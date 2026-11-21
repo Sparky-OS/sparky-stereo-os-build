@@ -29,6 +29,8 @@ class GraphicsKcm : public KQuickConfigModule
     Q_PROPERTY(bool mainAppliesLater READ mainAppliesLater NOTIFY changed)
     Q_PROPERTY(bool mainSetByHand READ mainSetByHand NOTIFY changed)
     Q_PROPERTY(QVariantList categories READ categories NOTIFY changed)
+    // ORDER 70: the card the partners compute on (key, label, choice, options, nowText, problem)
+    Q_PROPERTY(QVariantMap partners READ partners NOTIFY changed)
     Q_PROPERTY(QString profile READ profile NOTIFY changed)
     Q_PROPERTY(QString profileText READ profileText NOTIFY changed)
     Q_PROPERTY(QString measuredText READ measuredText NOTIFY changed)
@@ -66,6 +68,7 @@ public:
     bool mainAppliesLater() const;
     bool mainSetByHand() const;
     QVariantList categories() const;
+    QVariantMap partners() const;
     QString profile() const;
     QString profileText() const;
     QString measuredText() const;

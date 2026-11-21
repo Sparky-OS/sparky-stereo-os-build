@@ -49,6 +49,9 @@ int main(int argc, char **argv)
     for (const FixtureGpu &gpu : gpus) {
         fixture.add(gpu);
     }
+    if (name == u"host"_s) {
+        fixture.addHostCompute();
+    }
     // the A10 is Daniel's Lenovo ideapad 310-15ABR, machine type 80ST; the others are any make
     if (name == u"a10"_s) {
         fixture.setDmi("LENOVO", "80ST");

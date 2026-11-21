@@ -1,0 +1,6 @@
+# rocBLAS kernels: AMD GPU code objects (ELF for the AMDGPU machine), loaded by the ROCm runtime onto the graphics card,
+# never by the processor; architecture-independent data, kept in /usr/share as Debian keeps qemu-system-data's firmware
+ollama-rocm-data: arch-independent-package-contains-binary-or-object [usr/share/ollama/rocm_v7_2/rocblas/library/*]
+ollama-rocm-data: unstripped-binary-or-object [usr/share/ollama/rocm_v7_2/rocblas/library/*]
+ollama-rocm-data: arch-dependent-file-in-usr-share [usr/share/ollama/rocm_v7_2/rocblas/library/*]
+ollama-rocm-data: shared-library-lacks-prerequisites [usr/share/ollama/rocm_v7_2/rocblas/library/*]

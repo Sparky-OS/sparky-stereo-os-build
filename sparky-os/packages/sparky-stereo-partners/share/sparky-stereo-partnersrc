@@ -1,0 +1,120 @@
+# The system defaults of the Partners page (ORDER 70): who answers each kind of work, with which model. The person's own
+# choices are in ~/.config/sparky-stereo-partnersrc and win key by key (KConfig's cascade). The card is not here: it is the
+# Graphics package's one key, [Render] Partners in sparky-stereo-graphicsrc. No key or account is ever written in this file.
+[General]
+Kinds=text,speech,image,3d
+
+[Interface][ollama-local]
+Name=Ollama on this computer
+Kind=ollama
+Url=http://127.0.0.1:11434
+Runs=here
+Package=ollama
+Service=ollama.service
+
+# llama.cpp, the other local engine (Daniel's answer: "Ollama, with llama.cpp as the fallback"): offered, chosen by the person
+[Interface][llamacpp-local]
+Name=llama.cpp on this computer
+Kind=openai-compatible
+Url=http://127.0.0.1:8080/v1
+Runs=here
+Package=llama.cpp-tools
+Service=sparky-stereo-llama-server.service
+
+[Interface][vibe-local]
+Name=Vibe on this computer
+Kind=vibe
+Runs=here
+Package=vibe
+
+[Interface][spirula-local]
+Name=Spirula Studio on this computer
+Kind=spirula
+Runs=here
+Package=spirula-studio
+
+[Default][text]
+Interface=ollama-local
+
+[Default][speech]
+Interface=vibe-local
+
+[Default][image]
+Interface=none
+
+[Default][3d]
+Interface=spirula-local
+
+# The models the page offers, their sizes read from the registry before anything is fetched (Daniel, 2026-11-21: Qwen;
+# the 0.8b offered, never proposed)
+[Models]
+Registry=https://registry.ollama.ai
+Text=qwen3.5:4b,qwen3.5:2b,qwen3.5:0.8b
+
+[Models][qwen3.5:0.8b]
+Note=small
+
+# The programs the page lists, read in each program before it was listed
+[ProgramInfo][org.kde.kmail2]
+Name=KMail, Kontact and the Sieve editor
+Kinds=text
+Package=kdepim-addons
+Note=kde-text-addons
+# Kontact and the Sieve editor share KDE's text add-ons (one settings file), so KMail's choice answers them too
+Also=org.kde.kontact,org.kde.sieveeditor
+
+[ProgramInfo][vibe]
+Name=Vibe
+Kinds=speech,text
+Package=vibe
+Note=seeded
+
+# Betterbird, from the app center (its maker's release, placed in /opt/betterbird), with ThunderAI offered, not installed:
+# the page's text choice reaches ThunderAI through a managed-storage manifest of the person's (sparky-stereo-partners sync)
+[ProgramInfo][eu.betterbird.Betterbird]
+Name=Betterbird with ThunderAI
+Kinds=text
+Executables=/opt/betterbird/betterbird
+Note=thunderai
+ManagedStorage=thunderai@micz.it
+
+[ProgramInfo][spirula-studio]
+Name=Spirula Studio
+Kinds=3d
+Package=spirula-studio
+
+[ProgramInfo][org.kde.kdenlive]
+Name=Kdenlive
+Kinds=speech
+Package=kdenlive
+Note=own-engines
+
+[ProgramInfo][org.kde.digikam]
+Name=digiKam
+Kinds=image
+Package=digikam
+Note=own-engines
+
+[ProgramInfo][page.codeberg.Imaginer.Imaginer]
+Name=Imaginer
+Kinds=image
+Package=imaginer
+Note=own-services
+
+[ProgramInfo][sparky-stereo-browser]
+Name=Stereo Browser
+Kinds=text
+Package=sparky-stereo-browser
+Note=own-services
+
+[ProgramInfo][noi]
+Name=Noi
+Kinds=text
+Package=noi
+Note=own-services
+
+[ProgramInfo][crow-translate]
+Name=Crow Translate
+Kinds=text
+Package=crow-translate
+Note=own-services

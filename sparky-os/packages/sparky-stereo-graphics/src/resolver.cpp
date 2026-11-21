@@ -35,12 +35,77 @@ QString powerProfileToString(PowerProfile profile)
     return u"balanced"_s;
 }
 
-Resolver::Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, const ProfileReading &profile, const QString &measuredBest)
+Resolver::Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, const ProfileReading &profile, const QString &measuredBest,
+                   const QString &partnersBest)
     : m_gpus(gpus)
     , m_savedMain(savedMainGpu)
     , m_profile(profile)
     , m_measuredBest(measuredBest)
+    , m_partnersBest(partnersBest)
 {
+}
+
+static QString pciIdOf(const Gpu &gpu)
+{
+    return QStringLiteral("%1:%2").arg(gpu.vendorId, 4, 16, QLatin1Char('0')).arg(gpu.deviceId, 4, 16, QLatin1Char('0'));
+}
+
+int Resolver::partnersMeasuredIndex() const
+{
+    if (m_partnersBest.isEmpty()) {
+        return -1;
+    }
+    for (int i = 0; i < m_gpus.size(); ++i) {
+        const Gpu &gpu = m_gpus.at(i);
+        if ((gpu.id == m_partnersBest || pciIdOf(gpu) == m_partnersBest) && gpu.usable()) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool Resolver::holdsPartnersModel(const Gpu &gpu)
+{
+    return gpu.kind == GpuKind::Integrated || gpu.memory == 0 || gpu.memory >= partnersModelMemory;
+}
+
+Resolution Resolver::resolvePartnersAutomatic() const
+{
+    // ORDER 70, the main session's ruling of 2026-11-21: a record measured on the machine decides (the A10: the Carrizo,
+    // 3.73 tokens a second against the Hainan's 3.17 and the processor's 3.43, the whole model in its memory against 12%);
+    // on a machine without one, a card whose own memory cannot hold the model the page proposes is not Automatic's pick.
+    // The order below is the lane's reading for Daniel to read, not his words.
+    const int measured = partnersMeasuredIndex();
+    if (measured >= 0) {
+        return make(measured, u"measured"_s);
+    }
+    const bool recordMissing = !m_partnersBest.isEmpty();
+    int renderers = 0;
+    for (const Gpu &gpu : m_gpus) {
+        renderers += gpu.usable() ? 1 : 0;
+    }
+    const int presenting = presentingIndex();
+    if (presenting >= 0 && holdsPartnersModel(m_gpus.at(presenting))) {
+        return make(presenting, recordMissing ? u"measured-missing"_s : renderers <= 1 ? u"only-gpu"_s : u"unmeasured"_s);
+    }
+    int best = -1;
+    for (int i = 0; i < m_gpus.size(); ++i) {
+        const Gpu &gpu = m_gpus.at(i);
+        if (gpu.usable() && gpu.kind == GpuKind::Discrete && gpu.memory >= partnersModelMemory && (best < 0 || gpu.memory > m_gpus.at(best).memory)) {
+            best = i;
+        }
+    }
+    if (best < 0) {
+        best = firstOfKind(GpuKind::Integrated);
+    }
+    if (best >= 0) {
+        return make(best, u"unmeasured-memory"_s);
+    }
+    // no card here can hold the model: the processor, said as Automatic's answer
+    Resolution resolution;
+    resolution.reason = u"cpu-memory"_s;
+    resolution.isMain = false;
+    return resolution;
 }
 
 int Resolver::measuredIndex() const
@@ -187,7 +252,9 @@ QString Resolver::automaticTarget(Category category, PowerProfile profile, bool 
     // Daniel, 2026-10-24, split by kind: players, games and any program while it presents 3D draw on the GPU
     // measured best on the machine whatever the power profile, battery included; browsers follow the power
     // profile; other programs stay on the GPU that draws the desktop. The person's choice wins over it
-    if (category == Category::Players || category == Category::Games || stereo) {
+    // ORDER 70: the partners' card is Automatic as players and games are, the measured best card (the accepted Partners
+    // page design, 2026-11-21)
+    if (category == Category::Players || category == Category::Games || category == Category::Partners || stereo) {
         return u"measured"_s;
     }
     if (category == Category::Browsers) {
@@ -278,12 +345,22 @@ Resolution Resolver::resolveChoice(const QString &choice, Category category, boo
 {
     // The person's own GPU, by its id or its kind, is kept or said to be unusable, also when one GPU or none is left: another
     // GPU is only ever an explicit choice of theirs (Daniel, 2026-11-01)
+    if (choice == u"cpu"_s) {
+        // the partners' card set to the processor only (ORDER 70): no GPU, and nothing missing
+        Resolution resolution;
+        resolution.reason = u"cpu"_s;
+        resolution.isMain = false;
+        return resolution;
+    }
     if (choice != u"auto"_s && choice != u"profile"_s) {
         return resolveGpu(choice);
     }
     const int main = mainIndex();
     if (main < 0) {
         return {}; // no GPU: nothing to choose
+    }
+    if (choice == u"auto"_s && category == Category::Partners) {
+        return resolvePartnersAutomatic();
     }
     int renderers = 0;
     for (const Gpu &gpu : m_gpus) {
@@ -294,7 +371,7 @@ Resolution Resolver::resolveChoice(const QString &choice, Category category, boo
     }
 
     // Automatic and Follow the power profile are rules: each says where it puts a kind of program, and the page shows it
-    const bool measured = choice == u"auto"_s && (category == Category::Players || category == Category::Games || stereo);
+    const bool measured = choice == u"auto"_s && (category == Category::Players || category == Category::Games || category == Category::Partners || stereo);
     if (measured) {
         // the machine's record naming a GPU that is not here is said, not taken for "not measured"
         return make(presentingIndex(), measuredIndex() >= 0 ? u"measured"_s : (measuredNamesAbsentGpu() ? u"measured-missing"_s : u"unmeasured"_s));

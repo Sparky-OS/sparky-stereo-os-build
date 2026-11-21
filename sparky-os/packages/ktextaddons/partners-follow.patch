@@ -1,0 +1,380 @@
+Description: Follow the Partners page when the person set up no instance
+ KDE's text add-ons (KMail's AI Chat, Ask AI and quick answers, Kontact, the
+ Sieve editor) keep their engines in one file, autogeneratetextinstances.
+ When it holds none, they now take the edition's system default for text,
+ and a program's own choice beside it, from System Settings, Partners
+ (sparky-stereo-partners resolve --kind text --program DESKTOP-ID): an Ollama
+ interface becomes one instance in memory, written to the file only when the
+ person changes its settings, which makes it theirs. Other interfaces are
+ left alone and said in the log: the llama.cpp add-on of 2.1.2 is not
+ finished (its manager's requests are TODO) and the generic add-on knows no
+ provider's own address. With sparky-stereo-partners installed, "Start
+ Ollama" becomes "Open Partners": the engine is turned on there, as its user
+ service on the card the person chose, not started by a program behind that
+ switch. Without sparky-stereo-partners nothing changes.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-21
+---
+--- a/textautogeneratetext/core/textautogeneratetextinstancesmanager.cpp
++++ b/textautogeneratetext/core/textautogeneratetextinstancesmanager.cpp
+@@ -10,11 +10,75 @@
+ #include "core/textautogeneratetextplugin.h"
+ #include "textautogeneratetextcore_debug.h"
+ #include "textautogeneratetextutils.h"
++#include <KAboutData>
++#include <KConfig>
+ #include <KConfigGroup>
+ #include <KSharedConfig>
++#include <QGuiApplication>
++#include <QProcess>
++#include <QStandardPaths>
++#include <QUrl>
++
++#include <optional>
+ 
+ using namespace Qt::Literals::StringLiterals;
+ using namespace TextAutoGenerateText;
++
++namespace
++{
++// Sparky Stereo OS: the Partners page in System Settings keeps one system default for text, and a program's own choice beside
++// it; its command answers who that is (sparky-stereo-partners resolve). Read only when the person has set up no instance here.
++struct PartnersChoice {
++    QString kind; // the interface's protocol: "ollama", "openai-compatible", ...
++    QString name;
++    QString url;
++    QString model;
++};
++
++std::optional<PartnersChoice> partnersTextChoice()
++{
++    const QString command = QStandardPaths::findExecutable(u"sparky-stereo-partners"_s);
++    if (command.isEmpty()) {
++        return std::nullopt;
++    }
++    QString program = QGuiApplication::desktopFileName();
++    if (program.isEmpty()) {
++        program = KAboutData::applicationData().desktopFileName();
++    }
++    QStringList arguments{u"resolve"_s, u"--kind"_s, u"text"_s};
++    if (!program.isEmpty()) {
++        arguments << u"--program"_s << program;
++    }
++    QProcess process;
++    process.start(command, arguments);
++    if (!process.waitForFinished(10000)) {
++        qCWarning(TEXTAUTOGENERATETEXT_CORE_LOG) << "Partners: sparky-stereo-partners did not answer" << process.errorString();
++        process.kill();
++        return std::nullopt;
++    }
++    // it answers with its lines also when no model is chosen yet (status 1) or the card cannot be used now (4)
++    PartnersChoice choice;
++    const QStringList lines = QString::fromUtf8(process.readAllStandardOutput()).split(u'\n');
++    for (const QString &line : lines) {
++        const qsizetype eq = line.indexOf(u'=');
++        if (eq < 0) {
++            continue;
++        }
++        const QString key = line.left(eq);
++        const QString value = line.mid(eq + 1);
++        if (key == u"PARTNER_KIND"_s) {
++            choice.kind = value;
++        } else if (key == u"PARTNER_NAME"_s) {
++            choice.name = value;
++        } else if (key == u"PARTNER_URL"_s) {
++            choice.url = value;
++        } else if (key == u"PARTNER_MODEL"_s) {
++            choice.model = value;
++        }
++    }
++    return choice;
++}
++}
+ TextAutoGenerateTextInstancesManager::TextAutoGenerateTextInstancesManager(TextAutoGenerateManager *manager, QObject *parent)
+     : QObject{parent}
+     , mTextAutoGenerateTextInstanceModel(new TextAutoGenerateTextInstanceModel(this))
+@@ -46,7 +110,46 @@
+     mTextAutoGenerateEngineLoader->loadPlugins();
+     const QStringList instancesList = TextAutoGenerateTextUtils::instancesList(config);
+     if (instancesList.isEmpty()) {
+-        return; // nothing to be done...
++        // Sparky Stereo OS: no instance of the person's own, so the Partners page's choice answers, while it lasts: nothing
++        // is written here until the person changes this instance's settings, which makes it theirs
++        const auto partners = partnersTextChoice();
++        if (!partners) {
++            return; // nothing to be done...
++        }
++        if (partners->kind != u"ollama"_s || partners->url.isEmpty()) {
++            // said on the Partners page too: these add-ons reach only Ollama for now
++            qCInfo(TEXTAUTOGENERATETEXT_CORE_LOG) << "Partners: the text choice is" << partners->name << partners->kind
++                                                  << "which these add-ons cannot use; set up an instance of your own";
++            return;
++        }
++        auto client = mTextAutoGenerateEngineLoader->searchTextAutoGenerateTextClient(u"ollama"_s);
++        if (!client) {
++            qCWarning(TEXTAUTOGENERATETEXT_CORE_LOG) << "Partners: the Ollama add-on is not installed";
++            return;
++        }
++        KConfig memory(QString(), KConfig::SimpleConfig);
++        KConfigGroup group(&memory, u"Instance #0"_s);
++        group.writeEntry("enabled", true);
++        group.writeEntry("pluginName", u"ollama"_s);
++        group.writeEntry("pluginIdentifier", u"ollama"_s);
++        group.writeEntry("uuid", QByteArray("sparky-stereo-partners-text"));
++        group.writeEntry(u"Name"_s, partners->name);
++        group.writeEntry(u"ServerUrl"_s, QUrl(partners->url));
++        group.writeEntry(u"CurrentModel"_s, partners->model);
++        auto inst = new TextAutoGenerateTextInstance;
++        inst->load(group);
++        auto plugin = client->createTextAutoGeneratePlugin(mManager, inst);
++        if (!plugin) {
++            qCWarning(TEXTAUTOGENERATETEXT_CORE_LOG) << "Partners: the Ollama add-on could not be created";
++            delete inst;
++            return;
++        }
++        plugin->load(group);
++        connect(plugin, &TextAutoGenerateTextPlugin::configChanged, this, &TextAutoGenerateTextInstancesManager::saveInstances);
++        inst->setPlugin(plugin);
++        setInstances({inst});
++        setCurrentinstance(inst->instanceUuid());
++        return;
+     }
+ 
+     QList<TextAutoGenerateTextInstance *> lstInstances;
+--- a/textautogeneratetext/plugins/ollama/ollamaplugin.cpp
++++ b/textautogeneratetext/plugins/ollama/ollamaplugin.cpp
+@@ -18,8 +18,25 @@
+ #include <KLocalizedString>
+ #include <QAction>
+ #include <QDesktopServices>
++#include <QProcess>
++#include <QStandardPaths>
+ #include <QUrl>
+ 
++namespace
++{
++// Sparky Stereo OS: the local engine is turned on in System Settings, Partners (its user service, on the card the person
++// chose), never started by a program behind that switch
++bool partnersPage()
++{
++    return !QStandardPaths::findExecutable(QStringLiteral("sparky-stereo-partners")).isEmpty();
++}
++
++void openPartnersPage()
++{
++    QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_sparkystereo_partners")});
++}
++}
++
+ using namespace Qt::Literals::StringLiterals;
+ OllamaPlugin::OllamaPlugin(TextAutoGenerateText::TextAutoGenerateManager *manager,
+                            TextAutoGenerateText::TextAutoGenerateTextInstance *instance,
+@@ -63,6 +80,10 @@
+ 
+ void OllamaPlugin::slotOllamaRequested()
+ {
++    if (partnersPage()) {
++        openPartnersPage();
++        return;
++    }
+     mOllamaManager->startOllama();
+ }
+ 
+@@ -217,7 +238,15 @@
+     }
+     TextAutoGenerateText::TextAutoGenerateTextPlugin::ActivateInstanceActionInfo activateInstanceInfo;
+     const QString ollamaPath = TextAddonsWidgets::ExecutableUtils::findExecutable(u"ollama"_s);
+-    if (ollamaPath.isEmpty()) {
++    if (partnersPage()) {
++        activateInstanceInfo.text = i18n("The local partner is off. Turn it on in System Settings, Partners.");
++        auto openPartnersAction = new QAction(i18nc("@action", "Open Partners"), this);
++        openPartnersAction->setObjectName(u"openPartnersAction"_s);
++        connect(openPartnersAction, &QAction::triggered, this, [] {
++            openPartnersPage();
++        });
++        mCurrentAction = openPartnersAction;
++    } else if (ollamaPath.isEmpty()) {
+ #if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS)
+         activateInstanceInfo.text = i18n("Ollama not found on system. Ask to your administrator system to install it.");
+ #else
+--- a/po/pt_BR/libtextautogeneratetext.po
++++ b/po/pt_BR/libtextautogeneratetext.po
+@@ -771,6 +771,17 @@
+ msgid "Start Ollama"
+ msgstr "Iniciar Ollama"
+ 
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "O parceiro local está desligado. Ligue-o em Configurações do sistema, Parceiros."
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "Abrir Parceiros"
++
+ #: plugins/ollama/ollamastartprocessjob.cpp:35
+ #, kde-format
+ msgid "Ollama not found on system."
+diff --git a/po/de/libtextautogeneratetext.po b/po/de/libtextautogeneratetext.po
+--- a/po/de/libtextautogeneratetext.po
++++ b/po/de/libtextautogeneratetext.po
+@@ -759,4 +759,15 @@
+ msgstr ""
+
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "Der lokale Partner ist ausgeschaltet. Schalten Sie ihn in den Systemeinstellungen auf der Seite „Partner“ ein."
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "Partner öffnen"
++
+ #: plugins/ollama/ollamastartprocessjob.cpp:35
+ #, kde-format
+diff --git a/po/es/libtextautogeneratetext.po b/po/es/libtextautogeneratetext.po
+--- a/po/es/libtextautogeneratetext.po
++++ b/po/es/libtextautogeneratetext.po
+@@ -774,4 +774,15 @@
+ msgstr "Iniciar Ollama"
+
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "El colaborador local está desactivado. Actívalo en «Colaboradores», en Preferencias del sistema."
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "Abrir Colaboradores"
++
+ #: plugins/ollama/ollamastartprocessjob.cpp:35
+ #, kde-format
+diff --git a/po/fr/libtextautogeneratetext.po b/po/fr/libtextautogeneratetext.po
+--- a/po/fr/libtextautogeneratetext.po
++++ b/po/fr/libtextautogeneratetext.po
+@@ -770,4 +770,15 @@
+ msgstr "Démarrer Ollama"
+
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "Le partenaire local est désactivé. Activez-le sur la page « Partenaires » de Configuration du système."
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "Ouvrir « Partenaires »"
++
+ #: plugins/ollama/ollamastartprocessjob.cpp:35
+ #, kde-format
+diff --git a/po/pl/libtextautogeneratetext.po b/po/pl/libtextautogeneratetext.po
+--- a/po/pl/libtextautogeneratetext.po
++++ b/po/pl/libtextautogeneratetext.po
+@@ -801,4 +801,15 @@
+ msgstr "Uruchom Ollama"
+
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "Partner lokalny jest wyłączony. Włącz go na stronie „Partnerzy” w Ustawieniach systemowych."
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "Otwórz stronę „Partnerzy”"
++
+ #: plugins/ollama/ollamastartprocessjob.cpp:35
+ #, kde-format
+diff --git a/po/ja/libtextautogeneratetext.po b/po/ja/libtextautogeneratetext.po
+new file mode 100644
+--- /dev/null
++++ b/po/ja/libtextautogeneratetext.po
+@@ -0,0 +1,22 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: ktextaddons 2.1.2\n"
++"PO-Revision-Date: 2026-11-21 12:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: Sparky Stereo OS\n"
++"Language: ja\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "ローカルのパートナーはオフです。システム設定の「パートナー」でオンにしてください。"
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "「パートナー」を開く"
+diff --git a/po/ko/libtextautogeneratetext.po b/po/ko/libtextautogeneratetext.po
+--- a/po/ko/libtextautogeneratetext.po
++++ b/po/ko/libtextautogeneratetext.po
+@@ -840,4 +840,15 @@
+ msgstr "Ollama"
+
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "로컬 파트너가 꺼져 있습니다. 시스템 설정의 파트너에서 켜십시오."
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "파트너 열기"
++
+ #: plugins/ollama/ollamastartprocessjob.cpp:35
+ #, kde-format
+diff --git a/po/zh_CN/libtextautogeneratetext.po b/po/zh_CN/libtextautogeneratetext.po
+--- a/po/zh_CN/libtextautogeneratetext.po
++++ b/po/zh_CN/libtextautogeneratetext.po
+@@ -764,4 +764,15 @@
+ msgstr "启动 Ollama"
+
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "本地伙伴已关闭。请在“系统设置 > 伙伴”中开启。"
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "打开“伙伴”"
++
+ #: plugins/ollama/ollamastartprocessjob.cpp:35
+ #, kde-format
+diff --git a/po/zh_TW/libtextautogeneratetext.po b/po/zh_TW/libtextautogeneratetext.po
+--- a/po/zh_TW/libtextautogeneratetext.po
++++ b/po/zh_TW/libtextautogeneratetext.po
+@@ -788,4 +788,15 @@
+ msgstr "啟動 Ollama"
+
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgid "The local partner is off. Turn it on in System Settings, Partners."
++msgstr "本機夥伴已關閉。請在「系統設定 > 夥伴」中開啟。"
++
++#: plugins/ollama/ollamaplugin.cpp
++#, kde-format
++msgctxt "@action"
++msgid "Open Partners"
++msgstr "開啟「夥伴」"
++
+ #: plugins/ollama/ollamastartprocessjob.cpp:35
+ #, kde-format

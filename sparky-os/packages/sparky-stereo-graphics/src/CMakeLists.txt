@@ -5,6 +5,7 @@ add_library(sparkystereo_graphics STATIC
     graphicssettings.cpp graphicssettings.h
     machinerecord.cpp machinerecord.h
     appentries.cpp appentries.h
+    compute.cpp compute.h
     launchwatch.cpp launchwatch.h
     resolver.cpp resolver.h
     paint.cpp paint.h

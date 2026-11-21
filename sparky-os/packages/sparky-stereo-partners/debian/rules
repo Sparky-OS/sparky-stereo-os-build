@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=OFF -DKDE_INSTALL_USE_QT_SYS_PATHS=ON "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$(CURDIR)=."
+
+override_dh_auto_install:
+	dh_auto_install
+	# the journal catalogue holds what the problems engine shows: the kept problems' sentences, the action, the title
+	python3 po/problems-only.py po debian/problems-po
+	sparky-stereo-problems catalog sparky-stereo-partners debian/problems-po debian/sparky-stereo-partners/usr/lib/systemd/catalog \
+		--domain kcm_sparkystereo_partners --context "@info" --context "@action:button" \
+		--subject "@title notification|A partner cannot work"
+
+# llama.cpp's user service stays off until the person turns it on on the page
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable
+
+# every catalogue complete, its placeholders kept, or the sentence named in po/pending-translation.txt (the translations lane's next run)
+override_dh_auto_test:
+	python3 tests/check-lang.py

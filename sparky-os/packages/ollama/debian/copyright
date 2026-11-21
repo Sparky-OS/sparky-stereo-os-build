@@ -1,0 +1,85 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: ollama
+Upstream-Contact: https://github.com/ollama/ollama
+Source: https://github.com/ollama/ollama (tag v0.40.16) and its release files
+Comment: The release bundles are repacked: NVIDIA's CUDA libraries, the CUDA 12 runner, GCC's OpenMP library and the copies of
+ libdrm, libnuma and libelf are left out, each with its size, SHA-256 and reason in release/EXCLUDED.tsv (installed as
+ /usr/share/doc/ollama/EXCLUDED.tsv). The licence texts of the components upstream's bundle names are installed beside the
+ libraries in /usr/lib/ollama (*_LICENSE, *_NOTICE); AMD's ROCm 7.2.1 licences, which the bundle does not carry, come from AMD's
+ repositories at the tag rocm-7.2.1 and are installed in /usr/share/doc/ollama-rocm/licences.
+
+Files: *
+Copyright: Ollama
+License: Expat
+
+Files: release/payload/lib/ollama/libggml* release/payload/lib/ollama/libllama* release/payload/lib/ollama/libmtmd*
+ release/payload/lib/ollama/llama-* release/payload/lib/ollama/vulkan/* release/payload/lib/ollama/cuda_v13/*
+ release/payload/lib/ollama/rocm_v7_2/libggml-hip.so
+Copyright: 2023-2026 The ggml authors
+License: Expat
+Comment: llama.cpp and ggml, built by Ollama with its compatibility patch; see LLAMA_CPP_LICENSE and LLAMA_CPP_VENDORS_LICENSE.
+
+Files: release/payload/lib/ollama/rocm_v7_2/libamdhip64* release/payload/lib/ollama/rocm_v7_2/librocblas*
+ release/payload/lib/ollama/rocm_v7_2/rocblas/* release/payload/lib/ollama/rocm_v7_2/libhipblas*
+ release/payload/lib/ollama/rocm_v7_2/librocroller* release/payload/lib/ollama/rocm_v7_2/librocprofiler-register*
+ release/payload/lib/ollama/rocm_v7_2/libroctx64*
+Copyright: Advanced Micro Devices, Inc.
+License: Expat
+Comment: The texts: release/licences/rocm/clr.txt, rocblas.txt (with the further notices it carries), hipblas.txt,
+ hipblaslt.txt, rocroller.txt, rocprofiler-register.txt and roctracer.txt.
+
+Files: release/payload/lib/ollama/rocm_v7_2/librocsolver*
+Copyright: 2018-2025 Advanced Micro Devices, Inc.
+License: BSD-2-Clause
+Comment: The text, with the LAPACK and MAGMA notices it carries: release/licences/rocm/rocsolver.txt.
+
+Files: release/payload/lib/ollama/rocm_v7_2/libhsa-runtime64*
+Copyright: 2014-2025 Advanced Micro Devices, Inc.
+License: NCSA
+Comment: The text: release/licences/rocm/rocr-runtime.txt.
+
+Files: release/payload/lib/ollama/rocm_v7_2/libamd_comgr*
+Copyright: Advanced Micro Devices, Inc.
+License: Apache-2.0 with LLVM exception
+Comment: The text: release/licences/rocm/comgr.txt. On Debian systems the Apache License 2.0 is in
+ /usr/share/common-licenses/Apache-2.0.
+
+Files: debian/* make-orig.sh
+Copyright: 2026 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski)
+License: GPL-3+
+Comment: On Debian systems the GNU General Public License version 3 is in /usr/share/common-licenses/GPL-3.
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+License: BSD-2-Clause
+ The full text, with the notices it carries, is release/licences/rocm/rocsolver.txt, installed as
+ /usr/share/doc/ollama-rocm/licences/rocsolver.txt.
+
+License: NCSA
+ The full text is release/licences/rocm/rocr-runtime.txt, installed as
+ /usr/share/doc/ollama-rocm/licences/rocr-runtime.txt.
+
+License: Apache-2.0 with LLVM exception
+ The full text is release/licences/rocm/comgr.txt, installed as
+ /usr/share/doc/ollama-rocm/licences/comgr.txt.
+
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as
+ published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.

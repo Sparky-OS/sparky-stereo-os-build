@@ -94,6 +94,13 @@ void GpuInventoryTest::hostAmdAndNvidia()
     QCOMPARE(gpus[1].connectors.size(), 4);
     QCOMPARE(gpus[1].connectedCount(), 1);
     QCOMPARE(gpus[1].connectors.last().monitor, u"LG TV"_s);
+    // ORDER 70: the card's own memory where sysfs gives it (amdgpu), unknown (0) for NVIDIA's, which only NVML gives on
+    // the running system
+    QCOMPARE(gpus[0].memory, quint64(536870912));
+    QCOMPARE(gpus[1].memory, quint64(0));
+    QList<Gpu> again = gpus;
+    GpuInventory::readMemory(again, fixture.root());
+    QCOMPARE(again[1].memory, quint64(0));
 }
 
 void GpuInventoryTest::bmcCannotRender()

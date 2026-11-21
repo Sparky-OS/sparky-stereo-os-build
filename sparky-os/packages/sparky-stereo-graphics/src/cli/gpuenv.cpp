@@ -3,10 +3,18 @@
 
 // sparky-stereo-gpu-env: what the Graphics page decides, for programs that start programs.
 //
-//   sparky-stereo-gpu-env [--category players|games|browsers|other | --app ID.desktop|/path/to/file.desktop | --choice auto|profile|integrated|discrete|pci-...]
+//   sparky-stereo-gpu-env [--category players|games|browsers|other|partners | --app ID.desktop|/path/to/file.desktop | --choice auto|profile|integrated|discrete|pci-...]
 //                         [--3d] [--profile power-saver|balanced|performance] [--root DIR]
-//                         [--print env|gpu|render-node|card-node|id|reason] [--shell]
+//                         [--print env|gpu|render-node|card-node|id|reason|memory|compute-env] [--shell]
 //                         [--ask]
+//
+// ORDER 70, the partners' card: --category partners is the card the edition's partners (local AI engines) compute on,
+// [Render] Partners, one choice with the Partners page; Automatic is the card measured best, as for players, and "cpu"
+// (Processor only) is a choice of this kind alone (also --choice cpu with --print compute-env). --print compute-env gives
+// the variables that leave only that card visible to every runner (CUDA, ROCm, Vulkan; compute.h), or for the processor
+// the values that hide every card. A card no compute driver reaches is said and kept (problem "card-no-compute") and the
+// exit status is 4, as for any choice that cannot be used. --print memory: the card's own memory in bytes (exit 1 when
+// it is not known).
 //   sparky-stereo-gpu-env --session     the KWIN_DRM_DEVICES line for the next login, nothing when Automatic
 //   sparky-stereo-gpu-env --list        the GPUs, one line each (--json for a machine reader)
 //   sparky-stereo-gpu-env --problems    what is kept: each choice that cannot be used, each failed step of the package
@@ -51,6 +59,7 @@
 // sparky-stereo-gpu-run asks or does not start it, as for 4.
 
 #include "appentries.h"
+#include "compute.h"
 #include "gpuinventory.h"
 #include "graphicssettings.h"
 #include "launchwatch.h"
@@ -201,7 +210,7 @@ static int died(const QString &unit, const QString &root)
     const QList<Gpu> gpus = GpuInventory::read(root);
     const GraphicsSettings settings;
     const MachineRecord record = MachineRecord::read();
-    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu);
+    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu, record.partnersBestGpu);
     const Resolution resolution = resolver.resolveApp(entry, settings, false);
     if (!resolution.problem.isEmpty() || resolution.gpuIndex < 0 || resolution.environment.isEmpty()) {
         return 0;
@@ -259,7 +268,7 @@ static int useApp(const QString &id, const QString &gpuId, const QString &root)
     const QList<Gpu> gpus = GpuInventory::read(root);
     const GraphicsSettings settings;
     const MachineRecord record = MachineRecord::read();
-    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu);
+    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu, record.partnersBestGpu);
     for (AppPreference preference : {AppPreference::MainGpu, AppPreference::OtherGpu}) {
         AppEntry other = entry;
         other.preference = preference;
@@ -454,8 +463,11 @@ int main(int argc, char **argv)
             settings.setMainGpu(useGpu);
         } else {
             bool found = false;
-            for (Category category : allCategories()) {
+            for (Category category : renderCategories()) {
                 if (categoryKey(category).toLower() == useKey) {
+                    if (!GraphicsSettings::validChoice(useGpu, category)) {
+                        return usage(i18nc("@info:shell %1 is what was given to --choice", "Not a choice: %1", useGpu));
+                    }
                     settings.setRenderChoice(category, useGpu);
                     found = true;
                 }
@@ -488,10 +500,13 @@ int main(int argc, char **argv)
         return usage(i18nc("@info:shell %1 is what was given; power-saver, balanced and performance stay as they are",
                             "Not a power profile: %1 (power-saver, balanced or performance)", profile));
     }
-    const QList<Gpu> gpus = GpuInventory::read(root);
+    QList<Gpu> gpus = GpuInventory::read(root);
+    if ((list && json) || print == u"memory"_s) {
+        GpuInventory::readMemory(gpus, root);
+    }
     const GraphicsSettings settings;
     const MachineRecord record = MachineRecord::read();
-    const Resolver resolver(gpus, settings.mainGpu(), powerProfile, record.bestGpu);
+    const Resolver resolver(gpus, settings.mainGpu(), powerProfile, record.bestGpu, record.partnersBestGpu);
 
     if (session) {
         // The saved main GPU that cannot draw is said and kept, never replaced: KWin's own order draws this login, as
@@ -526,7 +541,7 @@ int main(int argc, char **argv)
                 array.append(QJsonObject{{u"id"_s, gpu.id}, {u"name"_s, gpu.name}, {u"vendor"_s, gpu.vendor}, {u"chip"_s, gpu.chip}, {u"driver"_s, gpu.driver},
                                          {u"kind"_s, kind}, {u"cardNode"_s, gpu.cardNode}, {u"renderNode"_s, gpu.renderNode}, {u"canRender"_s, gpu.canRender},
                                          {u"bootVga"_s, gpu.bootVga}, {u"main"_s, i == main}, {u"measuredBest"_s, i == measured},
-                                         {u"connectors"_s, connectors}});
+                                         {u"memory"_s, double(gpu.memory)}, {u"connectors"_s, connectors}});
             } else {
                 out << gpu.id << '\t' << kind << '\t' << gpu.driver << '\t' << gpu.cardNode << '\t' << (gpu.canRender ? gpu.renderNode : u"-"_s) << '\t'
                     << (i == main ? u"main"_s : u"-"_s) << '\t' << gpu.name << '\n';
@@ -556,12 +571,17 @@ int main(int argc, char **argv)
             saved = categoryKey(entry.category).toLower();
         }
     } else if (!choice.isEmpty()) {
-        if (!GraphicsSettings::validChoice(choice)) {
+        // the processor alone is a choice for the partners' card only, so only with its variables
+        const bool computeChoice = print == u"compute-env"_s || print == u"memory"_s;
+        if (!GraphicsSettings::validChoice(choice, computeChoice ? Category::Partners : Category::Other)) {
             return usage(i18nc("@info:shell %1 is what was given to --choice", "Not a choice: %1", choice));
         }
-        resolution = resolver.resolveChoice(choice, Category::Other, stereo);
+        resolution = resolver.resolveChoice(choice, computeChoice ? Category::Partners : Category::Other, stereo);
+        if (computeChoice) {
+            asked = Category::Partners;
+        }
     } else {
-        const QList<Category> categories = allCategories();
+        const QList<Category> categories = renderCategories();
         Category selected = Category::Other;
         bool known = category.isEmpty();
         for (Category candidate : categories) {
@@ -578,6 +598,11 @@ int main(int argc, char **argv)
         saved = categoryKey(selected).toLower();
     }
     // Paint windows (ORDER 518): the way this program's Qt Widgets windows are painted, with what names it for the program
+    // the partners' card computes; nothing of it paints windows (ORDER 70)
+    const bool partners = asked == Category::Partners;
+    if (partners && print.startsWith(u"paint"_s)) {
+        return usage(i18nc("@info:shell %1 is what was given to --print", "Not something to print: %1", print));
+    }
     PaintFacts paintFacts = PaintFacts::read(!resolver.usableIndices().isEmpty());
     const PaintSettings paintSettings;
     const PaintRecord paintRecord = PaintRecord::read();
@@ -585,14 +610,17 @@ int main(int argc, char **argv)
     const QString paintGpu = resolution.gpuIndex >= 0 && resolution.gpuIndex < gpus.size()
         ? PaintRecord::gpuKey(gpus.at(resolution.gpuIndex).vendorId, gpus.at(resolution.gpuIndex).deviceId)
         : QString();
-    PaintResolution paint = Paint::resolve(asked, paintId, paintGpu, paintSettings, paintRecord, paintFacts);
-    if (paint.way != PaintWay::Processor && paint.reason != u"session"_s) {
-        paintFacts.qtPaintsOnGpu = PaintFacts::qtHasPainting();
+    PaintResolution paint;
+    if (!partners) {
         paint = Paint::resolve(asked, paintId, paintGpu, paintSettings, paintRecord, paintFacts);
+        if (paint.way != PaintWay::Processor && paint.reason != u"session"_s) {
+            paintFacts.qtPaintsOnGpu = PaintFacts::qtHasPainting();
+            paint = Paint::resolve(asked, paintId, paintGpu, paintSettings, paintRecord, paintFacts);
+        }
     }
     // said and kept only for a caller that takes the painting's answer (the launcher's lines, or the way itself), not
     // for one that only asks where a kind of program draws (libmedia-gpu-route's --print render-node)
-    const bool paintAsked = print == u"env"_s || print.startsWith(u"paint"_s);
+    const bool paintAsked = !partners && (print == u"env"_s || print.startsWith(u"paint"_s));
     if (paintAsked && paint.reason != u"session"_s && paint.asked != PaintWay::Processor) {
         const QString key = Paint::problemKey(asked, paintId);
         if (!paint.problem.isEmpty()) {
@@ -641,8 +669,9 @@ int main(int argc, char **argv)
         if (!saved.isEmpty()) {
             Problems::keep(problem, Problems::userDir());
         }
-        tell(problem, true);
-        const QString picked = askChoice ? ask(problem) : QString();
+        tell(problem, !partners);
+        // the partners' engine is a service: nothing is asked, it is not started
+        const QString picked = askChoice && !partners ? ask(problem) : QString();
         if (picked.isEmpty()) {
             // Automatic is a rule, not the person's choice: said apart, so a launcher never refuses a program the person
             // placed nowhere
@@ -655,6 +684,45 @@ int main(int argc, char **argv)
         }
     } else if (!saved.isEmpty()) {
         Problems::clear(saved, Problems::userDir());
+    }
+    if (print == u"compute-env"_s) {
+        // ORDER 70: only the chosen card is visible to every runner, or none for the processor; a computer with no GPU at
+        // all computes on the processor, which is the whole answer there
+        ComputeAnswer answer = resolution.gpuIndex < 0 ? Compute::processor() : Compute::forGpu(gpus, resolution.gpuIndex, root);
+        if (!answer.problem.isEmpty()) {
+            const Problem problem = Problems::fromCompute(saved.isEmpty() ? u"partners"_s : saved, resolution.gpuIndex, gpus, answer.detail);
+            if (!saved.isEmpty()) {
+                Problems::keep(problem, Problems::userDir());
+            }
+            tell(problem, false);
+            return 4;
+        }
+        for (const QString &line : std::as_const(answer.environment)) {
+            if (shell) {
+                const int eq = line.indexOf(u'=');
+                out << "export " << line.left(eq) << '=' << shellQuote(line.mid(eq + 1)) << '\n';
+            } else {
+                out << line << '\n';
+            }
+        }
+        return 0;
+    }
+    if (resolution.reason == u"cpu"_s || resolution.reason == u"cpu-memory"_s) {
+        // the partners' card set to the processor only, or Automatic on a computer where no card can hold the model the
+        // Partners page proposes (ORDER 70): no GPU to name
+        if (print == u"id"_s) {
+            out << "cpu\n";
+            return 0;
+        }
+        if (print == u"reason"_s) {
+            out << resolution.reason << '\n';
+            return 0;
+        }
+        if (print == u"gpu"_s) {
+            out << i18nc("@item:inlistbox the card the partners compute on", "Processor only") << '\n';
+            return 0;
+        }
+        return print == u"env"_s ? 0 : 1;
     }
     if (resolution.gpuIndex < 0) {
         // no GPU at all and nothing chosen: no variable to set, which is the whole answer; there is no GPU to name
@@ -682,6 +750,11 @@ int main(int argc, char **argv)
         out << gpu.id << '\n';
     } else if (print == u"reason"_s) {
         out << resolution.reason << '\n';
+    } else if (print == u"memory"_s) {
+        if (gpu.memory == 0) {
+            return 1;
+        }
+        out << gpu.memory << '\n';
     } else {
         return usage(i18nc("@info:shell %1 is what was given to --print", "Not something to print: %1", print));
     }

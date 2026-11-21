@@ -1,0 +1,54 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) 2026/11/21
+# Copyright 2026 under the GNU GPL3 License
+# A local partner engine and the runner for this computer's card, installed as root through pkexec (ORDER 70).
+#   install-engine plan [ollama|llamacpp]                         what installing downloads: one line per package (NAME TAB
+#                                                                 BYTES), then total TAB BYTES
+#   install-engine install [ollama|llamacpp] [--even-if-metered]  installs them (the page has shown the plan and the size first)
+# Ollama's runner is the hardware setup's own answer: the "partner" lines of sparky-stereo-hardware --auto --dry-run, never
+# every runner. SPARKY_STEREO_PARTNERS_HARDWARE_ARGS gives that command extra arguments in a test (--fixture DIR); pkexec
+# clears it. llama.cpp is Debian's llama-server with ggml's Vulkan back end, which runs on any card with a Vulkan driver
+# (its processor back ends come with libggml0); Debian's llama.cpp-services is not installed: its system service starts at
+# installation, and the Partners page's own user service starts only when the person turns it on.
+# Exit status: 0 done, 2 wrong arguments, 3 failed (said), 5 held (metered, said by the caller before it asked).
+set -u
+export LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive
+if [[ $EUID != 0 ]]; then echo 'install-engine: run as root (through pkexec)' >&2; exit 2; fi
+mode=${1:-}
+engine=ollama
+[[ ${2:-} == ollama || ${2:-} == llamacpp ]] && engine=$2
+case $mode in plan | install) ;; *) echo 'Usage: install-engine plan | install [ollama|llamacpp] [--even-if-metered]' >&2; exit 2 ;; esac
+if [[ $engine == llamacpp ]]; then
+	packages=(llama.cpp-tools libggml0-backend-vulkan)
+else
+	packages=(ollama)
+fi
+if [[ $engine == llamacpp ]]; then
+	:
+elif command -v sparky-stereo-hardware >/dev/null; then
+	# shellcheck disable=SC2086
+	if ! plan=$(sparky-stereo-hardware --auto --dry-run ${SPARKY_STEREO_PARTNERS_HARDWARE_ARGS:-} 2>/dev/null); then
+		echo 'install-engine: the hardware setup could not say which runner this computer needs (sparky-stereo-hardware --auto --dry-run failed); nothing was installed' >&2
+		exit 3
+	fi
+	while IFS=$'\t' read -r kind package _; do
+		[[ $kind == partner ]] && packages+=("$package")
+	done <<<"$plan"
+else
+	echo 'install-engine: sparky-stereo-hardware is not installed, so no runner for the card is added (the processor and Vulkan runners come with ollama)' >&2
+fi
+if [[ $mode == plan ]]; then
+	# apt's own list of what it would download, each with its size (nothing already in its cache, nothing installed)
+	if ! uris=$(apt-get install --print-uris -qq -y "${packages[@]}" 2>&1); then
+		echo "install-engine: apt cannot install ${packages[*]}: $(tail -n 3 <<<"$uris" | tr '\n' ' ')" >&2
+		exit 3
+	fi
+	awk -v total=0 "/^'/ { name = \$2; sub(/_.*/, \"\", name); print name \"\t\" \$3; total += \$3 } END { print \"total\t\" total }" <<<"$uris"
+	printf 'packages\t%s\n' "${packages[*]}"
+	exit 0
+fi
+if ! apt-get install -y -q "${packages[@]}"; then
+	echo "install-engine: apt-get install ${packages[*]} failed" >&2
+	exit 3
+fi
+exit 0

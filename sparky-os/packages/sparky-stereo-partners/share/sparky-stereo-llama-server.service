@@ -1,0 +1,19 @@
+[Unit]
+Description=llama.cpp on this computer (127.0.0.1:8080), the Partners page's other local engine
+Documentation=man:llama-server(1)
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+# Debian's llama-server in router mode on the person's folder of model files: it downloads no model by itself (--offline),
+# answers this computer only, and lets only this computer's own pages call it from a browser (--cors-origins localhost;
+# its default is every origin). The card is the Partners choice, and only that card, as for Ollama.
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/llama.cpp/models
+ExecStart=/usr/bin/sparky-stereo-gpu-run --compute --category partners /usr/bin/llama-server --host 127.0.0.1 --port 8080 --models-dir %h/.local/share/llama.cpp/models --cors-origins localhost --offline
+SyslogIdentifier=llama-server
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=4 127
+
+[Install]
+WantedBy=default.target
