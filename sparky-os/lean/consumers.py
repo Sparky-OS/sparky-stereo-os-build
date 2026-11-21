@@ -19,6 +19,10 @@ from . import lang_c, lang_ini, lang_js, lang_json, lang_perl, lang_python, lang
 HANDLERS = {m.KEY: m for m in (lang_shell, lang_python, lang_js, lang_ini, lang_yaml, lang_toml, lang_json,
                                lang_c, lang_perl, lang_java, lang_kotlin, lang_zig, lang_rust, lang_go)}
 
+# The startup files bash reads by name (bash(1), INVOCATION; Debian's skel .bashrc reads ~/.bash_aliases): shell
+# wherever they are installed, as /etc/skel/.bashrc was (rows 629/802: sparky-stereo-console's .bash_aliases).
+BASH_STARTUP_NAMES = ('.bashrc', '.bash_aliases', '.bash_logout', '.bash_profile', '.bash_login', '.profile')
+
 # never projected, with the reason recorded in the manifest
 EXCLUDE = [
     ('/usr/share/doc/*', 'documentation (kept whole by the policy)'),
@@ -97,8 +101,8 @@ def choose(path: str, data: bytes, native: bool = False):
         return None, None, f'interpreter {interp}: no qualified adapter'
     if ext in ('.sh', '.bash'):
         return 'shell', 'bash' if ext == '.bash' else 'dash', None
-    if path.startswith('/etc/profile.d/') or path in ('/etc/profile', '/etc/bash.bashrc', '/etc/skel/.bashrc',
-                                                       '/etc/skel/.profile', '/etc/skel/.bash_logout'):
+    if path.startswith('/etc/profile.d/') or path in ('/etc/profile', '/etc/bash.bashrc') \
+            or os.path.basename(path) in BASH_STARTUP_NAMES:
         return 'shell', 'bash', None
     if path.startswith('/usr/share/bash-completion/completions/') or path.startswith('/etc/bash_completion.d/') \
             or path == '/usr/share/bash-completion/bash_completion':
