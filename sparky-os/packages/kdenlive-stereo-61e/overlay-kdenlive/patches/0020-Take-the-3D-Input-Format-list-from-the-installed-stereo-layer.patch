@@ -1,0 +1,128 @@
+Description: Take the 3D Input Format list from the installed stereo layer
+ The list of a clip's 3D input formats is the installed stereo layer's own
+ (stereo-policy 1.23: stereo_policy_input_format_count() and _at()), read when
+ Kdenlive first needs it, in its order, groups and words, translated by the
+ layer's catalogue; Kdenlive keeps no copy of it.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -319,6 +319,11 @@ add_definitions(${qt${QT_MAJOR_VERSION}g
+ if(StereoLayer_FOUND)
+     target_link_libraries(kdenliveLib PUBLIC Stereo::Layer)
+     target_compile_definitions(kdenliveLib PUBLIC HAVE_STEREO_LAYER)
++    # the layer's own list of input formats (stereo-policy 1.23), read when the program runs
++    if(TARGET Stereo::Policy AND StereoLayer_VERSION VERSION_GREATER_EQUAL 1.23)
++        target_link_libraries(kdenliveLib PUBLIC Stereo::Policy)
++        target_compile_definitions(kdenliveLib PUBLIC HAVE_STEREO_POLICY_LIST)
++    endif()
+     # the person's 3D correction of a clip written into the file's own mark, when the person chooses it (libstereo-av)
+     if(TARGET Stereo::Av)
+         target_link_libraries(kdenliveLib PUBLIC Stereo::Av)
+--- a/src/utils/stereo3d.cpp
++++ b/src/utils/stereo3d.cpp
+@@ -10,6 +10,9 @@
+ #ifdef HAVE_STEREO_LAYER
+ #include <video.h>
+ #endif
++#ifdef HAVE_STEREO_POLICY_LIST
++#include <stereo-policy.h>
++#endif
+ 
+ #include <KLocalizedString>
+ #include <QCoreApplication>
+@@ -18,45 +21,56 @@
+ 
+ namespace Stereo3D {
+ 
+-// The stereo layer's input formats (stereo-layer 1.22, src/picture/filechoicelist.cpp; from 1.23 also its C list
+-// stereo_policy_input_format_at()), in its order and words: the packings of RFC 9559 StereoMode and of H.264 Table D-8 and H.265
+-// Table D.8, both eye orders, the anaglyph colour pairs and the picture-with-depth layouts. The policy values are stereo-policy.h's:
+-// layouts 0 none, 1 side by side, 2 top and bottom, 4 rows, 5 columns, 6 checkerboard, 7 side by side quincunx, 8 frames in turn,
+-// 9 both views in one block, 10 to 13 a picture and its depth; anaglyphs 1 red/cyan, 2 green/magenta, 3 amber/blue.
++// The stereo layer's input formats, read from the installed layer when they are first needed (stereo-policy 1.23:
++// stereo_policy_input_format_at()), in its order, groups and words, translated by its own catalogue (context Stereo::FileChoiceMenu):
++// every packing the layer knows, never a list of Kdenlive's own. The policy values are stereo-policy.h's: layouts 0 none, 1 side by
++// side, 2 top and bottom, 4 rows, 5 columns, 6 checkerboard, 7 side by side quincunx, 8 frames in turn, 9 both views in one block,
++// 10 to 13 a picture and its depth; anaglyphs 1 red/cyan, 2 green/magenta, 3 amber/blue. Kdenlive shows as a pair the packings
++// MLT's stereo3d_unpack takes apart; the others are shown as one picture and said so.
++static Packing packingOfLayout(int layout, int anaglyph)
++{
++    if (anaglyph != 0) {
++        return Packing::None;
++    }
++    switch (layout) {
++    case 1:
++        return Packing::SideBySide;
++    case 2:
++        return Packing::TopBottom;
++    case 4:
++        return Packing::Lines;
++    case 5:
++        return Packing::Columns;
++    case 6:
++        return Packing::Checkerboard;
++    case 7:
++        return Packing::SideBySideQuincunx;
++    case 8:
++        return Packing::FrameSequence;
++    default:
++        return Packing::None;
++    }
++}
++
+ const QList<InputEntry> &inputEntries()
+ {
+-    static const QList<InputEntry> entries{
+-        {"mono", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Not 3D"), 0, Packing::None, false, 0, 0, 0, false},
+-        {"sideBySideLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side, left eye first"), 1, Packing::SideBySide, false, 1, 0, 0, false},
+-        {"sideBySideRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side, right eye first"), 1, Packing::SideBySide, true, 1, 1, 0, false},
+-        {"topBottomLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Top and bottom, left eye first"), 1, Packing::TopBottom, false, 2, 0, 0, false},
+-        {"topBottomRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Top and bottom, right eye first"), 1, Packing::TopBottom, true, 2, 1, 0, false},
+-        {"rowInterleavedLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Rows, left eye first"), 2, Packing::Lines, false, 4, 0, 0, false},
+-        {"rowInterleavedRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Rows, right eye first"), 2, Packing::Lines, true, 4, 1, 0, false},
+-        {"columnInterleavedLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Columns, left eye first"), 2, Packing::Columns, false, 5, 0, 0, false},
+-        {"columnInterleavedRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Columns, right eye first"), 2, Packing::Columns, true, 5, 1, 0, false},
+-        {"checkerboardLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Checkerboard, left eye first"), 2, Packing::Checkerboard, false, 6, 0, 0, false},
+-        {"checkerboardRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Checkerboard, right eye first"), 2, Packing::Checkerboard, true, 6, 1, 0, false},
+-        {"sideBySideQuincunxLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side quincunx, left eye first"), 2, Packing::SideBySideQuincunx,
+-         false, 7, 0, 0, false},
+-        {"sideBySideQuincunxRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side quincunx, right eye first"), 2,
+-         Packing::SideBySideQuincunx, true, 7, 1, 0, false},
+-        {"frameSequentialLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Frames in turn, left eye first"), 3, Packing::FrameSequence, false, 8, 0, 0, true},
+-        {"frameSequentialRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Frames in turn, right eye first"), 3, Packing::FrameSequence, true, 8, 1, 0, true},
+-        {"blockLacedLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Both views in one block, left eye first"), 3, Packing::None, false, 9, 0, 0, true},
+-        {"blockLacedRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Both views in one block, right eye first"), 3, Packing::None, true, 9, 1, 0, true},
+-        {"anaglyphCyanRed", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Red/cyan"), 4, Packing::None, false, 0, 0, 1, false},
+-        {"anaglyphGreenMagenta", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Green/magenta"), 4, Packing::None, false, 0, 0, 2, false},
+-        {"anaglyphAmberBlue", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Amber/blue"), 4, Packing::None, false, 0, 0, 3, false},
+-        {"depthSideBySidePictureFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side, picture first"), 5, Packing::None, false, 10, 0, 0, false},
+-        {"depthSideBySideDepthFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side, depth first"), 5, Packing::None, false, 10, 1, 0, false},
+-        {"depthTopBottomPictureFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Top and bottom, picture first"), 5, Packing::None, false, 11, 0, 0, false},
+-        {"depthTopBottomDepthFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Top and bottom, depth first"), 5, Packing::None, false, 11, 1, 0, false},
+-        {"depthGraphicsTopBottom", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Four rows: picture, depth, graphics, graphics depth"), 5, Packing::None, false,
+-         12, 0, 0, false},
+-        {"depthBackgroundQuarters", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Four quarters: picture, depth, background, background depth"), 5,
+-         Packing::None, false, 13, 0, 0, false},
+-    };
++    static const QList<InputEntry> entries = [] {
++        QList<InputEntry> list;
++#ifdef HAVE_STEREO_POLICY_LIST
++        const size_t count = stereo_policy_input_format_count();
++        for (size_t i = 0; i < count; ++i) {
++            const stereo_policy_input_format *format = stereo_policy_input_format_at(i);
++            // Kdenlive's own first entry, Automatic, is the property left empty
++            if (!format || !format->id || !format->text || !strcmp(format->id, "automatic")) {
++                continue;
++            }
++            const Packing packing = packingOfLayout(format->layout, format->anaglyph);
++            list.append({format->id, format->text, format->group, packing, packing != Packing::None && format->order == 1, format->layout,
++                         format->order, format->anaglyph, format->video_only != 0});
++        }
++#endif
++        return list;
++    }();
+     return entries;
+ }
+ 

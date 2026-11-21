@@ -1,15 +1,17 @@
 # Kdenlive and MLT for ORDER 61e
 
-Kdenlive 26.08.1-1+stereo3d9+lc1 and MLT 7.40.0-1+stereo3d8+lc1, made from the published +lc1 sources of round r1118a
-(kdenlive +stereo3d6, mlt +stereo3d6), never from a work tree. The first milestone's Kdenlive +stereo3d8 and MLT +stereo3d7
-were staged only and enter no round: these sources carry all of it (ORDER 61e, two milestones).
+Kdenlive 26.08.1-1+stereo3d10+lc1 and MLT 7.40.0-1+stereo3d9+lc1, made from the published +lc1 sources of round r1118a
+(kdenlive +stereo3d6, mlt +stereo3d6), never from a work tree. The staged Kdenlive +stereo3d8 and +stereo3d9 and MLT +stereo3d7
+and +stereo3d8 of ORDER 61e's first two milestones enter no round: these sources carry all of it (ORDER 61e, three milestones,
+the third as 61f). Both build against the stereo layer 1.23.2 the round carries (`layer-1.23.2.sha256`; `build.sh WORK REPO IMAGE
+LAYER`, LAYER a folder holding those packages), installed as staged siblings before the build dependencies.
 
 | Package | What this recipe adds |
 |---|---|
-| MLT +stereo3d8 | 0013: `stereo3d_unpack` as the first filter of a producer (`in_producer`, `target_views`); 0014: the HEVC frame packing SEI through FFmpeg's `hevc_metadata`; 0015: a deep source keeps its bits (RGBA64, the asked format handed back, no alpha mask on an opaque picture); 0016: half or whole views judged by the producer's own frame |
-| Kdenlive +stereo3d9 | 0009 (edition only): 3D preview by default; 0010: told once when 3D cannot be shown; 0011: the Stereoscopic 3D render presets; 0012: each 3D clip taken apart side by side in a 3D project; 0013: thumbnails from the left eye, a packing only the SEI says learned from a frame; 0014: a 3D project's resolution is one eye's in its renders; 0015: each clip's 3D input corrections in its properties, and the save into the file; 0016: the monitors' 3D options are the layer's Enable 3D and Display Settings, the project's Right Eye First moved to its clips; 0017: an unknown preset name stops a command-line render; 0018: both monitors in 3D at once; then `translations/kdenlive-order46c-catalogues.patch` (the +stereo3d7 recipe of ORDER 46c, carried) and `translations/kdenlive-order61e.po.patch` |
+| MLT +stereo3d9 | 0013: `stereo3d_unpack` as the first filter of a producer (`in_producer`, `target_views`); 0014: the HEVC frame packing SEI through FFmpeg's `hevc_metadata`; 0015: a deep source keeps its bits (RGBA64, the asked format handed back, no alpha mask on an opaque picture); 0016: half or whole views judged by the producer's own frame; 0017: a 2D picture in both eyes (`packing=mono`); 0018: a 3D still read as its pair through the stereo layer (Build-Depends libstereo-layer-dev 1.23.2) |
+| Kdenlive +stereo3d9 | 0009 (edition only): 3D preview by default; 0010: told once when 3D cannot be shown; 0011: the Stereoscopic 3D render presets; 0012: each 3D clip taken apart side by side in a 3D project; 0013: thumbnails from the left eye, a packing only the SEI says learned from a frame; 0014: a 3D project's resolution is one eye's in its renders; 0015: each clip's 3D input corrections in its properties, and the save into the file; 0016: the monitors' 3D options are the layer's Enable 3D and Display Settings, the project's Right Eye First moved to its clips; 0017: an unknown preset name stops a command-line render; 0018: both monitors in 3D at once; 0019: a 2D element in both eyes, and the monitors at one eye's full resolution; 0020: the 3D Input Format list from the installed layer; 0021: 3D stills in the clip's properties, and the monitor after a save; 0022: a 3D render keeps the source's depth or says it writes fewer bits, and a 3D FFV1 preset; then `translations/kdenlive-order46c-catalogues.patch` (ORDER 46c), `translations/kdenlive-order61e.po.patch` (ORDER 61e in ten languages, ORDER 46e) and `translations/kdenlive-order61f.po.patch` |
 
-Kdenlive's `Depends` is raised from `libmlt7 (>= 7.40.0-1+stereo3d5+lc1)` to `libmlt7 (>= 7.40.0-1+stereo3d8+lc1)`: patch 0012 needs MLT's `in_producer`, and a deep 3D clip needs MLT 0015 (without it the doubled render of a 10 bit clip is black or 8 bit).
+Kdenlive's `Depends` is raised from `libmlt7 (>= 7.40.0-1+stereo3d5+lc1)` to `libmlt7 (>= 7.40.0-1+stereo3d9+lc1), kscreen, libkf6kcmutils-bin`: patch 0012 needs MLT's `in_producer`, a deep 3D clip MLT 0015, a 2D element in a 3D project MLT 0017; the Display Settings shortcut opens kscreen's Display Configuration page through `kcmshell6` (a designed feature's dependency is a Depends). Its Build-Depends name `libstereo-layer-dev (>= 1.23.2)`, for the layer's input list.
 
 ## Where the published patches live
 
