@@ -19,7 +19,7 @@ $S/scripts/drun.sh upgrade-sim sci50f-rig:1 --cpus 1 -v "$F":/flat:ro -v /var/li
   apt-get install -y -q --no-install-recommends \$pkgs > /tmp/debian.log 2>&1 || { tail -20 /tmp/debian.log; exit 1; }
   # the rest of the system brought up to date first (the rig's base is older than today's testing), so the simulation shows
   # only what the stage changes
-  apt-get -y -q full-upgrade > /tmp/base-upgrade.log 2>&1 || { tail -20 /tmp/base-upgrade.log; exit 1; }
+  apt-get -y -q --allow-downgrades full-upgrade > /tmp/base-upgrade.log 2>&1 || { tail -20 /tmp/base-upgrade.log; exit 1; }
   apt-mark hold libvtk9.6 libvtk9.6-qt libvtk9-dev libvtk9-qt-dev python3-vtk9 libvtk9-java vtk9 paraview paraview-dev python3-paraview > /dev/null
   dpkg-query -W libvtk9.6 libvtk9.6-qt libvtk9-dev libvtk9-qt-dev python3-vtk9 libvtk9-java vtk9 paraview paraview-dev python3-paraview > /runs/apt-upgrade-before.txt
   apt-mark unhold libvtk9.6 libvtk9.6-qt libvtk9-dev libvtk9-qt-dev python3-vtk9 libvtk9-java vtk9 paraview paraview-dev python3-paraview > /dev/null
