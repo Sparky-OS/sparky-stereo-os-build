@@ -41,10 +41,19 @@ if [ "${MODE:-}" != archive ]; then
 	# 2. the lost records, made by the published 0.1.41 before the new version is installed
 	mk uc-cache 1.0 10; mk uc-cache 2.0 10; mk uc-cache 3.0 30
 	mk uc-source 1.0 10; mk uc-source 2.0 10
-	for v in 1.0 2.0; do dpkg -i "$W/uc-cache_${v}_all.deb" "$W/uc-source_${v}_all.deb" </dev/null >"$W/uc-$v.log" 2>&1; done
-	check '[ "$(recorded uc-cache /etc/default/uc-cache)" = 0 ] && [ "$(recorded uc-source /etc/systemd/uc-source.conf)" = 0 ]' \
-		"red precondition: the verifier before 0.1.44 left the four projected conffiles without a record"
-	cp "$W/uc-cache_2.0_all.deb" /var/cache/apt/archives/uc-cache_2.0_all.deb
+	mk uc-pristine 1.0 10; mk uc-pristine 2.0 10
+	for v in 1.0 2.0; do
+		dpkg -i "$W/uc-cache_${v}_all.deb" "$W/uc-source_${v}_all.deb" "$W/uc-pristine_${v}_all.deb" </dev/null >"$W/uc-$v.log" 2>&1
+	done
+	check '[ "$(recorded uc-cache /etc/default/uc-cache)" = 0 ] && [ "$(recorded uc-source /etc/systemd/uc-source.conf)" = 0 ] && [ "$(recorded uc-pristine /etc/default/uc-pristine)" = 0 ]' \
+		"red precondition: the verifier before 0.1.44 left the six projected conffiles without a record"
+	# dpkg-stereo keeps a conffile's original in its pristine store when it projects it: uc-pristine keeps its copies
+	# (no download needed at all); uc-cache's and uc-source's are removed, as on a machine where they are gone
+	for p in uc-cache uc-source; do
+		for f in etc/default/$p etc/systemd/$p.conf; do
+			rm -f "/var/lib/dpkg-stereo/pristine/$(dpkg-deb --fsys-tarfile "$W/${p}_2.0_all.deb" | tar -xO "./$f" | sha256sum | cut -d' ' -f1).xz"
+		done
+	done
 	cp "$W/uc-source_2.0_all.deb" "$W/repo/"
 	f=uc-source_2.0_all.deb
 	{ dpkg-deb -f "$W/repo/$f"; printf 'Filename: ./%s\nSize: %s\nSHA256: %s\n' "$f" "$(stat -c %s "$W/repo/$f")" \
@@ -52,6 +61,9 @@ if [ "${MODE:-}" != archive ]; then
 	printf 'Types: deb\nURIs: file:%s/repo\nSuites: ./\nTrusted: yes\n' "$W" >/etc/apt/sources.list.d/uc.sources
 	apt-get -q -o Dir::Etc::SourceList=/etc/apt/sources.list.d/uc.sources -o Dir::Etc::SourceParts=- \
 		-o APT::Get::List-Cleanup=0 update >/dev/null 2>&1
+	# after the update: Debian's container images empty APT's cache after every update and every apt dpkg run
+	# (/etc/apt/apt.conf.d/docker-clean); an installed system keeps it
+	cp "$W/uc-cache_2.0_all.deb" /var/cache/apt/archives/uc-cache_2.0_all.deb
 	meter 1
 	dpkg -i "$DEB" </dev/null >"$W/install.log" 2>&1
 	echo "  installed $(dpkg-query -W -f='${Version}' dpkg-stereo)"
@@ -61,6 +73,8 @@ if [ "${MODE:-}" != archive ]; then
 	check '[ "$rc" = 2 ] && echo "$out" | grep -q "This needs root: sudo dpkg-stereo --verify --deep" && ! echo "$out" | grep -q Traceback' \
 		"not root: one sentence with the person's own command, exit 2, no traceback (rc=$rc)"
 
+	check '[ "$(recorded uc-pristine /etc/default/uc-pristine)" = 1 ] && [ "$(recorded uc-pristine /etc/systemd/uc-pristine.conf)" = 1 ]' \
+		"lost records from the pristine store, no network and no cache: both conffiles of uc-pristine recorded again"
 	check '[ "$(recorded uc-cache /etc/default/uc-cache)" = 1 ] && [ "$(recorded uc-cache /etc/systemd/uc-cache.conf)" = 1 ]' \
 		"lost records from APT's cache: both conffiles of uc-cache recorded again"
 	dpkg-stereo --problems >"$W/problems.log" 2>&1
@@ -75,7 +89,7 @@ if [ "${MODE:-}" != archive ]; then
 	dpkg -i "$W/uc-cache_3.0_all.deb" </dev/null >"$W/3.log" 2>&1; rc=$?
 	check '[ "$rc" = 0 ] && ! grep -q "Configuration file" "$W/3.log" && [ ! -e /etc/default/uc-cache.dpkg-new ] && grep -q SETTING=30 /etc/default/uc-cache' \
 		"uc-cache 3.0 changes the conffiles: no question, installed (rc=$rc)"
-	dpkg -P uc-cache uc-source >/dev/null 2>&1
+	dpkg -P uc-cache uc-source uc-pristine >/dev/null 2>&1
 	rm -f /etc/apt/sources.list.d/uc.sources
 fi
 
