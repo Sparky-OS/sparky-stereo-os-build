@@ -1,0 +1,29 @@
+sparky-stereo-obs (0.2.0) unstable; urgency=medium
+
+  * 3D on by itself (ORDER 61, milestone 2): when a screen shows 3D (the stereo
+    layer's ScreenMode, as Spectacle reads it), a new profile's canvas becomes
+    full side by side at 1920x1080 per eye; on a 2D desktop nothing changes; a
+    profile that holds the person's scenes keeps its canvas and is told once,
+    with the action; the person's own choice in the dialog is kept from then on.
+  * The canvas's layout goes to the edition's libobs (obs_set_video_stereo3d),
+    from which x264, VA-API, NVENC and the muxers write the marks; the x264
+    option token is gone, and so are the reasons that no longer apply. That
+    libobs's shlibs name 1:33.0.1-dmo2+stereo3d1 as the minimum, so the
+    module's dependency on it comes from the build.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 20 Nov 2026 22:50:00 -0300
+
+sparky-stereo-obs (0.1.0) unstable; urgency=medium
+
+  * First version (ORDER 61, milestone 1): a module for OBS Studio 33 built
+    against deb-multimedia's libobs-dev. Enable 3D sets the canvas to full side
+    by side with the render resolution per eye and gives the canvas back when
+    switched off; x264 writes the frame packing arrangement message (type 3,
+    left eye first) while it encodes; before each start OBS says which encoder
+    or file mark cannot be written and why, and the first keyframe of every
+    running output is read to confirm it. The Stereo input filter converts
+    every one-picture packing of the stereo layer's input list to full side
+    by side, with the swap of the eyes; its words come from the layer's own
+    catalogue, the module's sentences are in the ten languages.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 20 Nov 2026 22:00:00 -0300

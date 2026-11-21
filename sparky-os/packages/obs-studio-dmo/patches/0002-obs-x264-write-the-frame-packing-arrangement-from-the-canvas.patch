@@ -1,0 +1,58 @@
+Description: obs-x264: write the frame packing arrangement from the canvas
+ x264's i_frame_packing is set from the canvas's layout after the person's own options are applied, so their options
+ never lose the mark. A layout x264 cannot say (right eye first: it always writes content_interpretation_type 1;
+ quincunx side by side, tiled) is logged and left unmarked rather than mislabelled.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 2)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-21
+---
+diff --git a/plugins/obs-x264/obs-x264.c b/plugins/obs-x264/obs-x264.c
+index 3bd44c2..faf684e 100644
+--- a/plugins/obs-x264/obs-x264.c
++++ b/plugins/obs-x264/obs-x264.c
+@@ -493,6 +493,44 @@ static void update_params(struct obs_x264 *obsx264, obs_data_t *settings, const
+ 	for (size_t i = 0; i < options->count; ++i)
+ 		set_param(obsx264, options->options[i]);
+ 
++	/* The canvas's stereo layout, after the person's own options, so their options never lose it: x264 writes the frame
++	 * packing arrangement SEI on each keyframe (H.264 D.2.26, Table D-9), always with content_interpretation_type 1 */
++	uint32_t stereo_flags = 0;
++	const enum obs_stereo3d_type stereo = obs_encoder_get_stereo3d(obsx264->encoder, &stereo_flags);
++	int packing = -1;
++	switch (stereo) {
++	case OBS_STEREO3D_CHECKERBOARD:
++		packing = 0;
++		break;
++	case OBS_STEREO3D_COLUMNS:
++		packing = 1;
++		break;
++	case OBS_STEREO3D_LINES:
++		packing = 2;
++		break;
++	case OBS_STEREO3D_SIDE_BY_SIDE:
++		packing = 3;
++		break;
++	case OBS_STEREO3D_TOP_BOTTOM:
++		packing = 4;
++		break;
++	case OBS_STEREO3D_FRAME_SEQUENCE:
++		packing = 5;
++		break;
++	default:
++		break;
++	}
++	if (stereo != OBS_STEREO3D_2D && (packing < 0 || (stereo_flags & OBS_STEREO3D_FLAG_INVERT))) {
++		warn("the canvas's stereo layout %d%s cannot be written by x264 (its frame packing option has no quincunx side "
++		     "by side and always says left eye first): no frame packing message",
++		     (int)stereo, (stereo_flags & OBS_STEREO3D_FLAG_INVERT) ? ", right eye first" : "");
++		obsx264->params.i_frame_packing = -1;
++	} else if (packing >= 0) {
++		obsx264->params.i_frame_packing = packing;
++		if (!update)
++			info("stereo: frame packing arrangement type %d from the canvas", packing);
++	}
++
+ 	if (!update) {
+ 		info("settings:\n"
+ 		     "\trate_control: %s\n"

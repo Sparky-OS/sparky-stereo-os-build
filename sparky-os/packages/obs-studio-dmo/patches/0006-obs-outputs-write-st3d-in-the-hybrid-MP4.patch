@@ -1,0 +1,79 @@
+Description: obs-outputs: write st3d in the hybrid MP4
+ The Stereoscopic 3D Video Box of Spherical Video V2 after pasp in every visual sample entry of OBS's own MP4 muxer,
+ with FFmpeg's values (1 top and bottom, 2 left and right); a layout st3d cannot say is logged.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 2)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-21
+---
+diff --git a/plugins/obs-outputs/mp4-mux.c b/plugins/obs-outputs/mp4-mux.c
+index 6b7987b..09592e4 100644
+--- a/plugins/obs-outputs/mp4-mux.c
++++ b/plugins/obs-outputs/mp4-mux.c
+@@ -548,6 +548,34 @@ static size_t mp4_write_pasp(struct mp4_mux *mux)
+ 	return 16;
+ }
+ 
++/// Stereoscopic 3D Video Box, Spherical Video V2 (google/spatial-media, docs/spherical-video-v2-rfc.md, "st3d"):
++/// the canvas's stereo layout, as FFmpeg's MP4 muxer writes it (stereo_mode 1 top and bottom, 2 left and right, left eye
++/// first; the box has no other arrangement and no eye order)
++static size_t mp4_write_st3d(struct mp4_mux *mux, obs_encoder_t *enc)
++{
++	struct serializer *s = mux->serializer;
++	uint32_t flags = 0;
++	const enum obs_stereo3d_type stereo = obs_encoder_get_stereo3d(enc, &flags);
++	uint8_t mode;
++
++	if (stereo == OBS_STEREO3D_2D)
++		return 0;
++	if (stereo == OBS_STEREO3D_SIDE_BY_SIDE && !(flags & OBS_STEREO3D_FLAG_INVERT)) {
++		mode = 2;
++	} else if (stereo == OBS_STEREO3D_TOP_BOTTOM && !(flags & OBS_STEREO3D_FLAG_INVERT)) {
++		mode = 1;
++	} else {
++		blog(LOG_WARNING, "[mp4 muxer] the canvas's stereo layout %d%s has no st3d value: no st3d box", (int)stereo,
++		     (flags & OBS_STEREO3D_FLAG_INVERT) ? ", right eye first" : "");
++		return 0;
++	}
++
++	write_fullbox(s, 13, "st3d", 0, 0);
++	s_w8(s, mode);
++
++	return 13;
++}
++
+ /// 12.1.3 Visual Sample Entry
+ static inline void mp4_write_visual_sample_entry(struct mp4_mux *mux, obs_encoder_t *enc)
+ {
+@@ -680,6 +708,7 @@ static size_t mp4_write_avc1(struct mp4_mux *mux, obs_encoder_t *enc)
+ 
+ 	// pasp
+ 	mp4_write_pasp(mux);
++	mp4_write_st3d(mux, enc);
+ 
+ 	return write_box_size(s, start);
+ }
+@@ -708,6 +737,7 @@ static size_t mp4_write_hvc1(struct mp4_mux *mux, obs_encoder_t *enc)
+ 
+ 	// pasp
+ 	mp4_write_pasp(mux);
++	mp4_write_st3d(mux, enc);
+ 
+ 	return write_box_size(s, start);
+ }
+@@ -736,6 +766,7 @@ static size_t mp4_write_av01(struct mp4_mux *mux, obs_encoder_t *enc)
+ 
+ 	// pasp
+ 	mp4_write_pasp(mux);
++	mp4_write_st3d(mux, enc);
+ 
+ 	return write_box_size(s, start);
+ }
+@@ -777,6 +808,7 @@ static size_t mp4_write_prores(struct mp4_mux *mux, obs_encoder_t *enc)
+ 
+ 	// pasp
+ 	mp4_write_pasp(mux);
++	mp4_write_st3d(mux, enc);
+ 
+ 	return write_box_size(s, start);
+ }
