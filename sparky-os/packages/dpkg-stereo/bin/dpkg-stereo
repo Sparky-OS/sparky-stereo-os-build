@@ -680,10 +680,12 @@ def diverted_note(path, package, table):
 
 
 def diverted_away(path, package, table):
-    """True when PACKAGE diverts PATH itself, so its own copy stays at the path: the record of a diverted path is
-    its owner's copy, so the diverting package's own copy is not projected (its lc1 manifest judges it)."""
+    """True when PACKAGE's copy of PATH is not projected because of a diversion: PACKAGE diverts the path itself (its
+    own copy stays at the path, and its lc1 manifest judges it; the record of the path is its owner's copy), or the
+    diversion is a local one (dpkg-divert --local: the person set every package's copy aside, and it stays as they
+    left it). Under another package's diversion the owner's copy is projected where dpkg keeps it."""
     row = table.get(path)
-    return bool(row) and row[1] == package.split(':')[0]
+    return bool(row) and (row[1] is None or row[1] == package.split(':')[0])
 
 
 def _work(args):
@@ -887,8 +889,9 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     # may still list the path from before it moved (a Replaces takeover takes the path out of the old
     # package's file list and leaves its md5sums as they were, src/main/unpack.c)
     confs = conffiles(P, db)
-    # under a diversion, the path's record is its owner's copy, projected where dpkg keeps it (the diverted name); the
-    # diverting package's own copy at the path, and any file at a diverted name, are left alone (0.1.43, rows 629/802)
+    # under another package's diversion, the path's record is its owner's copy, projected where dpkg keeps it (the
+    # diverted name); the diverting package's own copy at the path, a copy a local diversion set aside, and any file at
+    # a diverted name are left alone (0.1.43, rows 629/802)
     divs = diversion_table(P)
     moved = {to for to, _ in divs.values()}
     # a shared file of a Multi-Arch: same package is recorded once, for the instance that projected it: the tables of
