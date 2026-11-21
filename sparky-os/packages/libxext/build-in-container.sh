@@ -11,7 +11,9 @@ set -euo pipefail
 # libxext6-udeb (Debian-Installer's libXext, which the edition's installer, Calamares, does not use) is not built, as in the
 # gtk4 and glib2.0 recipes: its udeb dependencies cannot be solved with the deb packages in one link-gate root. Debian's
 # control has no profile for it, so the patch of Debian bug 1024924 (Helmut Grohne) adds <!noudeb> first.
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4 nocheck' DEB_BUILD_PROFILES=noudeb
+# A UTF-8 locale, as Debian's build had: w3m writes libxext-doc's text pages by the locale, and in the image's POSIX locale
+# every "©" became "?".
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4 nocheck' DEB_BUILD_PROFILES=noudeb LC_ALL=C.UTF-8
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
