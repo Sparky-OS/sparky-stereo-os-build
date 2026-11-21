@@ -29,7 +29,7 @@ run pv-$P-menu-x-amd-en $IMG pv-case.sh MENU=1 QT_QPA_PLATFORM=xcb $EN
 run pv-$P-menu-x-amd-pt $IMG pv-case.sh MENU=1 QT_QPA_PLATFORM=xcb $PT
 # the Settings dialog (Render View, searched for "stereo") and the main window with its Properties panel
 run pv-$P-settings-en $IMG pv-settings-case.sh QT_QPA_PLATFORM=xcb $EN
-run pv-$P-settings-pt $IMG pv-settings-case.sh QT_QPA_PLATFORM=xcb $PT
+run pv-$P-settings-pt $IMG pv-settings-case.sh SEARCH=3D QT_QPA_PLATFORM=xcb $PT   # ParaView searches the translated texts
 # the six former output types on the command line, in English and pt_BR
 run pv-$P-refuse-en $IMG pv-refuse-case.sh $EN
 run pv-$P-refuse-pt $IMG pv-refuse-case.sh $PT
@@ -39,6 +39,8 @@ run pv-$P-oldsetting-wl-amd-pt $IMG pv-case.sh "PV_SETTINGS=$OLD" $PT
 if [ -f fixtures/anaglyph.pvsm ]; then
   run pv-$P-oldstate-wl-amd $IMG pv-case.sh PV_NODATA=1 PV_EXTRA=--state=/fixtures/anaglyph.pvsm $EN
   run pv-$P-oldstate-off-wl-amd $IMG pv-case.sh PV_NODATA=1 PV_EXTRA=--state=/fixtures/anaglyph.pvsm "PV_SETTINGS=$OFF" $EN
+  run pv-$P-oldstate-wl-amd-pt $IMG pv-case.sh PV_NODATA=1 PV_EXTRA=--state=/fixtures/anaglyph.pvsm $PT
+  run pv-red3-oldstate-wl-amd sci50f-rig:1 pv-case.sh PV_NODATA=1 PV_EXTRA=--state=/fixtures/anaglyph.pvsm $EN   # Debian's
 fi
 # a desktop that shows no 3D areas (a bare X server), in English and pt_BR
 SESSION=pv-noareas-case.sh run pv-$P-noareas-en $IMG none $EN
