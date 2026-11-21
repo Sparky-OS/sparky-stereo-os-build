@@ -9,5 +9,5 @@ GPU=nvidia rig/run-case.sh qb-$P-wl-nv-1 $IMG qb-case.sh LANG=en_US.UTF-8 >/dev/
 rig/run-case.sh qb-$P-x-amd-1 $IMG qb-case.sh QT_QPA_PLATFORM=xcb LANG=en_US.UTF-8 >/dev/null
 GPU=nvidia rig/run-case.sh qb-$P-x-nv-1 $IMG qb-case.sh QT_QPA_PLATFORM=xcb LANG=en_US.UTF-8 >/dev/null
 [ -n "$b" ] && docker unpause "$b" >/dev/null
-for d in runs/qb-$P-*; do echo "$(basename $d) $(cat $d/rc.txt) $(tr '\n' ' ' < $d/qb.out) set_content=$(grep -c set_content $d/wl.txt) capture=$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("width"), d.get("height"))' $d/shot1.json 2>/dev/null)"; done > runs/qb-$P-summary.txt
+for d in runs/qb-$P-*/; do d=${d%/}; echo "$(basename $d) $(cat $d/rc.txt) $(tr '\n' ' ' < $d/qb.out) set_content=$(grep -c set_content $d/wl.txt) capture=$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("width"), d.get("height"))' $d/shot1.json 2>/dev/null)"; done > runs/qb-$P-summary.txt
 cat runs/qb-$P-summary.txt
