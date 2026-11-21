@@ -177,11 +177,45 @@ def failure_owners(text):
                       r'(?:PreDepends|Pre-Depends|Depends|Conflicts|Breaks):', text, re.M)
 
 
+class EligibilityStop(package.Invalid):
+    """A recorded predecessor refusal; collection mode may continue, but never pass it."""
+
+
+def providers(controls):
+    """Name presence, deliberately ignoring versions: an existing provider is never absent."""
+    result = {}
+    for obj, source in controls:
+        names = [obj['Package']] + [r[0] for r in archive.policy_relations(obj.get('Provides', ''))]
+        for name in names:
+            result.setdefault(name, []).append({'identity': archive.identity(obj), 'archive': source,
+                                               'Provides': obj.get('Provides', '')})
+    return result
+
+
+def archive_providers(context, rows):
+    controls = []
+    for row in rows:
+        data = subprocess.check_output(['/usr/lib/apt/apt-helper', 'cat-file', row['Packages']], env=context.env)
+        for paragraph in data.decode().split('\n\n'):
+            obj = archive.fields(paragraph)
+            if obj.get('Package'):
+                controls.append((obj, row['source']))
+    return providers(controls)
+
+
+def solver_evidence(failure):
+    return [{'solver': a['solver'], 'sha256': archive.digest(a['solver']),
+             'lines': Path(a['solver']).read_text(), 'enabled': a.get('enabled', [])}
+            for a in failure.attempts]
+
+
 class PreviousView:
     def __init__(self, current, config, published_at, candidates, policy=None):
         self.cutoff = instant(published_at)
         self.candidates = {archive.identity(current.input(p)['control']) for p in candidates}
         self.names = {obj[0] for obj in self.candidates}
+        self.candidate_controls = [current.input(p)['control'] for p in candidates]
+        self.candidate_providers = providers((obj, 'candidate-set') for obj in self.candidate_controls)
         self.dated = archive.Archive(config, current.scratch / 'dated-predecessor', current.arch,
                                      current.minimum >> 30, current.root_minimum >> 30)
         now_sources, now_rows = authenticated_view(current)
@@ -211,8 +245,10 @@ class PreviousView:
             self.archives.append({'source': number, 'archive': label, 'view': mode, 'reason': reason,
                                   'InRelease_sha256': old[0]['InRelease_sha256'],
                                   'candidate_InRelease_sha256': new[0]['InRelease_sha256']})
-        self.owners = package_archives(current, now_rows)
-        self.dated_owners = package_archives(self.dated, old_rows)
+        self.current_providers = archive_providers(current, now_rows)
+        self.dated_providers = archive_providers(self.dated, old_rows)
+        self.owners = {name: {p['archive'] for p in entries} for name, entries in self.current_providers.items()}
+        self.dated_owners = {name: {p['archive'] for p in entries} for name, entries in self.dated_providers.items()}
         self.mode = 'mixed' if exceptions else 'dated'
         self.evidence = {'publication': self.cutoff.isoformat(), 'candidate': now_rows, 'dated': old_rows,
                          'archive_decisions': self.archives, 'search_evidence': exceptions}
@@ -232,6 +268,66 @@ class PreviousView:
         return other
 
     def qualify(self, current, deb, siblings):
+        try:
+            return self._qualify(current, deb, siblings)
+        except package.NoSpace:
+            raise
+        except (OSError, package.Invalid) as exc:
+            current.predecessor_result['stop'] = str(exc)
+            raise EligibilityStop(str(exc)) from exc
+
+    def absent_relations(self, current, deb, prior, failure):
+        """A required path through exact previous inputs, ending at a name absent in both views.
+
+        Alternative or unparsed groups never establish a required path. APT still
+        solves both complete views; this proves absence, it does not solve relations.
+        """
+        previous = {p['control']['Package']: p['control'] for p in prior}
+        previous_providers = providers((obj, 'previous-set') for obj in previous.values())
+        logs = solver_evidence(failure)
+        seen, pending, absent = set(), [(current.input(deb)['control']['Package'], [])], []
+        candidate_by_name = {obj['Package']: obj for obj in self.candidate_controls}
+        while pending:
+            owner, chain = pending.pop()
+            if owner in seen or owner not in previous:
+                continue
+            seen.add(owner)
+            obj = previous[owner]
+            for field in ('Depends', 'Pre-Depends'):
+                for group in obj.get(field, '').split(','):
+                    if not group.strip() or '|' in group:
+                        continue
+                    relations = list(archive.policy_relations(group))
+                    name, qualifier, operator, version = relations[0]
+                    if qualifier not in (None, 'native', current.arch):
+                        continue
+                    edge = {'owner': archive.identity(obj), 'field': field, 'relation': group.strip()}
+                    path = chain + [edge]
+                    if name in previous:
+                        target = previous[name]
+                        if not operator or archive.version_matches(target['Version'], operator, version):
+                            pending.append((name, path))
+                    if any(name in p for p in (self.candidate_providers, previous_providers,
+                                               self.current_providers, self.dated_providers)):
+                        continue
+                    # At least one real solver attempt must identify this missing
+                    # relation. Other policy attempts may terminate at a policy conflict.
+                    if not any(re.search(r'\b' + re.escape(owner) + r'(?::[a-z0-9-]+)?(?: :)? '
+                               r'(?:PreDepends|Pre-Depends|Depends):?\s+' + re.escape(name) + r'(?![a-z0-9+.-])',
+                               a['lines']) for a in logs):
+                        continue
+                    successor = candidate_by_name.get(owner)
+                    if not successor:
+                        continue
+                    new_names = archive.hard_dependencies(successor) - archive.hard_dependencies(obj)
+                    replacements = {n: self.current_providers.get(n, []) + self.candidate_providers.get(n, [])
+                                    for n in sorted(new_names)}
+                    absent.append({'name': name, 'required_path': path, 'candidate_relation_owner': archive.identity(successor),
+                                   'successor_dependencies': replacements,
+                                   'providers': {'candidate-set': [], 'previous-set': [], 'candidate-archives': [], 'dated-archives': []}})
+        return absent
+
+    def _qualify(self, current, deb, siblings):
         prior = [current.input(p) for p in dict.fromkeys([deb] + list(siblings))]
         overlap = [archive.identity(p['control']) for p in prior if archive.identity(p['control']) in self.candidates]
         if overlap:
@@ -248,6 +344,46 @@ class PreviousView:
             # Only a complete dependency-solver refusal is eligible; download, signature,
             # extraction, runtime and space failures never enter the dated path.
             failures = getattr(exc, "attempts", ())
+            current.predecessor_result['failure_in_candidate_view'] = solver_evidence(exc)
+            absent = self.absent_relations(current, deb, prior, exc)
+            if absent:
+                # Unrelated current indexes are still permitted only when no failure
+                # names one of their packages, including the complete request chain.
+                for attempt in failures:
+                    named = failure_names(Path(attempt['solver']).read_text())
+                    affected = set().union(*(self.owners.get(n, set()) for n in named))
+                    if affected & self.exempt:
+                        raise package.Invalid('solver failure names an archive with only a later index: ' + attempt['solver'])
+                current.predecessor_result['attempted'] = self.mode
+                try:
+                    qualified = self.dated.qualify(deb, siblings)
+                except archive.PolicySolveFailure as old_failure:
+                    current.predecessor_result['failure_in_publication_view'] = solver_evidence(old_failure)
+                    for attempt in old_failure.attempts:
+                        named = failure_names(Path(attempt['solver']).read_text())
+                        affected = set().union(*(self.dated_owners.get(n, set()) for n in named))
+                        if affected & self.exempt:
+                            raise package.Invalid('dated solver failure names an archive with only a later index: ' + attempt['solver'])
+                    dated_absent = self.absent_relations(current, deb, prior, old_failure)
+                    both = [row for row in absent if row in dated_absent]
+                    if not both:
+                        raise package.Invalid('dated solver does not confirm the same absent external relation') from old_failure
+                    record = {'view': 'uninstallable-at-publication', 'predecessor': str(deb),
+                              'publication': self.cutoff.isoformat(), 'archives': self.archives,
+                              'missing_relations': both,
+                              'failure_in_candidate_view': solver_evidence(exc),
+                              'failure_in_publication_view': solver_evidence(old_failure),
+                              'archive_evidence': self.evidence,
+                              'previous_inputs': [{'identity': archive.identity(p['control']), 'sha256': p['sha256']} for p in prior]}
+                    current.predecessor_result = record
+                    (Path(exc.directory) / 'uninstallable-at-publication.json').write_text(json.dumps(record, indent=2) + '\n')
+                    return None
+                else:
+                    # A solvable dated predecessor always remains a real baseline.
+                    record = {'view': self.mode, 'archives': self.archives, 'predecessor': str(deb),
+                              'publication': self.cutoff.isoformat(), 'failure_in_candidate_view': solver_evidence(exc)}
+                    current.predecessor_result = record
+                    return qualified
             reasons = []
             changed_causes = set()
             for attempt in failures:
@@ -255,7 +391,12 @@ class PreviousView:
                 # APT 3's terminal conflicting assignment is the unsatisfied relation;
                 # its preceding numbered chain explains why that package was requested.
                 owners = failure_owners(text)
-                if not owners or self.names.intersection(owners):
+                previous_providers = providers((p['control'], 'previous-set') for p in prior)
+                candidate_owned = self.names.intersection(owners)
+                external_relations = set(re.findall(r'(?:PreDepends|Pre-Depends|Depends):?\s+([a-z0-9][a-z0-9+.-]*)', text[text.find('   2. '):] if '   2. ' in text else text))
+                external_missing = (external_relations and all(n not in self.candidate_providers and n not in previous_providers
+                                    and n not in self.current_providers for n in external_relations))
+                if not owners or (candidate_owned and not external_missing):
                     raise package.Invalid('predecessor failure is not exclusively outside the candidate set; '
                                           f'see {attempt["solver"]}') from exc
                 names = failure_names(text)
@@ -266,6 +407,8 @@ class PreviousView:
                     raise package.Invalid('solver failure names an archive with only a later index: ' +
                                           ', '.join(blocked) + '; see ' + attempt['solver']) from exc
                 changed_causes.update(set().union(*(self.owners.get(n, set()) for n in owners)) & self.changed)
+                if external_missing:
+                    changed_causes.update(set().union(*(self.dated_owners.get(n, set()) for n in external_relations)) & self.changed)
                 reasons.append({'solver': attempt['solver'], 'sha256': archive.digest(attempt['solver']),
                                 'outside_candidate': sorted(set(owners)), 'named_package_archives': attribution})
             if not reasons:

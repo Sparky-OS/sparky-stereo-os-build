@@ -190,3 +190,92 @@ def test_missing_or_changed_search_evidence_blocks(tmp_path):
     (tmp_path/'search.json').write_text('{}')
     with pytest.raises(package.Invalid, match='search evidence missing or changed'):
         release.check_link(**args)
+
+
+def absent_fixture(tmp_path, provider_in=None, dated_available=False):
+    provider = deb(tmp_path/'provider', 'external-runtime', '2', extra='Provides: runtime-abi-2\n')
+    old_provider = deb(tmp_path/'old-provider', 'external-runtime', '1', extra='Provides: runtime-abi-1\n')
+    def keep_old(text):
+        return '\n\n'.join(p for p in text.split('\n\n') if not p.startswith('Package: external-runtime\n')
+                           or '\nVersion: 1\n' in '\n'+p+'\n')
+    def keep_new(text):
+        return '\n\n'.join(p for p in text.split('\n\n') if not p.startswith('Package: external-runtime\n')
+                           or '\nVersion: 2\n' in '\n'+p+'\n')
+    old = signed_archive(tmp_path/'archive', additional=[provider, old_provider],
+                         transform=keep_old if dated_available else keep_new,
+                         variants=[('current', keep_new, 'Wed, 28 Oct 2026 00:00:00 UTC')])
+    before = deb(tmp_path/'before', 'edition-binding', '1', depends='runtime-abi-1')
+    after = deb(tmp_path/'after', 'edition-binding', '2', depends='runtime-abi-2')
+    previous, candidates = [before], [after]
+    if provider_in:
+        blocked = deb(tmp_path/'edition-provider', 'edition-runtime', '1', depends='also-missing',
+                      extra='Provides: runtime-abi-1\n')
+        if provider_in == 'candidate':
+            candidates.append(blocked)
+        else:
+            previous.append(blocked)
+    return dict(debs=candidates, archive_config=old.parent/'current/archive.json',
+                previous_archive_config=old, previous_published_at='2026-10-27T00:00:00Z',
+                previous_siblings=previous, scratch=tmp_path/'scratch', collect_predecessor_stops=True)
+
+
+def test_published_missing_external_provider_has_no_baseline(tmp_path, capsys):
+    args = absent_fixture(tmp_path)
+    unchanged = {k: v for k, v in args.items() if k not in ('previous_archive_config', 'previous_published_at', 'collect_predecessor_stops')}
+    with pytest.raises(package.Invalid, match='previous edition dependency qualification failed'):
+        release.check_link(**unchanged)
+    release.check_link(**args)
+    output = capsys.readouterr().out
+    assert 'predecessor view=uninstallable-at-publication' in output
+    assert 'published predecessor not installable at its publication: 1 inputs' in output
+    records = json.loads((tmp_path/'scratch/uninstallable-predecessors.json').read_text())
+    absent = records[0]['missing_relations'][0]
+    assert absent['name'] == 'runtime-abi-1'
+    assert absent['successor_dependencies']['runtime-abi-2'][0]['identity'] == ['external-runtime', '2', 'amd64']
+    assert records[0]['failure_in_candidate_view'][0]['lines']
+    assert records[0]['failure_in_publication_view'][0]['lines']
+
+
+@pytest.mark.parametrize('which', ['candidate', 'previous'])
+def test_missing_provider_owned_by_either_edition_still_blocks(tmp_path, which):
+    args = absent_fixture(tmp_path, provider_in=which)
+    # The extra broken candidate's own check need not run: absence classification
+    # itself must refuse the first predecessor, not erase its edition provider.
+    args['collect_predecessor_stops'] = False
+    with pytest.raises(package.Invalid, match='previous edition dependency qualification failed'):
+        release.check_link(**args)
+
+
+def test_external_name_available_at_publication_uses_real_baseline(tmp_path, capsys):
+    args = absent_fixture(tmp_path, dated_available=True)
+    release.check_link(**args)
+    output = capsys.readouterr().out
+    assert 'predecessor view=dated' in output
+    assert 'published predecessor not installable at its publication: 0 inputs' in output
+
+
+def test_collect_predecessor_stops_finishes_later_inputs_and_still_fails(tmp_path, capsys):
+    args = absent_fixture(tmp_path, provider_in='previous')
+    later = deb(tmp_path/'later', 'later-independent', '1')
+    args['debs'].append(later)
+    with pytest.raises(package.Invalid, match='1 uncovered predecessor eligibility stops after 2 inputs'):
+        release.check_link(**args)
+    output = capsys.readouterr().out
+    assert 'later-independent_1_amd64.deb: predecessor view=none' in output
+    assert len(json.loads((tmp_path/'scratch/predecessor-stops.json').read_text())) == 1
+
+
+def test_uninstallable_predecessor_never_excuses_real_candidate_regression(tmp_path):
+    from lean.tests.test_linkcheck import _runpath_case
+    _, built = _runpath_case(tmp_path)
+    before, after = built('1', 'lib/x86_64-linux-gnu'), built('1+lc1', 'share/own/x86_64-linux-gnu')
+    args = absent_fixture(tmp_path/'views')
+    for path, abi in ((before, 'runtime-abi-1'), (after, 'runtime-abi-2')):
+        root = tmp_path / ('unpack-' + path.name)
+        subprocess.run(['dpkg-deb', '-R', str(path), str(root)], check=True, stdout=subprocess.DEVNULL)
+        control = root/'DEBIAN/control'
+        control.write_text(control.read_text().replace('Depends: libc6', 'Depends: libc6, ' + abi))
+        subprocess.run(['dpkg-deb', '-b', str(root), str(path)], check=True, stdout=subprocess.DEVNULL)
+    args.update(debs=[after], previous_siblings=[before])
+    with pytest.raises(package.Invalid, match='not found.*libdemoown.so.*no previous build'):
+        release.check_link(**args)
