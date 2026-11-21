@@ -279,3 +279,10 @@ def test_uninstallable_predecessor_never_excuses_real_candidate_regression(tmp_p
     args.update(debs=[after], previous_siblings=[before])
     with pytest.raises(package.Invalid, match='not found.*libdemoown.so.*no previous build'):
         release.check_link(**args)
+
+
+def test_provider_presence_keeps_legacy_archive_aliases():
+    obj = {'Package': 'office', 'Version': '1', 'Architecture': 'amd64',
+           'Provides': 'openoffice-en-US, standard-name (= 1)'}
+    found = historical.providers([(obj, 'archive')])
+    assert set(found) == {'office', 'openoffice-en-US', 'standard-name'}

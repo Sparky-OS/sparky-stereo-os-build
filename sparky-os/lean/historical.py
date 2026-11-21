@@ -185,7 +185,11 @@ def providers(controls):
     """Name presence, deliberately ignoring versions: an existing provider is never absent."""
     result = {}
     for obj, source in controls:
-        names = [obj['Package']] + [r[0] for r in archive.policy_relations(obj.get('Provides', ''))]
+        # Presence is conservative, not a second archive-policy validator. Some
+        # signed third-party indexes retain legacy mixed-case aliases that APT
+        # accepts; retain their literal names rather than rejecting the index.
+        names = [obj['Package']] + [entry.strip().split()[0].split(':', 1)[0]
+                                  for entry in obj.get('Provides', '').split(',') if entry.strip()]
         for name in names:
             result.setdefault(name, []).append({'identity': archive.identity(obj), 'archive': source,
                                                'Provides': obj.get('Provides', '')})
