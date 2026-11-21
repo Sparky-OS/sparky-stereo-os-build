@@ -16,9 +16,9 @@ override_dh_auto_build:
 override_dh_auto_install:
 	install -d debian/ollama/usr/bin debian/ollama/$(L) debian/ollama-cuda/$(L) debian/ollama-rocm/$(L)
 	install -m 0755 release/payload/bin/ollama debian/ollama/usr/bin/ollama
-	cd release/payload/$(L) && find . -mindepth 1 -maxdepth 1 ! -name cuda_v13 ! -name rocm_v7_2 -exec cp -a {} $(CURDIR)/debian/ollama/$(L)/ \;
-	cp -a release/payload/$(L)/cuda_v13 debian/ollama-cuda/$(L)/
-	cp -a release/payload/$(L)/rocm_v7_2 debian/ollama-rocm/$(L)/
+	cd release/payload/lib/ollama && find . -mindepth 1 -maxdepth 1 ! -name cuda_v13 ! -name rocm_v7_2 -exec cp -a {} $(CURDIR)/debian/ollama/$(L)/ \;
+	cp -a release/payload/lib/ollama/cuda_v13 debian/ollama-cuda/$(L)/
+	cp -a release/payload/lib/ollama/rocm_v7_2 debian/ollama-rocm/$(L)/
 	install -d debian/ollama-rocm/usr/share/doc/ollama-rocm/licences
 	install -m 0644 release/licences/rocm/*.txt debian/ollama-rocm/usr/share/doc/ollama-rocm/licences/
 	install -D -m 0644 release/EXCLUDED.tsv debian/ollama/usr/share/doc/ollama/EXCLUDED.tsv

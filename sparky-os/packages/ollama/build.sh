@@ -26,10 +26,21 @@ trap 'chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 mkdir "$WORK/orig" "$WORK/recipe"
 git -C "$TREE" archive --format=tar "$PACKAGING_COMMIT" sparky-os/packages/ollama | tar -x -C "$WORK/recipe" --strip-components=3
 
-docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}ollama-orig" --pull=never --platform linux/amd64 --cpus "${CPUS:-4}" \
-	--ulimit core=1 --network "${ORIG_NETWORK:-none}" --user "$(id -u):$(id -g)" -e HOME=/tmp \
-	--mount "type=bind,src=$WORK/recipe,dst=/recipe,readonly" --mount "type=bind,src=$DL,dst=/dl" --mount "type=bind,src=$WORK/orig,dst=/orig" \
-	"$IMAGE" bash /recipe/make-orig.sh /dl /orig
+# The orig tarballs are made once from the pinned inputs and kept in DOWNLOADS/orig-$UPV; make-orig.sh gives the same bytes
+# for the same inputs, so a later run reuses them (delete the folder to make them again).
+CACHE=$DL/orig-$UPV
+if [ ! -f "$CACHE/ollama_$UPV.orig.tar.xz" ] || [ ! -f "$CACHE/ollama_$UPV.orig-release.tar.xz" ]; then
+	docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}ollama-orig" --pull=never --platform linux/amd64 --cpus "${CPUS:-4}" \
+		--ulimit core=1 --network "${ORIG_NETWORK:-none}" --user "$(id -u):$(id -g)" -e HOME=/tmp \
+		--mount "type=bind,src=$WORK/recipe,dst=/recipe,readonly" --mount "type=bind,src=$DL,dst=/dl" --mount "type=bind,src=$WORK/orig,dst=/orig" \
+		"$IMAGE" bash /recipe/make-orig.sh /dl /orig
+	mkdir -p "$CACHE"
+	cp "$WORK"/orig/ollama_"$UPV".orig*.tar.xz "$CACHE"/
+else
+	echo "orig tarballs from $CACHE (made by an earlier run of make-orig.sh):"
+	cp "$CACHE"/ollama_"$UPV".orig*.tar.xz "$WORK/orig/"
+	(cd "$WORK/orig" && sha256sum ollama_"$UPV".orig*.tar.xz)
+fi
 
 tar -xJf "$WORK/orig/ollama_$UPV.orig.tar.xz" -C "$WORK"
 tar -xJf "$WORK/orig/ollama_$UPV.orig-release.tar.xz" -C "$WORK/$SRC"
