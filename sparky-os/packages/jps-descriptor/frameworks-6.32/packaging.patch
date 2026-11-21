@@ -1,6 +1,6 @@
 --- a/debian/control
 +++ b/debian/control
-@@ -1,17 +1,17 @@
+@@ -1,17 +1,21 @@
  Source: kf6-kimageformats
  Section: kde
 -Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
@@ -19,10 +19,14 @@
                 libcups2-dev,
 -               libheif-dev (>= 1.10.0~),
 +               libheif-dev (>= 1.23.6-2+stereo3d1+lc1),
++               libheif-plugin-jpegdec <!nocheck>,
++               libheif-plugin-jpegenc <!nocheck>,
++               libheif-plugin-j2kenc <!nocheck>,
++               libheif-plugin-ffmpegdec <!nocheck>,
                 libheif-plugin-j2kdec <!nocheck>,
                 libheif-plugin-libde265 <!nocheck>,
                 libheif-plugin-x265 <!nocheck>,
-@@ -33,12 +33,14 @@
+@@ -33,12 +37,14 @@
  
  Package: kimageformat6-plugins
  Architecture: any
@@ -49,3 +53,11 @@
 +Files: debian/*
 +Copyright: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +License: LGPL-2.1+
+--- a/debian/rules
++++ b/debian/rules
+@@ -21,4 +21,4 @@
+ 	dh_auto_configure -- -DKIMAGEFORMATS_HEIF=ON
+ 
+ override_dh_auto_test:
+-	xvfb-run -a dh_auto_test $(fail_param)
++	xvfb-run -a dh_auto_test

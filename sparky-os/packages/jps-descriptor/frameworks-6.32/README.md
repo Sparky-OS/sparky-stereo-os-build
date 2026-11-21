@@ -13,3 +13,5 @@ The changelog, binary fixtures, added symbols, copyrights and installed-test har
 Build amd64 only.
 Use the same signed archive snapshot for build dependencies and final link/upgrade qualification.
 Record a clean recipe commit before the build; qualify every resulting binary and its source closure before publication.
+
+The full upstream HEIF test set needs the JPEG decoder/encoder, JPEG 2000 encoder and FFmpeg decoder plug-ins as build dependencies. Debian’s ignored-test return is removed so an amd64 test failure stops the source build. The tests remain enabled and unchanged.
