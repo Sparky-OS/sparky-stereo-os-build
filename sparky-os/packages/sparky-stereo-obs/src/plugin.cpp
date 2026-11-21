@@ -12,11 +12,16 @@
 #include <util/config-file.h>
 #include <util/platform.h>
 
+#include <screenmode.h>
+
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QTimer>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMainWindow>
@@ -57,6 +62,12 @@ struct State {
 	uint32_t eyeHeight = kDefaultEyeHeight;
 	// the canvas the person had before 3D, given back when 3D goes off
 	uint32_t baseWidth = 0, baseHeight = 0, outputWidth = 0, outputHeight = 0;
+	// the person's own choice in the dialog: "" none yet, "on", "off"; kept over the default from then on
+	QString choice;
+	// 3D set by the default (3D active on the desktop), not by the person
+	bool automatic = false;
+	// told once that 3D is active and this profile's scenes kept their canvas
+	bool toldScenes = false;
 };
 
 State state;
@@ -97,6 +108,9 @@ void loadState()
 		state.baseHeight = (uint32_t)obs_data_get_int(mine, "base_height");
 		state.outputWidth = (uint32_t)obs_data_get_int(mine, "output_width");
 		state.outputHeight = (uint32_t)obs_data_get_int(mine, "output_height");
+		state.choice = QString::fromUtf8(obs_data_get_string(mine, "choice"));
+		state.automatic = obs_data_get_bool(mine, "automatic");
+		state.toldScenes = obs_data_get_bool(mine, "told_scenes");
 		if (!state.eyeWidth || !state.eyeHeight) {
 			state.eyeWidth = kDefaultEyeWidth;
 			state.eyeHeight = kDefaultEyeHeight;
@@ -127,6 +141,9 @@ bool saveState()
 	obs_data_set_int(mine, "base_height", state.baseHeight);
 	obs_data_set_int(mine, "output_width", state.outputWidth);
 	obs_data_set_int(mine, "output_height", state.outputHeight);
+	obs_data_set_string(mine, "choice", state.choice.toUtf8().constData());
+	obs_data_set_bool(mine, "automatic", state.automatic);
+	obs_data_set_bool(mine, "told_scenes", state.toldScenes);
 	obs_data_set_obj(profiles, profileName.toUtf8().constData(), mine);
 	obs_data_set_obj(all, "profiles", profiles);
 	const bool saved = obs_data_save_json_safe(all, path.constData(), "tmp", "bak");
@@ -211,6 +228,7 @@ bool applyCanvas(bool enable, uint32_t eyeWidth, uint32_t eyeHeight, QWidget *pa
 	}
 	blog(LOG_INFO, "[sparky-stereo-obs] 3D %s, canvas %ux%u", enable ? "on" : "off", video.base_width,
 	     video.base_height);
+	setCanvasLayout(enable);
 	return true;
 }
 
@@ -287,9 +305,164 @@ void showDialog()
 		return;
 	const bool on = enable->isChecked();
 	const uint32_t w = (uint32_t)width->value(), h = (uint32_t)height->value();
-	if (on == state.enabled && (!on || (w == state.eyeWidth && h == state.eyeHeight)))
+	if (on == state.enabled && (!on || (w == state.eyeWidth && h == state.eyeHeight))) {
+		// the person confirmed what the default chose: from now on it is their choice
+		if (state.choice != (on ? QStringLiteral("on") : QStringLiteral("off"))) {
+			state.choice = on ? QStringLiteral("on") : QStringLiteral("off");
+			state.automatic = false;
+			saveState();
+		}
 		return;
-	applyCanvas(on, w, h, parent);
+	}
+	if (applyCanvas(on, w, h, parent)) {
+		state.choice = on ? QStringLiteral("on") : QStringLiteral("off");
+		state.automatic = false;
+		saveState();
+	}
+}
+
+// Whether 3D is active on the desktop: any screen in a 3D mode or an anaglyph mode, read by the stereo layer's
+// Stereo::ScreenMode as Spectacle reads it (ImagePlatformKWin::updateStereoOutputs()). A 2D screen copied to a 3D target
+// counts through the target, which is a screen of its own.
+std::vector<QPointer<Stereo::ScreenMode>> screenModes;
+bool defaultPending = false;
+
+void evaluateDefault(bool timedOut);
+
+void watchScreens()
+{
+	for (QScreen *screen : qGuiApp->screens()) {
+		bool known = false;
+		for (const auto &mode : screenModes)
+			known = known || (mode && mode->screen() == screen);
+		if (known)
+			continue;
+		auto *mode = new Stereo::ScreenMode(qApp);
+		mode->setScreen(screen);
+		QObject::connect(mode, &Stereo::ScreenMode::modeChanged, qApp, [] { evaluateDefault(false); });
+		screenModes.emplace_back(mode);
+	}
+}
+
+bool desktopIn3D(bool *settled)
+{
+	bool active = false;
+	*settled = true;
+	for (const auto &mode : screenModes) {
+		if (!mode)
+			continue;
+		switch (mode->mode()) {
+		case Stereo::OutputMode::Stereo:
+		case Stereo::OutputMode::Anaglyph:
+			active = true;
+			break;
+		case Stereo::OutputMode::Unknown:
+			*settled = false;
+			break;
+		default:
+			break;
+		}
+	}
+	return active;
+}
+
+// A scene collection with no item in any scene: a fresh profile, whose canvas the default may set.
+bool collectionEmpty()
+{
+	struct obs_frontend_source_list scenes = {};
+	obs_frontend_get_scenes(&scenes);
+	bool empty = true;
+	for (size_t i = 0; i < scenes.sources.num && empty; i++) {
+		obs_scene_t *scene = obs_scene_from_source(scenes.sources.array[i]);
+		if (scene)
+			obs_scene_enum_items(
+				scene,
+				[](obs_scene_t *, obs_sceneitem_t *, void *param) {
+					*static_cast<bool *>(param) = false;
+					return false;
+				},
+				&empty);
+	}
+	obs_frontend_source_list_free(&scenes);
+	return empty;
+}
+
+void offerEnable()
+{
+	blog(LOG_INFO, "[sparky-stereo-obs] %s", text("Notice.ScenesExist").arg(2 * state.eyeWidth).arg(state.eyeHeight).toUtf8().constData());
+	auto *box = new QMessageBox(QMessageBox::Information, text("DialogTitle"),
+				    text("Notice.ScenesExist").arg(2 * state.eyeWidth).arg(state.eyeHeight), QMessageBox::Close,
+				    mainWindow());
+	QPushButton *enable = box->addButton(layerWord("Enable 3D"), QMessageBox::AcceptRole);
+	box->setAttribute(Qt::WA_DeleteOnClose);
+	box->setModal(false);
+	QObject::connect(enable, &QPushButton::clicked, box, [] {
+		if (applyCanvas(true, state.eyeWidth, state.eyeHeight, mainWindow())) {
+			state.choice = QStringLiteral("on");
+			state.automatic = false;
+			saveState();
+		}
+	});
+	box->show();
+}
+
+// Daniel, 2026-11-19, for the edition's capture programs: "the default mode is 3D when 3D is active"; "in 2d only, the
+// default is also a 2D picture". Decided once per start (and per profile change), never over the person's own choice,
+// and never resizing a canvas that already holds the person's scenes: that is told once, with the action.
+void evaluateDefault(bool timedOut)
+{
+	if (!defaultPending)
+		return;
+	bool settled = false;
+	const bool in3D = desktopIn3D(&settled);
+	if (!settled && !timedOut)
+		return;
+	defaultPending = false;
+	for (const auto &mode : screenModes) {
+		if (mode)
+			blog(LOG_INFO, "[sparky-stereo-obs] screen %s: %s",
+			     mode->screen() ? mode->screen()->name().toUtf8().constData() : "?",
+			     mode->mode() == Stereo::OutputMode::Stereo     ? "3D"
+			     : mode->mode() == Stereo::OutputMode::Anaglyph ? "anaglyph"
+			     : mode->mode() == Stereo::OutputMode::Mono     ? "2D"
+									    : "not read");
+	}
+	if (!settled) {
+		tell(text("Notice.ModeUnknown"));
+		return;
+	}
+	blog(LOG_INFO, "[sparky-stereo-obs] the desktop is in %s; the person's choice: %s", in3D ? "3D" : "2D",
+	     state.choice.isEmpty() ? "none yet" : state.choice.toUtf8().constData());
+	if (!state.choice.isEmpty())
+		return;
+	const bool empty = collectionEmpty();
+	if (in3D && !state.enabled) {
+		if (empty) {
+			if (applyCanvas(true, state.eyeWidth, state.eyeHeight, mainWindow())) {
+				state.automatic = true;
+				saveState();
+				blog(LOG_INFO, "[sparky-stereo-obs] 3D is active on the desktop: 3D on for this new profile");
+			}
+		} else if (!state.toldScenes) {
+			state.toldScenes = true;
+			saveState();
+			offerEnable();
+		}
+	} else if (!in3D && state.enabled && state.automatic && empty) {
+		if (applyCanvas(false, state.eyeWidth, state.eyeHeight, mainWindow())) {
+			state.automatic = false;
+			saveState();
+			blog(LOG_INFO, "[sparky-stereo-obs] the desktop is in 2D: the canvas the profile had is back");
+		}
+	}
+}
+
+void startDefault()
+{
+	watchScreens();
+	defaultPending = true;
+	QTimer::singleShot(5000, qApp, [] { evaluateDefault(true); });
+	evaluateDefault(false);
 }
 
 OutputKind kindOf(enum obs_frontend_event event)
@@ -312,9 +485,9 @@ void starting(OutputKind kind)
 	const bool stereo = canvasIsStereo(&why);
 	if (state.enabled && !stereo && !why.isEmpty())
 		tell(why);
-	applyX264Mark(stereo);
+	setCanvasLayout(stereo);
 	if (!stereo)
-		return; // a 2D canvas: nothing of the module's stays in the encoders, nothing is read
+		return; // a 2D canvas: the layout is 2D, nothing is read
 	struct obs_video_info video = {};
 	if (obs_get_video_info(&video) &&
 	    (uint64_t)video.output_width * video.base_height != (uint64_t)video.output_height * video.base_width)
@@ -331,6 +504,8 @@ void onEvent(enum obs_frontend_event event, void *)
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 	case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
 		loadState();
+		setCanvasLayout(canvasIsStereo());
+		startDefault();
 		break;
 	case OBS_FRONTEND_EVENT_STREAMING_STARTING:
 	case OBS_FRONTEND_EVENT_RECORDING_STARTING:
