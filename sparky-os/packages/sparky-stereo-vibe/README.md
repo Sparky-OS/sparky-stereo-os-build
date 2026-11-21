@@ -4,6 +4,7 @@ Presets are templates in /usr/share/sparky-stereo/vibe/presets.
 The shared integration runner invokes seed only after vibe-server is present.
 The only live speech-model and transcription settings are Vibe's XDG_DATA_HOME/github.com.thewh1teagle.vibe/app_config.json.
 The path was established by launching the actual signed binary with isolated XDG config/data roots and comparing readback and theme; the config-home seed was ignored.
+Captions re-resolve GPU policy for every action, so a later choice on the Graphics page takes effect without changing the native settings file.
 GPU policy is the Graphics page's per-app policy; model.gpuDevice is its Vibe device-number mapping at seed time, null for an uncertain match.
 AI tasks stay disabled. This pack introduces no provider store: the Partners page integration will own connection choices and its adapter to Vibe's existing ai.connection object.
 No Partners page or connection synchronization is supplied here.

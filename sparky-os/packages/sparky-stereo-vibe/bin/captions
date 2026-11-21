@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -52,7 +53,9 @@ def caption(path, settings, model):
         return False
     command = ['vibe-server', 'transcribe', str(model), str(path), '--threads', '4',
                '--word-timestamps', '--max-segment-len', '80']
-    device = settings.get('model.gpuDevice')
+    # Resolve the Graphics page again for each action; a later choice there
+    # must not be hidden by the snapshot placed in Vibe's initial store.
+    device, _ = runpy.run_path(str(Path(__file__).with_name('seed')))['gpu_facts']()
     if isinstance(device, int) and not isinstance(device, bool) and device >= 0:
         command += ['--gpu-device', str(device)]
     if settings.get('transcription.ffmpegOptions', {}).get('normalize_loudness'):
