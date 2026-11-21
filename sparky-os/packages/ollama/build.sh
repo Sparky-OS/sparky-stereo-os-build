@@ -74,6 +74,9 @@ set -euo pipefail
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8
 cd /work
 python3 /toolkit/packages/ollama/prepare-lean.py '"$SRC"' "'"$DEBV"'+lc1"
+# debian/ (the recipe and the Lean toolkit prepare-lean.py copies in) gets the recipe'"'"'s date and modes: dpkg-source only clamps
+# newer times, so a toolkit checked out before that date kept its checkout time in the debian tarball (ORDER 70, +ds-2)
+python3 /toolkit/repo/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" '"$SRC"'
 cd '"$SRC"'
 if ! dpkg-buildpackage -us -uc -sa > ../build.log 2>&1; then tail -60 ../build.log; exit 1; fi
 tail -12 ../build.log
