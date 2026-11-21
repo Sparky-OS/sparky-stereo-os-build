@@ -3,8 +3,11 @@
 # Copyright 2026 under the GNU GPL3 License
 """translations-shipped.py [--repo DIR] [--cohort LIST] [--only PATCH,...] [STAGE_DIR ...]
 
-For every *.po.patch in sparky-os/translations, finds the newest built package of its source and fails on any
-msgid the patch adds that the package's catalogues lack, naming the patch, the language and the string.
+For every catalogue patch in sparky-os/translations (a *.po.patch, and any other *.patch there that changes a gettext .po file:
+the ORDER 46b and 46c catalogue patches), finds the newest built package of its source and fails on any msgid the patch adds
+that the package's catalogues lack, naming the patch, the language and the string. A patch that changes no gettext catalogue
+(Qt .ts, sView .lng, a desktop or JSON file) and a Qt catalogue kept as .po under poqm/ (installed as .qm) are named as not
+read by this test, never passed over in silence.
 
 A patch that no series names never ships (dpkg-source(1), debian/patches/series: "lists all patches that have to be
 applied"); this test reads what the built packages carry, so it catches a patch no build applied.
@@ -43,6 +46,7 @@ SOURCES = {
     'discover-backend-split.po.patch': ('plasma-discover', None),
     'dragon-3d-video.po.patch': ('dragon', None),
     'kalgebra-stereo3d.po.patch': ('kalgebra', None),
+    'kdenlive-order61e.po.patch': ('kdenlive', None),
     'kalzium-stereo3d.po.patch': ('kalzium', None),
     'kf6-kfilemetadata-stereo3d.po.patch': ('kf6-kfilemetadata', None),
     'kf6-kio-gpu-launch.po.patch': ('kf6-kio', None),
@@ -64,7 +68,61 @@ SOURCES = {
     'plasma-workspace-wallpaper-cost.po.patch': ('plasma-workspace', None),
     'powerdevil-graphics-link.po.patch': ('powerdevil', None),
     'vlc-spatial-video.po.patch': ('vlc', 'vlc', 'usr/share/vlc-stereo/locale'),
+    # ORDER 46b and 46c (catalogue-rebuilds/order46b.md and order46c-receivers.tsv: the source each patch is for)
+    'digikam-order46c-catalogues.patch': ('digikam', None),
+    'dolphin-order46c-catalogues.patch': ('dolphin', None),
+    'dragon-order46c-catalogues.patch': ('dragon', None),
+    'gwenview-order46c-catalogues.patch': ('gwenview', None),
+    'haruna-order46c-catalogues.patch': ('haruna', None),
+    'kalgebra-order46c-catalogues.patch': ('kalgebra', None),
+    'kalzium-order46c-catalogues.patch': ('kalzium', None),
+    'karton-order46c-catalogues.patch': ('karton', None),
+    'kdenlive-order46c-catalogues.patch': ('kdenlive', None),
+    'koko-order46c-catalogues.patch': ('koko', None),
+    'kolourpaint-order46c-catalogues.patch': ('kolourpaint', None),
+    'kphotoalbum-order46c-catalogues.patch': ('kphotoalbum', None),
+    'krdc-throw-catch-names.patch': ('krdc', None),
+    'krdp-order46b.packaging.patch': ('krdp', None),
+    'krdp-order46b.patch': ('krdp', None),
+    'krdp-packaging-throw-catch-names.patch': ('krdp', None),
+    'krdp-throw-catch-names.patch': ('krdp', None),
+    'krita-order46c-catalogues.patch': ('krita', None),
+    'kubrick-order46c-catalogues.patch': ('kubrick', None),
+    'kwin-order46b.patch': ('kwin', None),
+    'kwin-throw-catch-names.patch': ('kwin', None),
+    'lutris-order46c-catalogues.patch': ('lutris', 'lutris'),
+    'marble-order46c-catalogues.patch': ('marble', None),
+    'partitionmanager-order46c-catalogues.patch': ('partitionmanager', None),
+    'plank-player-order46c-catalogues.patch': ('plank-player', None),
+    'plasma-stereo-wallpaper-order46b.patch': ('plasma-stereo-wallpaper', None),
+    'stereo-create-order46c-catalogues.patch': ('stereo-create', None),
+    'variety-order46c-catalogues.patch': ('variety', 'variety'),
+    'vlc-order46c-catalogues.patch': ('vlc', 'vlc', 'usr/share/vlc-stereo/locale'),
+    'wine-sbs-view-order46c-catalogues.patch': ('wine-sbs-view', 'wine-sbs-view'),
+    'xscreensaver-order46c-catalogues.patch': ('xscreensaver', 'xscreensaver'),
 }
+
+
+def gettext_files(patch):
+    """The .po files a patch changes (the paths of its +++ lines)."""
+    return [m.group(1) for m in re.finditer(r'^\+\+\+ b/(\S+\.po)\s*$', patch.read_text(encoding='utf-8'), re.M)]
+
+
+def catalogue_patches():
+    """(patches to read, [(patch, why it is not read)]): every *.po.patch, and every other *.patch that changes a gettext .po file;
+    a patch whose catalogues are Qt's (poqm/, installed as .qm) or that changes no .po file is named with the reason."""
+    read, skipped = [], []
+    for patch in sorted(TRANSLATIONS.glob('*.patch')):
+        files = gettext_files(patch)
+        if patch.name.endswith('.po.patch'):
+            read.append(patch)
+        elif not files:
+            skipped.append((patch, 'changes no gettext catalogue (Qt .ts, sView .lng, desktop, JSON or template files)'))
+        elif all(f.startswith('poqm/') for f in files):
+            skipped.append((patch, 'its catalogues are Qt translations (poqm/, installed as .qm), which this test does not read'))
+        else:
+            read.append(patch)
+    return read, skipped
 
 LOCALES = {'pl': 'pl_PL', 'pt_BR': 'pt_BR', 'fr': 'fr_FR', 'de': 'de_DE', 'es': 'es_ES', 'ja': 'ja_JP', 'ko': 'ko_KR',
            'zh_CN': 'zh_CN', 'zh_TW': 'zh_TW'}
@@ -134,7 +192,7 @@ def added_entries(patch):
     cur = None
     in_hunk = False
     for line in patch.read_text(encoding='utf-8').split('\n'):
-        m = re.match(r'^\+\+\+ b/po/([^/]+)/([^/]+)\.po$', line)
+        m = re.match(r'^\+\+\+ b/po/([^/]+)/([^/]+)\.po$', line) or re.match(r'^\+\+\+ b/(?!poqm/)(?:\S+/)?([a-z]{2,3}(?:_[A-Z]{2})?)/([^/]+)\.po$', line)
         if m:
             cur = (m.group(1), m.group(2))
             lines.setdefault(cur, [])
@@ -327,7 +385,11 @@ def check_packages(args):
     failed = 0
     unreadable = 0
     only = set(args.only.split(',')) if args.only else None
-    for patch in sorted(TRANSLATIONS.glob('*.po.patch')):
+    patches, skipped = catalogue_patches()
+    for patch, why in skipped:
+        if only is None or patch.name in only:
+            print(f'skip {patch.name}: {why}')
+    for patch in patches:
         if only is not None and patch.name not in only:
             continue
         if patch.name not in SOURCES:

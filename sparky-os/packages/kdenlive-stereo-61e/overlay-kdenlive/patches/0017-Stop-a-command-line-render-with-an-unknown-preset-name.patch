@@ -1,0 +1,57 @@
+Description: Stop a command-line render with an unknown preset name
+ "kdenlive --render --render-preset NAME project out.mkv" with a name Kdenlive does
+ not have rendered with the default MP4-H264/AAC preset, so an MP4 file was written
+ under the .mkv name, and the only trace was a warning in the log
+ (RenderPresetRepository::getPreset()). Upstream master (cc173e72e, 2026-11-20) has
+ the same fallback; no merge request or issue touches it; KDE bug 495962 reports a
+ related case. Now an unknown name stops the render before anything is written,
+ says so with the list of the presets, and the exit status is a failure; a render
+ request that ends with no job (refused with its reason) also exits with a failure
+ instead of 0.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -5,6 +5,7 @@
+ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ */
+ 
++#include "renderpresets/renderpresetrepository.hpp"
+ #include "core.h"
+ #ifdef CRASH_AUTO_TEST
+ #include "logger.hpp"
+@@ -468,6 +469,22 @@ int main(int argc, char *argv[])
+         // ensure we have a proper kdenlive_render path, particular important for AppImage
+         Wizard::fixKdenliveRenderPath();
+ 
++        // A preset name Kdenlive does not have stops the render: it is said, never replaced by the default preset (which wrote another
++        // format into the file name given)
++        if (!RenderPresetRepository::get()->presetExists(presetName)) {
++            qCritical().noquote() << i18n("Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:", presetName);
++            QVector<QString> names = RenderPresetRepository::get()->getAllPresets();
++            for (const QString &name : std::as_const(names)) {
++                qCritical().noquote() << "  " << name;
++            }
++            // as the render's own end does
++            pCore->projectManager()->closeCurrentDocument(false, false);
++            app.processEvents();
++            Core::clean();
++            app.processEvents();
++            return EXIT_FAILURE;
++        }
++
+         RenderRequest *renderrequest = new RenderRequest();
+         renderrequest->setOutputFile(renderUrl.toLocalFile());
+         renderrequest->loadPresetParams(presetName);
+@@ -490,7 +507,8 @@ int main(int argc, char *argv[])
+             qInfo() << "The following errors occurred while trying to render:\n" << renderrequest->errorMessages().join(QLatin1Char('\n'));
+         }
+ 
+-        int exitCode = EXIT_SUCCESS;
++        // nothing to render (a request refused with its reason above) is a failed render, not a success
++        int exitCode = renderjobs.empty() ? EXIT_FAILURE : EXIT_SUCCESS;
+ 
+         for (const auto &job : renderjobs) {
+             QStringList argsJob = RenderRequest::argsByJob(job, false);

@@ -1,0 +1,201 @@
+Description: Make the thumbnails of a 3D clip from its left eye, and learn a packing only the stream says
+ The bin's and the timeline's thumbnails of a 3D clip were the packed frame, both
+ views squeezed into one picture. The thumbnail producer now gets MLT's
+ stereo3d_unpack with output left, first of its filters, so a thumbnail is the
+ left eye's view as one picture, at the shape of a view; frame sequences, one view
+ per frame, are as before. A frame packing arrangement SEI is only read when a frame
+ is decoded, so the clip learns its packing from the first thumbnail's frame, makes
+ that thumbnail again from the left eye and updates its timeline producers; a render
+ of a 3D project or with a 3D preset decodes one frame of each clip whose packing is
+ not known yet, so a clip marked only in its stream is taken apart like the others.
+ The thumbnail cache key of a 3D clip changes, so packed thumbnails cached earlier
+ are not shown for it.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-20
+
+--- a/src/bin/projectclip.cpp
++++ b/src/bin/projectclip.cpp
+@@ -836,6 +836,7 @@ std::unique_ptr<Mlt::Producer> ProjectCl
+         m_thumbMutex.unlock();
+         QReadLocker lock(&pCore->xmlMutex);
+         thumbProd.reset(new Mlt::Producer(pCore->thumbProfile(), "xml-string", m_thumbXml.constData()));
++        attachStereoLeftEye(*thumbProd.get(), stereo3DFormat());
+         return thumbProd;
+     }
+     if (KdenliveSettings::gpu_accel()) {
+@@ -861,9 +862,63 @@ std::unique_ptr<Mlt::Producer> ProjectCl
+     }
+     m_thumbXml = ClipController::producerXml(*thumbProd.get(), true, false);
+     m_thumbMutex.unlock();
++    attachStereoLeftEye(*thumbProd.get(), stereo3DFormat());
+     return thumbProd;
+ }
+ 
++Stereo3D::Format ProjectClip::stereo3DFormat() const
++{
++    if (!m_masterProducer) {
++        return {};
++    }
++    return {Stereo3D::fromMltName(QString::fromUtf8(m_masterProducer->get("meta.media.stereo3d.type"))),
++            m_masterProducer->get_int("meta.media.stereo3d.invert") == 1};
++}
++
++void ProjectClip::learnStereo3DFromFrame()
++{
++    if (!m_masterProducer || stereo3DFormat().isStereo() || (m_clipType != ClipType::AV && m_clipType != ClipType::Video)) {
++        return;
++    }
++    // A frame packing arrangement SEI is only read when a frame is decoded: decode one
++    std::unique_ptr<Mlt::Producer> prod = getThumbProducer();
++    if (!prod || !prod->is_valid()) {
++        return;
++    }
++    std::unique_ptr<Mlt::Frame> frame(prod->get_frame());
++    if (!frame || !frame->is_valid()) {
++        return;
++    }
++    mlt_image_format format = mlt_image_rgba;
++    int width = 0;
++    int height = 0;
++    frame->get_image(format, width, height);
++    const QString type = QString::fromUtf8(prod->get("meta.media.stereo3d.type"));
++    if (!type.isEmpty()) {
++        setStereo3DFromFrame(type, prod->get_int("meta.media.stereo3d.invert"), QString::fromUtf8(prod->get("meta.media.stereo3d.views")));
++    }
++}
++
++void ProjectClip::attachStereoLeftEye(Mlt::Producer &producer, const Stereo3D::Format &format)
++{
++    // A thumbnail of a 3D clip is its left eye's view, one picture, not the squeezed pair; a frame sequence has one view in each
++    // frame already. The filter goes first, before the scaling and padding of the thumbnail.
++    if (!producer.is_valid() || !Stereo3D::bothViewsInFrame(format.packing)) {
++        return;
++    }
++    Mlt::Filter left(pCore->thumbProfile(), "stereo3d_unpack");
++    if (!left.is_valid()) {
++        return;
++    }
++    left.set("packing", Stereo3D::mltName(format.packing).toUtf8().constData());
++    left.set("invert", format.rightFirst ? 1 : 0);
++    left.set("output", "left");
++    // it says the view's size to the scaling and padding of the thumbnail (the edition's MLT, +stereo3d7)
++    left.set("in_producer", 1);
++    producer.attach(left);
++    producer.move_filter(producer.filter_count() - 1, 0);
++}
++
+ void ProjectClip::applyStereoUnpack(const std::shared_ptr<Mlt::Producer> &producer)
+ {
+     if (!producer || !producer->is_valid()) {
+@@ -1684,6 +1739,10 @@ const QString ProjectClip::hashForThumbs
+     if (!clipHash.isEmpty() && m_hasMultipleVideoStreams) {
+         clipHash.append(m_properties->get("video_index"));
+     }
++    if (!clipHash.isEmpty() && Stereo3D::bothViewsInFrame(stereo3DFormat().packing)) {
++        // the thumbnails of a 3D clip are its left eye's; a cache made of the packed frames is not used for them
++        clipHash.append(QStringLiteral("-left-eye"));
++    }
+     return clipHash;
+ }
+ 
+--- a/src/bin/projectclip.h
++++ b/src/bin/projectclip.h
+@@ -8,6 +8,8 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ 
+ #pragma once
+ 
++#include "utils/stereo3d.h"
++
+ #include "abstractprojectitem.h"
+ #include "definitions.h"
+ #include "mltcontroller/clipcontroller.h"
+@@ -302,6 +304,13 @@ public:
+     void refreshBounds();
+     /** @brief Returns a list of important enforced parameters in MLT format, for example to disable autorotate. */
+     const QStringList enforcedParams() const;
++    /** @brief The stereoscopic 3D packing of the clip, as its stream or its container says it */
++    Stereo3D::Format stereo3DFormat() const;
++    /** @brief Decode a frame of the clip when its packing is not known yet, so a packing said only by the stream's frame packing
++     *  arrangement SEI is known before a render */
++    void learnStereo3DFromFrame();
++    /** @brief Make a thumbnail producer give the left eye's view of a 3D clip (MLT's stereo3d_unpack, first of its filters) */
++    static void attachStereoLeftEye(Mlt::Producer &producer, const Stereo3D::Format &format);
+     /** @brief The stereoscopic 3D packing the stream or the container says, learned from a frame of another producer of this clip
+      *  (a frame packing arrangement SEI is only read when a frame is decoded) */
+     Q_INVOKABLE void setStereo3DFromFrame(const QString &type, int invert, const QString &views);
+--- a/src/jobs/cliploadtask.cpp
++++ b/src/jobs/cliploadtask.cpp
+@@ -24,6 +24,7 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ #include <mlt++/MltProducer.h>
+ #include <mlt++/MltProfile.h>
+ 
++#include "utils/stereo3d.h"
+ #include "xml/xml.hpp"
+ #include <KLocalizedString>
+ #include <KMessageWidget>
+@@ -264,6 +265,37 @@ void ClipLoadTask::generateThumbnail(std
+                         return;
+                     }
+                     QImage result = KThumb::getFrame(frame.get(), imageWidth, imageHeight, fullWidth);
++                    // A frame packing arrangement SEI is read only when a frame is decoded: the clip learns its packing from this one,
++                    // and the thumbnail is made again from the left eye's view
++                    const QString learned = QString::fromUtf8(thumbProd->get("meta.media.stereo3d.type"));
++                    if (!learned.isEmpty() && !binClip->stereo3DFormat().isStereo()) {
++                        const Stereo3D::Format format{Stereo3D::fromMltName(learned), thumbProd->get_int("meta.media.stereo3d.invert") == 1};
++                        QMetaObject::invokeMethod(binClip.get(), "setStereo3DFromFrame", Qt::QueuedConnection, Q_ARG(QString, learned),
++                                                  Q_ARG(int, format.rightFirst ? 1 : 0),
++                                                  Q_ARG(QString, QString::fromUtf8(thumbProd->get("meta.media.stereo3d.views"))));
++                        std::unique_ptr<Mlt::Producer> leftProd = binClip->getThumbProducer(m_sequenceUuid);
++                        if (leftProd && leftProd->is_valid() && Stereo3D::bothViewsInFrame(format.packing)) {
++                            ProjectClip::attachStereoLeftEye(*leftProd.get(), format);
++                            Mlt::Profile *prodProfile = &pCore->thumbProfile();
++                            Mlt::Filter scaler(*prodProfile, "swscale");
++                            Mlt::Filter padder(*prodProfile, "resize");
++                            Mlt::Filter converter(*prodProfile, "avcolor_space");
++                            leftProd->attach(scaler);
++                            leftProd->attach(padder);
++                            leftProd->attach(converter);
++                            leftProd->seek(frameNumber);
++                            std::unique_ptr<Mlt::Frame> leftFrame(leftProd->get_frame());
++                            if (leftFrame && leftFrame->is_valid()) {
++                                leftFrame->set("consumer.deinterlacer", "onefield");
++                                leftFrame->set("consumer.top_field_first", -1);
++                                leftFrame->set("consumer.rescale", "nearest");
++                                const QImage leftImage = KThumb::getFrame(leftFrame.get(), imageWidth, imageHeight, fullWidth);
++                                if (!leftImage.isNull()) {
++                                    result = leftImage;
++                                }
++                            }
++                        }
++                    }
+                     if (result.isNull() && !m_isCanceled.loadAcquire()) {
+                         qDebug() << "+++++\nINVALID RESULT IMAGE\n++++++++++++++";
+                         result = QImage(fullWidth, imageHeight, QImage::Format_ARGB32_Premultiplied);
+--- a/src/render/renderrequest.cpp
++++ b/src/render/renderrequest.cpp
+@@ -4,6 +4,7 @@
+ */
+ 
+ #include "renderrequest.h"
++#include "bin/projectclip.h"
+ #include "bin/projectitemmodel.h"
+ #include "core.h"
+ #include "doc/kdenlivedoc.h"
+@@ -130,6 +131,16 @@ std::vector<RenderRequest::RenderJob> Re
+ 
+     // The stereoscopic 3D presets write the project's frames as full side by side, the left eye first, and mark them so:
+     // a project that is not 3D, or whose frames the person declared packed another way, is not rendered with them
++    // A clip whose packing only its stream's SEI says is known once a frame of it is decoded: in a 3D project, or with a 3D
++    // preset, each such clip is known before the project's frames are made
++    if (m_presetParams.contains(QStringLiteral("stereo3d")) || pCore->currentDoc()->stereo3DFormat().isStereo()) {
++        const std::vector<QString> ids = pCore->projectItemModel()->getAllClipIds();
++        for (const QString &id : ids) {
++            if (const std::shared_ptr<ProjectClip> clip = pCore->projectItemModel()->getClipByBinID(id)) {
++                clip->learnStereo3DFromFrame();
++            }
++        }
++    }
+     if (m_presetParams.contains(QStringLiteral("stereo3d"))) {
+         const Stereo3D::Format stereo = pCore->currentDoc()->stereo3DFormat();
+         if (!stereo.isStereo()) {

@@ -1,0 +1,617 @@
+Description: Per-clip 3D input corrections in the clip's properties
+ "A player adds the input corrections (the input packing, and a per-file 'Swap
+ left and right eyes') for every media file shown in 3D, declared or not, since a
+ declaration can be wrong", and the correction is kept where the program keeps its
+ per-file state: for Kdenlive the project's clip properties. A video clip's
+ Properties now offer the stereo layer's "3D Input Format" (every entry of the
+ layer's list, in the layer's words and catalogue: Automatic, Not 3D, both eye
+ orders of side by side, top and bottom, rows, columns, checkerboard, side by side
+ quincunx, frames in turn, both views in one block, the anaglyph pairs and the
+ picture-with-depth layouts, those Kdenlive shows as one picture saying so), "Swap
+ left and right eyes" for a clip shown in 3D, and "Save the correction into the
+ file", which writes the file's own mark (Matroska StereoMode, MP4 st3d) through
+ the layer's libstereo-av only when the person presses it, reads it back, then
+ takes the correction off the clip and reads the clip again from the file. A clip
+ shown flat is offered the list, so an unmarked 3D clip can be declared, but no
+ swap and no save. The packing a clip is shown with (monitors, thumbnails, the
+ project's conversion, renders) is the file's unless the person corrected it.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -319,6 +319,11 @@ add_definitions(${qt${QT_MAJOR_VERSION}g
+ if(StereoLayer_FOUND)
+     target_link_libraries(kdenliveLib PUBLIC Stereo::Layer)
+     target_compile_definitions(kdenliveLib PUBLIC HAVE_STEREO_LAYER)
++    # the person's 3D correction of a clip written into the file's own mark, when the person chooses it (libstereo-av)
++    if(TARGET Stereo::Av)
++        target_link_libraries(kdenliveLib PUBLIC Stereo::Av)
++        target_compile_definitions(kdenliveLib PUBLIC HAVE_STEREO_MARK)
++    endif()
+ endif()
+ 
+ # The 3D window of the monitors: where the compositor takes stereo content declarations, a layer under a window of its own
+--- a/src/bin/projectclip.cpp
++++ b/src/bin/projectclip.cpp
+@@ -48,6 +48,10 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ #include <QPainter>
+ #include <QProcess>
+ #include <QtMath>
++#ifdef HAVE_STEREO_MARK
++#include <cstring>
++#include <stereo-mark.h>
++#endif
+ #include <timeline2/view/qml/timelinewaveform.h>
+ 
+ #ifdef CRASH_AUTO_TEST
+@@ -866,7 +870,7 @@ std::unique_ptr<Mlt::Producer> ProjectCl
+     return thumbProd;
+ }
+ 
+-Stereo3D::Format ProjectClip::stereo3DFormat() const
++Stereo3D::Format ProjectClip::stereo3DFileFormat() const
+ {
+     if (!m_masterProducer) {
+         return {};
+@@ -875,9 +879,123 @@ Stereo3D::Format ProjectClip::stereo3DFo
+             m_masterProducer->get_int("meta.media.stereo3d.invert") == 1};
+ }
+ 
++QString ProjectClip::stereo3DInput() const
++{
++    return m_masterProducer ? QString::fromUtf8(m_masterProducer->get("kdenlive:stereo3d_input")) : QString();
++}
++
++bool ProjectClip::stereo3DSwap() const
++{
++    return m_masterProducer && m_masterProducer->get_int("kdenlive:stereo3d_swap") == 1;
++}
++
++bool ProjectClip::hasStereo3DCorrection() const
++{
++    return Stereo3D::inputEntry(stereo3DInput()) != nullptr || stereo3DSwap();
++}
++
++Stereo3D::Format ProjectClip::stereo3DFormat() const
++{
++    // the correction applies as soon as the clip's producer exists: its timeline producers are made before the clip's type is known
++    if (!m_masterProducer) {
++        return {};
++    }
++    return Stereo3D::corrected(stereo3DFileFormat(), stereo3DInput(), stereo3DSwap());
++}
++
++QString ProjectClip::saveStereo3DCorrection()
++{
++#ifdef HAVE_STEREO_MARK
++    if (!hasStereo3DCorrection()) {
++        return i18n("This clip has no 3D correction to save.");
++    }
++    const Stereo3D::Format format = stereo3DFormat();
++    int layout = 0;
++    int order = format.rightFirst ? 1 : 0;
++    int anaglyph = 0;
++    if (const Stereo3D::InputEntry *entry = Stereo3D::inputEntry(stereo3DInput())) {
++        layout = entry->policyLayout;
++        order = entry->policyOrder;
++        anaglyph = entry->policyAnaglyph;
++        if (stereo3DSwap() && layout >= 1 && layout <= 9) {
++            order = 1 - order;
++        }
++    } else {
++        // the file's own packing with the swap
++        switch (format.packing) {
++        case Stereo3D::Packing::SideBySide:
++            layout = 1;
++            break;
++        case Stereo3D::Packing::TopBottom:
++            layout = 2;
++            break;
++        case Stereo3D::Packing::Lines:
++            layout = 4;
++            break;
++        case Stereo3D::Packing::Columns:
++            layout = 5;
++            break;
++        case Stereo3D::Packing::Checkerboard:
++            layout = 6;
++            break;
++        case Stereo3D::Packing::SideBySideQuincunx:
++            layout = 7;
++            break;
++        case Stereo3D::Packing::FrameSequence:
++            layout = 8;
++            break;
++        case Stereo3D::Packing::None:
++            break;
++        }
++    }
++    const QString path = url();
++    stereo_mark_result result;
++    memset(&result, 0, sizeof(result));
++    const int status = stereo_mark_save(path.toUtf8().constData(), 1, layout, order, anaglyph, &result);
++    if (status != STEREO_MARK_WRITTEN && status != STEREO_MARK_UNCHANGED) {
++        QString reason;
++        switch (status) {
++        case STEREO_MARK_CONTAINER:
++            reason = i18nc("Why a 3D correction could not be saved into a file", "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one).");
++            break;
++        case STEREO_MARK_LAYOUT:
++        case STEREO_MARK_WEBM_LAYOUT:
++        case STEREO_MARK_MP4_DEPTH:
++            reason = i18nc("Why a 3D correction could not be saved into a file", "its format's mark has no value for this 3D input format.");
++            break;
++        case STEREO_MARK_STREAM_DECLARES:
++            reason = i18nc("Why a 3D correction could not be saved into a file",
++                           "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark.");
++            break;
++        case STEREO_MARK_MP4_NO_ROOM:
++        case STEREO_MARK_MP4_ENTRIES:
++            reason = i18nc("Why a 3D correction could not be saved into a file", "the mark cannot be added to this MP4 file without moving its media data.");
++            break;
++        case STEREO_MARK_TOOL_MISSING:
++            reason = i18nc("Why a 3D correction could not be saved into a file", "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed.");
++            break;
++        default:
++            reason = i18nc("Why a 3D correction could not be saved into a file, %1 what the system said", "the write failed (%1).",
++                           QString::fromUtf8(result.details[0] ? result.details : stereo_mark_status_name(status)));
++            break;
++        }
++        qCWarning(KDENLIVE_LOG) << "3D correction not saved into" << path << stereo_mark_status_name(status) << result.details;
++        return i18n("The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project.",
++                    QFileInfo(path).fileName(), reason);
++    }
++    // The file carries the correction now: the clip's own is taken off and the clip is read again from the file
++    resetProducerProperty(QStringLiteral("kdenlive:stereo3d_input"));
++    resetProducerProperty(QStringLiteral("kdenlive:stereo3d_swap"));
++    reloadProducer(false, false, false);
++    return QString();
++#else
++    return i18n("This build of Kdenlive cannot write a 3D mark into a file.");
++#endif
++}
++
+ void ProjectClip::learnStereo3DFromFrame()
+ {
+-    if (!m_masterProducer || stereo3DFormat().isStereo() || (m_clipType != ClipType::AV && m_clipType != ClipType::Video)) {
++    if (!m_masterProducer || stereo3DFileFormat().isStereo() || hasStereo3DCorrection() || (m_clipType != ClipType::AV && m_clipType != ClipType::Video)) {
+         return;
+     }
+     // A frame packing arrangement SEI is only read when a frame is decoded: decode one
+@@ -934,8 +1052,8 @@ void ProjectClip::applyStereoUnpack(cons
+     if (!m_masterProducer || !doc || !doc->isStereo3DAutomatic()) {
+         return;
+     }
+-    const Stereo3D::Format format{Stereo3D::fromMltName(QString::fromUtf8(m_masterProducer->get("meta.media.stereo3d.type"))),
+-                                  m_masterProducer->get_int("meta.media.stereo3d.invert") == 1};
++    // the packing the clip is shown with: the file's, or the person's correction
++    const Stereo3D::Format format = stereo3DFormat();
+     if (!Stereo3D::bothViewsInFrame(format.packing)) {
+         return;
+     }
+@@ -949,7 +1067,10 @@ void ProjectClip::applyStereoUnpack(cons
+         const QSize clip(m_masterProducer->get_int("meta.media.width"), m_masterProducer->get_int("meta.media.height"));
+         const double sar = m_masterProducer->get_double("aspect_ratio") > 0 ? m_masterProducer->get_double("aspect_ratio") : 1.0;
+         const int hint = Stereo3D::viewsHint(QString::fromUtf8(m_masterProducer->get("meta.media.stereo3d.views")));
+-        if (Stereo3D::fullSizeViews(QSize(qRound(clip.width() * sar), clip.height()), format.packing, hint) == projectFull) {
++        // only when it is known: a timeline producer can be made before the clip's frame size is (an unmarked clip given its packing
++        // in its properties); the filter then decides by the clip's own frame
++        if ((hint >= 0 || (clip.width() > 0 && clip.height() > 0))
++            && Stereo3D::fullSizeViews(QSize(qRound(clip.width() * sar), clip.height()), format.packing, hint) == projectFull) {
+             return;
+         }
+     }
+@@ -1739,9 +1860,10 @@ const QString ProjectClip::hashForThumbs
+     if (!clipHash.isEmpty() && m_hasMultipleVideoStreams) {
+         clipHash.append(m_properties->get("video_index"));
+     }
+-    if (!clipHash.isEmpty() && Stereo3D::bothViewsInFrame(stereo3DFormat().packing)) {
+-        // the thumbnails of a 3D clip are its left eye's; a cache made of the packed frames is not used for them
+-        clipHash.append(QStringLiteral("-left-eye"));
++    const Stereo3D::Format stereo = stereo3DFormat();
++    if (!clipHash.isEmpty() && Stereo3D::bothViewsInFrame(stereo.packing)) {
++        // the thumbnails of a 3D clip are its left eye's; a cache made of the packed frames, or with another packing, is not used for them
++        clipHash.append(QStringLiteral("-left-eye-") + Stereo3D::mltName(stereo.packing) + (stereo.rightFirst ? QStringLiteral("-rf") : QString()));
+     }
+     return clipHash;
+ }
+@@ -2023,6 +2145,19 @@ void ProjectClip::setProperties(const QM
+                                                                            {AbstractProjectItem::DataDescription});
+         }
+     }
++    if (properties.contains(QStringLiteral("kdenlive:stereo3d_input")) || properties.contains(QStringLiteral("kdenlive:stereo3d_swap"))) {
++        // The person corrected the clip's 3D input: its views are taken out again in the project, its thumbnails made again from the
++        // eye that is now the left one, and the monitors show it so
++        updateStereoUnpack();
++        if (!reload) {
++            reloadProducer(true);
++        }
++        refreshPanel = true;
++        pCore->refreshProjectMonitorOnce();
++        if (pCore->bin()) {
++            pCore->bin()->reloadMonitorIfActive(clipId());
++        }
++    }
+     // update timeline clips
+     if (!reload) {
+         updateTimelineClips(refreshRoles);
+--- a/src/bin/projectclip.h
++++ b/src/bin/projectclip.h
+@@ -304,8 +304,20 @@ public:
+     void refreshBounds();
+     /** @brief Returns a list of important enforced parameters in MLT format, for example to disable autorotate. */
+     const QStringList enforcedParams() const;
+-    /** @brief The stereoscopic 3D packing of the clip, as its stream or its container says it */
++    /** @brief The stereoscopic 3D packing the clip is shown with: what its stream or its container says, unless the person
++     *  corrected it in the clip's properties (its 3D input format, and Swap left and right eyes) */
+     Stereo3D::Format stereo3DFormat() const;
++    /** @brief The stereoscopic 3D packing as the clip's stream or its container says it, whatever the person's correction */
++    Stereo3D::Format stereo3DFileFormat() const;
++    /** @brief The person's correction of the clip's 3D input, kept in the project ("kdenlive:stereo3d_input", the stereo layer's id of
++     *  an input format, and "kdenlive:stereo3d_swap"); never in the file unless the person saves it there */
++    QString stereo3DInput() const;
++    bool stereo3DSwap() const;
++    bool hasStereo3DCorrection() const;
++    /** @brief Write the person's correction into the file's own mark (Matroska's StereoMode, MP4's st3d, through the stereo layer's
++     *  libstereo-av, which reads it back), only because the person chose it; on success the correction is taken off the clip, which
++     *  is read again from the file. Returns an empty string, or what failed and why. */
++    QString saveStereo3DCorrection();
+     /** @brief Decode a frame of the clip when its packing is not known yet, so a packing said only by the stream's frame packing
+      *  arrangement SEI is known before a render */
+     void learnStereo3DFromFrame();
+--- a/src/doc/kdenlivedoc.cpp
++++ b/src/doc/kdenlivedoc.cpp
+@@ -3045,12 +3045,13 @@ Stereo3D::Format KdenliveDoc::stereo3DFo
+         if (!clip) {
+             continue;
+         }
+-        const Stereo3D::Packing packing = Stereo3D::fromMltName(clip->getProducerProperty(QStringLiteral("meta.media.stereo3d.type")));
+-        if (Stereo3D::bothViewsInFrame(packing)) {
++        // what the clip is shown as: its file's packing, or the person's correction
++        const Stereo3D::Format format = clip->stereo3DFormat();
++        if (Stereo3D::bothViewsInFrame(format.packing)) {
+             return {Stereo3D::Packing::SideBySide, false};
+         }
+-        if (packing != Stereo3D::Packing::None && !sequence.isStereo()) {
+-            sequence = {packing, clip->getProducerIntProperty(QStringLiteral("meta.media.stereo3d.invert")) == 1};
++        if (format.isStereo() && !sequence.isStereo()) {
++            sequence = format;
+         }
+     }
+     return sequence;
+--- a/src/jobs/cliploadtask.cpp
++++ b/src/jobs/cliploadtask.cpp
+@@ -268,7 +268,7 @@ void ClipLoadTask::generateThumbnail(std
+                     // A frame packing arrangement SEI is read only when a frame is decoded: the clip learns its packing from this one,
+                     // and the thumbnail is made again from the left eye's view
+                     const QString learned = QString::fromUtf8(thumbProd->get("meta.media.stereo3d.type"));
+-                    if (!learned.isEmpty() && !binClip->stereo3DFormat().isStereo()) {
++                    if (!learned.isEmpty() && !binClip->stereo3DFileFormat().isStereo() && !binClip->hasStereo3DCorrection()) {
+                         const Stereo3D::Format format{Stereo3D::fromMltName(learned), thumbProd->get_int("meta.media.stereo3d.invert") == 1};
+                         QMetaObject::invokeMethod(binClip.get(), "setStereo3DFromFrame", Qt::QueuedConnection, Q_ARG(QString, learned),
+                                                   Q_ARG(int, format.rightFirst ? 1 : 0),
+--- a/src/mltcontroller/clippropertiescontroller.cpp
++++ b/src/mltcontroller/clippropertiescontroller.cpp
+@@ -9,6 +9,7 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ #include "clippropertiescontroller.h"
+ #include "bin/projectclip.h"
+ #include "bin/bin.h"
++#include "bin/projectitemmodel.h"
+ #include "clipcontroller.h"
+ #include "utils/stereo3d.h"
+ #include "core.h"
+@@ -36,6 +37,8 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ #include <QCheckBox>
+ #include <QClipboard>
+ #include <QComboBox>
++#include <QCoreApplication>
++#include <QStandardItemModel>
+ #include <QDesktopServices>
+ #include <QDoubleSpinBox>
+ #include <QFile>
+@@ -606,6 +609,90 @@ QVBoxLayout *ClipPropertiesController::t
+     return vlay;
+ }
+ 
++QVBoxLayout *ClipPropertiesController::stereoInputProperty()
++{
++    // The person's correction of the clip's 3D input, as every program on the stereo layer offers it for a file it shows: the
++    // input formats of the layer's list in its words (a declaration can be wrong, and an unmarked clip gets its packing here), Swap
++    // left and right eyes and the save into the file for a clip shown in 3D. Kept in the project's clip properties, never in the file
++    // unless the person saves it there.
++    const QString input = QString::fromUtf8(m_properties->get("kdenlive:stereo3d_input"));
++    const bool swap = m_properties->get_int("kdenlive:stereo3d_swap") == 1;
++    const std::shared_ptr<ProjectClip> clip = pCore->projectItemModel()->getClipByBinID(m_id);
++    const bool shownAsPair = clip && clip->stereo3DFormat().isStereo();
++
++    auto *vlay = new QVBoxLayout;
++    auto *hlay = new QHBoxLayout;
++    auto *label = new QLabel(Stereo3D::inputTitle(), this);
++    auto *combo = new QComboBox(this);
++    combo->setObjectName(QStringLiteral("stereo3d_input_value"));
++    combo->addItem(QCoreApplication::translate("Stereo::FileChoiceMenu", "Automatic"), QString());
++    int group = 0;
++    for (const Stereo3D::InputEntry &entry : Stereo3D::inputEntries()) {
++        if (entry.group != group) {
++            group = entry.group;
++            combo->insertSeparator(combo->count());
++            const QString title = Stereo3D::inputGroupTitle(group);
++            if (!title.isEmpty()) {
++                combo->addItem(title);
++                if (auto *model = qobject_cast<QStandardItemModel *>(combo->model())) {
++                    model->item(combo->count() - 1)->setEnabled(false);
++                }
++            }
++        }
++        combo->addItem(Stereo3D::inputText(entry), QString::fromLatin1(entry.id));
++    }
++    combo->setCurrentIndex(qMax(0, combo->findData(input)));
++    label->setBuddy(combo);
++    hlay->addWidget(label);
++    hlay->addStretch(10);
++    hlay->addWidget(combo);
++    vlay->addLayout(hlay);
++
++    auto *swapBox = new QCheckBox(Stereo3D::swapEyesText(), this);
++    swapBox->setToolTip(Stereo3D::swapEyesToolTip());
++    swapBox->setChecked(swap);
++    // a correction of a pair: offered for a clip shown in 3D, or to take back a swap the clip has; nothing of it on a clip shown flat
++    swapBox->setVisible(shownAsPair || swap);
++    vlay->addWidget(swapBox);
++
++    const bool corrected = clip && clip->hasStereo3DCorrection();
++    auto *saveButton = new QPushButton(Stereo3D::saveCorrectionText(), this);
++    saveButton->setToolTip(Stereo3D::saveCorrectionToolTip());
++    saveButton->setEnabled(corrected);
++    saveButton->setVisible(shownAsPair || corrected);
++    auto *saveLay = new QHBoxLayout;
++    saveLay->addWidget(saveButton);
++    saveLay->addStretch(10);
++    vlay->addLayout(saveLay);
++
++    connect(combo, static_cast<void (QComboBox::*)(int)>(&QComboBox::activated), this, [this, combo]() {
++        QMap<QString, QString> oldProperties;
++        oldProperties.insert(QStringLiteral("kdenlive:stereo3d_input"), QString::fromUtf8(m_properties->get("kdenlive:stereo3d_input")));
++        QMap<QString, QString> properties;
++        properties.insert(QStringLiteral("kdenlive:stereo3d_input"), combo->currentData().toString());
++        Q_EMIT updateClipProperties(m_id, oldProperties, properties);
++    });
++    connect(swapBox, &QCheckBox::toggled, this, [this](bool checked) {
++        QMap<QString, QString> oldProperties;
++        oldProperties.insert(QStringLiteral("kdenlive:stereo3d_swap"), QString::fromUtf8(m_properties->get("kdenlive:stereo3d_swap")));
++        QMap<QString, QString> properties;
++        properties.insert(QStringLiteral("kdenlive:stereo3d_swap"), checked ? QStringLiteral("1") : QString());
++        Q_EMIT updateClipProperties(m_id, oldProperties, properties);
++    });
++    connect(saveButton, &QPushButton::clicked, this, [this]() {
++        // written only because the person chose it; read back by the library, and the clip read again from the file
++        const std::shared_ptr<ProjectClip> binClip = pCore->projectItemModel()->getClipByBinID(m_id);
++        if (!binClip) {
++            return;
++        }
++        const QString error = binClip->saveStereo3DCorrection();
++        if (!error.isEmpty()) {
++            KMessageBox::error(this, error);
++        }
++    });
++    return vlay;
++}
++
+ QWidget *ClipPropertiesController::constructPropertiesPage()
+ {
+     auto *forcePage = new QScrollArea(this);
+@@ -675,6 +762,11 @@ QWidget *ClipPropertiesController::const
+         fpBox->addLayout(hlay);
+     }
+ 
++    if (m_type == ClipType::AV || m_type == ClipType::Video) {
++        // 3D input format: the person's correction of how the clip's frames hold the two views
++        fpBox->addLayout(stereoInputProperty());
++    }
++
+     if (m_controller->supportsProxy()) {
+         // Proxy
+         auto hlay = proxyProperty(i18n("Proxy clip"), QStringLiteral("kdenlive:proxy"));
+--- a/src/mltcontroller/clippropertiescontroller.h
++++ b/src/mltcontroller/clippropertiescontroller.h
+@@ -144,6 +144,9 @@ private:
+     QHBoxLayout *timecodeProperty(const QString &label, const QString &propertyName);
+     QHBoxLayout *aspectRatioProperty(const QString &label);
+     QVBoxLayout *textProperty(const QString &label, const QString &propertyName);
++    /** @brief The person's correction of the clip's 3D input: the stereo layer's input formats, Swap left and right eyes, and the
++     *  save into the file; kept in the clip's properties in the project */
++    QVBoxLayout *stereoInputProperty();
+ 
+     QMap<QString, QString> getMetadateMagicLantern();
+     QMap<QString, QString> getMetadataExif();
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -2669,8 +2669,8 @@ Stereo3D::Format Monitor::stereoFormat()
+         if (!m_controller) {
+             return {};
+         }
+-        const Stereo3D::Packing packing = Stereo3D::fromMltName(m_controller->getProducerProperty(QStringLiteral("meta.media.stereo3d.type")));
+-        return {packing, m_controller->getProducerIntProperty(QStringLiteral("meta.media.stereo3d.invert")) == 1};
++        // the clip as it is shown: its file's packing, or the person's correction
++        return m_controller->stereo3DFormat();
+     }
+     if (m_id == Kdenlive::ProjectMonitor && pCore->currentDoc()) {
+         return pCore->currentDoc()->stereo3DFormat();
+--- a/src/utils/stereo3d.cpp
++++ b/src/utils/stereo3d.cpp
+@@ -11,11 +11,127 @@
+ #endif
+ 
+ #include <KLocalizedString>
++#include <QCoreApplication>
+ #include <QPainter>
+ #include <cstring>
+ 
+ namespace Stereo3D {
+ 
++// The stereo layer's input formats (stereo-layer 1.22, src/picture/filechoicelist.cpp; from 1.23 also its C list
++// stereo_policy_input_format_at()), in its order and words: the packings of RFC 9559 StereoMode and of H.264 Table D-8 and H.265
++// Table D.8, both eye orders, the anaglyph colour pairs and the picture-with-depth layouts. The policy values are stereo-policy.h's:
++// layouts 0 none, 1 side by side, 2 top and bottom, 4 rows, 5 columns, 6 checkerboard, 7 side by side quincunx, 8 frames in turn,
++// 9 both views in one block, 10 to 13 a picture and its depth; anaglyphs 1 red/cyan, 2 green/magenta, 3 amber/blue.
++const QList<InputEntry> &inputEntries()
++{
++    static const QList<InputEntry> entries{
++        {"mono", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Not 3D"), 0, Packing::None, false, 0, 0, 0, false},
++        {"sideBySideLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side, left eye first"), 1, Packing::SideBySide, false, 1, 0, 0, false},
++        {"sideBySideRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side, right eye first"), 1, Packing::SideBySide, true, 1, 1, 0, false},
++        {"topBottomLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Top and bottom, left eye first"), 1, Packing::TopBottom, false, 2, 0, 0, false},
++        {"topBottomRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Top and bottom, right eye first"), 1, Packing::TopBottom, true, 2, 1, 0, false},
++        {"rowInterleavedLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Rows, left eye first"), 2, Packing::Lines, false, 4, 0, 0, false},
++        {"rowInterleavedRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Rows, right eye first"), 2, Packing::Lines, true, 4, 1, 0, false},
++        {"columnInterleavedLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Columns, left eye first"), 2, Packing::Columns, false, 5, 0, 0, false},
++        {"columnInterleavedRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Columns, right eye first"), 2, Packing::Columns, true, 5, 1, 0, false},
++        {"checkerboardLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Checkerboard, left eye first"), 2, Packing::Checkerboard, false, 6, 0, 0, false},
++        {"checkerboardRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Checkerboard, right eye first"), 2, Packing::Checkerboard, true, 6, 1, 0, false},
++        {"sideBySideQuincunxLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side quincunx, left eye first"), 2, Packing::SideBySideQuincunx,
++         false, 7, 0, 0, false},
++        {"sideBySideQuincunxRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side quincunx, right eye first"), 2,
++         Packing::SideBySideQuincunx, true, 7, 1, 0, false},
++        {"frameSequentialLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Frames in turn, left eye first"), 3, Packing::FrameSequence, false, 8, 0, 0, true},
++        {"frameSequentialRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Frames in turn, right eye first"), 3, Packing::FrameSequence, true, 8, 1, 0, true},
++        {"blockLacedLeftFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Both views in one block, left eye first"), 3, Packing::None, false, 9, 0, 0, true},
++        {"blockLacedRightFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Both views in one block, right eye first"), 3, Packing::None, true, 9, 1, 0, true},
++        {"anaglyphCyanRed", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Red/cyan"), 4, Packing::None, false, 0, 0, 1, false},
++        {"anaglyphGreenMagenta", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Green/magenta"), 4, Packing::None, false, 0, 0, 2, false},
++        {"anaglyphAmberBlue", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Amber/blue"), 4, Packing::None, false, 0, 0, 3, false},
++        {"depthSideBySidePictureFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side, picture first"), 5, Packing::None, false, 10, 0, 0, false},
++        {"depthSideBySideDepthFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Side by side, depth first"), 5, Packing::None, false, 10, 1, 0, false},
++        {"depthTopBottomPictureFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Top and bottom, picture first"), 5, Packing::None, false, 11, 0, 0, false},
++        {"depthTopBottomDepthFirst", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Top and bottom, depth first"), 5, Packing::None, false, 11, 1, 0, false},
++        {"depthGraphicsTopBottom", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Four rows: picture, depth, graphics, graphics depth"), 5, Packing::None, false,
++         12, 0, 0, false},
++        {"depthBackgroundQuarters", QT_TRANSLATE_NOOP("Stereo::FileChoiceMenu", "Four quarters: picture, depth, background, background depth"), 5,
++         Packing::None, false, 13, 0, 0, false},
++    };
++    return entries;
++}
++
++const InputEntry *inputEntry(const QString &id)
++{
++    for (const InputEntry &entry : inputEntries()) {
++        if (id == QLatin1String(entry.id)) {
++            return &entry;
++        }
++    }
++    return nullptr;
++}
++
++QString inputText(const InputEntry &entry)
++{
++    const QString text = QCoreApplication::translate("Stereo::FileChoiceMenu", entry.text);
++    if (entry.packing == Packing::None && strcmp(entry.id, "mono") != 0) {
++        // the layer's words for a format the program cannot show in 3D where the list is: the choice is still kept
++        return QCoreApplication::translate("Stereo::FileChoiceMenu", "%1 (one view shown here)").arg(text);
++    }
++    return text;
++}
++
++QString inputGroupTitle(int group)
++{
++    switch (group) {
++    case 2:
++        return QCoreApplication::translate("Stereo::FileChoiceMenu", "Interleaved");
++    case 3:
++        return QCoreApplication::translate("Stereo::FileChoiceMenu", "One view after the other");
++    case 4:
++        return QCoreApplication::translate("Stereo::FileChoiceMenu", "Anaglyph");
++    case 5:
++        return QCoreApplication::translate("Stereo::FileChoiceMenu", "Picture and depth");
++    default:
++        return QString();
++    }
++}
++
++QString inputTitle()
++{
++    return QCoreApplication::translate("Stereo::FileChoiceMenu", "3D Input Format");
++}
++
++QString swapEyesText()
++{
++    return QCoreApplication::translate("Stereo::FileChoiceMenu", "Swap left and right eyes");
++}
++
++QString swapEyesToolTip()
++{
++    return QCoreApplication::translate("Stereo::FileChoiceMenu", "Show each eye the other view of this file");
++}
++
++QString saveCorrectionText()
++{
++    return QCoreApplication::translate("Stereo::FileChoiceMenu", "Save the correction into the file");
++}
++
++QString saveCorrectionToolTip()
++{
++    return QCoreApplication::translate("Stereo::FileChoiceMenu", "Write this correction into the file itself, so every program and device reads it");
++}
++
++Format corrected(const Format &file, const QString &input, bool swapEyes)
++{
++    Format format = file;
++    if (const InputEntry *entry = inputEntry(input)) {
++        format = {entry->packing, entry->rightFirst};
++    }
++    if (swapEyes && format.isStereo()) {
++        format.rightFirst = !format.rightFirst;
++    }
++    return format;
++}
++
+ QString mltName(Packing packing)
+ {
+     switch (packing) {
+--- a/src/utils/stereo3d.h
++++ b/src/utils/stereo3d.h
+@@ -63,6 +63,43 @@ QSize storedViewSize(const QSize &frame,
+ /** @brief Whether the views of the frame are full size (not squeezed to fit the frame) */
+ bool fullSizeViews(const QSize &frame, Packing packing, int viewsHint = -1);
+ 
++/** @brief The person's correction of a clip's 3D input: the stereo layer's list of input formats (stereo-layer's FileChoiceMenu),
++ *  each by its id, the Stereo3DLayout word a file's mark uses for the same thing. The words are the layer's, in its translation
++ *  context "Stereo::FileChoiceMenu", whose catalogue the layer's library loads, so every program says the same thing. The
++ *  correction is kept in the project's clip properties ("kdenlive:stereo3d_input", "kdenlive:stereo3d_swap"), never in the file. */
++struct InputEntry
++{
++    const char *id;
++    /** @brief English, the context Stereo::FileChoiceMenu */
++    const char *text;
++    /** @brief 0 at the top, 1 one picture whole, 2 interleaved, 3 one view after the other, 4 anaglyph, 5 picture and depth */
++    int group;
++    /** @brief What the clip is shown as: None for "Not 3D", and for a format Kdenlive shows as one picture (an anaglyph, a picture
++     *  with its depth, both views in one block) */
++    Packing packing;
++    bool rightFirst;
++    /** @brief The format as a file's mark says it (stereo-policy.h: enum stereo_policy_layout, the order, enum stereo_policy_anaglyph),
++     *  for writing it into the file */
++    int policyLayout;
++    int policyOrder;
++    int policyAnaglyph;
++    /** @brief A format only a video holds (one view after the other in time or in a stream's blocks) */
++    bool videoOnly;
++};
++const QList<InputEntry> &inputEntries();
++/** @brief The entry of an id, nullptr for none (no correction) */
++const InputEntry *inputEntry(const QString &id);
++/** @brief The entry's words in the person's language; a format Kdenlive shows as one picture says so */
++QString inputText(const InputEntry &entry);
++QString inputGroupTitle(int group);
++QString inputTitle();
++QString swapEyesText();
++QString swapEyesToolTip();
++QString saveCorrectionText();
++QString saveCorrectionToolTip();
++/** @brief The packing a clip is shown with: the file's, unless the person corrected it; the swap changes which eye comes first */
++Format corrected(const Format &file, const QString &input, bool swapEyes);
++
+ /** @brief One view of a frame, slot 0 is the first view of the packing and 1 the second, at the size of a view */
+ QImage view(const QImage &frame, Packing packing, int slot);
+ /** @brief The two views of a frame as one image, side by side, the left eye first: the full side by side that our compositor takes */

@@ -1,0 +1,263 @@
+Description: The monitors' 3D options are the layer's Enable 3D and Display Settings
+ "A program's 3D options are only: enable 3D, render resolution per eye, and a
+ shortcut to Display Settings." The monitors' Preview choice (Packed Frame as It Is,
+ Left Eye Only, 3D) becomes the stereo layer's own "Enable 3D"
+ (Stereo::Enable3DAction, the switch and the words every program on the layer has),
+ the view of the left eye below it (choosing it enables 3D again, as in the picture
+ programs of ORDER 551c), and "Display Settings…", which opens Display Configuration
+ (kcmshell6 kcm_kscreen), where each screen's 3D format and its swap of the eyes are.
+ The setting keeps its values: 0 is Enable 3D off (the frames as they are, nothing
+ declared), 1 the left eye, 2 3D; a choice saved before reads the same.
+ The project's own "Right Eye First" goes: the definitive swap is the output's and a
+ program has no swap for everything; the eye order is each clip's (its input format
+ and swap). A project saved with it gets the declared packing with the right eye
+ first as the input format of each of its video clips, takes its packing from its
+ clips, and the person is told once in the project monitor. A packing declared for
+ the project is left eye first.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -7,6 +7,7 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ #include "monitor.h"
+ #include "bin/bin.h"
+ #include "bin/projectclip.h"
++#include "bin/projectitemmodel.h"
+ #include "capture/mediacapture.h"
+ #include "core.h"
+ #include "dialogs/markerdialog.h"
+@@ -45,6 +46,7 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ 
+ #include "KLocalizedString"
+ #include <KActionMenu>
++#include <KIO/CommandLauncherJob>
+ #include <KColorScheme>
+ #include <KDualAction>
+ #include <KFileWidget>
+@@ -55,6 +57,9 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ #include <KWindowConfig>
+ 
+ #include "kdenlive_debug.h"
++#ifdef HAVE_STEREO_LAYER
++#include <filechoicemenu.h>
++#endif
+ #include <QApplication>
+ #include <QCheckBox>
+ #include <QClipboard>
+@@ -472,33 +477,61 @@ Monitor::Monitor(Kdenlive::MonitorId id,
+         });
+     }
+ 
+-    // Stereoscopic 3D: how the packed frames of a 3D video are shown, and for the project how they are packed
++    // Stereoscopic 3D: the program's own 3D options, as every program on the stereo layer has them ("enable 3D, render resolution per
++    // eye, and a shortcut to Display Settings"): Enable 3D (off, the frames are shown as they are and nothing is declared), a view of
++    // the left eye only (choosing it enables 3D again), and Display Settings, where the screens' 3D formats and the swap of the eyes
++    // of each screen are. The project's resolution is one eye's; a clip's input format and swap are in its properties.
+     auto *stereoMenu = new KActionMenu(QIcon::fromTheme(QStringLiteral("view-3d")), i18n("Stereoscopic 3D"), this);
+-    m_stereoPreview = new KSelectAction(i18n("Preview"), this);
+-    QAction *packedAction = m_stereoPreview->addAction(QIcon(), i18n("Packed Frame as It Is"));
+-    packedAction->setData(0);
+-    QAction *leftAction = m_stereoPreview->addAction(QIcon(), i18n("Left Eye Only"));
+-    leftAction->setData(1);
+-    QAction *stereoAction = nullptr;
+-#ifdef HAVE_STEREO_PREVIEW
+-    if (StereoLayer::isSupported()) {
+-        stereoAction = m_stereoPreview->addAction(QIcon(), i18nc("The video shown in 3D by the compositor, in the monitor itself", "3D"));
+-        stereoAction->setData(2);
+-    }
++#ifdef HAVE_STEREO_LAYER
++    m_stereoEnable = new Stereo::Enable3DAction(this);
++#else
++    m_stereoEnable = new QAction(i18n("Enable 3D"), this);
++    m_stereoEnable->setCheckable(true);
+ #endif
+-    m_stereoPreview->setCurrentAction(stereoPreviewSetting() == 1 ? leftAction
+-                                      : (stereoPreviewSetting() == 2 && stereoAction) ? stereoAction
+-                                                                                      : packedAction);
+-    connect(m_stereoPreview, &KSelectAction::actionTriggered, this, [this](QAction *a) {
+-        setStereoPreviewSetting(a->data().toInt());
++    m_stereoEnable->setChecked(stereoPreviewSetting() != 0);
++    m_stereoLeftEye = new QAction(i18n("Left Eye Only"), this);
++    m_stereoLeftEye->setCheckable(true);
++    m_stereoLeftEye->setChecked(stereoPreviewSetting() == 1);
++    connect(m_stereoEnable, &QAction::triggered, this, [this](bool checked) {
++        // on: the view chosen last, both eyes or the left one; off: the frames as they are
++        setStereoPreviewSetting(checked ? (m_stereoLeftEye->isChecked() ? 1 : 2) : 0);
+ #ifdef HAVE_STEREO_PREVIEW
+         // The person chose again: a 3D area that failed is tried again
+         m_stereoLayerFailed = false;
+ #endif
+         updateStereoPreview();
+     });
+-    stereoMenu->addAction(m_stereoPreview);
++    connect(m_stereoLeftEye, &QAction::triggered, this, [this](bool checked) {
++        // choosing a view of one eye enables 3D again
++        if (checked) {
++            m_stereoEnable->setChecked(true);
++        }
++        setStereoPreviewSetting(m_stereoEnable->isChecked() ? (checked ? 1 : 2) : 0);
++#ifdef HAVE_STEREO_PREVIEW
++        m_stereoLayerFailed = false;
++#endif
++        updateStereoPreview();
++    });
++    auto *displaySettings = new QAction(QIcon::fromTheme(QStringLiteral("preferences-desktop-display")), i18n("Display Settings…"), this);
++    connect(displaySettings, &QAction::triggered, this, [this]() {
++        // the screens' own 3D formats, and their swap of the eyes, are the compositor's outputs: Display Configuration
++        auto *job = new KIO::CommandLauncherJob(QStringLiteral("kcmshell6"), {QStringLiteral("kcm_kscreen")});
++        connect(job, &KJob::result, this, [this, job]() {
++            // told, never silent: KIO's own message would be the program's name alone
++            if (job->error()) {
++                KMessageBox::error(this, i18n("Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's "
++                                              "settings modules, and the screens' 3D formats are on the Display Configuration page of "
++                                              "System Settings.",
++                                              QStringLiteral("kcmshell6")));
++            }
++        });
++        job->start();
++    });
++    stereoMenu->addAction(m_stereoEnable);
++    stereoMenu->addAction(m_stereoLeftEye);
++    stereoMenu->addAction(displaySettings);
+     if (m_id == Kdenlive::ProjectMonitor) {
++        stereoMenu->addSeparator();
+         m_stereoProject = new KSelectAction(i18n("Packing of the Project"), this);
+         QAction *autoAction = m_stereoProject->addAction(QIcon(), i18n("Automatic (From the Clips)"));
+         autoAction->setData(QStringLiteral("auto"));
+@@ -512,7 +545,8 @@ Monitor::Monitor(Kdenlive::MonitorId id,
+         connect(m_stereoProject, &KSelectAction::actionTriggered, this, [this](QAction *a) {
+             const QString value = a->data().toString();
+             if (auto *doc = pCore->currentDoc()) {
+-                Stereo3D::Format format{Stereo3D::fromMltName(value), m_stereoRightFirst->isChecked()};
++                // the eye order of a clip is its own (its swap, in its properties): a packing declared for the project is left eye first
++                Stereo3D::Format format{Stereo3D::fromMltName(value), false};
+                 doc->setStereo3DFormat(format, value == QLatin1String("auto"));
+                 if (value == QLatin1String("none")) {
+                     doc->setDocumentProperty(QStringLiteral("stereo3d"), QStringLiteral("none"));
+@@ -520,21 +554,7 @@ Monitor::Monitor(Kdenlive::MonitorId id,
+             }
+             updateStereoPreview();
+         });
+-        m_stereoRightFirst = new QAction(i18n("Right Eye First"), this);
+-        m_stereoRightFirst->setCheckable(true);
+-        connect(m_stereoRightFirst, &QAction::triggered, this, [this]() {
+-            auto *doc = pCore->currentDoc();
+-            QAction *current = m_stereoProject->currentAction();
+-            if (doc && current && current->data().toString() != QLatin1String("auto")) {
+-                doc->setStereo3DFormat({Stereo3D::fromMltName(current->data().toString()), m_stereoRightFirst->isChecked()}, false);
+-                if (current->data().toString() == QLatin1String("none")) {
+-                    doc->setDocumentProperty(QStringLiteral("stereo3d"), QStringLiteral("none"));
+-                }
+-            }
+-            updateStereoPreview();
+-        });
+         stereoMenu->addAction(m_stereoProject);
+-        stereoMenu->addAction(m_stereoRightFirst);
+     }
+     m_configMenuAction->addAction(stereoMenu);
+ 
+@@ -2729,6 +2749,15 @@ void Monitor::updateStereoPreview()
+     }
+     m_glMonitor->setStereoLayerActive(layer);
+ #endif
++    if (m_id == Kdenlive::ProjectMonitor && !m_stereoRightFirstMoved) {
++        moveProjectRightFirstToClips();
++    }
++    if (m_stereoEnable) {
++        QSignalBlocker enableBlocker(m_stereoEnable);
++        QSignalBlocker eyeBlocker(m_stereoLeftEye);
++        m_stereoEnable->setChecked(mode != 0);
++        m_stereoLeftEye->setChecked(mode == 1);
++    }
+     if (m_stereoProject && pCore->currentDoc()) {
+         // Show what the project says
+         const KdenliveDoc *doc = pCore->currentDoc();
+@@ -2742,10 +2771,62 @@ void Monitor::updateStereoPreview()
+                 m_stereoProject->setCurrentAction(a);
+             }
+         }
+-        m_stereoRightFirst->setChecked(format.rightFirst);
+     }
+ }
+ 
++void Monitor::moveProjectRightFirstToClips()
++{
++    // Kdenlive 26.08.1-1+stereo3d6 to +stereo3d8 had a "Right Eye First" for the whole project, beside a packing declared for the
++    // project. The eye order is now each clip's own (its swap), and only the screen's own swap is for everything: a project saved with
++    // it gets the packing and the eye order as each video clip's input format, takes its packing from its clips, and the person is told.
++    KdenliveDoc *doc = pCore->currentDoc();
++    if (!doc || doc->getDocumentProperty(QStringLiteral("stereo3d_invert")) != QLatin1String("1")) {
++        m_stereoRightFirstMoved = doc != nullptr;
++        return;
++    }
++    const Stereo3D::Packing packing = Stereo3D::fromMltName(doc->getDocumentProperty(QStringLiteral("stereo3d")));
++    QString input;
++    for (const Stereo3D::InputEntry &entry : Stereo3D::inputEntries()) {
++        if (entry.packing == packing && entry.rightFirst && packing != Stereo3D::Packing::None) {
++            input = QString::fromLatin1(entry.id);
++            break;
++        }
++    }
++    std::vector<std::shared_ptr<ProjectClip>> clips;
++    for (const QString &id : pCore->projectItemModel()->getAllClipIds()) {
++        const std::shared_ptr<ProjectClip> clip = pCore->projectItemModel()->getClipByBinID(id);
++        if (!clip || (clip->clipType() != ClipType::AV && clip->clipType() != ClipType::Video)) {
++            continue;
++        }
++        if (!clip->statusReady()) {
++            // the clips are read again later: the move waits for all of them
++            return;
++        }
++        clips.push_back(clip);
++    }
++    m_stereoRightFirstMoved = true;
++    int moved = 0;
++    if (!input.isEmpty()) {
++        for (const auto &clip : clips) {
++            if (!clip->hasStereo3DCorrection()) {
++                clip->setProperties({{QStringLiteral("kdenlive:stereo3d_input"), input}}, false);
++                ++moved;
++            }
++        }
++    }
++    doc->setDocumentProperty(QStringLiteral("stereo3d_invert"), QString());
++    if (!input.isEmpty()) {
++        doc->setStereo3DFormat({}, true);
++    }
++    doc->setModified(true);
++    warningMessage(i18np("This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video "
++                         "clip has that 3D input format in its properties, and the project takes its packing from its clips.",
++                         "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video "
++                         "clips have that 3D input format in their properties, and the project takes its packing from its clips.",
++                         moved, Stereo3D::packingText(packing)),
++                   -1);
++}
++
+ void Monitor::onFrameDisplayed(const SharedFrame &frame)
+ {
+ #ifdef HAVE_STEREO_PREVIEW
+--- a/src/monitor/monitor.h
++++ b/src/monitor/monitor.h
+@@ -249,11 +249,17 @@ private:
+     TimecodeDisplay *m_timePos;
+     KDualAction *m_playAction;
+     KSelectAction *m_forceSize;
+-    /** @brief How a stereoscopic 3D video is shown: as it is (the packed frame), or the left eye's view only */
+-    KSelectAction *m_stereoPreview{nullptr};
++    /** @brief The program's own switch, the stereo layer's "Enable 3D": on, a 3D video is shown in 3D; off, the frames are shown as
++     *  they are and nothing is declared */
++    QAction *m_stereoEnable{nullptr};
++    /** @brief A view of one eye, the left one: choosing it enables 3D again */
++    QAction *m_stereoLeftEye{nullptr};
+     /** @brief The packing of the project (project monitor): automatic, none or one of the packings */
+     KSelectAction *m_stereoProject{nullptr};
+-    QAction *m_stereoRightFirst{nullptr};
++    /** @brief A project saved with the right eye first for the whole project has had it moved to its clips */
++    bool m_stereoRightFirstMoved{false};
++    /** @brief Move a project's "Right Eye First" to its clips' own swap, once, and say so */
++    void moveProjectRightFirstToClips();
+     QElapsedTimer m_stereoCheck;
+ #ifdef HAVE_STEREO_PREVIEW
+     /** @brief The 3D area under the monitor, where the compositor takes stereo content */
