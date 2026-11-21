@@ -14,3 +14,7 @@ The shared runner owns the missing-program offer through command-not-found and t
 English and Brazilian Portuguese are authored here; the other eight menu labels use English pending translation.
 
 The unmodified Vibe startup can attempt a model download automatically; the seed does not change that upstream behavior.
+
+Vibe clears a selected model path when the model is absent. Presets therefore omit model.path; they do not select or download a model.
+For Light and Basic, choose medium-q8_0 (ggml-medium-q8_0.bin) in Vibe's model list. Basic keeps FFmpeg and omits AI tasks.
+Default's model recommendation is large-v3-turbo (ggml-large-v3-turbo.bin).
