@@ -121,10 +121,10 @@ KCM.SimpleKCM {
                     onActivated: kcm.choose("default/" + kindRow.kind + "/interface", ["set-default", kindRow.kind, "--interface", currentValue], currentValue)
                 }
 
-                Item { visible: kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"; width: 1; height: 1 }
-                QQC2.Label { visible: kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"; text: i18nc("@label", "Model") }
+                Item { visible: !!kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"; width: 1; height: 1 }
+                QQC2.Label { visible: !!kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"; text: i18nc("@label", "Model") }
                 QQC2.ComboBox {
-                    visible: kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"
+                    visible: !!kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 16
                     readonly property string current: root.pending("default/" + kindRow.kind + "/model", kindRow.modelData.model)
                     model: root.modelOptions(current)
@@ -134,10 +134,10 @@ KCM.SimpleKCM {
                                             currentValue ? ["set-default", kindRow.kind, "--model", currentValue] : ["set-default", kindRow.kind, "--no-model"], currentValue)
                 }
 
-                Item { visible: kindRow.chosenIface && kindRow.chosenIface.runs === "here"; width: 1; height: 1 }
-                QQC2.Label { visible: kindRow.chosenIface && kindRow.chosenIface.runs === "here"; text: i18nc("@label the card the partners compute on", "Card") }
+                Item { visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"; width: 1; height: 1 }
+                QQC2.Label { visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"; text: i18nc("@label the card the partners compute on", "Card") }
                 RowLayout {
-                    visible: kindRow.chosenIface && kindRow.chosenIface.runs === "here"
+                    visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"
                     QQC2.ComboBox {
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 16
                         model: root.cardOptions()
@@ -166,7 +166,7 @@ KCM.SimpleKCM {
                         if (kindRow.chosenIface && kindRow.chosenIface.runs === "here" && kindRow.kind === "text")
                             lines.push(root.card.problem ? root.card.problem
                                        : root.card.choice === "cpu" ? i18nc("@info", "Now: the processor only")
-                                       : i18nc("@info %1 is a GPU name", "Now: %1", root.card.name || root.card.id))
+                                       : i18nc("@info %1 is a GPU name", "Now: %1", root.card.name || root.card.id || ""))
                         const p = root.privacy(kindRow.kind, c)
                         if (p) lines.push(p)
                         return lines.join("\n")
@@ -208,13 +208,13 @@ KCM.SimpleKCM {
                         onClicked: kcm.act(["install-plan"])
                     }
                     QQC2.Button {
-                        visible: root.engine.installed && !root.engine.on
+                        visible: !!root.engine.installed && !root.engine.on
                         enabled: !kcm.busy
                         text: i18nc("@action:button", "Turn on")
                         onClicked: kcm.act(["engine", "on"])
                     }
                     QQC2.Button {
-                        visible: root.engine.installed && root.engine.on
+                        visible: !!root.engine.installed && !!root.engine.on
                         enabled: !kcm.busy
                         text: i18nc("@action:button", "Turn off")
                         onClicked: kcm.act(["engine", "off"])
@@ -223,7 +223,7 @@ KCM.SimpleKCM {
                     QQC2.Label { visible: kcm.progress.length > 0; text: kcm.progress }
                 }
                 Repeater {
-                    model: root.engine.installed ? kcm.models : []
+                    model: !!root.engine.installed ? kcm.models : []
                     delegate: RowLayout {
                         required property var modelData
                         readonly property bool present: (root.engine.models || []).some(m => m.name === modelData.name)
@@ -252,7 +252,7 @@ KCM.SimpleKCM {
                     onClicked: kcm.act(["download", kcm.heldModel, "--even-if-metered"])
                 }
                 QQC2.Label {
-                    visible: root.engine.installed
+                    visible: !!root.engine.installed
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     font: Kirigami.Theme.smallFont
