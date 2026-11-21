@@ -1,0 +1,598 @@
+Description: Jmol's display as a declared 3D area on Sparky Stereo OS
+ With Enable 3D (Display menu, on by default) the application runs Jmol's own
+ side-by-side stereo, "stereo 5" with "set perspectiveDepth false" (the preset:
+ the left eye's picture on the left, no vertical difference between the eyes),
+ lets Jmol draw each of the two pictures at the display panel's own size, and
+ puts them into an X11 window of its own inside the frame, two pictures wide,
+ declared to Stereo KWin as full side by side with libstereo-declare
+ (stereo_declare_x11_child, the size one view is shown at). The rest of the
+ frame stays an ordinary 2D window. Jmol keeps its own stereo angle. A
+ negative angle (cross-eyed, Jmol's "stereo on") is handed over left eye
+ first. Display gains "Enable 3D" and "3D display settings..."; the popup
+ menu's "Stereographic" submenu, whose entries are output modes, is not
+ offered; every script command is unchanged.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-21
+---
+diff -ruN a/src/org/jmol/popup/MainPopupResourceBundle.java b/src/org/jmol/popup/MainPopupResourceBundle.java
+--- a/src/org/jmol/popup/MainPopupResourceBundle.java
++++ b/src/org/jmol/popup/MainPopupResourceBundle.java
+@@ -106,7 +106,7 @@
+ 
+       {   "renderMenu",
+           "renderSchemeMenu - atomMenu labelMenu bondMenu hbondMenu ssbondMenu - "
+-              + "PDBstructureMenu - [set_axes]Menu [set_boundbox]Menu [set_UNITCELL]Menu - perspectiveDepthCB stereoMenu" },
++              + "PDBstructureMenu - [set_axes]Menu [set_boundbox]Menu [set_UNITCELL]Menu - perspectiveDepthCB" },
+ 
+       {   "renderSchemeMenu",
+           "renderCpkSpacefill renderBallAndStick "
+diff -ruN a/src/org/jmol/viewer/TransformManager.java b/src/org/jmol/viewer/TransformManager.java
+--- a/src/org/jmol/viewer/TransformManager.java
++++ b/src/org/jmol/viewer/TransformManager.java
+@@ -2328,6 +2328,22 @@
+   float stereoDegrees = Float.NaN; // set in state manager
+   float stereoRadians;
+ 
++  /**
++   * @return true when Jmol draws its two pictures side by side, each at the
++   *         size of the screen it was given (stereo on, stereo N)
++   */
++  public boolean isStereoDoubleFull() {
++    return stereoDoubleFull;
++  }
++
++  /**
++   * @return the stereo angle: negative is cross-eyed (the left eye's picture
++   *         on the right), positive wall-eyed (the left eye's picture on the left)
++   */
++  public float getStereoDegrees() {
++    return stereoDegrees;
++  }
++
+   void setStereoDegrees(float stereoDegrees) {
+     this.stereoDegrees = stereoDegrees;
+     stereoRadians = (float) (stereoDegrees * JC.radiansPerDegree);
+diff -ruN a/src/org/openscience/jmol/app/jmolpanel/DisplayPanel.java b/src/org/openscience/jmol/app/jmolpanel/DisplayPanel.java
+--- a/src/org/openscience/jmol/app/jmolpanel/DisplayPanel.java
++++ b/src/org/openscience/jmol/app/jmolpanel/DisplayPanel.java
+@@ -24,6 +24,7 @@
+ package org.openscience.jmol.app.jmolpanel;
+ 
+ import java.awt.Dimension;
++import java.awt.image.BufferedImage;
+ import java.awt.Graphics;
+ import java.awt.Graphics2D;
+ import java.awt.Image;
+@@ -155,7 +156,8 @@
+       getSize(dimSize);
+       if (dimSize.width == 0)
+         return;
+-      vwr.setScreenDimension(dimSize.width, dimSize.height);
++      // in 3D Jmol draws its two pictures side by side, each at the panel's size
++      vwr.setScreenDimension(stereo3D == null ? dimSize.width : 2 * dimSize.width, dimSize.height);
+     } else {
+       vwr.setScreenDimension(startupDim.width, startupDim.height);
+     }
+@@ -170,12 +172,17 @@
+ 
+   @Override
+   public void paint(Graphics g) {
++    update3D();
+     updateSize(false); // important for JavaScript, as the update comes too late. 
+     if (dimSize.width == 0)
+       return;
+     if (showPaintTime)
+       startPaintClock();
+-    vwr.renderScreenImage(g, dimSize.width, dimSize.height);
++    if (stereo3D != null) {
++      paint3D(g);
++    } else {
++      vwr.renderScreenImage(g, dimSize.width, dimSize.height);
++    }
+     if (showPaintTime)
+       stopPaintClock();
+   }
+@@ -230,6 +237,18 @@
+       "measurementsCheck", "set showMeasurements");
+   protected Action perspectiveAction = new CheckBoxMenuItemAction(
+       "perspectiveCheck", "set PerspectiveDepth");
++  protected Action enable3DAction = new AbstractAction("enable3DCheck") {
++    @Override
++    public void actionPerformed(ActionEvent e) {
++      set3D(((JCheckBoxMenuItem) e.getSource()).isSelected(), true);
++    }
++  };
++  protected Action displaySettings3DAction = new AbstractAction("displaySettings3D") {
++    @Override
++    public void actionPerformed(ActionEvent e) {
++      Stereo3D.openDisplaySettings(DisplayPanel.this);
++    }
++  };
+   protected Action axesAction = new CheckBoxMenuItemAction("axesCheck",
+       "set showAxes");
+   protected Action boundboxAction = new CheckBoxMenuItemAction("boundboxCheck",
+@@ -339,7 +358,8 @@
+     Action[] a = new Action[] { deleteAction, zoomAction, xlateAction,
+         frontAction, topAction, bottomAction, rightAction, leftAction,
+         defineCenterAction, hydrogensAction, measurementsAction, homeAction,
+-        perspectiveAction, axesAction, boundboxAction, };
++        perspectiveAction, axesAction, boundboxAction, enable3DAction,
++        displaySettings3DAction, };
+     actions.addAll(Arrays.asList(a));
+   }
+ 
+@@ -401,6 +421,96 @@
+             + fmt(timeLast) + "/" + timeAverage + " ms"));
+   }
+ 
++  // Sparky Stereo OS: the display as a declared 3D area (Stereo3D)
++
++  protected Stereo3D stereo3D;
++  private Boolean enable3D;
++  private boolean enable3DByHand;
++
++  /** Enable 3D, the person's one switch; on by default (PreferencesDialog's "enable3D"). */
++  public boolean isEnable3D() {
++    if (enable3D == null) {
++      PreferencesDialog p = jmolPanel.preferencesDialog;
++      enable3D = Boolean.valueOf(p == null
++          || Boolean.parseBoolean(p.currentProperties.getProperty("enable3D", "true")));
++    }
++    return enable3D.booleanValue();
++  }
++
++  /** The preset with 3D: stereo 5 (the left eye's picture on the left), no perspective depth (no vertical difference). */
++  protected void set3D(boolean on, boolean byHand) {
++    enable3D = Boolean.valueOf(on);
++    enable3DByHand |= byHand;
++    PreferencesDialog p = jmolPanel.preferencesDialog;
++    if (byHand && p != null) {
++      p.currentProperties.put("enable3D", String.valueOf(on));
++      p.save();
++    }
++    if (on) {
++      vwr.evalStringQuiet("stereo 5; set perspectiveDepth false");
++    } else {
++      String perspective = (p == null ? "true"
++          : p.currentProperties.getProperty("perspectiveDepth", "true"));
++      vwr.evalStringQuiet("stereo off; set perspectiveDepth " + perspective);
++    }
++    repaint();
++  }
++
++  private boolean preset3D;
++
++  /** Make or remove the 3D area: there is one while Enable 3D is on and Jmol draws its two pictures side by side. */
++  protected void update3D() {
++    if (!haveDisplay || !isShowing())
++      return;
++    if (!preset3D) {
++      preset3D = true;
++      if (isEnable3D()) {
++        set3D(true, false);
++        return;
++      }
++    }
++    boolean want = isEnable3D() && vwr.tm.isStereoDoubleFull();
++    if (want && stereo3D == null) {
++      try {
++        stereo3D = new Stereo3D(frame, this);
++      } catch (Stereo3D.Unavailable e) {
++        if ("not-x11".equals(e.kind))
++          Stereo3D.tell(this, "not-x11", Stereo3D.tr("flatNotX11"), e.getMessage());
++        else if (!"support".equals(e.kind) || e.support > 0 || enable3DByHand)
++          Stereo3D.tell(this, "no-area", Stereo3D.tr("flatNoArea"), e.getMessage());
++        else
++          System.err.println("Jmol 3D: " + e.getMessage());
++        set3D(false, false);
++      }
++    } else if (!want && stereo3D != null) {
++      stereo3D.close();
++      stereo3D = null;
++    }
++  }
++
++  /** Both pictures into the declared window, left eye first; the left eye's picture also in the panel itself. */
++  protected void paint3D(Graphics g) {
++    int w = dimSize.width, h = dimSize.height;
++    stereo3D.place(this);
++    BufferedImage pair = stereo3D.image(w, h);
++    Graphics pg = pair.getGraphics();
++    vwr.renderScreenImage(pg, 2 * w, h);
++    pg.dispose();
++    boolean rightFirst = vwr.tm.getStereoDegrees() < 0;
++    stereo3D.show(pair, rightFirst);
++    int left = rightFirst ? w : 0;
++    g.drawImage(pair, 0, 0, w, h, left, 0, left + w, h, null);
++  }
++
++  @Override
++  public void removeNotify() {
++    if (stereo3D != null) {
++      stereo3D.close();
++      stereo3D = null;
++    }
++    super.removeNotify();
++  }
++
+   public void setJmolSize(Dimension d) {
+     dimSize.width = d.width;
+     dimSize.height = d.height;
+diff -ruN a/src/org/openscience/jmol/app/jmolpanel/GuiMap.java b/src/org/openscience/jmol/app/jmolpanel/GuiMap.java
+--- a/src/org/openscience/jmol/app/jmolpanel/GuiMap.java
++++ b/src/org/openscience/jmol/app/jmolpanel/GuiMap.java
+@@ -163,6 +163,8 @@
+     labels.put("zoom400Script", GT.o(GT.$("{0}%"), "400"));
+     labels.put("zoom800Script", GT.o(GT.$("{0}%"), "800"));
+     labels.put("perspectiveCheck", GT.$("&Perspective Depth"));
++    labels.put("enable3DCheck", Stereo3D.tr("enable3D"));
++    labels.put("displaySettings3D", Stereo3D.tr("displaySettings3D"));
+     labels.put("axesCheck", GT.$("A&xes"));
+     labels.put("boundboxCheck", GT.$("B&ounding Box"));
+     labels.put("hydrogensCheck", GT.$("&Hydrogens"));
+diff -ruN a/src/org/openscience/jmol/app/jmolpanel/JmolPanel.java b/src/org/openscience/jmol/app/jmolpanel/JmolPanel.java
+--- a/src/org/openscience/jmol/app/jmolpanel/JmolPanel.java
++++ b/src/org/openscience/jmol/app/jmolpanel/JmolPanel.java
+@@ -1079,6 +1079,7 @@
+ 
+   protected void setMenuState() {
+     guimap.setSelected("perspectiveCheck", vwr.tm.perspectiveDepth);
++    guimap.setSelected("enable3DCheck", display.isEnable3D() && display.stereo3D != null);
+     guimap.setSelected("hydrogensCheck", vwr.getBoolean(T.showhydrogens));
+     guimap.setSelected("measurementsCheck", vwr.getBoolean(T.showmeasurements));
+     guimap.setSelected("axesCheck", vwr.getShowAxes());
+diff -ruN a/src/org/openscience/jmol/app/jmolpanel/PreferencesDialog.java b/src/org/openscience/jmol/app/jmolpanel/PreferencesDialog.java
+--- a/src/org/openscience/jmol/app/jmolpanel/PreferencesDialog.java
++++ b/src/org/openscience/jmol/app/jmolpanel/PreferencesDialog.java
+@@ -114,7 +114,7 @@
+   private PrefsAction prefsAction = new PrefsAction();
+   private Map<String, Action> commands;
+ 
+-  final static String[] jmolDefaults = { "jmolDefaults", "true",
++  final static String[] jmolDefaults = { "jmolDefaults", "true", "enable3D", "true",
+       "showHydrogens", "true", "showMeasurements", "true", "perspectiveDepth",
+       "true", "showAxes", "false", "showBoundingBox", "false",
+       "antialiasDisplay", "true", "measureAngstroms", "true",
+diff -ruN a/src/org/openscience/jmol/app/jmolpanel/Properties/Jmol-resources.properties b/src/org/openscience/jmol/app/jmolpanel/Properties/Jmol-resources.properties
+--- a/src/org/openscience/jmol/app/jmolpanel/Properties/Jmol-resources.properties
++++ b/src/org/openscience/jmol/app/jmolpanel/Properties/Jmol-resources.properties
+@@ -76,6 +76,7 @@
+ #
+ display=selectMenu atomMenu bondMenu labelMenu vectorMenu - zoomMenu \
+              - perspectiveCheck axesCheck boundboxCheck \
++             - enable3DCheck displaySettings3D \
+              - hydrogensCheck vectorsCheck measurementsCheck - resize
+ 
+ selectMenu=selectAllScript selectNoneScript selectHydrogenScript selectCarbonScript \
+diff -ruN a/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D.properties b/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D.properties
+--- a/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D.properties
++++ b/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D.properties
+@@ -0,0 +1,6 @@
++# Sparky Stereo OS: the sentences of Jmol's 3D area (Stereo3D.java). The translations lane adds the other languages.
++enable3D=Enable 3D
++displaySettings3D=3D display settings...
++flatNoArea=This molecule is shown flat: this desktop does not show 3D areas inside windows.
++flatNotX11=This molecule is shown flat: Jmol's window is not an X11 window here, so it cannot hold a 3D area.
++settingsFailed=The display settings could not be opened.
+diff -ruN a/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D_pt_BR.properties b/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D_pt_BR.properties
+--- a/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D_pt_BR.properties
++++ b/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D_pt_BR.properties
+@@ -0,0 +1,6 @@
++# Sparky Stereo OS: the sentences of Jmol's 3D area (Stereo3D.java), Brazilian Portuguese.
++enable3D=Ativar 3D
++displaySettings3D=Configurações da tela 3D...
++flatNoArea=Esta molécula aparece plana: esta área de trabalho não mostra áreas 3D dentro de janelas.
++flatNotX11=Esta molécula aparece plana: aqui a janela do Jmol não é uma janela X11, então não pode ter uma área 3D.
++settingsFailed=Não foi possível abrir as configurações de tela.
+diff -ruN a/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java b/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
+--- a/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
++++ b/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
+@@ -0,0 +1,307 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later
++ *
++ * Sparky Stereo OS: Jmol's display as a declared 3D area.
++ *
++ * Swing draws the display panel into its frame's X window, so the panel has no window of its own.
++ * Under Stereo KWin a 3D area is an X window that the frame lists and that declares itself full side
++ * by side (libstereo-declare, stereo_declare_x11_child). This class makes, inside the frame's window,
++ * a place window of the panel's size and, inside it, a window two views wide that holds Jmol's two
++ * pictures, left eye first, each at the panel's size; it is declared with the size one view is shown
++ * at, so Stereo KWin shows each picture once, at the panel's place, without resizing it. Neither
++ * window selects events, so the pointer and the keys reach the frame and Swing as before.
++ */
++package org.openscience.jmol.app.jmolpanel;
++
++import java.awt.Component;
++import java.awt.Point;
++import java.awt.Window;
++import java.awt.image.BufferedImage;
++import java.awt.image.DataBufferInt;
++import java.util.HashSet;
++import java.util.MissingResourceException;
++import java.util.ResourceBundle;
++import java.util.Set;
++
++import javax.swing.JOptionPane;
++import javax.swing.JPopupMenu;
++import javax.swing.SwingUtilities;
++import javax.swing.ToolTipManager;
++
++import com.sun.jna.Library;
++import com.sun.jna.Memory;
++import com.sun.jna.Native;
++import com.sun.jna.NativeLong;
++import com.sun.jna.Pointer;
++import com.sun.jna.ptr.IntByReference;
++import com.sun.jna.ptr.NativeLongByReference;
++import com.sun.jna.ptr.PointerByReference;
++
++public class Stereo3D {
++
++  /** stereo_declare_x11_child() with the size one view is shown at */
++  public static final int NEEDED_SUPPORT = 8;
++  private static final int STEREO_SBS_FULL = 3;
++  private static final int STEREO_CLASS_SCIENTIFIC = 4;
++  private static final int ZPIXMAP = 2;
++
++  interface X11 extends Library {
++    Pointer XOpenDisplay(String name);
++    int XCloseDisplay(Pointer display);
++    int XDefaultScreen(Pointer display);
++    Pointer XDefaultVisual(Pointer display, int screen);
++    NativeLong XDefaultRootWindow(Pointer display);
++    NativeLong XInternAtom(Pointer display, String name, int onlyIfExists);
++    int XQueryTree(Pointer display, NativeLong window, NativeLongByReference root,
++                   NativeLongByReference parent, PointerByReference children, IntByReference count);
++    int XGetWindowProperty(Pointer display, NativeLong window, NativeLong property, NativeLong offset,
++                           NativeLong length, int delete, NativeLong type, NativeLongByReference actualType,
++                           IntByReference actualFormat, NativeLongByReference items,
++                           NativeLongByReference bytesAfter, PointerByReference data);
++    int XGetGeometry(Pointer display, NativeLong drawable, NativeLongByReference root, IntByReference x,
++                     IntByReference y, IntByReference width, IntByReference height, IntByReference border,
++                     IntByReference depth);
++    int XTranslateCoordinates(Pointer display, NativeLong from, NativeLong to, int x, int y,
++                              IntByReference toX, IntByReference toY, NativeLongByReference child);
++    NativeLong XCreateSimpleWindow(Pointer display, NativeLong parent, int x, int y, int width, int height,
++                                   int border, NativeLong borderPixel, NativeLong background);
++    int XMapWindow(Pointer display, NativeLong window);
++    int XMoveResizeWindow(Pointer display, NativeLong window, int x, int y, int width, int height);
++    int XDestroyWindow(Pointer display, NativeLong window);
++    int XFlush(Pointer display);
++    int XSync(Pointer display, int discard);
++    Pointer XCreateGC(Pointer display, NativeLong drawable, NativeLong mask, Pointer values);
++    int XFreeGC(Pointer display, Pointer gc);
++    Pointer XCreateImage(Pointer display, Pointer visual, int depth, int format, int offset, Pointer data,
++                         int width, int height, int pad, int bytesPerLine);
++    int XPutImage(Pointer display, NativeLong drawable, Pointer gc, Pointer image, int srcX, int srcY,
++                  int dstX, int dstY, int width, int height);
++    int XFree(Pointer data);
++  }
++
++  interface Declare extends Library {
++    int stereo_supported_x11(Pointer display);
++    int stereo_declare_x11_child(Pointer display, NativeLong parent, NativeLong child, int layout,
++                                 int contentClass, int subclass, int viewWidth, int viewHeight);
++    int stereo_declare_x11_one_view_size(Pointer display, NativeLong window, int width, int height);
++    int stereo_remove_x11_child(Pointer display, NativeLong parent, NativeLong child);
++  }
++
++  /** Why no 3D area could be made. */
++  public static class Unavailable extends Exception {
++    public final String kind;
++    public final int support;
++
++    Unavailable(String kind, int support, String message) {
++      super(message);
++      this.kind = kind;
++      this.support = support;
++    }
++  }
++
++  private static final Set<String> told = new HashSet<String>();
++  private static ResourceBundle words;
++
++  /** One of this class's sentences in the person's language (Stereo3D.properties and its translations). */
++  public static String tr(String key) {
++    try {
++      if (words == null)
++        words = ResourceBundle.getBundle("org.openscience.jmol.app.jmolpanel.Properties.Stereo3D");
++      return words.getString(key);
++    } catch (MissingResourceException e) {
++      return key;
++    }
++  }
++
++  /**
++   * Say a sentence once per session and kind: in a window over Jmol's, opened after the paint that found the
++   * reason (a modal dialog opened inside paint() is never painted), and on standard error (Jmol's console).
++   */
++  public static void tell(final Component parent, String kind, final String sentence, String reason) {
++    System.err.println("Jmol 3D: " + sentence + (reason == null ? "" : " (" + reason + ")"));
++    if (!told.add(kind))
++      return;
++    SwingUtilities.invokeLater(new Runnable() {
++      @Override
++      public void run() {
++        JOptionPane.showMessageDialog(parent, sentence, "Jmol", JOptionPane.INFORMATION_MESSAGE);
++      }
++    });
++  }
++
++  private final X11 x;
++  private final Declare declare;
++  private final Pointer display;
++  private final NativeLong frameWindow, toplevel, place, views;
++  private final Pointer gc, visual;
++  private final int depth;
++  private int placeX = Integer.MIN_VALUE, placeY, width, height;
++  private BufferedImage image;
++  private Memory pixels;
++
++  /** Make the 3D area for a panel of the frame; the panel must be showing. */
++  public Stereo3D(Window frame, Component panel) throws Unavailable {
++    try {
++      x = Native.load("X11", X11.class);
++    } catch (Throwable e) {
++      throw new Unavailable("library", -1, "libX11: " + e);
++    }
++    try {
++      declare = Native.load("stereo-declare", Declare.class);
++    } catch (Throwable e) {
++      throw new Unavailable("library", -1, "libstereo-declare: " + e);
++    }
++    long id;
++    try {
++      id = Native.getWindowID(frame);
++    } catch (Throwable e) {
++      throw new Unavailable("not-x11", -1, "the window has no X11 id: " + e);
++    }
++    if (id == 0)
++      throw new Unavailable("not-x11", -1, "the window has no X11 id");
++    display = x.XOpenDisplay(null);
++    if (display == null)
++      throw new Unavailable("not-x11", -1, "no X11 display");
++    int support = declare.stereo_supported_x11(display);
++    if (support < NEEDED_SUPPORT) {
++      x.XCloseDisplay(display);
++      throw new Unavailable("support", support, "the desktop announces stereo declaration support " + support
++          + "; " + NEEDED_SUPPORT + " is needed for a 3D area inside a window");
++    }
++    frameWindow = new NativeLong(id);
++    toplevel = managedToplevel(frameWindow);
++    IntByReference d = new IntByReference(), i = new IntByReference();
++    x.XGetGeometry(display, frameWindow, new NativeLongByReference(), i, i, i, i, i, d);
++    depth = d.getValue();
++    visual = x.XDefaultVisual(display, x.XDefaultScreen(display));
++    width = Math.max(1, panel.getWidth());
++    height = Math.max(1, panel.getHeight());
++    place = x.XCreateSimpleWindow(display, frameWindow, 0, 0, width, height, 0, new NativeLong(0), new NativeLong(0));
++    views = x.XCreateSimpleWindow(display, place, 0, 0, 2 * width, height, 0, new NativeLong(0), new NativeLong(0));
++    gc = x.XCreateGC(display, views, new NativeLong(0), null);
++    int result = declare.stereo_declare_x11_child(display, toplevel, views, STEREO_SBS_FULL,
++        STEREO_CLASS_SCIENTIFIC, 0, width, height);
++    if (result < 0) {
++      close();
++      throw new Unavailable("declaration", support, "the declaration of the 3D area failed (" + result + ")");
++    }
++    // Swing would draw a light popup inside the frame, under the 3D area: popups and tips get windows of their own
++    JPopupMenu.setDefaultLightWeightPopupEnabled(false);
++    ToolTipManager.sharedInstance().setLightWeightPopupEnabled(false);
++    place(panel);
++    x.XMapWindow(display, views);
++    x.XMapWindow(display, place);
++    x.XSync(display, 0);
++  }
++
++  /** ICCCM 4.1.3.1: the nearest ancestor that carries WM_STATE (the window itself counts). */
++  private NativeLong managedToplevel(NativeLong window) {
++    NativeLong wmState = x.XInternAtom(display, "WM_STATE", 1);
++    NativeLong current = window;
++    for (int guard = 0; guard < 64; guard++) {
++      if (wmState.longValue() != 0 && hasProperty(current, wmState))
++        return current;
++      NativeLongByReference root = new NativeLongByReference(), parent = new NativeLongByReference();
++      PointerByReference children = new PointerByReference();
++      if (x.XQueryTree(display, current, root, parent, children, new IntByReference()) == 0)
++        return current;
++      if (children.getValue() != null)
++        x.XFree(children.getValue());
++      if (parent.getValue().longValue() == 0 || parent.getValue().longValue() == root.getValue().longValue())
++        return current;
++      current = parent.getValue();
++    }
++    return current;
++  }
++
++  private boolean hasProperty(NativeLong window, NativeLong atom) {
++    NativeLongByReference type = new NativeLongByReference();
++    PointerByReference data = new PointerByReference();
++    x.XGetWindowProperty(display, window, atom, new NativeLong(0), new NativeLong(0), 0, new NativeLong(0), type,
++        new IntByReference(), new NativeLongByReference(), new NativeLongByReference(), data);
++    if (data.getValue() != null)
++      x.XFree(data.getValue());
++    return type.getValue().longValue() != 0;
++  }
++
++  /** Follow the panel's place and size in the frame's window. */
++  public void place(Component panel) {
++    Point onScreen;
++    try {
++      onScreen = panel.getLocationOnScreen();
++    } catch (RuntimeException e) {
++      return;
++    }
++    IntByReference fx = new IntByReference(), fy = new IntByReference();
++    x.XTranslateCoordinates(display, frameWindow, x.XDefaultRootWindow(display), 0, 0, fx, fy,
++        new NativeLongByReference());
++    int px = onScreen.x - fx.getValue(), py = onScreen.y - fy.getValue();
++    int w = Math.max(1, panel.getWidth()), h = Math.max(1, panel.getHeight());
++    if (px == placeX && py == placeY && w == width && h == height)
++      return;
++    placeX = px;
++    placeY = py;
++    boolean resized = w != width || h != height;
++    width = w;
++    height = h;
++    x.XMoveResizeWindow(display, place, px, py, w, h);
++    x.XMoveResizeWindow(display, views, 0, 0, 2 * w, h);
++    if (resized)
++      declare.stereo_declare_x11_one_view_size(display, views, w, h);
++    x.XFlush(display);
++  }
++
++  /** An image two views wide for Jmol to draw both pictures into. */
++  public BufferedImage image(int w, int h) {
++    if (image == null || image.getWidth() != 2 * w || image.getHeight() != h)
++      image = new BufferedImage(2 * w, h, BufferedImage.TYPE_INT_RGB);
++    return image;
++  }
++
++  /** Put the two pictures into the declared window, left eye first; rightFirst exchanges the halves. */
++  public void show(BufferedImage pair, boolean rightFirst) {
++    int w2 = pair.getWidth(), h = pair.getHeight(), w = w2 / 2;
++    int[] src = ((DataBufferInt) pair.getRaster().getDataBuffer()).getData();
++    int[] row = new int[w2];
++    long bytes = 4L * w2 * h;
++    if (pixels == null || pixels.size() != bytes)
++      pixels = new Memory(bytes);
++    for (int y = 0; y < h; y++) {
++      int base = y * w2;
++      for (int i = 0; i < w2; i++) {
++        int from = rightFirst ? (i < w ? i + w : i - w) : i;
++        row[i] = src[base + from] | 0xff000000;
++      }
++      pixels.write(4L * base, row, 0, w2);
++    }
++    Pointer xImage = x.XCreateImage(display, visual, depth, ZPIXMAP, 0, pixels, w2, h, 32, 0);
++    if (xImage == null)
++      return;
++    x.XPutImage(display, views, gc, xImage, 0, 0, 0, 0, w2, h);
++    x.XFree(xImage);
++    x.XFlush(display);
++  }
++
++  /** Take the declaration back and remove both windows. */
++  public void close() {
++    declare.stereo_remove_x11_child(display, toplevel, views);
++    if (gc != null)
++      x.XFreeGC(display, gc);
++    x.XDestroyWindow(display, views);
++    x.XDestroyWindow(display, place);
++    x.XSync(display, 0);
++    x.XCloseDisplay(display);
++  }
++
++  /** Open the desktop's display settings (KScreen), where a screen's 3D mode and the depth limits are set. */
++  public static void openDisplaySettings(Component parent) {
++    try {
++      new ProcessBuilder("kcmshell6", "kcm_kscreen").start();
++    } catch (Exception e) {
++      tell(parent, "settings", tr("settingsFailed"), e.getMessage());
++    }
++  }
++
++  static void runLater(Runnable r) {
++    SwingUtilities.invokeLater(r);
++  }
++}

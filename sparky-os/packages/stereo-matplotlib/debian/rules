@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+export PYBUILD_NAME=stereo-matplotlib
+
+%:
+	dh $@ --buildsystem=pybuild
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	MPLBACKEND=Agg MPLCONFIGDIR=$(CURDIR)/debian/mplconfig PYTHONPATH=$(CURDIR) python3 -m unittest discover -s tests -v
+endif
+
+execute_after_dh_auto_install:
+	set -e; for po in po/*.po; do \
+		lang=$$(basename $$po .po); \
+		mkdir -p debian/python3-stereo-matplotlib/usr/share/locale/$$lang/LC_MESSAGES; \
+		msgfmt --check -o debian/python3-stereo-matplotlib/usr/share/locale/$$lang/LC_MESSAGES/stereo-matplotlib.mo $$po; \
+	done
