@@ -1,0 +1,110 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Make a sibling SRT with Vibe. Never modify the source or replace a caption file."""
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+PT = os.environ.get('LC_ALL', os.environ.get('LC_MESSAGES', os.environ.get('LANG', ''))).startswith('pt_BR')
+STRINGS = {
+    'title': ('Make captions (Vibe)', 'Criar legendas (Vibe)'),
+    'file': ('Cannot read this local media file: {path}', 'Não é possível ler este arquivo de mídia local: {path}'),
+    'settings': ('Cannot read Vibe settings. Open Vibe and select an installed speech model, then try again.', 'Não é possível ler as configurações do Vibe. Abra o Vibe, selecione um modelo de fala instalado e tente novamente.'),
+    'model': ('No installed speech model is selected in Vibe. Select one in Vibe, then try again.', 'Nenhum modelo de fala instalado está selecionado no Vibe. Selecione um no Vibe e tente novamente.'),
+    'exists': ('Captions already exist; they were kept: {path}', 'As legendas já existem e foram preservadas: {path}'),
+    'engine': ('Vibe could not create captions: {reason}', 'O Vibe não conseguiu criar as legendas: {reason}'),
+    'empty': ('Vibe returned no timed speech. No caption file was created.', 'O Vibe não retornou fala com marcações de tempo. Nenhum arquivo de legenda foi criado.'),
+    'saved': ('Captions saved: {path}', 'Legendas salvas: {path}'),
+    'args': ('Choose one or more local audio or video files.', 'Escolha um ou mais arquivos locais de áudio ou vídeo.'),
+}
+
+
+def message(key, **values):
+    text = STRINGS[key][1 if PT else 0].format(**values)
+    print(text, file=sys.stderr)
+    if os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'):
+        try:
+            subprocess.run(['kdialog', '--title', STRINGS['title'][1 if PT else 0], '--passivepopup', text, '8'], check=False)
+        except OSError:
+            pass
+
+
+def to_srt(output):
+    entries = []
+    for line in output.splitlines():
+        match = re.fullmatch(r'\[(\d+:\d\d:\d\d\.\d{3}) --> (\d+:\d\d:\d\d\.\d{3})\] (.*)', line)
+        if match and match[3].strip():
+            entries.append(f'{len(entries)+1}\n{match[1].replace(".", ",")} --> {match[2].replace(".", ",")}\n{match[3].strip()}\n')
+        elif line.strip():
+            raise ValueError('unrecognized timed transcription output')
+    return '\n'.join(entries)
+
+
+def caption(path, settings, model):
+    output = path.with_suffix('.srt')
+    if os.path.lexists(output):
+        message('exists', path=output)
+        return False
+    command = ['vibe-server', 'transcribe', str(model), str(path), '--threads', '4',
+               '--word-timestamps', '--max-segment-len', '80']
+    device = settings.get('model.gpuDevice')
+    if isinstance(device, int) and not isinstance(device, bool) and device >= 0:
+        command += ['--gpu-device', str(device)]
+    if settings.get('transcription.ffmpegOptions', {}).get('normalize_loudness'):
+        command.append('--enhance-audio')
+    fd, temporary = tempfile.mkstemp(prefix='.' + output.name + '.', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            result = subprocess.run(command, text=True, capture_output=True, check=True,
+                                    env={**os.environ, 'OMP_NUM_THREADS': '4'})
+            captions = to_srt(result.stdout)
+            if not captions:
+                message('empty')
+                return False
+            stream.write(captions + '\n')
+            stream.flush(); os.fsync(stream.fileno())
+        try:
+            os.link(temporary, output)
+        except FileExistsError:
+            message('exists', path=output)
+            return False
+        message('saved', path=output)
+        return True
+    finally:
+        os.unlink(temporary)
+
+
+def main():
+    files = sys.argv[1:]
+    if files[:1] == ['--']:
+        files = files[1:]
+    if not files:
+        message('args'); return 2
+    store = Path(os.environ.get('XDG_DATA_HOME', str(Path.home()/'.local/share'))) / 'github.com.thewh1teagle.vibe/app_config.json'
+    try:
+        settings = json.loads(store.read_text())
+    except (OSError, ValueError):
+        message('settings'); return 1
+    model = settings.get('model.path')
+    if not isinstance(model, str) or not Path(model).is_absolute() or not Path(model).is_file() or not os.access(model, os.R_OK):
+        message('model'); return 1
+    success = True
+    for file in files:
+        path = Path(file).absolute()
+        if '://' in file or not path.is_file() or not os.access(path, os.R_OK):
+            message('file', path=file); success=False; continue
+        try:
+            success = caption(path, settings, Path(model)) and success
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            reason = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
+            message('engine', reason=reason); success=False
+    return 0 if success else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
