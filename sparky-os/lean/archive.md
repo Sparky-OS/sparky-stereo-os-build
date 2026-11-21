@@ -209,14 +209,15 @@ An unchanged candidate index whose signed Date already precedes publication need
 The previous edition's exact sibling universe is tried in the candidate view first.
 No selected candidate identity may be present in that previous snapshot or either public archive view.
 Only a complete APT dependency-solver refusal is eligible for the dated or mixed retry.
-Every conditional-policy attempt must name a terminal unsatisfied dependency or conflict owner outside the selected candidate package names.
+Every conditional-policy attempt must record its terminal unsatisfied relation or conflict.
+An unavailable external provider is judged by that provider, not solely by the package carrying the relation; the checked publication-time absence rule below applies even when its owner is taken.
 The gate retains the complete logs and hashes and names those external owners in `dated-predecessor-eligibility.json`.
 APT's preceding request chain is not the terminal cause: it necessarily includes the predecessor that was requested.
-Unknown diagnostic forms, candidate-owned failures, download failures, signature failures, extraction failures, space refusals and link failures do not authorize the retry.
+Unknown diagnostic forms, a missing provider belonging to either edition set, download failures, signature failures, extraction failures, space refusals and link failures do not authorize the publication-time absence exception.
 The parser accepts APT's terminal conflicting-assignment diagnostic and its classic unmet-dependency rows; ambiguity fails closed.
 
 The dated or mixed retry uses only the unchanged previous sibling snapshot.
-It must solve, link and pass applicable start probes there; failure in both views still blocks.
+It must solve, link and pass applicable start probes there; failure in both views blocks unless the publication-time absence rule below proves that no usable baseline existed.
 The previous build's narrow Recommends probe also stays in its chosen view.
 The candidate always solves, links and starts in the candidate view, with the existing regression checks unchanged.
 Every input result identifies its predecessor view and each archive’s view, reason and InRelease hash; the successful summary counts dated and mixed baselines. A mixed-view solver refusal retains every attempt and identifies the named packages and archives.
@@ -233,3 +234,37 @@ Check `sha256sum -c SHA256SUMS` in every architecture directory and retain the c
 The publication step must copy this evidence directory into the round's supply-chain record before the round goes online, then verify its sums there.
 The archive-view record identifies inputs; it does not by itself certify a successful whole-pool gate.
 A round published without its archive views cannot later serve as a dated predecessor for an archive that moves; an independently authenticated snapshot service is then required.
+
+## A published predecessor already uninstallable at publication
+
+A relation owner can be one of the selected candidate names while its missing provider is wholly external.
+The opt-in historical mode checks concrete Package names and virtual Provides in the candidate set, the full previous edition set, and every authenticated Packages index of both views.
+A provider present in any of those sets is not absent, even when its version cannot satisfy the relation.
+An edition-owned provider therefore cannot enter this exception.
+
+After a complete current-view solver refusal, the gate walks only mandatory single-alternative Depends and Pre-Depends through matching previous-edition controls from the requested predecessor.
+The required path and the exact missing relation must be supported by a retained solver attempt.
+Other conditional-policy attempts are retained too, including a final mutually conflicting policy combination.
+It does not use a missing dependency of an unrelated previous package as evidence about this input.
+The predecessor is then solved again with its unchanged siblings in the authenticated dated or mixed view.
+A dated success remains a real baseline; it never enters the no-baseline case.
+A dated failure qualifies as already uninstallable only when it confirms the same required external name, absent from every provider set in both views.
+The unchanged-index archive exceptions still require their search records, equal signed bytes, and no solver attribution to those archives.
+
+The evidence records the requested input and predecessor, publication instant, required relation path, previous input hashes, all attempts and their full lines, both authenticated index views, and the same-name candidate relation owner's replacement dependencies and their actual provider package/version identities.
+The result says `predecessor view=uninstallable-at-publication`.
+The candidate must qualify in its current view and pass the existing baseline-free link checks and its own start probes in full.
+No predecessor failure excuses a candidate failure.
+The summary lists these repairs under `published predecessor not installable at its publication`; the round description names them as repairs of already published breakage.
+
+Use `--collect-predecessor-stops` for a complete inventory of uncovered predecessor-eligibility refusals.
+Each refusal is printed and retained in `predecessor-stops.json`; checking continues with the next input and the invocation exits 1 if any remains.
+`uninstallable-predecessors.json` holds every input covered by the checked absence rule.
+A candidate link failure, space refusal or initialization failure still stops normally, and neither an incomplete run nor an uncovered refusal prints a passing whole-pool result.
+Without the option the gate still stops at its first refusal.
+The signed offline controls cover default-mode refusal, absent external-provider success, both edition-owned provider refusals, dated provider success using a real baseline, continuation after an uncovered stop, and a real missing-library candidate regression that still fails without a baseline.
+
+Symptom: a published Perl binding requires an ABI name that neither the current nor its own publication-time signed indexes provides, while the successor depends on the ABI those indexes actually provide.
+Cause: the old binding was already uninstallable when published; its relation owner having a successor does not make the absent external ABI an edition package.
+Fix: establish the absence in both complete views, retain every solver attempt and qualify the candidate with no usable baseline.
+Found by: the first solver attempts named the old ABI, the last named conflicting driver policies, and the signed Packages records identified the current runtime's newer Provides.

@@ -472,8 +472,15 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
                     # no room is the machine's state, not the previous edition's: the gate's one-at-a-time recheck takes it
                     raise
                 except (OSError, package.Invalid) as exc:
-                    raise package.Invalid(f'{Path(previous_deb).name}: previous edition dependency qualification '
+                    from .historical import EligibilityStop
+                    error = EligibilityStop if isinstance(exc, EligibilityStop) else package.Invalid
+                    raise error(f'{Path(previous_deb).name}: previous edition dependency qualification '
                                           f'failed; provide the matching previous sibling snapshot:\n{exc}') from exc
+            if previous_qualified is None:
+                # The checked historical rule established no usable baseline.
+                # Run the existing baseline-free checks in full, without old failures
+                # excusing any candidate result. The caller still runs candidate smoke.
+                return compare(new_deb, qualified=qualified, archive_context=archive_context, siblings=siblings)
             try:
                 with tempfile.TemporaryDirectory(prefix='inspect-old-', dir=previous_qualified.directory) as old_root:
                     extract(previous_deb, old_root, previous_qualified.owner.ensure_space)

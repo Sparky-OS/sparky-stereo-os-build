@@ -229,7 +229,7 @@ def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
 
 def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=(),
                previous_siblings=(), min_free_gib=None, root_min_free_gib=1,
-               previous_archive_config=None, previous_published_at=None, previous_archive_policy=None, archive_evidence=None):
+               previous_archive_config=None, previous_published_at=None, previous_archive_policy=None, archive_evidence=None, collect_predecessor_stops=False):
     """Qualify edition snapshots, optionally using a checked dated view for an unsolvable predecessor."""
     archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
     scratch = scratch or os.environ.get('SPARKY_LC_SCRATCH')
@@ -255,6 +255,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
     _LINK.update(contexts=contexts, smoke=smoke_table, plan=[], private={})
     stop = None
     dated_count = mixed_count = 0
+    eligibility_stops, unusable = [], []
     try:
         for deb in debs:
             arch = controls[deb]['Architecture']
@@ -307,15 +308,37 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
                     dated_count += 1
                 if view == 'mixed':
                     mixed_count += 1
+            if predecessor.get('view') == 'uninstallable-at-publication':
+                unusable.append({'input': str(_LINK['plan'][index][0]), **predecessor})
+                for row in predecessor['missing_relations']:
+                    print(f'lc1: published predecessor not installable at its publication: '
+                          f'{Path(_LINK["plan"][index][0]).name}: missing {row["name"]}; '
+                          f'successor providers={json.dumps(row["successor_dependencies"], sort_keys=True)}')
             if error is not None:
-                raise error
+                from .historical import EligibilityStop
+                if collect_predecessor_stops and isinstance(error, EligibilityStop):
+                    entry = {'input': str(_LINK['plan'][index][0]), 'error': str(error), **predecessor}
+                    eligibility_stops.append(entry)
+                    print('lc1: predecessor eligibility STOP: ' + json.dumps(entry, sort_keys=True))
+                else:
+                    raise error
     finally:
+        if collect_predecessor_stops:
+            Path(scratch).mkdir(parents=True, exist_ok=True)
+            (Path(scratch) / 'predecessor-stops.json').write_text(json.dumps(eligibility_stops, indent=2) + '\n')
+            (Path(scratch) / 'uninstallable-predecessors.json').write_text(json.dumps(unusable, indent=2) + '\n')
         _LINK.clear()
     if stop is not None:
         raise stop
-    print(f'lc1: archive-qualified link check passed for {len(debs)} packages')
     if previous_archive_config:
         print(f'lc1: dated predecessor baselines: {dated_count} of {len(debs)}; mixed dated/current: {mixed_count}')
+    print(f'lc1: published predecessor not installable at its publication: {len(unusable)} inputs')
+    for entry in unusable:
+        print('lc1: repaired published input: ' + Path(entry['input']).name)
+    if eligibility_stops:
+        raise package.Invalid(f'{len(eligibility_stops)} uncovered predecessor eligibility stops after '
+                              f'{len(debs)} inputs; see {Path(scratch) / "predecessor-stops.json"}')
+    print(f'lc1: archive-qualified link check passed for {len(debs)} packages')
 
 
 _LINK = {}
@@ -357,6 +380,7 @@ def main():
     link.add_argument('--previous-dir', help='directory holding the pre-lc1 builds to compare with')
     link.add_argument('--smoke', default=str(Path(__file__).with_name('smoke.tsv')), help='programs to start with LD_BIND_NOW=1')
     link.add_argument('--archive-config', help='JSON signed public archive sources (SPARKY_LC_ARCHIVE_CONFIG)')
+    link.add_argument('--collect-predecessor-stops', action='store_true', help='finish all inputs after recorded predecessor eligibility refusals; any uncovered refusal still exits 1')
     link.add_argument('--previous-archive-config', help='same signed archives in a dated predecessor view')
     link.add_argument('--previous-archive-policy', help='hashed per-archive search evidence for unchanged unrelated indexes')
     link.add_argument('--archive-evidence', help='retain authenticated archive views here for the round supply-chain record')
@@ -396,7 +420,7 @@ def main():
                        Path(args.siblings_file).read_text().splitlines() if args.siblings_file else (),
                        Path(args.previous_siblings_file).read_text().splitlines() if args.previous_siblings_file else (),
                        args.min_free_gib, args.root_min_free_gib,
-                       args.previous_archive_config, args.previous_published_at, args.previous_archive_policy, args.archive_evidence)
+                       args.previous_archive_config, args.previous_published_at, args.previous_archive_policy, args.archive_evidence, args.collect_predecessor_stops)
         elif args.command == 'check-selection':
             paths = [line.split('\t')[0] for line in Path(args.tsv).read_text().splitlines()
                      if line.split('\t')[-1] != 'source']
