@@ -257,4 +257,7 @@ EOF
 	grep -v -x -F -f <(sed 's|^/||' DEBIAN/conffiles) | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+# the source rebuilds to the same package, and check-debs writes the build record, as sparky-stereo-boot's recipe does
+python3 "$HERE/../../repo/rebuild-script-source.py" "$OUT/${PKG}_${VERSION}.dsc"
+(cd "$OUT" && PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-debs "./${PKG}_${VERSION}_all.deb")
 echo "built $OUT/${PKG}_${VERSION}_all.deb"
