@@ -14,6 +14,8 @@
 #   OUT    receives the .deb, .changes, .buildinfo and build-record files and a SHA256SUMS
 # SPARKY_LC_ARCHIVE_DIR (sources.json and its keyrings, mounted at /archive) is required, as for build-dh-lean.sh;
 # SPARKY_CONTAINER_PREFIX (optional) starts the container name (a lane's own prefix). SPARKY_LC_PREVIOUS_DIR (earlier +lc1 builds the gate compares with) is optional. CPUS (default 4).
+# SPARKY_LC_SIBLINGS_DIR (optional): a folder of .deb files built for this one and not published yet (a library whose new
+# version it depends on); the link gate takes them as edition siblings (lean/debhelper.py, SPARKY_LC_SIBLINGS_FILE).
 # Last update 2026/11/07
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -26,6 +28,9 @@ case $ARCH in amd64) FLAGS=-b ;; i386) FLAGS=-B ;; *) echo "unknown architecture
 PREV_MOUNT=() PREV_ENV=()
 if [ -n "${SPARKY_LC_PREVIOUS_DIR:-}" ]; then
 	PREV_MOUNT=(-v "$(realpath "$SPARKY_LC_PREVIOUS_DIR")":/prev:ro) PREV_ENV=(-e SPARKY_LC_PREVIOUS_DIR=/prev)
+fi
+if [ -n "${SPARKY_LC_SIBLINGS_DIR:-}" ]; then
+	PREV_MOUNT+=(-v "$(realpath "$SPARKY_LC_SIBLINGS_DIR")":/siblings:ro) PREV_ENV+=(-e SIBLINGS=1)
 fi
 [ ! -e "$OUT" ] || [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 2; }
 mkdir -p "$OUT"
@@ -59,7 +64,12 @@ docker run --ulimit core=1 --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTA
 	runuser -u builder -- dpkg-source -x /src/$DSC tree >/dev/null
 	apt-get -y --no-install-recommends build-dep ./tree >/work/build-dep.log 2>&1 || { tail -20 /work/build-dep.log; exit 1; }
 	cd tree
-	runuser -u builder -- env SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH=/work/link-scratch dpkg-buildpackage -us -uc $FLAGS -j4
+	sib=()
+	if [ -n "${SIBLINGS:-}" ]; then
+		find /siblings -maxdepth 1 -name "*.deb" ! -name "*-dbgsym_*" ! -name "*-lc-hr_*" | sort > /work/siblings.txt
+		sib=(SPARKY_LC_SIBLINGS_FILE=/work/siblings.txt)
+	fi
+	runuser -u builder -- env SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH=/work/link-scratch "${sib[@]}" dpkg-buildpackage -us -uc $FLAGS -j4
 	cd /work/build
 	PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/build/*.deb
 	mv /work/build/*.deb /work/build/*.changes /work/build/*.buildinfo /work/build/*.sparky-build.json /work/ 2>/dev/null || true

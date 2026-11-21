@@ -1,0 +1,71 @@
+Description: Render presets that write a stereoscopic 3D video, marked
+ A new group, Stereoscopic 3D, with H.264 and HEVC in MP4 and Matroska. Each writes
+ the project's frames as they are, full side by side with the left eye first, and
+ asks MLT's avformat consumer for stereo3d=side_by_side: the frame packing
+ arrangement SEI (H.264 D.2.26, by libx264; H.265 D.3.16, by FFmpeg's
+ hevc_metadata in the edition's MLT), Matroska's StereoMode 1 (RFC 9559,
+ 5.1.4.1.28.3) and MP4's st3d box, which FFmpeg's MP4 muxer writes only with
+ strict=-1 (FF_COMPLIANCE_UNOFFICIAL). A project with no 3D clip, or whose frames
+ the person declared packed another way, is refused with a message saying why,
+ so a 2D video is never marked 3D.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-20
+
+--- a/data/profiles.xml
++++ b/data/profiles.xml
+@@ -39,6 +39,29 @@
+    args="properties=x265-medium f=mp4 vcodec=libx265 crf=%quality:open-gop=0 acodec=aac ab=%audiobitrate+'k'"
+    defaultspeedindex="6" speeds="preset=veryslow;preset=slower;preset=slow;preset=medium;preset=fast;preset=faster;preset=veryfast;preset=superfast;preset=ultrafast"/>
+  </group>
++ <group renderer="avformat" type="av" id="stereo3d">
++  <name>Stereoscopic 3D</name>
++  <profile name="3D MP4-H264/AAC" extension="mp4"
++   qualities="15,45" defaultquality="23"
++   audiobitrates="64,128,160,256,384" defaultaudiobitrate="160"
++   args="f=mp4 movflags=+faststart strict=-1 vcodec=libx264 crf=%quality g=15 acodec=aac ab=%audiobitrate+'k' stereo3d=side_by_side"
++   defaultspeedindex="6" speeds="preset=veryslow;preset=slower;preset=slow;preset=medium;preset=fast;preset=faster;preset=veryfast;preset=superfast;preset=ultrafast"/>
++  <profile name="3D Matroska-H264/AAC" extension="mkv"
++   qualities="15,45" defaultquality="23"
++   audiobitrates="64,128,160,256,384" defaultaudiobitrate="160"
++   args="f=matroska vcodec=libx264 crf=%quality g=15 acodec=aac ab=%audiobitrate+'k' stereo3d=side_by_side"
++   defaultspeedindex="6" speeds="preset=veryslow;preset=slower;preset=slow;preset=medium;preset=fast;preset=faster;preset=veryfast;preset=superfast;preset=ultrafast"/>
++  <profile name="3D MP4-H265 (HEVC)" extension="mp4"
++   qualities="15,45" defaultquality="28"
++   audiobitrates="64,128,160,256,384" defaultaudiobitrate="160"
++   args="properties=x265-medium f=mp4 movflags=+faststart strict=-1 vcodec=libx265 crf=%quality:open-gop=0 acodec=aac ab=%audiobitrate+'k' stereo3d=side_by_side"
++   defaultspeedindex="6" speeds="preset=veryslow;preset=slower;preset=slow;preset=medium;preset=fast;preset=faster;preset=veryfast;preset=superfast;preset=ultrafast"/>
++  <profile name="3D Matroska-H265 (HEVC)" extension="mkv"
++   qualities="15,45" defaultquality="28"
++   audiobitrates="64,128,160,256,384" defaultaudiobitrate="160"
++   args="properties=x265-medium f=matroska vcodec=libx265 crf=%quality:open-gop=0 acodec=aac ab=%audiobitrate+'k' stereo3d=side_by_side"
++   defaultspeedindex="6" speeds="preset=veryslow;preset=slower;preset=slow;preset=medium;preset=fast;preset=faster;preset=veryfast;preset=superfast;preset=ultrafast"/>
++ </group>
+  <group renderer="avformat" type="av" id="alpha">
+    <name>Video with Alpha</name>
+   <profile name="Alpha VP8" extension="webm"
+--- a/src/render/renderrequest.cpp
++++ b/src/render/renderrequest.cpp
+@@ -128,6 +128,22 @@ std::vector<RenderRequest::RenderJob> Re
+ {
+     m_errors.clear();
+ 
++    // The stereoscopic 3D presets write the project's frames as full side by side, the left eye first, and mark them so:
++    // a project that is not 3D, or whose frames the person declared packed another way, is not rendered with them
++    if (m_presetParams.contains(QStringLiteral("stereo3d"))) {
++        const Stereo3D::Format stereo = pCore->currentDoc()->stereo3DFormat();
++        if (!stereo.isStereo()) {
++            addErrorMessage(i18n("This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."));
++            return {};
++        }
++        if (stereo.packing != Stereo3D::Packing::SideBySide || stereo.rightFirst) {
++            addErrorMessage(i18n("The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the "
++                                 "Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu.",
++                                 Stereo3D::description(stereo)));
++            return {};
++        }
++    }
++
+     QString playlistPath = generatePlaylistFile();
+     if (playlistPath.isEmpty()) {
+         return {};

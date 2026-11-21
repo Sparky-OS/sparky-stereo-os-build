@@ -1,0 +1,38 @@
+Description: EDITION-ONLY show a 3D video in 3D by default
+ Daniel Ramos, 2026-10-14, answering the stereo integrations study: "Kdenlive
+ 3D preview on by default on a stereo desktop: YES." Both monitors now start
+ with Preview at 3D (stereo3d_preview and stereo3d_clip_preview, 2). The
+ monitor offers 3D only where the compositor takes stereo content
+ (StereoLayer::isSupported(): kde_stereo_content_manager_v1 beside
+ wl_subcompositor, wp_viewporter and wl_shm), so on any other desktop the
+ menu has no 3D entry, the packed frame is shown as before, and nothing is
+ said. A person's own choice is kept: KConfig writes a value that differs
+ from this default, Packed Frame as It Is included
+ (KConfigSkeletonGenericItem::writeConfig).
+ .
+ The edition's build only; the patches offered upstream keep the packed
+ frame as the default.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-20
+
+--- a/src/kdenlivesettings.kcfg
++++ b/src/kdenlivesettings.kcfg
+@@ -600,13 +600,13 @@
+     </entry>
+ 
+     <entry name="stereo3d_preview" type="Int">
+-      <label>How the monitors show a stereoscopic 3D video: 0 the packed frame as it is, 1 the left eye's view only, 2 in a 3D window. The clip monitor has its own, stereo3d_clip_preview.</label>
+-      <default>0</default>
++      <label>How the monitors show a stereoscopic 3D video: 0 the packed frame as it is, 1 the left eye's view only, 2 in 3D, the monitor itself the 3D area, where the compositor takes stereo content. The clip monitor has its own, stereo3d_clip_preview.</label>
++      <default>2</default>
+     </entry>
+ 
+     <entry name="stereo3d_clip_preview" type="Int">
+-      <label>How the clip monitor shows a stereoscopic 3D video: 0 the packed frame as it is, 1 the left eye's view only, 2 in a 3D window.</label>
+-      <default>0</default>
++      <label>How the clip monitor shows a stereoscopic 3D video: 0 the packed frame as it is, 1 the left eye's view only, 2 in 3D, the monitor itself the 3D area, where the compositor takes stereo content.</label>
++      <default>2</default>
+     </entry>
+ 
+     <entry name="monitor_background" type="String">
