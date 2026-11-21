@@ -130,3 +130,63 @@ E: Unable to satisfy dependencies. Reached two conflicting assignments:
       2. policy-a:amd64 Conflicts policy-b
 '''
     assert historical.failure_owners(text) == ['policy-a']
+
+
+def mixed_fixture(tmp_path, implicated=False, different=False):
+    import hashlib
+    current, old, before, after, icons1, icons2 = fixture(tmp_path)
+    extra = []
+    if implicated:
+        extra.append(deb(tmp_path/'third-ext', 'external-framework', '2', depends='edition-icons (>= 2)'))
+    third = signed_archive(tmp_path/'third', additional=extra,
+        variants=[('current', lambda x: x, 'Wed, 28 Oct 2026 00:00:00 UTC'),
+                  ('changed', lambda x: x+'\n', 'Wed, 28 Oct 2026 00:00:00 UTC')])
+    third_now = json.loads((third.parent/'current/archive.json').read_text())[0]
+    third_old = json.loads((third.parent/('changed' if different else 'current')/'archive.json').read_text())[0]
+    candidate = json.loads(current.read_text()) + [third_now]
+    previous = json.loads(old.read_text()) + [third_old]
+    (tmp_path/'current.json').write_text(json.dumps(candidate))
+    (tmp_path/'previous.json').write_text(json.dumps(previous))
+    proof = tmp_path/'search.json';proof.write_text(json.dumps({'fixture': 'no retained older third-party indexes'}))
+    policy = {'publication': '2026-10-27T00:00:00Z', 'candidate_frozen': {'2': {
+        'uri': third_now['uri'], 'suite': third_now['suite'], 'searches': [
+            {'method': method, 'result': 'no-dated-signed-copy', 'summary': 'isolated synthetic archive search',
+             'files': [{'path': str(proof), 'sha256': hashlib.sha256(proof.read_bytes()).hexdigest()}]}
+            for method in ['official-mirrors', 'retained-baseline', 'archive-search']]}}}
+    (tmp_path/'policy.json').write_text(json.dumps(policy))
+    return dict(debs=[after], archive_config=tmp_path/'current.json', scratch=tmp_path/'scratch',
+                siblings=[icons2], previous_siblings=[before, icons1],
+                previous_archive_config=tmp_path/'previous.json', previous_archive_policy=tmp_path/'policy.json',
+                previous_published_at=policy['publication'], archive_evidence=tmp_path/'round-evidence')
+
+
+def test_unrelated_current_archive_with_search_proof_is_allowed(tmp_path, capsys):
+    args = mixed_fixture(tmp_path)
+    release.check_link(**args)
+    output = capsys.readouterr().out
+    assert 'predecessor view=mixed' in output
+    assert 'no dated signed copy; bound search evidence; absent from solver failure' in output
+    assert 'mixed dated/current: 1' in output
+    saved = tmp_path/'round-evidence/amd64'
+    assert (saved/'archive-view.json').is_file()
+    subprocess.run(['sha256sum', '-c', 'SHA256SUMS'], cwd=saved, check=True, stdout=subprocess.DEVNULL)
+    assert len(list((saved/'state/lists').glob('*InRelease'))) == 2
+
+
+def test_implicated_archive_with_only_a_later_index_still_blocks(tmp_path):
+    args = mixed_fixture(tmp_path, implicated=True)
+    with pytest.raises(package.Invalid, match='solver failure names an archive with only a later index'):
+        release.check_link(**args)
+
+
+def test_reused_archive_must_equal_the_candidate_index(tmp_path):
+    args = mixed_fixture(tmp_path, different=True)
+    with pytest.raises(package.Invalid, match='differs from candidate frozen index'):
+        release.check_link(**args)
+
+
+def test_missing_or_changed_search_evidence_blocks(tmp_path):
+    args = mixed_fixture(tmp_path)
+    (tmp_path/'search.json').write_text('{}')
+    with pytest.raises(package.Invalid, match='search evidence missing or changed'):
+        release.check_link(**args)
