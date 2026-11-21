@@ -188,7 +188,7 @@ def providers(controls):
         # Presence is conservative, not a second archive-policy validator. Some
         # signed third-party indexes retain legacy mixed-case aliases that APT
         # accepts; retain their literal names rather than rejecting the index.
-        names = [obj['Package']] + [entry.strip().split()[0].split(':', 1)[0]
+        names = [obj['Package']] + [re.split(r'[\s(:]', entry.strip(), maxsplit=1)[0]
                                   for entry in obj.get('Provides', '').split(',') if entry.strip()]
         for name in names:
             result.setdefault(name, []).append({'identity': archive.identity(obj), 'archive': source,
@@ -309,7 +309,10 @@ class PreviousView:
                     path = chain + [edge]
                     if name in previous:
                         target = previous[name]
-                        if not operator or archive.version_matches(target['Version'], operator, version):
+                        alternatives = (previous_providers.get(name, []) + self.current_providers.get(name, [])
+                                        + self.dated_providers.get(name, []))
+                        unique_owner = all(p['identity'][0] == name for p in alternatives)
+                        if unique_owner and (not operator or archive.version_matches(target['Version'], operator, version)):
                             pending.append((name, path))
                     if any(name in p for p in (self.candidate_providers, previous_providers,
                                                self.current_providers, self.dated_providers)):
