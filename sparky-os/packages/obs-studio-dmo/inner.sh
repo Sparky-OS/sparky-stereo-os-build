@@ -18,6 +18,10 @@ for p in "$HERE"/patches/*.patch; do
 	cp "$p" debian/patches/
 	basename "$p" >> debian/patches/series
 done
+# patch 0001 adds three exported functions to libobs, so a program linked against them needs this build: the shlibs
+# minimum moves to it (Debian Policy 8.6, shared library ABI changes); the other packages keep dh_makeshlibs as it was
+printf '\noverride_dh_makeshlibs:\n\tdh_makeshlibs -plibobs0t64 -V"libobs0t64 (>= %s~)"\n\tdh_makeshlibs -Nlibobs0t64\n' \
+	"$VERSION" >> debian/rules
 python3 - "$VERSION" <<'PY'
 import os, sys
 version = sys.argv[1]
@@ -30,6 +34,9 @@ entry = f"""obs-studio-dmo ({version}) unstable; urgency=medium
     FFmpeg), NVENC, the muxer helper (Matroska StereoMode, MP4 st3d), the
     hybrid MP4 muxer and the custom FFmpeg output write the 3D marks from it.
     Nothing changes on a 2D canvas.
+  * libobs exports three new functions (obs_set_video_stereo3d,
+    obs_get_video_stereo3d, obs_encoder_get_stereo3d), so its shlibs name
+    this version as the minimum.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {os.environ['SOURCE_DATE_RFC2822']}
 
