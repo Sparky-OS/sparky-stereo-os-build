@@ -1,0 +1,407 @@
+From d719493ea479184bbfb7ee18ec59228cba9f99ae Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 17:59:33 -0300
+Subject: [PATCH] Add stereo layout extraction for FFmpeg video streams
+
+Assisted-by: glm-5.3-flash:cloud (Ollama) via Codex
+---
+ autotests/ffmpegextractortest.cpp  | 207 +++++++++++++++++++++++++++++
+ src/extractors/ffmpegextractor.cpp |  83 ++++++++++++
+ src/properties.h                   |   2 +
+ src/propertyinfo.cpp               |   5 +-
+ 4 files changed, 295 insertions(+), 2 deletions(-)
+
+--- a/autotests/ffmpegextractortest.cpp
++++ b/autotests/ffmpegextractortest.cpp
+@@ -15,6 +15,18 @@
+ 
+ using namespace KFileMetaData;
+ using namespace Qt::StringLiterals;
++
++namespace {
++
++template <typename T>
++struct OptionalQVariant
++{
++    std::optional<T> value;
++};
++
++using OptionalQString = OptionalQVariant<QString>;
++
++} // namespace
+ 
+ namespace KFileMetaData {
+ class ffmpegExtractorTest : public QObject
+@@ -32,6 +44,10 @@
+     void testCoverimage_data();
+     void testLocation();
+     void testApple();
++    void testStereoLayout();
++    void testStereoLayout_data();
++    void testStereoLayoutAbsent();
++    void testStereoLayoutAbsent_data();
+ 
+ private:
+     QMimeDatabase mimeDb;
+@@ -110,6 +126,73 @@
+         << QStringLiteral("mpeg4")
+         << QStringLiteral("mp3")
+         << QVariant();
++}
++
++void ffmpegExtractorTest::testStereoLayout_data()
++{
++    QTest::addColumn<QString>("fileBase");
++    QTest::addColumn<QString>("expectedLayout");
++
++    const std::initializer_list<std::pair<QString, QString>> cases = {
++        {QStringLiteral("test_stereo0"), QStringLiteral("mono")},
++        {QStringLiteral("test_stereo1"), QStringLiteral("sideBySideLeftFirst")},
++        {QStringLiteral("test_stereo2"), QStringLiteral("topBottomRightFirst")},
++        {QStringLiteral("test_stereo3"), QStringLiteral("topBottomLeftFirst")},
++        {QStringLiteral("test_stereo4"), QStringLiteral("checkerboardRightFirst")},
++        {QStringLiteral("test_stereo5"), QStringLiteral("checkerboardLeftFirst")},
++        {QStringLiteral("test_stereo6"), QStringLiteral("rowInterleavedRightFirst")},
++        {QStringLiteral("test_stereo7"), QStringLiteral("rowInterleavedLeftFirst")},
++        {QStringLiteral("test_stereo8"), QStringLiteral("columnInterleavedRightFirst")},
++        {QStringLiteral("test_stereo9"), QStringLiteral("columnInterleavedLeftFirst")},
++        {QStringLiteral("test_stereo11"), QStringLiteral("sideBySideRightFirst")},
++        {QStringLiteral("test_stereo13"), QStringLiteral("frameSequentialLeftFirst")},
++        {QStringLiteral("test_stereo14"), QStringLiteral("frameSequentialRightFirst")},
++    };
++
++    for (const auto& [fileBase, expectedLayout] : cases) {
++        QTest::addRow(fileBase.toLatin1().constData()) << fileBase << expectedLayout;
++    }
++}
++
++void ffmpegExtractorTest::testStereoLayoutAbsent_data()
++{
++    QTest::addColumn<QString>("fileBase");
++
++    QTest::addRow("StereoModeAnaglyphCyanRed") << QStringLiteral("test_stereo10");
++    QTest::addRow("StereoModeAnaglyphGreenMagenta") << QStringLiteral("test_stereo12");
++}
++
++void ffmpegExtractorTest::testStereoLayoutAbsent()
++{
++    QFETCH(QString, fileBase);
++
++    QString fileName = testFilePath(fileBase, QStringLiteral("mkv"));
++    QString mimeType = MimeUtils::strictMimeType(fileName, mimeDb).name();
++
++    FFmpegExtractor plugin{this};
++    QVERIFY(plugin.mimetypes().contains(plugin.getSupportedMimeType(mimeType)));
++
++    SimpleExtractionResult result(fileName, mimeType);
++    plugin.extract(&result);
++
++    QVERIFY(!result.properties().contains(Property::Stereo3dLayout));
++}
++
++void ffmpegExtractorTest::testStereoLayout()
++{
++    QFETCH(QString, fileBase);
++    QFETCH(QString, expectedLayout);
++
++    QString fileName = testFilePath(fileBase, QStringLiteral("mkv"));
++    QString mimeType = MimeUtils::strictMimeType(fileName, mimeDb).name();
++
++    FFmpegExtractor plugin{this};
++    QVERIFY(plugin.mimetypes().contains(plugin.getSupportedMimeType(mimeType)));
++
++    SimpleExtractionResult result(fileName, mimeType);
++    plugin.extract(&result);
++
++    QCOMPARE(result.properties().value(Property::Stereo3dLayout).toString(), expectedLayout);
+ }
+ 
+ // only for testing of intrinsic video properties
+@@ -217,6 +300,130 @@
+     }
+ }
+ 
++QTEST_GUILESS_MAIN(ffmpegExtractorTest)
++
++#include "ffmpegextractortest.moc"
++{
++    QFETCH(QString, fileBase);
++    QFETCH(QString, expectedLayout);
++
++    QString fileName = testFilePath(fileBase, QStringLiteral("mkv"));
++    QString mimeType = MimeUtils::strictMimeType(fileName, mimeDb).name();
++
++    FFmpegExtractor plugin{this};
++    QVERIFY(plugin.mimetypes().contains(plugin.getSupportedMimeType(mimeType)));
++
++    SimpleExtractionResult result(fileName, mimeType);
++    plugin.extract(&result);
++
++    QCOMPARE(result.properties().value(Property::Stereo3dLayout).toString(), expectedLayout);
++}
++
++// only for testing of intrinsic video properties
++void ffmpegExtractorTest::testVideoProperties()
++{
++    QFETCH(QString, fileType);
++    QFETCH(QString, codec);
++    QFETCH(QString, audioCodec);
++    QFETCH(QVariant, colorSpace);
++
++    QString fileName = testFilePath(QStringLiteral("test"), fileType);
++    QString mimeType = MimeUtils::strictMimeType(fileName, mimeDb).name();
++
++    FFmpegExtractor plugin{this};
++
++    QVERIFY(plugin.mimetypes().contains(plugin.getSupportedMimeType(mimeType)));
++
++    SimpleExtractionResult result(fileName, mimeType);
++    plugin.extract(&result);
++
++    QCOMPARE(result.types().size(), 1);
++    QCOMPARE(result.types().constFirst(), Type::Video);
++
++    QCOMPARE(result.properties().value(Property::Width).toInt(), 1280);
++    QCOMPARE(result.properties().value(Property::Height).toInt(), 720);
++    QCOMPARE(result.properties().value(Property::FrameRate).toDouble(), 24.0/1.001);
++    QCOMPARE(result.properties().value(Property::AspectRatio).toDouble(), 16.0/9);
++    QCOMPARE(result.properties().value(Property::VideoCodec), codec);
++    QCOMPARE(result.properties().value(Property::AudioCodec), audioCodec);
++    QCOMPARE(result.properties().value(Property::PixelFormat), QStringLiteral("yuv420p"));
++    if (colorSpace.isNull()) {
++        QVERIFY(!result.properties().contains(Property::ColorSpace));
++    } else {
++        QCOMPARE(result.properties().value(Property::ColorSpace), colorSpace.toString());
++    }
++}
++
++void ffmpegExtractorTest::testMetaData_data()
++{
++    QTest::addColumn<QString>("fileType");
++
++    QTest::addRow("WebM")
++        << QStringLiteral("webm");
++
++    QTest::addRow("Matroska Video")
++        << QStringLiteral("mkv");
++
++    QTest::addRow("Vorbis Video")
++        << QStringLiteral("ogv");
++}
++
++void ffmpegExtractorTest::testMetaData()
++{
++    QFETCH(QString, fileType);
++
++    QString fileName = testFilePath(QStringLiteral("test"), fileType);
++    QString mimeType = MimeUtils::strictMimeType(fileName, mimeDb).name();
++
++    FFmpegExtractor plugin{this};
++
++    SimpleExtractionResult result(fileName, mimeType);
++    plugin.extract(&result);
++
++    QCOMPARE(result.properties().value(Property::Title).toString(), QStringLiteral("Title"));
++    QCOMPARE(result.properties().value(Property::Copyright).toString(), QStringLiteral("Copyright"));
++    QCOMPARE(result.properties().value(Property::Author).toString(), QStringLiteral("Author"));
++    QCOMPARE(result.properties().value(Property::Artist).toString(), QStringLiteral("Artist"));
++    QCOMPARE(result.properties().value(Property::ReleaseYear).toInt(), 2019);
++}
++
++void ffmpegExtractorTest::testCoverimage_data()
++{
++    using IT = EmbeddedImageData::ImageType;
++    QTest::addColumn<QString>("baseName");
++    QTest::addColumn<QString>("fileType");
++    QTest::addColumn<QList<IT>>("coverTypes");
++
++    // clang-format off
++    QTest::addRow("Matroska Video")            << u"test"_s       << u"mkv"_s << QList<IT>();
++    QTest::addRow("Matroska Video with cover") << u"test_cover"_s << u"mkv"_s << QList<IT>{IT::FrontCover};
++    // clang-format on
++}
++
++void ffmpegExtractorTest::testCoverimage()
++{
++    QFETCH(QString, baseName);
++    QFETCH(QString, fileType);
++    QFETCH(QList<EmbeddedImageData::ImageType>, coverTypes);
++
++    const QString fileName = testFilePath(baseName, fileType);
++    const QString mimeType = MimeUtils::strictMimeType(fileName, mimeDb).name();
++
++    FFmpegExtractor plugin{this};
++
++    SimpleExtractionResult result(fileName, mimeType, ExtractionResult::ExtractImageData);
++    plugin.extract(&result);
++
++    const auto imageMap = result.imageData();
++    QCOMPARE(imageMap.size(), coverTypes.size());
++    for (const auto type : coverTypes) {
++        QVERIFY(imageMap.contains(type));
++    }
++    for (const auto [type, imageData]: imageMap.asKeyValueRange()) {
++        QCOMPARE(imageData, m_coverImage);
++    }
++}
++
+ void ffmpegExtractorTest::testLocation()
+ {
+     const QString mimeType = QStringLiteral("mp4");
+--- a/src/extractors/ffmpegextractor.cpp
++++ b/src/extractors/ffmpegextractor.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include <QRegularExpression>
+ 
++#include <cstdint>
+ #ifdef __cplusplus
+ #define __STDC_CONSTANT_MACROS
+ #ifdef _STDINT_H
+@@ -29,6 +30,7 @@
+ #include <libavutil/avutil.h>
+ #include <libavutil/dict.h>
+ #include <libavutil/pixdesc.h>
++#include <libavutil/stereo3d.h>
+ }
+ 
+ using namespace KFileMetaData;
+@@ -88,6 +90,85 @@
+     return supportedMimeTypes;
+ }
+ 
++namespace {
++
++QString stereoLayoutString(AVStereo3DType type, uint32_t flags, AVStereo3DView view)
++{
++    QString layout;
++    switch (type) {
++    case AV_STEREO3D_SIDEBYSIDE:
++        layout = QStringLiteral("sideBySide");
++        break;
++    case AV_STEREO3D_SIDEBYSIDE_QUINCUNX:
++        layout = QStringLiteral("sideBySideQuincunx");
++        break;
++    case AV_STEREO3D_TOPBOTTOM:
++        layout = QStringLiteral("topBottom");
++        break;
++    case AV_STEREO3D_CHECKERBOARD:
++        layout = QStringLiteral("checkerboard");
++        break;
++    case AV_STEREO3D_LINES:
++        layout = QStringLiteral("rowInterleaved");
++        break;
++    case AV_STEREO3D_COLUMNS:
++        layout = QStringLiteral("columnInterleaved");
++        break;
++    case AV_STEREO3D_FRAMESEQUENCE:
++        layout = QStringLiteral("frameSequential");
++        break;
++    default:
++        return {};
++    }
++
++    const bool rightFirst = flags & AV_STEREO3D_FLAG_INVERT;
++    const bool invertOtherwise = !rightFirst && (view == AV_STEREO3D_VIEW_RIGHT);
++    layout += (rightFirst || invertOtherwise) ? QStringLiteral("RightFirst")
++        : QStringLiteral("LeftFirst");
++   return layout;
++}
++
++QString stereoLayoutString(const AVStereo3D* stereo)
++{
++    if (stereo->type == AV_STEREO3D_2D) {
++        return QStringLiteral("mono");
++    }
++
++    return stereoLayoutString(stereo->type, stereo->flags, stereo->view);
++}
++
++QString binaryStereoLayoutString(const uint8_t* data, qsizetype size)
++{
++    if (size < qsizetype(sizeof(uint32_t) * 2 + sizeof(uint64_t))) {
++        return {};
++    }
++
++    const uint32_t type = uint32_t(data[0]) | (uint32_t(data[1]) << 8)
++        | (uint32_t(data[2]) << 16) | (uint32_t(data[3]) << 24);
++    const uint32_t flags = uint32_t(data[4]) | (uint32_t(data[5]) << 8)
++        | (uint32_t(data[6]) << 16) | (uint32_t(data[7]) << 24);
++
++    if (type == uint32_t(AV_STEREO3D_2D)) {
++        return QStringLiteral("mono");
++    }
++
++    return stereoLayoutString(AVStereo3DType(type), flags, AV_STEREO3D_VIEW_PACKED);
++}
++
++void extractStereoLayout(ExtractionResult* result, const AVCodecParameters* codec)
++{
++    if (const auto* sideData = av_packet_side_data_get(codec->coded_side_data,
++                                                       codec->nb_coded_side_data,
++                                                       AV_PKT_DATA_STEREO3D)) {
++        const QString layout = binaryStereoLayoutString(sideData->data, sideData->size);
++        if (!layout.isEmpty()) {
++            result->add(Property::Stereo3dLayout, layout);
++        }
++    }
++}
++
++} // namespace <anonymous>
++
+ void FFmpegExtractor::extract(ExtractionResult* result)
+ {
+     AVFormatContext* fmt_ctx = nullptr;
+@@ -183,6 +264,8 @@
+                 if (codec->color_space != AVCOL_SPC_UNSPECIFIED) {
+                     result->add(Property::ColorSpace, QString::fromUtf8(av_color_space_name(codec->color_space)));
+                 }
++
++                extractStereoLayout(result, codec);
+             }
+         }
+ 
+--- a/src/properties.h
++++ b/src/properties.h
+@@ -109,6 +109,7 @@
+  * \value[since 6.13] PixelFormat The Pixel format used by the media (image or video)
+  * \value[since 6.13] ColorSpace The Color space used by the media (image or video)
+  * \value[since 6.16] AssistiveAlternateDescription A brief textual description of the purpose and meaning of an image. The text can be used by assistive technology.
++ * \value Stereo3dLayout The stereo layout of the visual content, as a stable string identifier. The identifier includes the eye order for layouts that have one.
+  */
+ enum Property {
+     Empty = 0,
+@@ -199,6 +200,7 @@
+     PixelFormat,
+     ColorSpace,
+     AssistiveAlternateDescription,
++    Stereo3dLayout,
+ };
+ 
+ } // namespace Property
+--- a/src/propertyinfo.cpp
++++ b/src/propertyinfo.cpp
+@@ -35,13 +35,13 @@
+     static auto fromName(const QString& name) -> const PropertyInfoData*;
+ 
+     static const PropertyInfoData s_Empty;
+-    static const std::array<PropertyInfoData, 83> s_allProperties;
++    static const std::array<PropertyInfoData, 84> s_allProperties;
+     static const QHash<LcIdentifierName, const PropertyInfoData*> s_propertyHash;
+ };
+ 
+ const PropertyInfoData PropertyInfoData::s_Empty{ Property::Empty, false, QStringLiteral("empty"), kli18nc("@label", "Empty") };
+ 
+-const std::array<PropertyInfoData, 83> PropertyInfoData::s_allProperties
++const std::array<PropertyInfoData, 84> PropertyInfoData::s_allProperties
+ {
+     PropertyInfoData{ Property::AssistiveAlternateDescription, true,  QStringLiteral("assistiveDescription"),    kli18nc("@label accessible alt text", "Assistive Description"), QMetaType::QString },
+     PropertyInfoData{ Property::Album,                      true,  QStringLiteral("album"),                      kli18nc("@label music album", "Album"),                QMetaType::QString },
+@@ -89,6 +89,7 @@
+     PropertyInfoData{ Property::PhotoSharpness,             false, QStringLiteral("photoSharpness"),             kli18nc("@label EXIF", "Sharpness"),                   QMetaType::Int },
+     PropertyInfoData{ Property::PhotoWhiteBalance,          false, QStringLiteral("photoWhiteBalance"),          kli18nc("@label EXIF", "White Balance"),               QMetaType::Int },
+     PropertyInfoData{ Property::ColorSpace,                 false, QStringLiteral("colorSpace"),                 kli18nc("@label", "Color Space"),                      QMetaType::QString },
++    PropertyInfoData{ Property::Stereo3dLayout,             false, QStringLiteral("stereo3dLayout"),             kli18nc("@label", "Stereo 3D Layout"),                 QMetaType::QString },
+     PropertyInfoData{ Property::VideoCodec,                 false, QStringLiteral("videoCodec"),                 kli18nc("@label", "Video Codec"),                      QMetaType::QString },
+     PropertyInfoData{ Property::AudioCodec,                 false, QStringLiteral("audioCodec"),                 kli18nc("@label", "Audio Codec"),                      QMetaType::QString },
+     PropertyInfoData{ Property::PixelFormat,                false, QStringLiteral("pixelFormat"),                kli18nc("@label", "Pixel Format"),                     QMetaType::QString },

@@ -1,0 +1,194 @@
+From 130141b9497dbde011589f9913e7e6b8267222d8 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 21:37:41 -0300
+Subject: [PATCH] Restrict stereo probing and preserve declared JPS anaglyph
+ eyes
+
+Select native H.264/HEVC decoders and probe one eligible stream so indexing avoids wrapper decoders and yields one layout. Cover stream selection and both VRex red-field eye declarations with synthetic fixtures.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ autotests/ffmpegextractortest.cpp             | 34 +++++++++++++++++++
+ autotests/samplefiles/generate_stereo_jpeg.py |  3 +-
+ .../samplefiles/generate_stereo_streams.py    | 23 +++++++++++++
+ autotests/stereojpegextractortest.cpp         |  4 ++-
+ src/extractors/ffmpegextractor.cpp            | 21 ++++++++++--
+ src/extractors/stereojpegextractor.cpp        |  2 ++
+ src/properties.h                              |  5 ++-
+ 7 files changed, 87 insertions(+), 5 deletions(-)
+ create mode 100644 autotests/samplefiles/generate_stereo_streams.py
+
+--- a/autotests/ffmpegextractortest.cpp
++++ b/autotests/ffmpegextractortest.cpp
+@@ -36,6 +36,8 @@
+     void testCoverimage_data();
+     void testLocation();
+     void testApple();
++    void testStereoStream();
++    void testStereoStream_data();
+     void testSeiLayout();
+     void testSeiLayout_data();
+     void testStereoLayout();
+@@ -120,6 +122,38 @@
+         << QStringLiteral("mpeg4")
+         << QStringLiteral("mp3")
+         << QVariant();
++}
++
++void ffmpegExtractorTest::testStereoStream_data()
++{
++    QTest::addColumn<QString>("baseName");
++    QTest::addColumn<QString>("layout");
++    QTest::addRow("first codec stream despite second default") << QStringLiteral("test_streams_first") << QStringLiteral("sideBySideLeftFirst");
++    QTest::addRow("unmarked first codec stream") << QStringLiteral("test_streams_plain") << QString();
++    QTest::addRow("attached picture") << QStringLiteral("test_streams_cover") << QStringLiteral("sideBySideLeftFirst");
++    QTest::addRow("codec stream after VP9") << QStringLiteral("test_streams_after_vp9") << QStringLiteral("topBottomRightFirst");
++}
++
++void ffmpegExtractorTest::testStereoStream()
++{
++    QFETCH(QString, baseName);
++    QFETCH(QString, layout);
++    if (!avcodec_find_decoder_by_name("h264")) {
++        QSKIP("Native H.264 decoder is unavailable");
++    }
++    const QString fileName = testFilePath(QStringLiteral("stereo/") + baseName,
++                                          baseName.endsWith(QStringLiteral("cover")) ? QStringLiteral("mp4") : QStringLiteral("mkv"));
++    QVERIFY(QFile::exists(fileName));
++    FFmpegExtractor plugin{this};
++    SimpleExtractionResult result(fileName, QStringLiteral("video/x-matroska"));
++    plugin.extract(&result);
++    const auto values = result.properties().values(Property::Stereo3dLayout);
++    if (layout.isEmpty()) {
++        QVERIFY(values.isEmpty());
++    } else {
++        QCOMPARE(values.size(), 1);
++        QCOMPARE(values.constFirst().toString(), layout);
++    }
+ }
+ 
+ void ffmpegExtractorTest::testSeiLayout_data()
+--- a/autotests/samplefiles/generate_stereo_jpeg.py
++++ b/autotests/samplefiles/generate_stereo_jpeg.py
+@@ -37,7 +37,8 @@
+     'unmarked.jpg': red,
+     'badlength.jps': jps(0x40201, 50),
+     'reserved.jps': jps(0x40501),
+-    'anaglyph.jps': jps(0x40401),
++    'anaglyph_left.jps': jps(0x40401),
++    'anaglyph_right.jps': jps(0x401),
+     'duplicate.jps': jps(0x40201)[:2] + jps(0x40201)[2:20] + jps(0x40201)[2:],
+     'truncated.jps': b'\xff\xd8\xff\xe3\x00\x20_JPSJPS_',
+ }.items():
+--- /dev/null
++++ b/autotests/samplefiles/generate_stereo_streams.py
+@@ -0,0 +1,23 @@
++#!/usr/bin/env python3
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++# SPDX-License-Identifier: CC0-1.0
++"""Combine generated clips to check selection of one stereo video stream."""
++import pathlib
++import subprocess
++
++root = pathlib.Path(__file__).parent / 'stereo'
++for name, first, second, default in (
++    ('first', 'test_sei_h264_3_0.mp4', 'test_sei_h264_4_1.mp4', 1),
++    ('plain', 'test_sei_plain.mp4', 'test_sei_h264_4_1.mp4', 1),
++    ('after_vp9', 'test_stereo2.mkv', 'test_sei_h264_4_1.mp4', 0),
++):
++    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(root / first),
++                    '-i', str(root / second), '-map', '0:v:0', '-map', '1:v:0',
++                    '-c', 'copy', '-disposition:v:0', 'default' if default == 0 else '0',
++                    '-disposition:v:1', 'default' if default == 1 else '0',
++                    str(root / f'test_streams_{name}.mkv')], check=True)
++
++subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(root / 'test_jps_unmarked.jpg'),
++                '-i', str(root / 'test_sei_h264_3_0.mp4'), '-map', '0:v:0', '-map', '1:v:0',
++                '-c', 'copy', '-disposition:v:0', 'attached_pic',
++                str(root / 'test_streams_cover.mp4')], check=True)
+--- a/autotests/stereojpegextractortest.cpp
++++ b/autotests/stereojpegextractortest.cpp
+@@ -32,6 +32,8 @@
+                 << layouts.at(layout - 1) + (left ? QStringLiteral("LeftFirst") : QStringLiteral("RightFirst"));
+         }
+     }
++    QTest::addRow("anaglyph red left") << QStringLiteral("test_jps_anaglyph_left.jps") << QStringLiteral("anaglyphRedLeft");
++    QTest::addRow("anaglyph red right") << QStringLiteral("test_jps_anaglyph_right.jps") << QStringLiteral("anaglyphRedRight");
+     QTest::addRow("mono") << QStringLiteral("test_jps_mono.jpg") << QStringLiteral("mono");
+     QTest::addRow("extension") << QStringLiteral("test_jps_unmarked.jps") << QStringLiteral("sideBySideRightFirst");
+     for (int little = 0; little <= 1; ++little) {
+@@ -43,7 +45,7 @@
+     }
+     const QStringList absent = {
+         QStringLiteral("test_jps_unmarked.jpg"), QStringLiteral("test_jps_badlength.jps"),
+-        QStringLiteral("test_jps_reserved.jps"), QStringLiteral("test_jps_anaglyph.jps"),
++        QStringLiteral("test_jps_reserved.jps"),
+         QStringLiteral("test_jps_duplicate.jps"), QStringLiteral("test_jps_truncated.jps"),
+         QStringLiteral("test_mpo_unknown.mpo"), QStringLiteral("test_mpo_equal.mpo"),
+         QStringLiteral("test_mpo_composite.mpo"), QStringLiteral("test_mpo_multangle.mpo"),
+--- a/src/extractors/ffmpegextractor.cpp
++++ b/src/extractors/ffmpegextractor.cpp
+@@ -133,7 +133,7 @@
+     if (parameters->codec_id != AV_CODEC_ID_H264 && parameters->codec_id != AV_CODEC_ID_HEVC) {
+         return {};
+     }
+-    const AVCodec *decoder = avcodec_find_decoder(parameters->codec_id);
++    const AVCodec *decoder = avcodec_find_decoder_by_name(parameters->codec_id == AV_CODEC_ID_H264 ? "h264" : "hevc");
+     if (!decoder) {
+         return {};
+     }
+@@ -359,8 +359,25 @@
+                     result->add(Property::ColorSpace, QString::fromUtf8(av_color_space_name(codec->color_space)));
+                 }
+ 
+-                extractStereoLayout(result, fmt_ctx, stream);
+-            }
++            }
++        }
++
++        const AVStream *stereoStream = nullptr;
++        for (unsigned int index = 0; index < fmt_ctx->nb_streams; ++index) {
++            const AVStream *stream = fmt_ctx->streams[index];
++            if (stream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO || (stream->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
++                continue;
++            }
++            if (!stereoStream) {
++                stereoStream = stream;
++            }
++            if (stream->codecpar->codec_id == AV_CODEC_ID_H264 || stream->codecpar->codec_id == AV_CODEC_ID_HEVC) {
++                stereoStream = stream;
++                break;
++            }
++        }
++        if (stereoStream) {
++            extractStereoLayout(result, fmt_ctx, stereoStream);
+         }
+ 
+         const auto audio_index_stream = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+--- a/src/extractors/stereojpegextractor.cpp
++++ b/src/extractors/stereojpegextractor.cpp
+@@ -105,6 +105,8 @@
+     case 3:
+         layout = QStringLiteral("topBottom");
+         break;
++    case 4:
++        return (descriptor & 0x40000) ? QStringLiteral("anaglyphRedLeft") : QStringLiteral("anaglyphRedRight");
+     default:
+         return {};
+     }
+--- a/src/properties.h
++++ b/src/properties.h
+@@ -114,9 +114,12 @@
+  * "sideBySideQuincunxLeftFirst", "sideBySideQuincunxRightFirst", "topBottomLeftFirst", "topBottomRightFirst",
+  * "checkerboardLeftFirst", "checkerboardRightFirst", "rowInterleavedLeftFirst", "rowInterleavedRightFirst",
+  * "columnInterleavedLeftFirst", "columnInterleavedRightFirst", "frameSequentialLeftFirst", "frameSequentialRightFirst",
+- * "anaglyphCyanRed", "anaglyphGreenMagenta", "blockLacedLeftFirst", "blockLacedRightFirst",
++ * "anaglyphCyanRed", "anaglyphGreenMagenta", "anaglyphRedLeft", "anaglyphRedRight",
++ * "blockLacedLeftFirst", "blockLacedRightFirst",
+  * "multiViewLeftFirst" and "multiViewRightFirst". First refers to spatial or temporal order for packed views,
+  * the base view for multi-view video, and the first individual image for MPO.
++ * The JPS values "anaglyphRedLeft" and "anaglyphRedRight" identify the red field
++ * eye; the other field's colour is not declared.
+  */
+ enum Property {
+     Empty = 0,
