@@ -61,6 +61,7 @@ SOURCES = {
     'kscreenlocker-edition-l10n.po.patch': ('kscreenlocker', None),
     'kubrick-stereo3d.po.patch': ('kubrick', None),
     'kwin-wallpaper-cost.po.patch': ('kwin', None),
+    'kwin-keyboard-tablet-mode-only.po.patch': ('kwin', None),
     'plasma-desktop-wallpaper-cost.po.patch': ('plasma-desktop', None),
     'plasma-nm-connectivity-check.po.patch': ('plasma-nm', None),
     'plasma-pa-virtual-streams.po.patch': ('plasma-pa', None),

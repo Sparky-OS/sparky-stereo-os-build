@@ -1,0 +1,154 @@
+Description: Apply the split-eye output swap to both screencast paths
+ The phone panel reaches its screen through this pair, so its output swap
+ selects the source eye once, for both scene painting and composed-eye copies.
+ Ordinary output capture and DRM output conversion remain unchanged.
+Author: Daniel Campos Ramos
+Forwarded: not-needed, edition stereo output integration
+Last-Update: 2026-11-21
+
+--- a/src/plugins/screencast/outputscreencastsource.cpp
++++ b/src/plugins/screencast/outputscreencastsource.cpp
+@@ -241,7 +241,7 @@
+     glClear(GL_COLOR_BUFFER_BIT);
+     GLFramebuffer::popFramebuffer();
+     for (int eye = 0; eye < 2; ++eye) {
+-        const auto &slot = eye == 0 ? eyes->left : eyes->right;
++        const auto &slot = (eye == 0) != backendOutput()->stereoSwapEyes() ? eyes->left : eyes->right;
+         GLFramebuffer::pushFramebuffer(destination);
+         QMatrix4x4 matrix;
+         matrix.ortho(QRectF(QPointF(), destination->size()));
+@@ -324,7 +324,7 @@
+     }
+     qCDebug(KWIN_SCREENCAST, "stereo-replica: %s stream scene passes 2", qPrintable(backendOutput()->name()));
+     for (int eye = 0; eye < 2; ++eye) {
+-        renderer->setStereoEye(eye == 0 ? StereoEye::Left : StereoEye::Right);
++        renderer->setStereoEye((eye == 0) != backendOutput()->stereoSwapEyes() ? StereoEye::Left : StereoEye::Right);
+         m_sceneView->paint(beginInfo->renderTarget, m_sceneView->renderOffset(), eyeDamage);
+         GLFramebuffer::pushFramebuffer(m_eyeFramebuffer.get());
+         target->blitFromFramebuffer(Rect(QPoint(), eyeSize), Rect(QPoint(eye * eyeSize.width(), 0), eyeSize), GL_NEAREST);
+--- a/autotests/integration/screencasting_test.cpp
++++ b/autotests/integration/screencasting_test.cpp
+@@ -260,22 +260,26 @@
+ void ScreencastingTest::testNativePanel_data()
+ {
+     QTest::addColumn<bool>("stereo");
++    QTest::addColumn<bool>("swapEyes");
+     QTest::addColumn<bool>("dmaBuf");
+     QTest::addColumn<QSize>("panelSize");
+     QTest::addColumn<double>("scale");
+     QTest::addColumn<int>("refresh");
+-    QTest::newRow("mono-duplicated") << false << false << QSize(2400, 1080) << 1.0 << 59940;
+-    QTest::newRow("declared-full-sbs") << true << false << QSize(2400, 1080) << 1.0 << 59940;
+-    QTest::newRow("mono-dmabuf") << false << true << QSize(2400, 1080) << 1.0 << 59940;
+-    QTest::newRow("declared-full-sbs-dmabuf") << true << true << QSize(2400, 1080) << 1.0 << 59940;
+-    QTest::newRow("fractional-native") << true << false << QSize(2520, 1260) << 1.75 << 60000;
+-    QTest::newRow("1440p-120hz") << true << false << QSize(2560, 1440) << 2.0 << 120000;
+-    QTest::newRow("4k-native") << true << false << QSize(3840, 2160) << 2.0 << 60000;
++    QTest::newRow("mono-duplicated") << false << false << false << QSize(2400, 1080) << 1.0 << 59940;
++    QTest::newRow("declared-full-sbs") << true << false << false << QSize(2400, 1080) << 1.0 << 59940;
++    QTest::newRow("mono-dmabuf") << false << false << true << QSize(2400, 1080) << 1.0 << 59940;
++    QTest::newRow("declared-full-sbs-dmabuf") << true << false << true << QSize(2400, 1080) << 1.0 << 59940;
++    QTest::newRow("fractional-native") << true << false << false << QSize(2520, 1260) << 1.75 << 60000;
++    QTest::newRow("1440p-120hz") << true << false << false << QSize(2560, 1440) << 2.0 << 120000;
++    QTest::newRow("4k-native") << true << false << false << QSize(3840, 2160) << 2.0 << 60000;
++    QTest::newRow("swapped-full-sbs") << true << true << false << QSize(2400, 1080) << 1.0 << 59940;
++    QTest::newRow("swapped-full-sbs-dmabuf") << true << true << true << QSize(2400, 1080) << 1.0 << 59940;
+ }
+ 
+ void ScreencastingTest::testNativePanel()
+ {
+     QFETCH(bool, stereo);
++    QFETCH(bool, swapEyes);
+     QFETCH(bool, dmaBuf);
+     QFETCH(QSize, panelSize);
+     QFETCH(double, scale);
+@@ -312,6 +316,7 @@
+         OutputConfiguration configuration;
+         configuration.source = OutputConfiguration::Source::User;
+         configuration.changeSet(backendOutput)->scaleSetting = scale;
++        configuration.changeSet(backendOutput)->stereoSwapEyes = swapEyes;
+         QCOMPARE(workspace()->applyOutputConfiguration(configuration), OutputConfigurationError::None);
+     }
+     QCOMPARE(backendOutput->modeSize(), panelSize);
+@@ -330,6 +335,12 @@
+     QVERIFY(fixtureDirectory.isValid());
+     const auto fixturePath = fixtureDirectory.filePath(QStringLiteral("fixture.png"));
+     QVERIFY((stereo ? expected : expected.copy(QRect(QPoint(), eyeSize))).save(fixturePath));
++    if (swapEyes) {
++        const QImage original = expected;
++        QPainter painter(&expected);
++        painter.drawImage(QPoint(), original.copy(QRect(QPoint(eyeSize.width(), 0), eyeSize)));
++        painter.drawImage(QPoint(eyeSize.width(), 0), original.copy(QRect(QPoint(), eyeSize)));
++    }
+     QProcess producer;
+     auto environment = QProcessEnvironment::systemEnvironment();
+     environment.insert(QStringLiteral("WAYLAND_DISPLAY"), waylandServer()->socketName());
+@@ -396,23 +407,26 @@
+ void ScreencastingTest::testNativePanelMirror_data()
+ {
+     QTest::addColumn<bool>("stereo");
++    QTest::addColumn<bool>("swapEyes");
+     QTest::addColumn<int>("viewMode");
+     QTest::addColumn<double>("zoom");
+     QTest::addColumn<double>("centerX");
+     QTest::addColumn<QRectF>("expectedViewport");
+     QTest::addColumn<QPointF>("pointer");
+     QTest::addColumn<QPoint>("windowOffset");
+-    QTest::newRow("mono-duplicated") << false << 0 << 1.0 << 0.5 << QRectF(0, 0, 1920, 1080) << QPointF(-1, -1) << QPoint();
+-    QTest::newRow("declared-full-sbs") << true << 0 << 1.0 << 0.5 << QRectF(0, 0, 1920, 1080) << QPointF(-1, -1) << QPoint();
+-    QTest::newRow("full-height-center") << true << 1 << 1.0 << 0.5 << QRectF(375, 0, 1170, 1080) << QPointF(-1, -1) << QPoint();
+-    QTest::newRow("full-height-left") << true << 1 << 1.0 << 0.0 << QRectF(0, 0, 1170, 1080) << QPointF(-1, -1) << QPoint();
+-    QTest::newRow("full-height-right") << true << 1 << 1.0 << 1.0 << QRectF(750, 0, 1170, 1080) << QPointF(-1, -1) << QPoint();
+-    QTest::newRow("zoom-center") << true << 2 << 1.25 << 0.5 << QRectF(492, 108, 936, 864) << QPointF(-1, -1) << QPoint();
+-    QTest::newRow("zoom-left") << true << 2 << 1.25 << 0.0 << QRectF(0, 108, 936, 864) << QPointF(-1, -1) << QPoint();
+-    QTest::newRow("zoom-right") << true << 2 << 1.25 << 1.0 << QRectF(984, 108, 936, 864) << QPointF(-1, -1) << QPoint();
+-    QTest::newRow("pointer-left") << true << 1 << 1.0 << 0.5 << QRectF(0, 0, 1170, 1080) << QPointF(1, 540) << QPoint();
+-    QTest::newRow("pointer-right") << true << 1 << 1.0 << 0.5 << QRectF(750, 0, 1170, 1080) << QPointF(1918, 540) << QPoint();
+-    QTest::newRow("center-active-fit") << true << 0 << 1.0 << 0.5 << QRectF(100, 50, 1920, 1080) << QPointF(-1, -1) << QPoint(100, 50);
++    QTest::newRow("mono-duplicated") << false << false << 0 << 1.0 << 0.5 << QRectF(0, 0, 1920, 1080) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("declared-full-sbs") << true << false << 0 << 1.0 << 0.5 << QRectF(0, 0, 1920, 1080) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("full-height-center") << true << false << 1 << 1.0 << 0.5 << QRectF(375, 0, 1170, 1080) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("full-height-left") << true << false << 1 << 1.0 << 0.0 << QRectF(0, 0, 1170, 1080) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("full-height-right") << true << false << 1 << 1.0 << 1.0 << QRectF(750, 0, 1170, 1080) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("zoom-center") << true << false << 2 << 1.25 << 0.5 << QRectF(492, 108, 936, 864) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("zoom-left") << true << false << 2 << 1.25 << 0.0 << QRectF(0, 108, 936, 864) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("zoom-right") << true << false << 2 << 1.25 << 1.0 << QRectF(984, 108, 936, 864) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("pointer-left") << true << false << 1 << 1.0 << 0.5 << QRectF(0, 0, 1170, 1080) << QPointF(1, 540) << QPoint();
++    QTest::newRow("pointer-right") << true << false << 1 << 1.0 << 0.5 << QRectF(750, 0, 1170, 1080) << QPointF(1918, 540) << QPoint();
++    QTest::newRow("center-active-fit") << true << false << 0 << 1.0 << 0.5 << QRectF(100, 50, 1920, 1080) << QPointF(-1, -1) << QPoint(100, 50);
++    QTest::newRow("swapped-full-sbs") << true << true << 0 << 1.0 << 0.5 << QRectF(0, 0, 1920, 1080) << QPointF(-1, -1) << QPoint();
++    QTest::newRow("swapped-cropped") << true << true << 1 << 1.0 << 0.5 << QRectF(375, 0, 1170, 1080) << QPointF(-1, -1) << QPoint();
+ }
+ 
+ 
+@@ -446,6 +460,7 @@
+     // a split-eye panel that replicates a 3D monitor shows each eye's view of the monitor,
+     // scaled to fit the eye's viewport and centred, and keeps streaming across the change
+     QFETCH(bool, stereo);
++    QFETCH(bool, swapEyes);
+     QFETCH(int, viewMode);
+     QFETCH(double, zoom);
+     QFETCH(double, centerX);
+@@ -531,6 +546,7 @@
+         OutputConfiguration configuration;
+         configuration.source = OutputConfiguration::Source::User;
+         configuration.changeSet(panel)->replicationSource = source->backendOutput()->uuid();
++        configuration.changeSet(panel)->stereoSwapEyes = swapEyes;
+         const int configuredMode = qEnvironmentVariableIsSet("KWIN_PHONE_VIEW_NEGATIVE") ? 0 : viewMode;
+         configuration.changeSet(panel)->headsetView = HeadsetView{HeadsetView::Mode(configuredMode), zoom, QPointF(centerX, 0.5), pointer.x() >= 0, !windowOffset.isNull()};
+         QCOMPARE(workspace()->applyOutputConfiguration(configuration), OutputConfigurationError::None);
+@@ -591,12 +607,12 @@
+                 return !isBlack(c);
+             });
+             QVERIFY2(within(content, picture.translated(eyeArea.topLeft()), 1), qPrintable(QStringLiteral("%1 eye %2 picture %3").arg(when).arg(eye).arg(describe(content))));
+-            const auto viewColour = eye == 0 || !stereo ? isRed : isBlue;
++            const auto viewColour = (eye == 0) != swapEyes || !stereo ? isRed : isBlue;
+             const QRect view = boundsOf(*image, eyeArea, viewColour);
+             QVERIFY2(within(view, picture.translated(eyeArea.topLeft()), 1), qPrintable(QStringLiteral("%1 eye %2 view %3").arg(when).arg(eye).arg(describe(view))));
+             const QRect white = boundsOf(*image, eyeArea, isWhite);
+             QVERIFY2(within(white, whiteBlock.translated(eyeArea.topLeft()), 1), qPrintable(QStringLiteral("%1 eye %2 block %3").arg(when).arg(eye).arg(describe(white))));
+-            const auto otherColour = eye == 0 || !stereo ? isBlue : isRed;
++            const auto otherColour = (eye == 0) != swapEyes || !stereo ? isBlue : isRed;
+             QCOMPARE(boundsOf(*image, eyeArea, otherColour), QRect());
+             qInfo() << when << "eye" << eye << "picture" << describe(content) << "view" << describe(view) << "block" << describe(white)
+                     << "predicted picture" << describe(picture.translated(eyeArea.topLeft())) << "block" << describe(whiteBlock.translated(eyeArea.topLeft()));
