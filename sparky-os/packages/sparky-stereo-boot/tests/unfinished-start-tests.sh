@@ -1,6 +1,6 @@
 #!/bin/bash
 # Tests of the menu shown after a start that did not finish (0.1.11, ORDER 572b): the rule of 30-sparky-stereo-boot.cfg
-# with a stand-in for grub-probe, what 01_sparky_stereo_menu, 10_linux and 90_sparky_stereo_start write (checked by
+# with a stand-in for grub-probe, what 01_sparky_stereo_menu and 90_sparky_stereo_start write (checked by
 # grub-script-check), and sparky-stereo-boot's login-check and start-finished in a fake root.
 #   unfinished-start-tests.sh PACKAGE_DIR      (needs grub-common, sparky-stereo-problems; run as root in a container)
 PKG=$(readlink -f "$1"); HOOK=$PKG/grub/30-sparky-stereo-boot.cfg; FIX=$PKG/tests/fixtures
@@ -65,25 +65,58 @@ out=$(header none ''); hasnot '01 (none) writes no function' "$out" recordfail
 out=$(header off ''); hasnot '01 (off) writes no function' "$out" recordfail
 printf 'quick_boot="1"\n' > "$W/00_header"; out=$(header grubenv 30 "$W/00_header")
 hasnot "01 with a GRUB built with quick boot leaves the function to 00_header" "$out" 'function recordfail'
-# the wrapper around Debian's 10_linux
-printf '#!/bin/sh\ncat %s\n' "$FIX/debian-10_linux.out" > "$W/10_linux.debian"; chmod +x "$W/10_linux.debian"
-wrap() { env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin SPARKY_STEREO_ROOT="$W/wr" SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" \
-	LANG=C.UTF-8 SPARKY_STEREO_RECORD="$1" SPARKY_STEREO_DEBIAN_10_LINUX="${2:-$W/10_linux.debian}" sh "$PKG/grub/10_linux"; }
-mkdir -p "$W/wr"
-out=$(wrap grubenv 2>/dev/null); ok 'each of the three Linux entries gets the call' "$(printf '%s\n' "$out" | grep -c '^[[:space:]]*recordfail$')" 3
-ok 'the call is the first line of an entry, at its indentation' "$(printf '%s\n' "$out" | grep -A1 "^	menuentry 'Sparky GNU/Linux, with Linux 7.3.0" | tail -1)" '		recordfail'
-ok 'nothing else changes' "$(printf '%s\n' "$out" | grep -v '^[[:space:]]*recordfail$' | cmp -s - $FIX/debian-10_linux.out && echo same)" same
-ok 'the result is valid GRUB script' "$(script_ok "function recordfail { true; }
-$out")" valid
-ok 'off: Debian output as it is' "$(wrap off 2>/dev/null | cmp -s - $FIX/debian-10_linux.out && echo same)" same
-ok 'none: Debian output as it is' "$(wrap none 2>/dev/null | cmp -s - $FIX/debian-10_linux.out && echo same)" same
-printf '#!/bin/sh\nprintf "entry X {\\n\\tlinux /boot/vmlinuz\\n}\\n"\n' > "$W/odd"; chmod +x "$W/odd"
-out=$(wrap grubenv "$W/odd" 2>"$W/err"); ok 'a form it does not know: the entries are still written' "$(printf '%s\n' "$out" | grep -c linux)" 1
-has 'and that is said' "$(cat $W/err)" 'wrote its entries in a form sparky-stereo-boot does not know'
-has 'and kept' "$(SPARKY_STEREO_ROOT=$W/wr SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 sparky-stereo-problems list 2>&1)" 'form sparky-stereo-boot does not know'
-wrap grubenv >/dev/null 2>&1; hasnot 'cleared when the entries are known again' "$(SPARKY_STEREO_ROOT=$W/wr SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 sparky-stereo-problems list 2>&1)" 'form sparky-stereo-boot does not know'
-wrap grubenv "$W/missing" >/dev/null 2>"$W/err"; ok "Debian's file gone: update-grub fails, said" "$?|$(grep -c 'no Linux entry can be written' $W/err)" '1|1'
-chmod -x "$W/10_linux.debian"; ok 'switched off by the person (chmod -x): nothing written' "$(wrap grubenv 2>&1 | wc -c)" 0; chmod +x "$W/10_linux.debian"
+hasnot "01 with a GRUB built with quick boot leaves the call to 10_linux" "$out" 'function load_video'
+# the call through load_video (0.1.13, rows 629/802): Debian's 10_linux and 00_header stay as they are
+cat > "$W/00_header.debian" <<'H'
+#!/bin/sh
+cat <<'EOF'
+set default="0"
+function load_video {
+  if [ x$grub_platform = xefi ]; then
+    insmod efi_gop
+    insmod efi_uga
+  elif [ x$feature_all_video_module = xy ]; then
+    insmod all_video
+  else
+    insmod vbe
+  fi
+}
+if loadfont unicode ; then
+  set gfxmode=auto
+  load_video
+fi
+EOF
+H
+printf '#!/bin/sh\necho "set default=0"\n' > "$W/00_header.odd"; chmod +x "$W/00_header.debian" "$W/00_header.odd"
+body() { printf '%s\n' "$1" | awk -v f="function $2 {" '$0 == f {p = 1; next} p && /^\}$/ {exit} p {print}'; }
+out=$(header grubenv 30 "$W/00_header.debian"); ok '01 with the call is valid GRUB script' "$(script_ok "$out")" valid
+ok "00_header's own load_video, unchanged, under another name" "$(body "$out" sparky_stereo_load_video)" "$(body "$("$W/00_header.debian")" load_video)"
+has 'load_video records the start for this system'"'"'s Linux entries only' "$out" "^	if regexp '^gnulinux-' \"\${chosen}\"; then$"
+has '... then runs that body' "$out" '^	sparky_stereo_load_video$'
+ok 'the recording load_video comes after the function it calls' "$(printf '%s\n' "$out" | awk '/^function recordfail/ {r = NR} /^function load_video/ {l = NR} END {print (r && l > r) ? "after" : "before"}')" after
+ok '01 and the entries together are valid GRUB script' "$(script_ok "$out
+$(cat $FIX/debian-10_linux.out)")" valid
+out=$(header esp:ABCD-1234:/EFI/sparky-stereo-boot/grubenv 30 "$W/00_header.debian"); has '01 (EFI system partition) has the call too' "$out" '^function load_video {$'
+out=$(header none '' "$W/00_header.debian"); hasnot '01 (none) leaves load_video as it is' "$out" 'function load_video'
+out=$(header off '' "$W/00_header.debian"); hasnot '01 (off) leaves load_video as it is' "$out" 'function load_video'
+out=$(header grubenv 30 "$W/00_header.odd"); hasnot '00_header without a load_video: none written (90 says it)' "$out" 'function load_video'
+# 90_sparky_stereo_start says when a Linux entry carries no load_video (LOCAL97), and clears it when they all do
+printf '#!/bin/sh\ncat %s\n' "$FIX/debian-10_linux.out" > "$W/10_linux"
+printf '#!/bin/sh\ngrep -v load_video %s\n' "$FIX/debian-10_linux.out" > "$W/10_linux.text"; chmod +x "$W/10_linux" "$W/10_linux.text"
+ok "every Linux entry of Debian's 10_linux carries load_video" "$(grep -c '^[[:space:]]*linux[[:space:]]' $FIX/debian-10_linux.out)|$(grep -c '^[[:space:]]*load_video$' $FIX/debian-10_linux.out)" '3|3'
+start() { env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin SPARKY_STEREO_ROOT="$W/st" SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" \
+	LANG=C.UTF-8 SPARKY_STEREO_RECORD="$1" SPARKY_GRUB_10_LINUX="${2:-$W/10_linux}" SPARKY_GRUB_00_HEADER="${3:-$W/00_header.debian}" SPARKY_STEREO_BIN=/nonexistent sh "$PKG/grub/90_sparky_stereo_start"; }
+plist() { SPARKY_STEREO_ROOT=$W/st SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 sparky-stereo-problems list 2>&1; }
+mkdir -p "$W/st"
+start grubenv >"$W/out" 2>"$W/err"; ok 'every entry records: 90 exits 0 and says nothing' "$?|$(wc -c <"$W/err")" '0|0'
+start grubenv "$W/10_linux.text" >/dev/null 2>"$W/err"; has 'GRUB_GFXPAYLOAD_LINUX=text (no load_video): said' "$(cat $W/err)" 'wrote its entries in a form sparky-stereo-boot does not know'
+has 'and kept' "$(plist)" 'form sparky-stereo-boot does not know'
+start grubenv >/dev/null 2>&1; hasnot 'cleared when the entries carry load_video again' "$(plist)" 'form sparky-stereo-boot does not know'
+start esp:ABCD-1234:/EFI/sparky-stereo-boot/grubenv "$W/10_linux" "$W/00_header.odd" >/dev/null 2>"$W/err"; has "00_header without a load_video: said" "$(cat $W/err)" 'form sparky-stereo-boot does not know'
+start grubenv >/dev/null 2>&1
+ok 'off: 90 writes and says nothing' "$(start off "$W/10_linux.text" 2>&1 | wc -c)" 0
+ok 'a GRUB built with quick boot: its own call, nothing said' "$(start grubenv "$W/10_linux.text" "$W/00_header" 2>&1 | wc -c)" 0
+chmod -x "$W/10_linux.text"; ok '10_linux switched off by the person (chmod -x): nothing said' "$(start grubenv "$W/10_linux.text" 2>&1 | wc -c)" 0
 # the reason on the menu
 tool() { env -i PATH="$W/bin:/usr/sbin:/usr/bin:/sbin:/bin" SPARKY_STEREO_ROOT="$T" SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" \
 	SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG="${TLANG:-C.UTF-8}" python3 "$PKG/bin/sparky-stereo-boot" "$@"; }
