@@ -1,0 +1,51 @@
+--- a/debian/control
++++ b/debian/control
+@@ -1,17 +1,17 @@
+ Source: kf6-kimageformats
+ Section: kde
+-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
++Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++XSBC-Original-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+ Uploaders: Aurélien COUDERC <coucouf@debian.org>,
+            Patrick Franz <deltaone@debian.org>,
+-Build-Depends: debhelper-compat (= 14),
++Build-Depends: libstereo-policy-dev (>= 1.17.5), qt6-tools-dev, qt6-l10n-tools, debhelper-compat (= 14),
+                dh-sequence-kf6,
+                dh-sequence-pkgkde-symbolshelper,
+-               dh-sequence-single-binary,
+                cmake (>= 3.30~),
+                extra-cmake-modules (>= 6.32.0~),
+                libavif-dev (>= 1~),
+                libcups2-dev,
+-               libheif-dev (>= 1.10.0~),
++               libheif-dev (>= 1.23.6-2+stereo3d1+lc1),
+                libheif-plugin-j2kdec <!nocheck>,
+                libheif-plugin-libde265 <!nocheck>,
+                libheif-plugin-x265 <!nocheck>,
+@@ -33,12 +33,14 @@
+ 
+ Package: kimageformat6-plugins
+ Architecture: any
+-Depends: libheif-plugin-j2kdec,
++Depends: libstereo-policy1 (>= 1.17.5), libheif1 (>= 1.23.6-2+stereo3d1+lc1),
++         libheif-plugin-j2kdec,
+          libheif-plugin-libde265,
+          libheif-plugin-x265,
+          ${misc:Depends},
+          ${shlibs:Depends},
+-Breaks: kf6-kimageformat-plugins,
++Breaks: libstereo-layer1 (<< 1.11.0-1+lc1),
++        kf6-kimageformat-plugins,
+ Replaces: kf6-kimageformat-plugins,
+ Description: additional image format plugins for Qt Gui
+  This framework provides additional image format plugins for QtGui.  As
+--- a/debian/copyright
++++ b/debian/copyright
+@@ -265,3 +265,7 @@
+  ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
++
++Files: debian/*
++Copyright: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++License: LGPL-2.1+

@@ -1,0 +1,68 @@
+--- a/debian/control
++++ b/debian/control
+@@ -1,9 +1,10 @@
+ Source: kf6-kfilemetadata
+ Section: kde
+-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
++Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++XSBC-Original-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+ Uploaders: Aurélien COUDERC <coucouf@debian.org>,
+            Patrick Franz <deltaone@debian.org>,
+-Build-Depends: debhelper-compat (= 14),
++Build-Depends: libheif-dev (>= 1.23.6-2+stereo3d1+lc1), debhelper-compat (= 14),
+                dh-sequence-kf6,
+                dh-sequence-pkgkde-symbolshelper,
+                cmake (>= 3.30~),
+@@ -34,13 +35,13 @@
+                xauth <!nocheck>,
+                xvfb <!nocheck>,
+ Standards-Version: 4.7.4
+-Homepage: https://invent.kde.org/frameworks/kfilemetadata
++Homepage: https://sparkylinux.org
+ Vcs-Browser: https://salsa.debian.org/qt-kde-team/kde/kf6-kfilemetadata
+ Vcs-Git: https://salsa.debian.org/qt-kde-team/kde/kf6-kfilemetadata.git
+ 
+ Package: libkf6filemetadata-bin
+ Architecture: any
+-Depends: ${misc:Depends},
++Depends: libheif1 (>= 1.23.6-2+stereo3d1+lc1), ${misc:Depends},
+          ${shlibs:Depends},
+ Recommends: catdoc,
+ Multi-Arch: same
+--- a/debian/rules
++++ b/debian/rules
+@@ -10,4 +10,4 @@
+ 	 dh_auto_configure -- -DBUILD_QCH=ON
+ 
+ override_dh_auto_test:
+-	xvfb-run -a dh_auto_test -Skf6
++	xvfb-run -a --server-args='-screen 0 1280x1024x24 -noreset' dh_auto_test -Skf6
+--- a/debian/copyright
++++ b/debian/copyright
+@@ -283,3 +283,26 @@
+  WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  General Public License for more details.
++
++Files: debian/*
++Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++License: LGPL-2.1-or-later
++Comment: Sparky Stereo OS, an edition of SparkyLinux, created by
++ Paweł "pavroo" Pijanowski <pavroo@onet.eu> and
++ Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>.
++
++Files: src/extractors/stereojpegextractor.* autotests/stereojpegextractortest.cpp
++Copyright: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++License: LGPL-2.1-or-later
++
++Files: autotests/samplefiles/generate_stereo*.py autotests/samplefiles/stereo/*
++Copyright: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++License: CC0-1.0
++
++Files: debian/stereo3d/*
++Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++License: CC0-1.0
++
++Files: debian/stereo3d/installed-probe.cpp
++Copyright: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++License: LGPL-2.1-or-later

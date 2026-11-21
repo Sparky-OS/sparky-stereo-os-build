@@ -1,0 +1,48 @@
+{
+  "source": "kf6-kimageformats",
+  "version": "6.32.0-1+stereo3d1",
+  "debian_descriptor": "kf6-kimageformats_6.32.0-1.dsc",
+  "debian_descriptor_sha256": "25b65f96d4788c5165ca2d5cb83f24e74ef1ec6c1322ba70663bc89a3eb7109f",
+  "published_descriptor": "kf6-kimageformats_6.30.0-1+stereo3d7+lc1.dsc",
+  "published_descriptor_sha256": "1226ff48d152e4522a9ee17d264b29242fe549593ea113ba732f0a9c3e6c2843",
+  "patches": [
+    {
+      "name": "stereo3d-readers.patch",
+      "published_sha256": "e46e156a96c0c4a8fff944e982d5aa3570655f14a1fa73fd3cbda15f3f67abc0",
+      "fate": "carried unchanged"
+    },
+    {
+      "name": "stereo3d-depth-readers.patch",
+      "published_sha256": "8b71d48318a55f685fc3990b721df930b36b1b0556a0ccc8cd7fee263f123c6f",
+      "fate": "carried rebased",
+      "replacement": "patches/stereo3d-depth-readers.patch",
+      "replacement_sha256": "e0e29cb230e11bb604f5fed6821889f87b7280dd86141624df2e78d2d0a8b777"
+    },
+    {
+      "name": "stereo3d-avif-depth-probe.patch",
+      "published_sha256": "b9f73cccd0c25f346b0eb42bcff4ddb2eea034dd766538fdb4a714e2913b67b9",
+      "fate": "carried unchanged"
+    },
+    {
+      "name": "kimageformats-stem.patch",
+      "published_sha256": "2fd9fa1bb5764acfe14c77c59676e9d45ccd4603fa133dffc85cc843a9a0bab9",
+      "fate": "carried rebased",
+      "replacement": "patches/kimageformats-stem.patch",
+      "replacement_sha256": "e4096d4fe493aee6982ad4e9f6ea9d9461aadf136116c7f4acc0691caf598261"
+    },
+    {
+      "name": "jps-descriptor.patch",
+      "published_sha256": "f3444198b22296fde96881aaac8e66d318c9d08e619876a10cd78fdd9f826c48",
+      "fate": "carried unchanged"
+    },
+    {
+      "name": "shared-jpeg-codec.patch",
+      "published_sha256": "0522b7f971ea47fb4435478288143ef16671d291f77697f7c667f29c9ffa5c29",
+      "fate": "carried unchanged"
+    }
+  ],
+  "packaging_patch": "packaging.patch",
+  "carry_debian_paths": [
+    "debian/source/include-binaries"
+  ]
+}
