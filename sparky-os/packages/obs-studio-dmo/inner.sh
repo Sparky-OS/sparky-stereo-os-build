@@ -21,16 +21,8 @@ done
 python3 - "$VERSION" <<'PY'
 import os, sys
 version = sys.argv[1]
-control = open('debian/control').read()
-old = [l for l in control.split('\n') if l.startswith('Maintainer:')][0]
-control = control.replace(old, 'Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nOriginal-' + old, 1)
-import re
-control = control.replace('Homepage: https://obsproject.com', 'Homepage: https://sparkylinux.org', 1)
-if re.search(r'(?m)^Bugs:', control):
-    control = re.sub(r'(?m)^Bugs:.*$', 'Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues', control, count=1)
-else:
-    control = control.replace('Homepage: https://sparkylinux.org', 'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues', 1)
-open('debian/control', 'w').write(control)
+# debian/control stays as deb-multimedia ships it: the build's provenance step (repo/provenance.sh --tree, run by Lean
+# Code's dh_builddeb) stamps the binaries with our Maintainer and keeps Christian Marillat as Original-Maintainer
 entry = f"""obs-studio-dmo ({version}) unstable; urgency=medium
 
   * Sparky Stereo OS (ORDER 61, milestone 2): libobs carries the main canvas's
@@ -48,6 +40,6 @@ python3 "$TOOLKIT/repo/reproducible.py" normalize "$SOURCE_DATE_EPOCH" debian
 PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare . "$VERSION+lc1"
 PYTHONPATH="$TOOLKIT" dpkg-buildpackage -us -uc -sa -j"${JOBS:-4}" > "$WORK/build.log" 2>&1 || { tail -60 "$WORK/build.log"; exit 1; }
 cd "$WORK"
-cp ./*.deb ./*.dsc ./*.debian.tar.xz ./*.buildinfo ./*.changes ./*.json "$OUT/" 2>/dev/null || true
+cp ./*.deb ./*.dsc ./*.debian.tar.xz ./*.orig*.tar.xz ./*.buildinfo ./*.changes ./*.json "$OUT/" 2>/dev/null || true
 cp build.log "$OUT/build.log"
 (cd "$OUT" && PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs ./*.deb)
