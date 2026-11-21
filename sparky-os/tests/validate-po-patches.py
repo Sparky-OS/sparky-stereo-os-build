@@ -24,6 +24,7 @@ DSC_MAP = {
     "plasma-pa-virtual-streams.po.patch": "plasma-pa_6.7.4-1.dsc",
     "plasma-pa-audio-routes.po.patch": "plasma-pa_6.7.4-1+stereo3d1+lc1.dsc",
     "kalgebra-stereo3d.po.patch": "kalgebra_26.04.0-1+stereo3d2.dsc",
+    "kdenlive-order61e.po.patch": "kdenlive_26.08.1-1+stereo3d6+lc1.dsc",
     "kalzium-stereo3d.po.patch": "kalzium_26.04.3-1+stereo3d4.dsc",
     "kf6-kfilemetadata-stereo3d.po.patch": "kf6-kfilemetadata_6.30.0-1+stereo3d2.dsc",
     "kinfocenter-stereo3d.po.patch": "kinfocenter_6.7.4-1+stereo3d1.dsc",
