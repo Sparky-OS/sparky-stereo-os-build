@@ -39,7 +39,10 @@ Their licences (MIT, BSD 2-clause, NCSA, Apache 2.0 with LLVM exceptions) allow 
 It listens on `127.0.0.1:11434` only (`OLLAMA_HOST`) and lets mail add-ons in Thunderbird and Betterbird call it (`OLLAMA_ORIGINS=moz-extension://*`, ThunderAI's documented setting).
 Models are kept where Ollama keeps them, `~/.ollama/models`, for each person.
 Models hosted by Ollama's own service (names ending in `:cloud`) are allowed, as upstream ships it: they send what the person writes to that service, and the Partners page says so beside each choice.
-Which graphics card it uses is upstream's own rule until the Graphics page gives it one: every card Ollama finds, Vulkan on.
+Which card it uses is the person's choice for partners (System Settings, Graphics, the Partners row, or the Partners page: one key, `[Render] Partners` in `sparky-stereo-graphicsrc`): the service starts `ollama serve` through `sparky-stereo-gpu-run --compute --category partners`, which sets the variables of `sparky-stereo-gpu-env --print compute-env` so that only that card is visible to every runner (CUDA, ROCm, Vulkan), or none for Processor only; `ollama-cuda` stays installed whatever the choice.
+`OLLAMA_IGPU_ENABLE=1` is set, since Ollama otherwise leaves an integrated card out even when it is the one chosen.
+Measured on the workstation with `ollama`, `ollama-cuda` and `ollama-rocm` installed (RTX 3060 through CDI, the Renoir APU's own render node): the RTX 3060 chosen gives `library=CUDA` alone, the APU chosen `library=Vulkan` naming the APU alone, the processor `library=cpu`; with no variable the engine takes both cards.
+A card that cannot be used (not here, no driver, no compute driver) is said and kept by the problems engine, and the engine does not start.
 
 ## Building
 

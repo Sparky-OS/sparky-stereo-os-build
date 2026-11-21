@@ -1,3 +1,20 @@
+ollama (0.40.16+ds-2) unstable; urgency=medium
+
+  * The service starts the engine on the card chosen for partners, and only
+    on it (ORDER 70; the card is one choice shared by the Graphics and
+    Partners pages): ExecStart goes through sparky-stereo-gpu-run --compute
+    --category partners, which sets the variables that leave only that card
+    visible to the CUDA, ROCm and Vulkan runners, or none for the processor.
+    A card that cannot be used is said and kept, and the engine does not
+    start. OLLAMA_IGPU_ENABLE=1, so a chosen integrated card is used.
+    Measured on an RTX 3060 and a Renoir APU with every runner installed:
+    the RTX 3060 chosen runs on CUDA alone, the APU on Vulkan alone, the
+    processor on the processor. Depends on sparky-stereo-graphics 0.2.16.
+  * ollama-rocm-data's Lintian override names the three tags that fire for
+    rocBLAS's GPU kernels.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 12:00:00 +0000
+
 ollama (0.40.16+ds-1) unstable; urgency=medium
 
   * Ollama 0.40.16 (2026-11-09), upstream's release build for Linux amd64
