@@ -16,7 +16,7 @@ umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.43
+VERSION=0.1.44
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -50,6 +50,9 @@ install -m 755 "$HERE/lib/conffile-verify" "$D/usr/lib/dpkg-stereo/conffile-veri
 install -m 644 "$LEAN"/*.py "$LEAN/JvmLexer.java" "$LEAN/ZigTokens.zig" "$D/usr/lib/dpkg-stereo/lean/"
 install -m 644 "$HERE/etc/dpkg-stereo.cfg" "$D/etc/dpkg/dpkg.cfg.d/dpkg-stereo"
 install -m 644 "$HERE/etc/99dpkg-stereo-hr" "$D/etc/apt/apt.conf.d/99dpkg-stereo-hr"
+mkdir -p "$D/usr/lib/systemd/system"
+install -m 644 "$HERE/systemd/dpkg-stereo-diverted-conffiles.service" "$HERE/systemd/dpkg-stereo-diverted-conffiles.timer" \
+	"$D/usr/lib/systemd/system/"
 install -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
 # what failed, why and what to do, in the nine languages (0.1.25); the edition's one engine keeps a problem and its
 # session notifier shows it (ORDER 350), from these messages built word for word into journal catalogs
@@ -107,6 +110,19 @@ fi
 if [ "$1" = "triggered" ] && [ -z "${DPKG_STEREO_NO_PROJECT:-}" ]; then
 	/usr/sbin/dpkg-stereo --post-invoke || true
 fi
+# the timer that retries a conffile a diversion kept from its package (rows 629/802), as dh_installsystemd enables one
+if [ "$1" = "configure" ] && command -v deb-systemd-helper >/dev/null 2>&1; then
+	if deb-systemd-helper --quiet was-enabled dpkg-stereo-diverted-conffiles.timer; then
+		deb-systemd-helper enable dpkg-stereo-diverted-conffiles.timer >/dev/null || true
+	else
+		deb-systemd-helper update-state dpkg-stereo-diverted-conffiles.timer >/dev/null || true
+		deb-systemd-helper enable dpkg-stereo-diverted-conffiles.timer >/dev/null || true
+	fi
+	if [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
+		systemctl start dpkg-stereo-diverted-conffiles.timer >/dev/null 2>&1 || true
+	fi
+fi
 exit 0
 EOS
 printf 'interest-noawait dpkg-stereo-first-projection\n' >"$D/DEBIAN/triggers"
@@ -137,7 +153,14 @@ set -e
 if [ "$1" = "remove" ] && command -v sparky-stereo-problems >/dev/null; then
 	sparky-stereo-problems clear --all dpkg-stereo || :
 fi
+if [ "$1" = "remove" ] && command -v deb-systemd-helper >/dev/null 2>&1; then
+	deb-systemd-helper mask dpkg-stereo-diverted-conffiles.timer >/dev/null || true
+fi
 if [ "$1" = "purge" ]; then
+	if command -v deb-systemd-helper >/dev/null 2>&1; then
+		deb-systemd-helper purge dpkg-stereo-diverted-conffiles.timer >/dev/null || true
+		deb-systemd-helper unmask dpkg-stereo-diverted-conffiles.timer >/dev/null || true
+	fi
 	rm -rf /var/lib/dpkg-stereo
 fi
 exit 0

@@ -1,4 +1,27 @@
 -------------------------------------------------------------------------------
+  Version 0.1.44 (2026-11-21)
+-------------------------------------------------------------------------------
+  * A conffile that another package's diversion kept from being installed is installed (rows 629 and 802). When a
+    diverting package that ships its own file at the path is unpacked in a later dpkg call of the same run as the
+    owning package, its file replaces the owner's pending PATH.dpkg-new, and dpkg keeps the hash "newconffile" with
+    nothing at the diverted name (nano's /etc/nanorc, initramfs-tools' update-initramfs.conf on fresh installs of the
+    published edition). The hook notices it when dpkg's diversions change and starts
+    dpkg-stereo-diverted-conffiles.service, which waits for dpkg's locks and installs the owning package again at its
+    installed version: from APT's cache with no download, otherwise downloaded unless the connection is metered.
+    Never a question (--force-confold); the diverting package's file is not touched; what was done is said, what had
+    to wait is kept as a problem with its size and the one command, and a timer tries again every hour.
+  * The records 0.1.41 and 0.1.42 lost are given back: a projected conffile that stayed the same across two versions
+    of its package lost its record, so its package's next change made dpkg ask about a file nobody touched. Each such
+    conffile (a real hash, no record, the Lean Code pointer, other bytes) gets its record back when it is exactly the
+    projection of its package's file at the installed version; anything else is said and left as it is.
+  * Nothing dpkg's hooks download by themselves is downloaded on a metered connection (NetworkManager's Metered: yes
+    or guess-yes): it waits, is said, and is fetched once the connection allows. The person's --repair downloads.
+  * dpkg-stereo run by a person who is not root says in one sentence that it needs root and how to run it (exit 2)
+    instead of ending in a traceback on its lock.
+  * Lean Code classifies the startup files bash reads (.bash_aliases, .bash_logout, .bash_profile, .bash_login,
+    .profile, .bashrc) as shell by their name.
+
+-------------------------------------------------------------------------------
   Version 0.1.43 (2026-11-21)
 -------------------------------------------------------------------------------
   * A file under a dpkg diversion is judged where dpkg keeps it (rows 629 and 802). dpkg puts the diverting package's
