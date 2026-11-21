@@ -23,9 +23,13 @@ run pv-$P-ce-wl-amd-1 $IMG pv-case.sh "PV_STEREO=Crystal Eyes" $EN
 run pv-$P-off-wl-amd $IMG pv-case.sh "PV_SETTINGS=$OFF" $EN
 run pv-$P-off-x-amd $IMG pv-case.sh "PV_SETTINGS=$OFF" QT_QPA_PLATFORM=xcb $EN
 GPU=nvidia run pv-$P-off-wl-nv $IMG pv-case.sh "PV_SETTINGS=$OFF" $EN
+GPU=nvidia run pv-$P-off-x-nv $IMG pv-case.sh "PV_SETTINGS=$OFF" QT_QPA_PLATFORM=xcb $EN
 # the View menu, in English and in pt_BR (xcb, keys through xdotool)
 run pv-$P-menu-x-amd-en $IMG pv-case.sh MENU=1 QT_QPA_PLATFORM=xcb $EN
 run pv-$P-menu-x-amd-pt $IMG pv-case.sh MENU=1 QT_QPA_PLATFORM=xcb $PT
+# the Settings dialog (Render View, searched for "stereo") and the main window with its Properties panel
+run pv-$P-settings-en $IMG pv-settings-case.sh QT_QPA_PLATFORM=xcb $EN
+run pv-$P-settings-pt $IMG pv-settings-case.sh QT_QPA_PLATFORM=xcb $PT
 # the six former output types on the command line, in English and pt_BR
 run pv-$P-refuse-en $IMG pv-refuse-case.sh $EN
 run pv-$P-refuse-pt $IMG pv-refuse-case.sh $PT
@@ -40,7 +44,7 @@ fi
 SESSION=pv-noareas-case.sh run pv-$P-noareas-en $IMG none $EN
 SESSION=pv-noareas-case.sh run pv-$P-noareas-pt $IMG none $PT
 [ -n "$paused" ] && docker unpause "$paused" >/dev/null
-for d in runs/pv-$P-*; do
+for d in runs/pv-$P-*/; do d=${d%/}
   [ -f $d/shot1.png ] || { echo "$(basename $d) (no capture)"; continue; }
   echo "$(basename $d) warnings=$(cat $d/drawbuffer-warnings.txt 2>/dev/null) set_content=$(grep -c set_content $d/wl.txt 2>/dev/null) windows=$(cut -d'|' -f2 $d/windows.txt | tr '\n' ';') $(python3 -I rig/pv_analyze.py $d | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("stereo", d["stereo"], "measured", d.get("measured"), "pred", {k: d.get("prediction", {}).get(k) for k in ("near","far")}, "vert", d.get("disparity", {}).get("near_red", {}).get("y0"), d.get("disparity", {}).get("far_blue", {}).get("y0"), "diff_outside", d.get("differing_outside_view"))')"
 done > runs/pv-$P-summary.txt
