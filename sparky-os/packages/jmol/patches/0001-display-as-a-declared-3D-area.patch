@@ -288,7 +288,7 @@ diff -ruN a/src/org/openscience/jmol/app/jmolpanel/Properties/Stereo3D_pt_BR.pro
 diff -ruN a/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java b/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
 --- a/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
 +++ b/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,307 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later
 + *
 + * Sparky Stereo OS: Jmol's display as a declared 3D area.
@@ -403,12 +403,20 @@ diff -ruN a/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java b/src/org/opens
 +    }
 +  }
 +
-+  /** Say a sentence once per session and kind: in a window over Jmol's and on standard error. */
-+  public static void tell(Component parent, String kind, String sentence, String reason) {
++  /**
++   * Say a sentence once per session and kind: in a window over Jmol's, opened after the paint that found the
++   * reason (a modal dialog opened inside paint() is never painted), and on standard error (Jmol's console).
++   */
++  public static void tell(final Component parent, String kind, final String sentence, String reason) {
 +    System.err.println("Jmol 3D: " + sentence + (reason == null ? "" : " (" + reason + ")"));
 +    if (!told.add(kind))
 +      return;
-+    JOptionPane.showMessageDialog(parent, sentence, "Jmol", JOptionPane.INFORMATION_MESSAGE);
++    SwingUtilities.invokeLater(new Runnable() {
++      @Override
++      public void run() {
++        JOptionPane.showMessageDialog(parent, sentence, "Jmol", JOptionPane.INFORMATION_MESSAGE);
++      }
++    });
 +  }
 +
 +  private final X11 x;
