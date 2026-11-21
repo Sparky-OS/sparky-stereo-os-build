@@ -47,6 +47,7 @@ IMAGE=<a Debian testing build image> SPARKY_SCRATCH=<scratch on an SSD> bash spa
 ```
 
 The first run fetches the inputs into `DOWNLOADS` (about 2.6 GB) with `ORIG_NETWORK=bridge`; later runs read them from there with no network.
+The orig tarballs `make-orig.sh` makes are kept in `DOWNLOADS/orig-0.40.16+ds` and reused (the same inputs give the same bytes); delete that folder to make them again.
 The build needs about 15 GB of scratch at its peak.
 
 ## Credits
