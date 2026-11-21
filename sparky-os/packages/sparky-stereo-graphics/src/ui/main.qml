@@ -292,6 +292,41 @@ KCM.SimpleKCM {
             text: i18nc("@info", "Players follow their choice from the next time they start. For a game in Steam, set its launch options to: sparky-stereo-gpu-run --category games %command%, and add --3d for a game you play in 3D. For any single program, use the list below.")
         }
 
+        // ORDER 70: the card the partners compute on, one choice with the Partners page; shown with one GPU too, since
+        // the processor alone is a choice
+        Kirigami.Heading {
+            level: 2
+            text: i18nc("@title:group", "Partners")
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            QQC2.Label {
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 8
+                text: i18nc("@label the card the partners compute on", "Card")
+            }
+            QQC2.ComboBox {
+                id: partnersCard
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 12
+                model: kcm.partners.options
+                textRole: "text"
+                valueRole: "value"
+                currentIndex: count > 0 ? Math.max(0, indexOfValue(kcm.partners.choice)) : -1
+                onActivated: kcm.setCategoryChoice(kcm.partners.key, currentValue)
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                font: Kirigami.Theme.smallFont
+                text: kcm.partners.nowText
+            }
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            font: Kirigami.Theme.smallFont
+            text: i18nc("@info", "The card the partners on this computer (Ollama and the other local engines) compute on. The same choice is on the Partners page; the engine follows it from its next start.")
+        }
+
         Kirigami.Separator {
             Layout.fillWidth: true
         }

@@ -52,6 +52,7 @@ private Q_SLOTS:
     void paintWindowsRoundTrip();
     void paintWindowsFollowsTheMeasurement();
     void paintWindowsSetInTheSessionIsReported();
+    void partnersRowRoundTrip();
     void qmlLoads_data();
     void qmlLoads();
 
@@ -663,6 +664,42 @@ void GraphicsKcmTest::paintWindowsSetInTheSessionIsReported()
     QVERIFY(kcm->paintSetInSession());
     QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Other"_s).value(u"way"_s).toString(), u"batch"_s);
     qunsetenv("QT_WIDGETS_GPU_PAINT");
+}
+
+void GraphicsKcmTest::partnersRowRoundTrip()
+{
+    // ORDER 70: the card the partners compute on, a row of its own beside the kinds of programs, shown with one GPU too;
+    // Automatic is the card measured best (not measured here: the discrete GPU), Processor only a choice of this row
+    auto kcm = page(u"host"_s);
+    const QVariantMap partners = kcm->partners();
+    QCOMPARE(partners.value(u"key"_s).toString(), u"Partners"_s);
+    QCOMPARE(partners.value(u"label"_s).toString(), u"Partners"_s);
+    QCOMPARE(partners.value(u"choice"_s).toString(), u"auto"_s);
+    QVERIFY2(partners.value(u"nowText"_s).toString().startsWith(u"Now: NVIDIA"_s), qPrintable(partners.value(u"nowText"_s).toString()));
+    QCOMPARE(row(partners.value(u"options"_s).toList(), u"value"_s, u"cpu"_s).value(u"text"_s).toString(), u"Processor only"_s);
+    QVERIFY(row(kcm->categories(), u"key"_s, u"Partners"_s).isEmpty());
+    kcm->setCategoryChoice(u"Partners"_s, u"cpu"_s);
+    QVERIFY(kcm->needsSave());
+    QCOMPARE(kcm->partners().value(u"nowText"_s).toString(), u"Now: the processor only"_s);
+    QCOMPARE(kcm->partners().value(u"options"_s).toList().size(), partners.value(u"options"_s).toList().size());
+    kcm->save();
+    QVERIFY(configText().contains("Partners=cpu"));
+    auto one = page(u"one"_s);
+    QCOMPARE(one->partners().value(u"choice"_s).toString(), u"cpu"_s);
+    // a card chosen for partners that is not here is said on the page, with the processor as one of the choices offered
+    one->setCategoryChoice(u"Partners"_s, u"pci-0000:42:00.0"_s);
+    one->save();
+    auto again = page(u"one"_s);
+    QVERIFY(again->partners().value(u"problem"_s).toBool());
+    QVERIFY2(again->partners().value(u"nowText"_s).toString().contains(u"The GPU you chose for partners, at PCI address 0000:42:00.0"_s),
+             qPrintable(again->partners().value(u"nowText"_s).toString()));
+    bool offered = false;
+    for (const QVariant &problem : again->problems()) {
+        for (const QVariant &gpu : problem.toMap().value(u"gpus"_s).toList()) {
+            offered = offered || gpu.toMap().value(u"text"_s).toString() == u"Use the processor only"_s;
+        }
+    }
+    QVERIFY(offered);
 }
 
 void GraphicsKcmTest::qmlLoads_data()

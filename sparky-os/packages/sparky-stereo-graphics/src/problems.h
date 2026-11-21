@@ -25,10 +25,11 @@ struct Alternative {
 // notifier shows each at login and when it is kept, with "Use NAME" for each GPU that can draw, and the Graphics page too.
 struct Problem {
     // Where it belongs, and the file it is kept in: "main-gpu", the kind of program ("players", "games", "browsers",
-    // "other"), or a step of the machine ("machine-record", "systemd-reload")
+    // "other"), the partners' card ("partners"), or a step of the machine ("machine-record", "systemd-reload")
     QString key;
     // "gpu-missing", "gpu-no-driver" (on the PCI bus with no graphics device), "gpu-cannot-render", "gpu-not-allowed",
-    // "kind-missing", "profile-unreadable", "record-write", "systemd-reload"; and (ORDER 467) "app-died": a program sent to
+    // "kind-missing", "profile-unreadable", "record-write", "systemd-reload"; "card-no-compute" (ORDER 70: the partners'
+    // card has no compute driver); and (ORDER 467) "app-died": a program sent to
     // a GPU stopped right after it started (key "died-NAME", NAME of its desktop entry)
     QString kind;
     QString requested; // the choice: a GPU id, "integrated", "discrete", "auto" or "profile"
@@ -75,6 +76,9 @@ QString userDir();
 // The problem of a resolution of a saved choice (key: "main-gpu" or a kind), with what the computer has now
 Problem fromResolution(const QString &key, const Resolution &resolution, const QList<Gpu> &gpus, const QString &root,
                        const ProfileReading &profile = ProfileReading());
+// ORDER 70: the card chosen for partners is here but no compute driver reaches it (Compute::forGpu's "card-no-compute");
+// driver is its kernel driver. The other cards and the processor are offered, only as the person's choice
+Problem fromCompute(const QString &key, int index, const QList<Gpu> &gpus, const QString &driver);
 // A program the Graphics page sent to a GPU and that stopped right after it started: how it ended is `how` ("crash":
 // number is the signal, "exit": the exit status, "result": systemd's word in extra), the GPUs it can be sent to instead
 // are only those its desktop entry can name (the desktop's GPU, or the discrete one), and only as the person's choice
