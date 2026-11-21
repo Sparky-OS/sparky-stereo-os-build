@@ -13,7 +13,8 @@
     An lc1 package's row is read at the diverted name too: --verify --deep called plymouth's plymouthd.defaults,
     which sparky-stereo-plymouth diverts, "changed after the install"
   * The owner's copy under another package's diversion is projected where dpkg keeps it, so its record follows its
-    upgrades; the diverting package's own copy and any file at a diverted name are left alone, as before
+    upgrades; the diverting package's own copy, a copy the person set aside with dpkg-divert --local, and any file at
+    a diverted name are left alone, as before (a record made before a local diversion is still judged where the copy is)
   * A projected conffile that is the same in two versions of its package keeps its record under the new version.
     dpkg keeps such a file on disk, post-invoke deleted the record of the old version, and the scan found the lean
     bytes "already projected", so no record came back; the next version that changed the file made dpkg ask
