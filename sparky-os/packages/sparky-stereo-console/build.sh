@@ -143,24 +143,7 @@ ZSH
 chmod 644 "$D/etc/zsh/zshrc"
 DIVERTED="/etc/issue /etc/issue.net /etc/update-motd.d/10-uname /etc/nanorc /etc/zsh/zshrc"
 GIVEN_BACK=/etc/skel/.bashrc
-cat >"$D/DEBIAN/preinst" <<EOF
-#!/bin/sh
-# preinst script
-set -e
-if [ "\$1" = "install" ] || [ "\$1" = "upgrade" ]; then
-	for f in $DIVERTED; do
-		before=\$(dpkg-divert --listpackage "\$f")
-		dpkg-divert --quiet --package $PKG --add --rename --divert "\$f.debian" "\$f"
-		# The owning package unpacked earlier in this dpkg run keeps its conffile as \$f.dpkg-new until it is
-		# configured; our own \$f is unpacked through that same name and would replace it, so the owner's conffile
-		# would never be installed (rows 629/802). It goes where dpkg now installs the owner's copy.
-		if [ -z "\$before" ] && [ -e "\$f.dpkg-new" ] && [ ! -e "\$f.debian.dpkg-new" ]; then
-			mv "\$f.dpkg-new" "\$f.debian.dpkg-new"
-		fi
-	done
-fi
-exit 0
-EOF
+sed -e "s|@DIVERTED@|$DIVERTED|" -e "s|@GIVEN_BACK@|$GIVEN_BACK|" "$HERE/preinst.in" >"$D/DEBIAN/preinst"
 # 20261102 and older diverted $GIVEN_BACK; dpkg has removed our copy at this unpack, so bash's own goes back to its
 # name with whatever the person changed in it. In the postinst: a preinst removal would make dpkg delete bash's
 # file as one our old version shipped (measured, rows 629/802).
