@@ -13,28 +13,32 @@
 # SPARKY_BUILD_IMAGE names the builder image when it is not sparky-lc-migration:20261020.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
-HERE=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd -P)
 . "$HERE/../../repo/build-provenance.sh"
 . "$HERE/../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
 : "${SPARKY_LC_ARCHIVE_DIR:?the link gate's folder, mounted at /archive: sources.json (the public archives, and the edition's
   published tree as file:/repo) and the public keyrings it names; see sparky-os/lean/archive.md}"
-WORK=$(mkdir -p "$1" && cd "$1" && pwd)
-PREV=$(cd "$2" && pwd)
-SRC=$(cd "$3" && pwd)
+# Every mounted folder by its real path: a daemon that cannot follow a symbolic link as a bind source (Docker Desktop:
+# "error while creating mount source path ...: file exists") stops on /var/tmp/sparky-repo-current, a link to the round.
+WORK=$(mkdir -p "$1" && cd "$1" && pwd -P)
+PREV=$(cd "$2" && pwd -P)
+SRC=$(cd "$3" && pwd -P)
+REPO=$(cd "$SPARKY_REPO_DIR" && pwd -P)
+ARCHIVE=$(cd "$SPARKY_LC_ARCHIVE_DIR" && pwd -P)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 name=${SPARKY_BUILD_CONTAINER:-libxext-build-$$}
 sparky_provenance_init "$IMAGE"
 docker run -d --name "$name" --pull=never --ulimit core=1 --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro \
-	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
+	-v "$REPO":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v "$HERE/patches":/patches:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
-	"$IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/build.log 2>&1' >/dev/null
+	"$IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/build.log 2>&1' >/dev/null || { docker rm "$name" >/dev/null 2>&1; echo "the build container did not start: $name removed" >&2; exit 1; }
 status=$(docker wait "$name")
 docker rm "$name" >/dev/null
 [ "$status" = 0 ] || { echo "the build failed (exit $status): $WORK/build.log" >&2; exit 1; }

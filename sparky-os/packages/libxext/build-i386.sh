@@ -10,29 +10,33 @@
 # SPARKY_BUILD_IMAGE names the builder image when it is not sparky-lc-migration:20261020-i386.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
-HERE=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd -P)
 . "$HERE/../../repo/build-provenance.sh"
 . "$HERE/../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
 : "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate, mounted at /archive; see sparky-os/lean/archive.md}"
-WORK=$(mkdir -p "$1" && cd "$1" && pwd)
-SRC=$(cd "$2" && pwd)
-PREV=$(cd "$3" && pwd)
+# Every mounted folder by its real path: a daemon that cannot follow a symbolic link as a bind source (Docker Desktop:
+# "error while creating mount source path ...: file exists") stops on /var/tmp/sparky-repo-current, a link to the round.
+WORK=$(mkdir -p "$1" && cd "$1" && pwd -P)
+SRC=$(cd "$2" && pwd -P)
+PREV=$(cd "$3" && pwd -P)
+REPO=$(cd "$SPARKY_REPO_DIR" && pwd -P)
+ARCHIVE=$(cd "$SPARKY_LC_ARCHIVE_DIR" && pwd -P)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020-i386}
 name=${SPARKY_BUILD_CONTAINER:-libxext-build-i386-$$}
 sparky_provenance_init "$IMAGE"
 docker run -d --name "$name" --pull=never --ulimit core=1 --cpus 4 --platform linux/386 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
-	-v "$WORK":/work -v "$SRC":/src:ro -v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
+	-v "$WORK":/work -v "$SRC":/src:ro -v "$REPO":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	"$IMAGE" bash -c '
 trap "chown -R 1000:1000 /work" EXIT
 set -euo pipefail
 sh /run/https-only-apt.sh
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="parallel=4 nocheck" DEB_BUILD_PROFILES=noudeb
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="parallel=4 nocheck" DEB_BUILD_PROFILES=noudeb LC_ALL=C.UTF-8
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 printf "deb [trusted=yes] file:/repo mashtabba main\n" > /etc/apt/sources.list.d/edition.list
 printf "deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n" > /etc/apt/sources.list.d/multimedia.list
@@ -54,7 +58,7 @@ cd /work/source
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" dpkg-buildpackage -us -uc -B -j4
 cd /work
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_i386.deb
-rm -rf /work/source' > /dev/null
+rm -rf /work/source' > /dev/null || { docker rm "$name" >/dev/null 2>&1; echo "the build container did not start: $name removed" >&2; exit 1; }
 status=$(docker wait "$name")
 docker logs "$name" > "$WORK/build.log" 2>&1
 docker rm "$name" >/dev/null
