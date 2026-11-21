@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""notice_probe.py EARLY|LATE: a QMainWindow and a window-modal QMessageBox (open()) parented to it, the box opened before
+"""notice_probe.py EARLY|LATE|GL|GL-ORPHAN: a QMainWindow and a window-modal QMessageBox (open()) parented to it, the box opened before
 the main window is shown (EARLY: a zero timer queued before show(), the way a ParaView view queues its notice during start-up)
-or once the main window is exposed (LATE). Prints when the box gets a close event. Exits after 12 s."""
+or once the main window is exposed (LATE); GL: LATE, then a QOpenGLWidget added to the main window 2 s after the box
+opened (the first render-to-texture widget makes Qt recreate the top-level's platform window); GL-ORPHAN: the same with a
+box that has no parent. Prints when the box gets a close event. Exits after 12 s."""
 import sys
 from PyQt6.QtCore import QTimer
+from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
 app = QApplication(sys.argv[:1])
@@ -16,8 +19,14 @@ class Box(QMessageBox):
 
 
 def open_box():
-    box = Box(QMessageBox.Icon.Information, "probe notice", "probe notice text", QMessageBox.StandardButton.Ok, main)
+    global box
+    box = Box(QMessageBox.Icon.Information, "probe notice", "probe notice text", QMessageBox.StandardButton.Ok,
+              None if sys.argv[1] == "GL-ORPHAN" else main)
     box.open(); print("box opened; main visible:", main.isVisible(), flush=True)
+
+
+def add_gl():
+    main.setCentralWidget(QOpenGLWidget()); print("QOpenGLWidget added", flush=True)
 
 
 if sys.argv[1] == "EARLY":
@@ -26,5 +35,7 @@ if sys.argv[1] == "EARLY":
 else:
     main.show()
     QTimer.singleShot(2000, open_box)
+    if sys.argv[1].startswith("GL"):
+        QTimer.singleShot(4000, add_gl)
 QTimer.singleShot(12000, app.quit)
 app.exec()
