@@ -814,7 +814,14 @@ class Archive:
         other.public_sources = self.public_sources.replace(old, new)
         other.env = {**self.env, 'HOME': new, 'APT_CONFIG': str(other.base / 'apt.conf')}
         other._active = set()
+        if getattr(self, "previous_view", None) is not None:
+            other.previous_view = self.previous_view.private()
         return other
+
+    def qualify_previous(self, deb, siblings=()):
+        if getattr(self, 'previous_view', None) is not None:
+            return self.previous_view.qualify(self, deb, siblings)
+        return self.qualify(deb, siblings)
 
     def preferences(self, item):
         """{name: bytes} of the files a supplied package ships in /etc/apt/preferences.d, read once per hash.
@@ -1032,6 +1039,8 @@ class Archive:
                                           for item in self.ordered_by_policy(inputs, chosen, conditional)}
                     return plan, label
         (directory / 'policy-attempts.json').write_text(json.dumps(attempts, indent=2) + '\n')
+        last_error.attempts = attempts
+        last_error.directory = directory
         raise last_error
 
     def candidate_priority(self, owner, candidate):

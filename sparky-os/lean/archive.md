@@ -172,3 +172,41 @@ Native debhelper builds can pass the same edition snapshots as the CLI with
 newline-separated list of readable archives. The embedded link gate reads these
 files before qualification; an unreadable list fails the build and removes its
 outputs. `SPARKY_LC_MIN_FREE_GIB` and `SPARKY_LC_ROOT_MIN_FREE_GIB` set its disk floors.
+
+## A dated view for an archive transition
+
+By default both sides still use the candidate's frozen signed indexes.
+When the public archives moved under an already published edition, an explicit pair of options enables a second view:
+
+```sh
+--previous-archive-config /path/to/publication-sources.json \
+--previous-published-at 2026-11-19T07:05:00Z
+```
+
+The second source list has the same archives, suites, components, architecture restrictions and public signing keys, in the same order.
+Its URIs may point to dated archive snapshots or a retained signed mirror.
+Debian must use `https://snapshot.debian.org/archive/debian/TIMESTAMP` (or `debian-security`).
+Both that timestamp and every archive's signed Release Date must be no later than the supplied publication instant.
+This includes third-party archives; changing only Debian while using newer third-party metadata does not establish a publication-time view.
+APT authenticates each InRelease with its explicit Signed-By key.
+The gate additionally binds every retained Packages target to its own InRelease SHA-256 and size, checks its frozen bytes, and compares signed Origin, Label, Suite and Codename across views.
+Every configured archive must be represented.
+It records the complete metadata, dates and hashes in `predecessor-views.json`.
+Expired freshness can be disabled in the source configuration, but authentication and hashes cannot.
+
+The previous edition's exact sibling universe is tried in the candidate view first.
+No selected candidate identity may be present in that previous snapshot or either public archive view.
+Only a complete APT dependency-solver refusal is eligible for the dated retry.
+Every conditional-policy attempt must name a terminal unsatisfied dependency or conflict owner outside the selected candidate package names.
+The gate retains the complete logs and hashes and names those external owners in `dated-predecessor-eligibility.json`.
+APT's preceding request chain is not the terminal cause: it necessarily includes the predecessor that was requested.
+Unknown diagnostic forms, candidate-owned failures, download failures, signature failures, extraction failures, space refusals and link failures do not authorize the retry.
+The parser accepts APT's terminal conflicting-assignment diagnostic and its classic unmet-dependency rows; ambiguity fails closed.
+
+The dated retry uses only the unchanged previous sibling snapshot.
+It must solve, link and pass applicable start probes there; failure in both views still blocks.
+The previous build's narrow Recommends probe also stays in its chosen view.
+The candidate always solves, links and starts in the candidate view, with the existing regression checks unchanged.
+Every input result identifies its predecessor view (`candidate`, `dated`, or `none`), and the successful summary counts dated baselines.
+A dated baseline is not a substitute candidate dependency or a waiver of a failed candidate start.
+The signed offline tests cover the current-view refusal, dated success, failure in both views, a snapshot after publication, candidate contamination, an external cause that is itself taken, key mismatch, changed metadata, and the existing missing-library regression.

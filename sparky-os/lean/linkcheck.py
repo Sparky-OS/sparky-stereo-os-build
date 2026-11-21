@@ -450,7 +450,7 @@ def with_recommends(deb, siblings, root, result, archive_context, notes, whose):
 
 
 def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_qualified=None,
-            archive_context=None, siblings=(), previous_siblings=None):
+            archive_context=None, siblings=(), previous_siblings=None, previous_smoke=None):
     """Return (findings, notes). A finding blocks the release, a note is informational.
     With `archive_context`, the predecessor is qualified here (after this build's narrow Recommends case, so that
     at most two roots are live), and both builds get the narrow Recommends case."""
@@ -467,7 +467,7 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
             old_inputs = siblings if previous_siblings is None else previous_siblings
             if own_previous:
                 try:
-                    previous_qualified = archive_context.qualify(previous_deb, old_inputs)
+                    previous_qualified = archive_context.qualify_previous(previous_deb, old_inputs)
                 except package.NoSpace:
                     # no room is the machine's state, not the previous edition's: the gate's one-at-a-time recheck takes it
                     raise
@@ -478,10 +478,14 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
                 with tempfile.TemporaryDirectory(prefix='inspect-old-', dir=previous_qualified.directory) as old_root:
                     extract(previous_deb, old_root, previous_qualified.owner.ensure_space)
                     before = resolve(old_root, qualified=previous_qualified)
+                    if (previous_smoke and getattr(archive_context, 'predecessor_result', {}).get('view') == 'dated'):
+                        failed = smoke(previous_deb, previous_smoke, qualified=previous_qualified, notes=notes)
+                        if failed:
+                            raise package.Invalid('dated predecessor failed start qualification: ' + '; '.join(failed))
                     if own_previous:
                         previous_qualified.close()
                     if archive_context is not None:
-                        before = with_recommends(previous_deb, old_inputs, old_root, before, archive_context, notes,
+                        before = with_recommends(previous_deb, old_inputs, old_root, before, previous_qualified.owner, notes,
                                                  'the previous build')
                     old_needed, old_stereo = inventories(old_root, previous_qualified, findings, 'the previous build')
             finally:
@@ -632,11 +636,13 @@ def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=(), archive_c
         qualified = archive_context.qualify(new_deb, siblings)
         # the predecessor is qualified inside compare, after this build's narrow Recommends case (two live roots)
         findings, notes = compare(new_deb, previous_deb, qualified=qualified, archive_context=archive_context,
-                                  siblings=siblings, previous_siblings=previous_siblings)
+                                  siblings=siblings, previous_siblings=previous_siblings, previous_smoke=smoke_table)
         if smoke_table:
             findings += smoke(new_deb, smoke_table, qualified=qualified, notes=notes)
         (qualified.directory / 'link-check.json').write_text(json.dumps({
             'package': str(new_deb), 'findings': findings, 'notes': notes,
+            **({'predecessor': archive_context.predecessor_result}
+               if getattr(archive_context, 'previous_view', None) is not None else {}),
         }, indent=2) + '\n')
         for note in notes:
             print(f'lc1 link note: {Path(new_deb).name}: {note}')
