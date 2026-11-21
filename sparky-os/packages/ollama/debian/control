@@ -1,0 +1,63 @@
+Source: ollama
+Section: misc
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14)
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+
+Package: ollama
+Architecture: amd64
+Depends: ${misc:Depends}, ${shlibs:Depends}, libvulkan1
+Suggests: ollama-cuda, ollama-rocm
+Description: run language models on this computer (Ollama)
+ Ollama answers programs on this computer that ask a language model for
+ text: KMail and the other KDE programs through KDE's text add-ons, Vibe,
+ and mail add-ons. It runs models on the processor, and on the graphics card
+ through Vulkan (AMD, Intel and NVIDIA).
+ .
+ This is upstream's own build of Ollama 0.40.16 (MIT,
+ https://github.com/ollama/ollama), repackaged. The release has no
+ signature for its Linux bundles: the bundle was checked by its size and
+ SHA-256 against the release's own checksum list, which comes from the same
+ origin as the file. The source package carries the tagged source and the
+ release files it installs.
+ .
+ Nothing runs after installation: the user service ollama.service is not
+ enabled. No model is in the package; models are downloaded only when the
+ person asks for one. Models hosted by Ollama's own service (their names end
+ in ":cloud") send what the person writes to that service.
+
+Package: ollama-cuda
+Architecture: amd64
+Depends: ${misc:Depends}, ollama (= ${binary:Version}),
+ cuda-cudart-13-5 | cuda-cudart-13-4 | cuda-cudart-13-3 | cuda-cudart-13-2 | cuda-cudart-13-1,
+ libcublas-13-5 | libcublas-13-4 | libcublas-13-3 | libcublas-13-2 | libcublas-13-1,
+ cuda-nvrtc-13-5 | cuda-nvrtc-13-4 | cuda-nvrtc-13-3 | cuda-nvrtc-13-2 | cuda-nvrtc-13-1,
+ libnvjitlink-13-5 | libnvjitlink-13-4 | libnvjitlink-13-3 | libnvjitlink-13-2 | libnvjitlink-13-1,
+ libnvfatbin-13-5 | libnvfatbin-13-4 | libnvfatbin-13-3 | libnvfatbin-13-2 | libnvfatbin-13-1,
+ libcuda1
+Enhances: ollama
+Description: run Ollama's models on NVIDIA cards with CUDA 13
+ Ollama's runner for NVIDIA graphics cards through CUDA 13 (Turing and
+ newer), 281 MB: upstream's build of llama.cpp's CUDA back end.
+ .
+ NVIDIA's CUDA libraries are not in this package: NVIDIA's licence lets an
+ application's developer distribute them. They come from NVIDIA's own
+ repository, which the edition's hardware setup configures on a computer
+ with an NVIDIA card. Cards that only run CUDA 12 (Maxwell, Pascal, Volta)
+ use the Vulkan runner of the ollama package.
+
+Package: ollama-rocm
+Architecture: amd64
+Depends: ${misc:Depends}, ${shlibs:Depends}, ollama (= ${binary:Version})
+Enhances: ollama
+Description: run Ollama's models on AMD cards with ROCm 7.2
+ Ollama's runner for AMD graphics cards through ROCm 7.2, 2.7 GB:
+ upstream's build of llama.cpp's HIP back end with AMD's ROCm 7.2.1
+ libraries (HIP, rocBLAS, rocSOLVER, hipBLAS, hipBLASLt and their runtime).
+ Debian ships ROCm 6.4, which this runner cannot load, so AMD's libraries
+ come with it; Debian's libdrm, libnuma and libelf serve it.
+ Every AMD card also runs models through the Vulkan runner of the ollama
+ package.
