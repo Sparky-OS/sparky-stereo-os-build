@@ -1,0 +1,190 @@
+Description: Tell once when the monitor cannot show a 3D video in 3D
+ With Preview at 3D, a 3D area that could not be made (the window had no Wayland
+ surface, the declaration library could not start, the compositor did not take
+ stereo content) left the monitor transparent with nothing said, and a refused
+ declaration was a log line while the views were shown side by side flat. Now the
+ layer says why (StereoLayer::failed), the monitor tells the person once in its
+ own message area and shows the packed frame as it is, and tries 3D again when the
+ person chooses a preview. On X11 under a compositor that takes stereo content
+ (stereo_supported_x11), where the 3D area, a Wayland surface, cannot be made, the
+ monitor says once that it shows 3D only when Kdenlive runs on Wayland. On a
+ desktop that takes no stereo content nothing is said: the menu has no 3D entry.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-20
+
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -491,6 +491,10 @@ Monitor::Monitor(Kdenlive::MonitorId id,
+                                                                                       : packedAction);
+     connect(m_stereoPreview, &KSelectAction::actionTriggered, this, [this](QAction *a) {
+         setStereoPreviewSetting(a->data().toInt());
++#ifdef HAVE_STEREO_PREVIEW
++        // The person chose again: a 3D area that failed is tried again
++        m_stereoLayerFailed = false;
++#endif
+         updateStereoPreview();
+     });
+     stereoMenu->addAction(m_stereoPreview);
+@@ -2683,7 +2687,12 @@ void Monitor::updateStereoPreview()
+     // subsampled chroma of the preview)
+     bool layer = false;
+ #ifdef HAVE_STEREO_PREVIEW
+-    layer = mode == 2 && StereoLayer::isSupported() && format.isStereo();
++    layer = mode == 2 && StereoLayer::isSupported() && format.isStereo() && !m_stereoLayerFailed;
++    if (mode == 2 && format.isStereo() && !m_stereoWaylandSaid && StereoLayer::needsWayland()) {
++        // The desktop takes stereo content, but the 3D area is a Wayland surface and Kdenlive runs on X11
++        m_stereoWaylandSaid = true;
++        warningMessage(i18n("This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."), -1);
++    }
+ #endif
+     const bool unpackedByFilter = format.packing == Stereo3D::Packing::Lines || format.packing == Stereo3D::Packing::Columns
+         || format.packing == Stereo3D::Packing::Checkerboard || format.packing == Stereo3D::Packing::FrameSequence;
+@@ -2699,6 +2708,16 @@ void Monitor::updateStereoPreview()
+         m_stereoLayer = new StereoLayer(m_glMonitor, this);
+         m_stereoLayerTimer.setInterval(100);
+         connect(&m_stereoLayerTimer, &QTimer::timeout, m_stereoLayer, &StereoLayer::update);
++        // Where the 3D area cannot show the views, the person is told once and the monitor shows the packed frame
++        connect(
++            m_stereoLayer, &StereoLayer::failed, this,
++            [this](const QString &reason) {
++                m_stereoLayerFailed = true;
++                warningMessage(i18n("This monitor cannot show the video in 3D: %1 It shows the packed frame as it is.", reason), -1);
++                updateStereoPreview();
++                m_glMonitor->requestRefresh();
++            },
++            Qt::QueuedConnection);
+     }
+     if (m_stereoLayer) {
+         m_stereoLayer->setActive(layer);
+--- a/src/monitor/monitor.h
++++ b/src/monitor/monitor.h
+@@ -259,6 +259,10 @@ private:
+     /** @brief The 3D area under the monitor, where the compositor takes stereo content */
+     StereoLayer *m_stereoLayer{nullptr};
+     QTimer m_stereoLayerTimer;
++    /** @brief The 3D area could not show the views: the monitor shows the packed frame until the person chooses a preview again */
++    bool m_stereoLayerFailed{false};
++    /** @brief Whether the person was told that the monitor shows 3D only on Wayland, once in a run */
++    bool m_stereoWaylandSaid{false};
+ #endif
+     KSelectAction *m_background;
+     /** Has to be available so we can enable and disable it. */
+--- a/src/monitor/stereolayer.cpp
++++ b/src/monitor/stereolayer.cpp
+@@ -170,6 +170,9 @@ struct StereoLayer::Private
+     bool declared{false};
+     bool stereoInitialized{false};
+     bool shown{false};
++    // Why the views could not be shown in 3D, and whether that was said
++    QString failure;
++    bool failureSaid{false};
+     QPoint placedPosition{-1, -1};
+     QSize placedSize;
+ 
+@@ -198,12 +201,30 @@ bool StereoLayer::isSupported()
+     return supported;
+ }
+ 
++bool StereoLayer::needsWayland()
++{
++#if QT_CONFIG(xcb)
++    static const bool needed = [] {
++        if (QGuiApplication::platformName() != QLatin1String("xcb")) {
++            return false;
++        }
++        auto *app = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
++        Display *display = app ? app->display() : nullptr;
++        return display && stereo_supported_x11(display) > 0;
++    }();
++    return needed;
++#else
++    return false;
++#endif
++}
++
+ bool StereoLayer::Private::createLayer()
+ {
+     QWidget *top = area ? area->window() : nullptr;
+     QWindow *window = top ? top->windowHandle() : nullptr;
+     auto *windowInterface = window ? window->nativeInterface<QNativeInterface::Private::QWaylandWindow>() : nullptr;
+     if (!windowInterface || !windowInterface->surface()) {
++        failure = i18nc("Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1", "the monitor's window has no Wayland surface.");
+         return false;
+     }
+     display = waylandDisplay();
+@@ -211,12 +232,14 @@ bool StereoLayer::Private::createLayer()
+     registry = readGlobals(display, queue, globals);
+     if (stereo_declare_wayland_init(display, queue) != 0) {
+         destroyLayer();
++        failure = i18nc("Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1", "the stereo declaration library could not start.");
+         return false;
+     }
+     stereoInitialized = true;
+     wl_display_roundtrip_queue(display, queue);
+     if (!stereo_supported_wayland()) {
+         destroyLayer();
++        failure = i18nc("Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1", "the compositor does not take stereo content.");
+         return false;
+     }
+     surface = wl_compositor_create_surface(globals.compositor);
+@@ -331,6 +354,8 @@ void StereoLayer::setActive(bool active)
+     d->active = active;
+     if (!active) {
+         d->destroyLayer();
++    } else {
++        d->failureSaid = false;
+     }
+ }
+ 
+@@ -391,6 +416,10 @@ void StereoLayer::showEyes(const QImage
+         return;
+     }
+     if (!d->surface && !d->createLayer()) {
++        if (!d->failureSaid) {
++            d->failureSaid = true;
++            Q_EMIT failed(d->failure);
++        }
+         return;
+     }
+     // Nothing is listened to on the queue of the layer but the release of buffers
+@@ -440,9 +469,13 @@ void StereoLayer::showEyes(const QImage
+         const int result = stereo_declare_wayland(d->surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
+         if (result < 0) {
+             qCWarning(KDENLIVE_STEREOLAYER) << "declaring the stereo content failed:" << strerror(-result);
+-        } else {
+-            d->declared = true;
++            if (!d->failureSaid) {
++                d->failureSaid = true;
++                Q_EMIT failed(i18nc("Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1", "the compositor refused the stereo declaration (%1).", QString::fromLocal8Bit(strerror(-result))));
++            }
++            return;
+         }
++        d->declared = true;
+     }
+     buffer->busy = true;
+     wl_surface_attach(d->surface, buffer->buffer, 0, 0);
+--- a/src/monitor/stereolayer.h
++++ b/src/monitor/stereolayer.h
+@@ -32,6 +32,9 @@ public:
+ 
+     /** @brief True if the compositor offers what the layer needs */
+     static bool isSupported();
++    /** @brief True if Kdenlive runs on X11 and the X server takes stereo content (our compositor's Xwayland): the 3D area
++     *  is a Wayland surface, so the monitor shows 3D only when Kdenlive runs on Wayland */
++    static bool needsWayland();
+ 
+     bool isActive() const;
+     void setActive(bool active);
+@@ -42,6 +45,11 @@ public:
+     /** @brief Follow the area when it moves or changes size, and hide the layer while it is not shown */
+     void update();
+ 
++Q_SIGNALS:
++    /** @brief The layer could not show the views in 3D: why, in the person's words. Emitted once for each time the layer is
++     *  made active. */
++    void failed(const QString &reason);
++
+ private:
+     struct Private;
+     std::unique_ptr<Private> d;
