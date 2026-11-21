@@ -16,6 +16,9 @@ ParaView 6.1.1+dfsg1-3+stereo3d1+lc1: Debian testing's own source, offering one 
 - **A desktop without 3D areas**: when the stereo-capable window gets a context without two views, the person is told once that the 3D views are flat.
 - **What stays in the binary**: VTK's vtkRenderWindow (Debian's shared vtk9) keeps every stereo type for the other programs that load it; ParaView no longer offers the six. `paraview.simple`'s SaveScreenshot documentation names the modes offered.
 
+## Patch 0002: ParaView's Wayland caution in the log
+On Wayland ParaView logs "ParaView is not fully tested on Wayland ... export QT_QPA_PLATFORM=xcb" as a warning at every start (CMake/paraview_client_main.cxx.in), which opens the Output Messages window, mono views included (measured on Debian's 6.1.1 in a virtual Stereo KWin). Wayland is the route the edition tests and ships (EGL, which the same block selects), so the caution is logged at INFO: in the log at that verbosity, no window at start. Separate from patch 0001 so it can be dropped on its own.
+
 ## Sentences
 Gettext domain `paraview-stereo` (`vtkPVStereoEdition.h`), catalogues from `../../translations/paraview-stereo.po.patch` (Clients/ParaView/stereo-po, built with msgfmt by the patched CMakeLists.txt, installed in /usr/share/locale). The Settings dialog's label and description of Enable 3D are translated through a QTranslator that answers ParaView's `ServerManagerXML` context for those two strings. "Enable 3D", "3D display settings..." and "The display settings could not be opened." are the edition's words from KiCad's and Jmol's catalogues, in all ten languages; the other sentences are in English and pt_BR, with a table for the translations lane in the lane report.
 
