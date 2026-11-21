@@ -1,0 +1,81 @@
+// Every packing of one picture to full side by side, left eye first, each eye at the resolution it has: each sample
+// copied from its own place (image.Load), never filtered or resized; the rule of the stereo layer's storedView() and
+// stereo_gtk_unpack() (Sparky-OS/stereo-layer, src/picture/render.cpp, src/gtk/stereo-gtk-unpack.c).
+// mode: 0 side by side (and side by side quincunx), 1 top and bottom, 2 rows, 3 columns, 4 checkerboard, 5 one picture
+// in both eyes, 6 anaglyph. phase: the part of the source that holds the left eye (0 the first, 1 the second).
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+
+uniform int mode;
+uniform int phase;
+uniform int2 view_size;
+uniform int2 source_size;
+// anaglyph: for each output eye, the weights of R, G and B for each channel and the channel's divisor
+uniform float4 left_r;
+uniform float4 left_g;
+uniform float4 left_b;
+uniform float4 right_r;
+uniform float4 right_g;
+uniform float4 right_b;
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float channel(float4 weights, float3 rgb)
+{
+	float3 stored = floor(rgb * 255.0 + 0.5);
+	float value = floor(dot(weights.xyz, stored) / weights.w);
+	return min(value, 255.0) / 255.0;
+}
+
+float4 PSUnpack(VertData v_in) : TARGET
+{
+	int2 out_size = int2(view_size.x * 2, view_size.y);
+	int2 p = int2(min(v_in.uv * float2(out_size), float2(out_size) - 0.5));
+	int eye = p.x >= view_size.x ? 1 : 0;
+	int x = p.x - eye * view_size.x;
+	int y = p.y;
+	int part = eye == 0 ? phase : 1 - phase;
+	int2 at = int2(x, y);
+
+	if (mode == 0) {
+		at = int2(x + part * view_size.x, y);
+	} else if (mode == 1) {
+		at = int2(x, y + part * view_size.y);
+	} else if (mode == 2) {
+		at = int2(x, 2 * y + part);
+	} else if (mode == 3) {
+		at = int2(min(2 * x + part, source_size.x - 1), y);
+	} else if (mode == 4) {
+		int first = (part + y) - ((part + y) / 2) * 2;
+		at = int2(min(2 * x + first, source_size.x - 1), y);
+	}
+
+	float4 sample = image.Load(int3(at, 0));
+	if (mode == 6) {
+		if (eye == 0)
+			return float4(channel(left_r, sample.rgb), channel(left_g, sample.rgb), channel(left_b, sample.rgb), 1.0);
+		return float4(channel(right_r, sample.rgb), channel(right_g, sample.rgb), channel(right_b, sample.rgb), 1.0);
+	}
+	return sample;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSUnpack(v_in);
+	}
+}
