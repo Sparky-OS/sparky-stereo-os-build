@@ -1,0 +1,894 @@
+diff --git a/po/de/kcm_kwinrules.po b/po/de/kcm_kwinrules.po
+--- a/po/de/kcm_kwinrules.po
++++ b/po/de/kcm_kwinrules.po
+@@ -1526,6 +1526,19 @@
+ 
+ #~ msgid "Strictly obey geometry"
+ #~ msgstr "Strikt der Geometrie folgen"
+ 
+ #~ msgid "&Detect"
+ #~ msgstr "E&rkennen"
++
++msgid "None (2D)"
++msgstr "Keine (2D)"
++
++msgid "Side by side (full), left eye first"
++msgstr "Side-by-Side (voll), linkes Auge zuerst"
++
++msgid "Stereo content"
++msgstr "Stereoinhalt"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "Das Fensterbild enthält zwei Ansichten, eine für jedes Auge. In einem 3D-Modus erhält jedes Auge seine Ansicht. Beim Anaglyphenverfahren werden beide Ansichten gemischt. Sonst wird die linke Ansicht angezeigt."
+diff --git a/po/de/kcm_kwinstereodepth.po b/po/de/kcm_kwinstereodepth.po
+--- a/po/de/kcm_kwinstereodepth.po
++++ b/po/de/kcm_kwinstereodepth.po
+@@ -86,6 +86,17 @@
+ 
+ #. Stereo 3D (Sparky Stereo OS), what a sunk wallpaper loses at the sides on a screen in a 3D mode
+ #: ui/main.qml
+ msgctxt "@info"
+ msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
+ msgstr "Videos mit Effekten, die aus dem Bildschirm hervortreten, sind mit Miniprogrammen oder anderen Dingen darüber voraussichtlich nicht angenehm anzusehen."
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "Menüs, Kurzinfos und Benachrichtigungen halten auf einem Bildschirm mit 3D-Anzeige mindestens diesen Abstand zum Bildschirmrand ein, damit ein vor dem Bildschirm angezeigtes Menü nicht abgeschnitten wird."
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "Aus"
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "Randabstand für Einblendungen:"
+diff --git a/po/de/kwin.po b/po/de/kwin.po
+--- a/po/de/kwin.po
++++ b/po/de/kwin.po
+@@ -5715,6 +5715,27 @@
+ msgid "Invalid side by side (full) timing"
+ msgstr "Ungültiges Timing für Side-by-Side (voll)"
+ 
+ #. Stereo 3D (Sparky Stereo OS)
+ msgid "Invalid stereo depth setting"
+ msgstr "Ungültige Stereo-Tiefeneinstellung"
++
++msgid "Invalid iZ3D option"
++msgstr "Ungültige iZ3D-Option"
++
++msgid "Invalid stereo format toggle value"
++msgstr "Ungültiger Wert für den Schalter des Stereoformats"
++
++msgid "Invalid stereo glasses value"
++msgstr "Ungültiger Wert für die Einstellung der 3D-Brille"
++
++msgid "Invalid stereo pair value"
++msgstr "Ungültiger Wert für das Stereopaar"
++
++msgid "Invalid swap eyes value"
++msgstr "Ungültiger Wert für das Vertauschen der Augen"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "Die Konfiguration der virtuellen Leiste konnte nicht angewendet werden"
++
++msgid "Virtual panel properties are not supported"
++msgstr "Die Eigenschaften der virtuellen Leiste werden nicht unterstützt"
+diff --git a/po/es/kcm_kwinrules.po b/po/es/kcm_kwinrules.po
+--- a/po/es/kcm_kwinrules.po
++++ b/po/es/kcm_kwinrules.po
+@@ -1024,6 +1024,19 @@
+ 
+ #: ui/ValueEditor.qml:203
+ #, kde-format
+ msgctxt "(x, y) coordinates separator in size/position"
+ msgid "x"
+ msgstr "x"
++
++msgid "None (2D)"
++msgstr "Ninguno (2D)"
++
++msgid "Side by side (full), left eye first"
++msgstr "Lado a lado (completo), ojo izquierdo primero"
++
++msgid "Stereo content"
++msgstr "Contenido estéreo"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "La imagen de la ventana contiene dos vistas, una para cada ojo. En un modo 3D, cada vista se dirige a su ojo. En anaglifo se combinan las dos. En los demás casos se muestra la vista izquierda."
+diff --git a/po/es/kcm_kwinstereodepth.po b/po/es/kcm_kwinstereodepth.po
+new file mode 100644
+--- /dev/null
++++ b/po/es/kcm_kwinstereodepth.po
+@@ -0,0 +1,78 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: kwin\n"
++"PO-Revision-Date: 2026-11-20 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: Sparky Stereo OS\n"
++"Language: es\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=2; plural=(n != 1);\n"
++
++msgid "How far the desktop's effects reach while they play, in the same pixels. Effects may be bolder than where the windows sit, so these are separate. Zero keeps an effect flat on that side."
++msgstr "Hasta dónde llegan los efectos del escritorio mientras se reproducen, en los mismos píxeles. Los efectos pueden ser más atrevidos que la posición de las ventanas, por eso estos valores van aparte. Cero mantiene el efecto plano en ese lado."
++
++msgid "How far the desktop's windows and menus reach behind and in front of the screen on a display in one of its 3D modes. The values are the distance between what the two eyes see, in pixels on a screen 1920 pixels wide, and grow and shrink with the screen. Zero switches that side off."
++msgstr "Hasta dónde llegan, detrás y delante de la pantalla, las ventanas y los menús del escritorio en una pantalla en uno de sus modos 3D. Los valores son la distancia entre lo que ven los dos ojos, en píxeles sobre una pantalla de 1920 píxeles de ancho, y crecen y disminuyen con la pantalla. Cero desactiva ese lado."
++
++msgid "Inactive windows and the wallpaper sink behind the screen by up to this much. More depth: the background drifts further apart."
++msgstr "Las ventanas inactivas y el fondo de escritorio se hunden detrás de la pantalla hasta esta distancia. Más profundidad: las dos imágenes del fondo se separan más."
++
++msgid "Menus, dialogs and tooltips of the active window come forward by up to this much. More pop-out: things near the screen's edges and long reading get harder."
++msgstr "Los menús, los diálogos y las descripciones emergentes de la ventana activa avanzan hacia delante hasta esta distancia. Más efecto emergente: lo que está cerca de los bordes de la pantalla y la lectura prolongada resultan más difíciles."
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "Los menús, las descripciones emergentes y las notificaciones de una pantalla en 3D mantienen al menos esta distancia respecto a los bordes. Así no se recorta un menú que sobresale de la pantalla."
++
++msgctxt "@info"
++msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
++msgstr "Es probable que los vídeos con efectos que sobresalen de la pantalla no resulten cómodos con widgets u otros elementos encima."
++
++msgctxt "@info %1 is a number of pixels, %2 how many of them at each side"
++msgid "%1 pixel of the wallpaper's width will be lost to the sunk effect, %2 at each side."
++msgid_plural "%1 pixels of the wallpaper's width will be lost to the sunk effect, %2 at each side."
++msgstr[0] "Se perderá %1 píxel del ancho del fondo de escritorio por el efecto de hundimiento, %2 a cada lado."
++msgstr[1] "Se perderán %1 píxeles del ancho del fondo de escritorio por el efecto de hundimiento, %2 a cada lado."
++
++msgctxt "@info %1 is a number of pixels, %2 how many of them at each side, %3 a screen's name"
++msgid "%3: %1 pixel of the wallpaper's width will be lost to the sunk effect, %2 at each side."
++msgid_plural "%3: %1 pixels of the wallpaper's width will be lost to the sunk effect, %2 at each side."
++msgstr[0] "%3: se perderá %1 píxel del ancho del fondo de escritorio por el efecto de hundimiento, %2 a cada lado."
++msgstr[1] "%3: se perderán %1 píxeles del ancho del fondo de escritorio por el efecto de hundimiento, %2 a cada lado."
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "Desactivado"
++
++msgctxt "@label no depth"
++msgid "Off"
++msgstr "Desactivado"
++
++msgctxt "@label no pop-out"
++msgid "Off"
++msgstr "Desactivado"
++
++msgctxt "@label pixels"
++msgid "%1 pixel"
++msgstr "%1 píxel"
++
++msgctxt "@label:slider"
++msgid "Background depth:"
++msgstr "Profundidad del fondo:"
++
++msgctxt "@label:slider"
++msgid "Effects, behind the screen:"
++msgstr "Efectos, detrás de la pantalla:"
++
++msgctxt "@label:slider"
++msgid "Effects, in front of the screen:"
++msgstr "Efectos, delante de la pantalla:"
++
++msgctxt "@label:slider"
++msgid "Pop-out:"
++msgstr "Emergente:"
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "Margen de elementos emergentes:"
+diff --git a/po/es/kwin.po b/po/es/kwin.po
+--- a/po/es/kwin.po
++++ b/po/es/kwin.po
+@@ -4441,6 +4441,90 @@
+ "en hilos de ayuda.\n"
+ 
+ #: xwayland/xwaylandlauncher.cpp:287
+ #, kde-format
+ msgid "Xwayland has crashed"
+ msgstr "Xwayland ha fallado"
++
++msgid "Blue is the source desktop. White is the selected region. Pointer or active-window following moves this region. This diagram changes no display settings."
++msgstr "El azul es el escritorio de origen. El blanco es la región seleccionada. El seguimiento del puntero o de la ventana activa mueve esta región. Este diagrama no cambia ningún ajuste de pantalla."
++
++msgid "Center the active window in the headset view"
++msgstr "Centrar la ventana activa en la vista del casco"
++
++msgid "Fit the whole desktop"
++msgstr "Ajustar todo el escritorio"
++
++msgid "Follow the pointer"
++msgstr "Seguir el puntero"
++
++msgid "Full height with panning"
++msgstr "Altura completa con desplazamiento"
++
++msgid "Headset:"
++msgstr "Casco:"
++
++msgid "Horizontal center:"
++msgstr "Centro horizontal:"
++
++msgid "Invalid iZ3D option"
++msgstr "Opción de iZ3D no válida"
++
++msgid "Invalid side by side (full) timing"
++msgstr "Temporización de lado a lado (completo) no válida"
++
++msgid "Invalid stereo depth setting"
++msgstr "Ajuste de profundidad estéreo no válido"
++
++msgid "Invalid stereo format toggle value"
++msgstr "Valor no válido para el selector de formato estéreo"
++
++msgid "Invalid stereo glasses value"
++msgstr "Valor no válido para el ajuste de gafas 3D"
++
++msgid "Invalid stereo pair value"
++msgstr "Valor no válido para el par estéreo"
++
++msgid "Invalid swap eyes value"
++msgstr "Valor no válido para el intercambio de los ojos"
++
++msgid "Mirrored view:"
++msgstr "Vista reflejada:"
++
++msgid "Preview the view size…"
++msgstr "Vista previa del tamaño de la vista…"
++
++msgid "Standalone display and KDE scale…"
++msgstr "Pantalla independiente y escala de KDE…"
++
++msgid "Start Throwing to a headset, then open this window again."
++msgstr "Inicie Throw (lanzar) hacia un visor y vuelva a abrir esta ventana."
++
++msgid "The Throw view could not be saved. Check that the headset is still connected."
++msgstr "No se pudo guardar la vista de Throw. Compruebe que el visor siga conectado."
++
++msgid "These settings affect the headset’s mirrored Throw view. The real monitor and its windows keep their placement."
++msgstr "Estos ajustes afectan a la vista duplicada de Throw en el visor. El monitor físico y sus ventanas conservan su posición."
++
++msgid "Throw view"
++msgstr "Vista de Throw (lanzar)"
++
++msgid "Throw view preview"
++msgstr "Vista previa de la vista de Throw"
++
++msgid "Throw view saved."
++msgstr "Se guardó la vista de Throw."
++
++msgid "Vertical center:"
++msgstr "Centro vertical:"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "No se ha podido aplicar la configuración del panel virtual"
++
++msgid "Virtual panel properties are not supported"
++msgstr "Las propiedades del panel virtual no son compatibles"
++
++msgid "Zoom a region"
++msgstr "Ampliar una región"
++
++msgid "Zoom:"
++msgstr "Ampliación:"
+diff --git a/po/fr/kcm_kwinrules.po b/po/fr/kcm_kwinrules.po
+--- a/po/fr/kcm_kwinrules.po
++++ b/po/fr/kcm_kwinrules.po
+@@ -1568,6 +1568,19 @@
+ 
+ #~ msgid "W&orkarounds"
+ #~ msgstr "A&stuces"
+ 
+ #~ msgid "Strictly obey geometry"
+ #~ msgstr "Obéir strictement à la géométrie"
++
++msgid "None (2D)"
++msgstr "Aucun (2D)"
++
++msgid "Side by side (full), left eye first"
++msgstr "Côte à côte (complet), œil gauche en premier"
++
++msgid "Stereo content"
++msgstr "Contenu stéréoscopique"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "L’image de la fenêtre contient deux vues, une par œil. Dans un mode 3D, chaque vue est dirigée vers son œil. En anaglyphe, les deux vues sont combinées. Dans les autres cas, la vue gauche est affichée."
+diff --git a/po/fr/kcm_kwinstereodepth.po b/po/fr/kcm_kwinstereodepth.po
+--- a/po/fr/kcm_kwinstereodepth.po
++++ b/po/fr/kcm_kwinstereodepth.po
+@@ -86,6 +86,17 @@
+ 
+ #. Stereo 3D (Sparky Stereo OS), what a sunk wallpaper loses at the sides on a screen in a 3D mode
+ #: ui/main.qml
+ msgctxt "@info"
+ msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
+ msgstr "Les vidéos avec des effets qui sortent de l'écran ne devraient pas être confortables à regarder avec des composants graphiques ou d'autres éléments par-dessus."
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "Sur un écran qui affiche la 3D, les menus, infobulles et notifications restent au moins à cette distance des bords de l’écran. Un menu qui ressort ne sera donc pas coupé par le bord."
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "Désactivé"
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "Marge des éléments contextuels :"
+diff --git a/po/fr/kwin.po b/po/fr/kwin.po
+--- a/po/fr/kwin.po
++++ b/po/fr/kwin.po
+@@ -5747,6 +5747,27 @@
+ msgid "Invalid side by side (full) timing"
+ msgstr "Synchronisation côte à côte (complet) non valable"
+ 
+ #. Stereo 3D (Sparky Stereo OS)
+ msgid "Invalid stereo depth setting"
+ msgstr "Réglage de profondeur stéréo non valable"
++
++msgid "Invalid iZ3D option"
++msgstr "Option iZ3D non valable"
++
++msgid "Invalid stereo format toggle value"
++msgstr "Valeur non valable pour le réglage du format stéréoscopique"
++
++msgid "Invalid stereo glasses value"
++msgstr "Valeur non valable pour le réglage des lunettes stéréoscopiques"
++
++msgid "Invalid stereo pair value"
++msgstr "Valeur non valable pour la paire stéréoscopique"
++
++msgid "Invalid swap eyes value"
++msgstr "Valeur non valable pour « Échanger les yeux gauche et droit »"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "Impossible d’appliquer la configuration du panneau virtuel"
++
++msgid "Virtual panel properties are not supported"
++msgstr "Les propriétés du panneau virtuel ne sont pas prises en charge"
+diff --git a/po/ja/kcm_kwinrules.po b/po/ja/kcm_kwinrules.po
+--- a/po/ja/kcm_kwinrules.po
++++ b/po/ja/kcm_kwinrules.po
+@@ -1011,6 +1011,19 @@
+ 
+ #: ui/ValueEditor.qml:203
+ #, kde-format
+ msgctxt "(x, y) coordinates separator in size/position"
+ msgid "x"
+ msgstr "x"
++
++msgid "None (2D)"
++msgstr "なし (2D)"
++
++msgid "Side by side (full), left eye first"
++msgstr "サイドバイサイド(フル)、左目が先"
++
++msgid "Stereo content"
++msgstr "ステレオコンテンツ"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "ウィンドウの画像には、左右の目に対応する 2 つのビューがあります。3D モードでは各ビューを対応する目に表示します。アナグリフでは両方を合成し、それ以外では左のビューを表示します。"
+diff --git a/po/ja/kcm_kwinstereodepth.po b/po/ja/kcm_kwinstereodepth.po
+--- a/po/ja/kcm_kwinstereodepth.po
++++ b/po/ja/kcm_kwinstereodepth.po
+@@ -83,6 +83,17 @@
+ 
+ #. Stereo 3D (Sparky Stereo OS), what a sunk wallpaper loses at the sides on a screen in a 3D mode
+ #: ui/main.qml
+ msgctxt "@info"
+ msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
+ msgstr "飛び出し効果のある動画は、上にウィジェットやほかのものが重なると、快適に見られることは想定されていません。"
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "3D を表示している画面では、メニュー、ツールチップ、通知を画面の端から少なくともこの距離だけ離します。飛び出したメニューが画面の端で切れるのを防ぎます。"
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "オフ"
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "ポップアップの余白:"
+diff --git a/po/ja/kwin.po b/po/ja/kwin.po
+--- a/po/ja/kwin.po
++++ b/po/ja/kwin.po
+@@ -2591,16 +2591,16 @@
+ msgstr ""
+ 
+ #: plugins/screencast/screencastmanager.cpp:56
+ #: plugins/screencast/screencastmanager.cpp:81
+ #: plugins/screencast/screencastmanager.cpp:97
+ #: plugins/screencast/screencastmanager.cpp:151
+-#, fuzzy, kde-format
++#, kde-format
+ #| msgid "Suspend Compositing"
+ msgid "Unsupported compositing type"
+-msgstr "コンポジティングを一時停止"
++msgstr "対応していないコンポジット方式"
+ 
+ #: plugins/screencast/screencastmanager.cpp:62
+ #, kde-format
+ msgid "Could not find window id %1"
+ msgstr ""
+ 
+@@ -4513,6 +4513,27 @@
+ msgid "Invalid side by side (full) timing"
+ msgstr "サイドバイサイド(フル)のタイミングが無効です"
+ 
+ #. Stereo 3D (Sparky Stereo OS)
+ msgid "Invalid stereo depth setting"
+ msgstr "ステレオの奥行きの設定が無効です"
++
++msgid "Invalid iZ3D option"
++msgstr "iZ3D のオプションが無効です"
++
++msgid "Invalid stereo format toggle value"
++msgstr "ステレオ形式の切り替え値が無効です"
++
++msgid "Invalid stereo glasses value"
++msgstr "3D メガネの設定値が無効です"
++
++msgid "Invalid stereo pair value"
++msgstr "ステレオペアの値が無効です"
++
++msgid "Invalid swap eyes value"
++msgstr "左右の目の入れ替え値が無効です"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "仮想パネルの設定を適用できませんでした"
++
++msgid "Virtual panel properties are not supported"
++msgstr "仮想パネルのプロパティには対応していません"
+diff --git a/po/ko/kcm_kwinrules.po b/po/ko/kcm_kwinrules.po
+--- a/po/ko/kcm_kwinrules.po
++++ b/po/ko/kcm_kwinrules.po
+@@ -1389,6 +1389,19 @@
+ 
+ #~ msgid "Transparent"
+ #~ msgstr "투명"
+ 
+ #~ msgid "&Moving/resizing"
+ #~ msgstr "크기 조정/이동(&M)"
++
++msgid "None (2D)"
++msgstr "없음 (2D)"
++
++msgid "Side by side (full), left eye first"
++msgstr "사이드 바이 사이드(전체), 왼쪽 눈 먼저"
++
++msgid "Stereo content"
++msgstr "스테레오 콘텐츠"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "창의 그림에는 눈마다 하나씩 두 개의 보기가 들어 있습니다. 3D 모드에서는 각 보기가 해당 눈에 표시되며, 애너글리프에서는 두 보기를 섞고 그 외에는 왼쪽 보기를 표시합니다."
+diff --git a/po/ko/kcm_kwinstereodepth.po b/po/ko/kcm_kwinstereodepth.po
+--- a/po/ko/kcm_kwinstereodepth.po
++++ b/po/ko/kcm_kwinstereodepth.po
+@@ -83,6 +83,17 @@
+ 
+ #. Stereo 3D (Sparky Stereo OS), what a sunk wallpaper loses at the sides on a screen in a 3D mode
+ #: ui/main.qml
+ msgctxt "@info"
+ msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
+ msgstr "튀어나오는 효과가 있는 동영상은 그 위에 위젯이나 다른 것이 있으면 편안하게 보기 어렵습니다."
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "3D를 표시하는 화면에서 메뉴, 풍선 도움말 및 알림은 화면 가장자리에서 이 거리 이상 떨어져 있습니다. 화면 앞으로 나온 메뉴가 가장자리에서 잘리지 않게 합니다."
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "끔"
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "팝업 여백:"
+diff --git a/po/ko/kwin.po b/po/ko/kwin.po
+--- a/po/ko/kwin.po
++++ b/po/ko/kwin.po
+@@ -5213,6 +5213,27 @@
+ msgid "Invalid side by side (full) timing"
+ msgstr "사이드 바이 사이드(전체) 타이밍이 잘못되었습니다"
+ 
+ #. Stereo 3D (Sparky Stereo OS)
+ msgid "Invalid stereo depth setting"
+ msgstr "스테레오 깊이 설정이 잘못되었습니다"
++
++msgid "Invalid iZ3D option"
++msgstr "iZ3D 옵션이 잘못되었습니다"
++
++msgid "Invalid stereo format toggle value"
++msgstr "스테레오 형식 전환 값이 잘못되었습니다"
++
++msgid "Invalid stereo glasses value"
++msgstr "3D 안경 설정 값이 잘못되었습니다"
++
++msgid "Invalid stereo pair value"
++msgstr "스테레오 쌍 값이 잘못되었습니다"
++
++msgid "Invalid swap eyes value"
++msgstr "좌우 눈 바꾸기 값이 잘못되었습니다"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "가상 패널 설정을 적용할 수 없습니다"
++
++msgid "Virtual panel properties are not supported"
++msgstr "가상 패널 속성을 지원하지 않습니다"
+diff --git a/po/pl/kcm_kwinrules.po b/po/pl/kcm_kwinrules.po
+--- a/po/pl/kcm_kwinrules.po
++++ b/po/pl/kcm_kwinrules.po
+@@ -1503,6 +1503,19 @@
+ 
+ #~ msgid "W&orkarounds"
+ #~ msgstr "&Obejścia"
+ 
+ #~ msgid "Strictly obey geometry"
+ #~ msgstr "Ściśle przestrzegaj geometrii"
++
++msgid "None (2D)"
++msgstr "Brak (2D)"
++
++msgid "Side by side (full), left eye first"
++msgstr "Obok siebie (pełny), najpierw lewe oko"
++
++msgid "Stereo content"
++msgstr "Treść stereoskopowa"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "Obraz okna zawiera dwa widoki, po jednym dla każdego oka. W trybie 3D każde oko widzi swój widok, w anaglifie oba są łączone, a w pozostałych przypadkach wyświetlany jest lewy widok."
+diff --git a/po/pl/kcm_kwinstereodepth.po b/po/pl/kcm_kwinstereodepth.po
+--- a/po/pl/kcm_kwinstereodepth.po
++++ b/po/pl/kcm_kwinstereodepth.po
+@@ -89,6 +89,17 @@
+ 
+ #. Stereo 3D (Sparky Stereo OS), what a sunk wallpaper loses at the sides on a screen in a 3D mode
+ #: ui/main.qml
+ msgctxt "@info"
+ msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
+ msgstr "Filmy z efektami wysunięcia nie będą wygodne w odbiorze, gdy nad nimi są elementy interfejsu lub inne rzeczy."
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "Menu, podpowiedzi i powiadomienia na ekranie wyświetlającym 3D pozostają co najmniej w tej odległości od krawędzi ekranu, aby wysunięte menu nie zostało obcięte."
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "Wył."
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "Margines elementów wyskakujących:"
+diff --git a/po/pl/kwin.po b/po/pl/kwin.po
+--- a/po/pl/kwin.po
++++ b/po/pl/kwin.po
+@@ -5634,6 +5634,27 @@
+ msgid "Invalid side by side (full) timing"
+ msgstr "Nieprawidłowe taktowanie trybu obok siebie (pełnego)"
+ 
+ #. Stereo 3D (Sparky Stereo OS)
+ msgid "Invalid stereo depth setting"
+ msgstr "Nieprawidłowe ustawienie głębi stereo"
++
++msgid "Invalid iZ3D option"
++msgstr "Nieprawidłowa opcja iZ3D"
++
++msgid "Invalid stereo format toggle value"
++msgstr "Nieprawidłowa wartość przełącznika formatu stereoskopowego"
++
++msgid "Invalid stereo glasses value"
++msgstr "Nieprawidłowa wartość ustawienia okularów stereoskopowych"
++
++msgid "Invalid stereo pair value"
++msgstr "Nieprawidłowa wartość pary stereoskopowej"
++
++msgid "Invalid swap eyes value"
++msgstr "Nieprawidłowa wartość zamiany oczu"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "Nie można zastosować konfiguracji wirtualnego panelu"
++
++msgid "Virtual panel properties are not supported"
++msgstr "Właściwości wirtualnego panelu nie są obsługiwane"
+diff --git a/po/pt_BR/kcm_kwinrules.po b/po/pt_BR/kcm_kwinrules.po
+--- a/po/pt_BR/kcm_kwinrules.po
++++ b/po/pt_BR/kcm_kwinrules.po
+@@ -1429,6 +1429,19 @@
+ 
+ #~ msgid "%"
+ #~ msgstr "%"
+ 
+ #~ msgid "org.kde.kwin"
+ #~ msgstr "org.kde.kwin"
++
++msgid "None (2D)"
++msgstr "Nenhum (2D)"
++
++msgid "Side by side (full), left eye first"
++msgstr "Lado a lado (completo), olho esquerdo primeiro"
++
++msgid "Stereo content"
++msgstr "Conteúdo estéreo"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "A imagem da janela contém duas vistas, uma para cada olho. Em um modo 3D, cada vista vai para o seu olho. No anáglifo, as duas se combinam. Nos outros casos, aparece a vista esquerda."
+diff --git a/po/pt_BR/kcm_kwinstereodepth.po b/po/pt_BR/kcm_kwinstereodepth.po
+--- a/po/pt_BR/kcm_kwinstereodepth.po
++++ b/po/pt_BR/kcm_kwinstereodepth.po
+@@ -86,6 +86,17 @@
+ 
+ #. Stereo 3D (Sparky Stereo OS), what a sunk wallpaper loses at the sides on a screen in a 3D mode
+ #: ui/main.qml
+ msgctxt "@info"
+ msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
+ msgstr "Vídeos com efeitos de saliência não devem ficar confortáveis com widgets ou outras coisas por cima deles."
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "Em uma tela que exibe 3D, menus, dicas e notificações ficam pelo menos a essa distância das bordas da tela, para que um menu à frente da tela não seja cortado."
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "Desativado"
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "Margem dos elementos pop-up:"
+diff --git a/po/pt_BR/kwin.po b/po/pt_BR/kwin.po
+--- a/po/pt_BR/kwin.po
++++ b/po/pt_BR/kwin.po
+@@ -5208,6 +5208,27 @@
+ msgid "Invalid side by side (full) timing"
+ msgstr "Temporização lado a lado (completo) inválida"
+ 
+ #. Stereo 3D (Sparky Stereo OS)
+ msgid "Invalid stereo depth setting"
+ msgstr "Configuração de profundidade estéreo inválida"
++
++msgid "Invalid iZ3D option"
++msgstr "Opção iZ3D inválida"
++
++msgid "Invalid stereo format toggle value"
++msgstr "Valor inválido para a opção de formato estéreo"
++
++msgid "Invalid stereo glasses value"
++msgstr "Valor inválido para a opção de óculos 3D"
++
++msgid "Invalid stereo pair value"
++msgstr "Valor inválido para o par estéreo"
++
++msgid "Invalid swap eyes value"
++msgstr "Valor inválido para «Trocar os olhos esquerdo e direito»"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "Não foi possível aplicar a configuração do painel virtual"
++
++msgid "Virtual panel properties are not supported"
++msgstr "As propriedades do painel virtual não são compatíveis"
+diff --git a/po/zh_CN/kcm_kwinrules.po b/po/zh_CN/kcm_kwinrules.po
+--- a/po/zh_CN/kcm_kwinrules.po
++++ b/po/zh_CN/kcm_kwinrules.po
+@@ -977,6 +977,19 @@
+ 
+ #: ui/ValueEditor.qml:203
+ #, kde-format
+ msgctxt "(x, y) coordinates separator in size/position"
+ msgid "x"
+ msgstr "x"
++
++msgid "None (2D)"
++msgstr "无（2D）"
++
++msgid "Side by side (full), left eye first"
++msgstr "并排（全宽），左眼优先"
++
++msgid "Stereo content"
++msgstr "立体内容"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "窗口图像包含两个视图，每只眼睛一个。在 3D 模式下，每个视图分别显示给对应的眼睛。色差模式会混合两个视图，其他模式则显示左视图。"
+diff --git a/po/zh_CN/kcm_kwinstereodepth.po b/po/zh_CN/kcm_kwinstereodepth.po
+--- a/po/zh_CN/kcm_kwinstereodepth.po
++++ b/po/zh_CN/kcm_kwinstereodepth.po
+@@ -83,6 +83,17 @@
+ 
+ #. Stereo 3D (Sparky Stereo OS), what a sunk wallpaper loses at the sides on a screen in a 3D mode
+ #: ui/main.qml
+ msgctxt "@info"
+ msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
+ msgstr "带有弹出效果的视频上若有小部件或其他内容，观看起来预计不会舒适。"
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "在显示 3D 内容的屏幕上，菜单、工具提示和通知与屏幕边缘至少保持此距离，以免凸出屏幕的菜单被边缘裁切。"
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "关闭"
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "弹出元素边距："
+diff --git a/po/zh_CN/kwin.po b/po/zh_CN/kwin.po
+--- a/po/zh_CN/kwin.po
++++ b/po/zh_CN/kwin.po
+@@ -4467,6 +4467,27 @@
+ msgid "Invalid side by side (full) timing"
+ msgstr "无效的并排（全宽）时序"
+ 
+ #. Stereo 3D (Sparky Stereo OS)
+ msgid "Invalid stereo depth setting"
+ msgstr "无效的立体深度设置"
++
++msgid "Invalid iZ3D option"
++msgstr "无效的 iZ3D 选项"
++
++msgid "Invalid stereo format toggle value"
++msgstr "无效的立体格式开关值"
++
++msgid "Invalid stereo glasses value"
++msgstr "无效的立体眼镜设置值"
++
++msgid "Invalid stereo pair value"
++msgstr "无效的立体对设置值"
++
++msgid "Invalid swap eyes value"
++msgstr "无效的左右眼交换设置值"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "无法应用虚拟面板配置"
++
++msgid "Virtual panel properties are not supported"
++msgstr "不支持虚拟面板属性"
+diff --git a/po/zh_TW/kcm_kwinrules.po b/po/zh_TW/kcm_kwinrules.po
+--- a/po/zh_TW/kcm_kwinrules.po
++++ b/po/zh_TW/kcm_kwinrules.po
+@@ -1349,6 +1349,19 @@
+ 
+ #~ msgid "%"
+ #~ msgstr "%"
+ 
+ #~ msgid "org.kde.kwin"
+ #~ msgstr "org.kde.kwin"
++
++msgid "None (2D)"
++msgstr "無（2D）"
++
++msgid "Side by side (full), left eye first"
++msgstr "並排（全寬），左眼優先"
++
++msgid "Stereo content"
++msgstr "立體內容"
++
++msgctxt "@info:tooltip"
++msgid "The window's picture holds two views, one for each eye. In a 3D mode each view goes to its eye, with anaglyph the two are mixed, and otherwise the left view is shown."
++msgstr "視窗影像有兩個視圖，每隻眼睛各一個。在 3D 模式下，各視圖分別呈現給對應的眼睛。色差模式會混合兩個視圖，其餘模式則顯示左視圖。"
+diff --git a/po/zh_TW/kcm_kwinstereodepth.po b/po/zh_TW/kcm_kwinstereodepth.po
+--- a/po/zh_TW/kcm_kwinstereodepth.po
++++ b/po/zh_TW/kcm_kwinstereodepth.po
+@@ -83,6 +83,17 @@
+ 
+ #. Stereo 3D (Sparky Stereo OS), what a sunk wallpaper loses at the sides on a screen in a 3D mode
+ #: ui/main.qml
+ msgctxt "@info"
+ msgid "Videos with pop effects are not expected to be comfortable with widgets or other things over it."
+ msgstr "帶有彈出效果的影片上若有元件或其他內容，觀看起來預計不會舒適。"
++
++msgid "Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge."
++msgstr "在顯示 3D 內容的螢幕上，選單、工具提示與通知和螢幕邊緣至少保持這段距離，以免凸出螢幕的選單被邊緣裁切。"
++
++msgctxt "@label no border"
++msgid "Off"
++msgstr "關閉"
++
++msgctxt "@label:slider"
++msgid "Popup border:"
++msgstr "彈出項目邊距："
+diff --git a/po/zh_TW/kwin.po b/po/zh_TW/kwin.po
+--- a/po/zh_TW/kwin.po
++++ b/po/zh_TW/kwin.po
+@@ -5048,6 +5048,27 @@
+ msgid "Invalid side by side (full) timing"
+ msgstr "無效的並排（全寬）時序"
+ 
+ #. Stereo 3D (Sparky Stereo OS)
+ msgid "Invalid stereo depth setting"
+ msgstr "無效的立體深度設定"
++
++msgid "Invalid iZ3D option"
++msgstr "無效的 iZ3D 選項"
++
++msgid "Invalid stereo format toggle value"
++msgstr "無效的立體格式切換值"
++
++msgid "Invalid stereo glasses value"
++msgstr "無效的立體眼鏡設定值"
++
++msgid "Invalid stereo pair value"
++msgstr "無效的立體配對設定值"
++
++msgid "Invalid swap eyes value"
++msgstr "無效的左右眼交換設定值"
++
++msgid "Virtual panel configuration could not be applied"
++msgstr "無法套用虛擬面板設定"
++
++msgid "Virtual panel properties are not supported"
++msgstr "不支援虛擬面板屬性"
+diff --git a/src/helpers/headset-view/org.kde.kwin.headsetview.desktop b/src/helpers/headset-view/org.kde.kwin.headsetview.desktop
+--- a/src/helpers/headset-view/org.kde.kwin.headsetview.desktop
++++ b/src/helpers/headset-view/org.kde.kwin.headsetview.desktop
+@@ -1,23 +1,25 @@
+ [Desktop Entry]
+ Type=Application
+ Name=Throw view
+-Name[pl]=Widok przerzucania
+-Name[pt_BR]=Visão do arremesso
+-Name[fr]=Vue du lancer
+-Name[de]=Ansicht beim Werfen
+-Name[ja]=スローの表示
+-Name[ko]=던지기 화면
+-Name[zh_CN]=投送视图
+-Name[zh_TW]=投送檢視
++Name[es]=Vista de Throw (lanzar)
++Name[pl]=Widok funkcji Throw (przerzucić)
++Name[pt_BR]=Visão do Throw (jogar)
++Name[fr]=Vue de Throw (envoyer)
++Name[de]=Ansicht für Throw (senden)
++Name[ja]=Throw (送る) の表示
++Name[ko]=Throw (보내다) 화면
++Name[zh_CN]=Throw (发送) 视图
++Name[zh_TW]=Throw (傳送) 檢視
+ Comment=Choose fit, pan or zoom for a Throw view
+-Comment[pl]=Wybierz dopasowanie, przesuwanie lub powiększenie przerzucanego widoku
+-Comment[pt_BR]=Escolher ajuste, deslocamento ou ampliação da visão do arremesso
+-Comment[fr]=Choisir l’ajustement, le déplacement ou le zoom de la vue du lancer
+-Comment[de]=Einpassen, Verschieben oder Vergrößern der Wurfansicht wählen
+-Comment[ja]=スロー表示の全体表示、移動、拡大を選択
+-Comment[ko]=던지기 화면의 맞춤, 이동 또는 확대 선택
+-Comment[zh_CN]=选择投送视图的适应、平移或缩放方式
+-Comment[zh_TW]=選擇投送檢視的符合、平移或縮放方式
++Comment[es]=Elija cómo ajustar, desplazar o ampliar la vista de Throw (lanzar)
++Comment[pl]=Wybierz dopasowanie, przesuwanie lub powiększenie widoku funkcji Throw (przerzucić)
++Comment[pt_BR]=Escolha como ajustar, mover ou ampliar a visão do Throw (jogar)
++Comment[fr]=Choisissez l’ajustement, le déplacement ou le zoom de la vue de Throw (envoyer)
++Comment[de]=Ansicht für Throw (senden) einpassen, verschieben oder vergrößern
++Comment[ja]=Throw (送る) の表示を画面に合わせるか、移動するか、拡大するかを選びます
++Comment[ko]=Throw (보내다) 화면 맞춤, 이동 또는 확대를 선택합니다
++Comment[zh_CN]=选择如何适配、平移或缩放 Throw (发送) 视图
++Comment[zh_TW]=選擇如何配合、平移或縮放 Throw (傳送) 檢視
+ Exec=kwin-headset-view
+ Icon=video-display
+ Categories=Qt;KDE;Settings;HardwareSettings;
+diff --git a/src/kcms/stereodepth/kcm_kwinstereodepth.json b/src/kcms/stereodepth/kcm_kwinstereodepth.json
+--- a/src/kcms/stereodepth/kcm_kwinstereodepth.json
++++ b/src/kcms/stereodepth/kcm_kwinstereodepth.json
+@@ -1,11 +1,12 @@
+ {
+     "Categories": "Qt;KDE;",
+     "KPlugin": {
+         "BugReportUrl": "https://bugs.kde.org/enter_bug.cgi?product=kwin&component=kcm_kwinstereodepth",
+         "Description": "How deep the desktop is on a display in a 3D mode",
++        "Description[es]": "Profundidad del escritorio en una pantalla en modo 3D",
+         "Description[de]": "Wie tief die Arbeitsfläche auf einem Anzeigegerät im 3D-Modus ist",
+         "Description[fr]": "Profondeur du bureau sur un affichage en mode 3D",
+         "Description[ja]": "3D モードのディスプレイでのデスクトップの奥行き",
+         "Description[ko]": "3D 모드 디스플레이에서 데스크톱의 깊이",
+         "Description[pl]": "Jak głęboki jest pulpit na wyświetlaczu w trybie 3D",
+         "Description[pt_BR]": "Quão profunda é a área de trabalho em um monitor no modo 3D",
+@@ -13,12 +14,13 @@
+         "Description[zh_TW]": "3D 模式顯示器上桌面的深度",
+         "FormFactors": [
+             "desktop"
+         ],
+         "Icon": "preferences-desktop-display",
+         "Name": "3D Depth",
++        "Name[es]": "Profundidad 3D",
+         "Name[de]": "3D-Tiefe",
+         "Name[fr]": "Profondeur 3D",
+         "Name[ja]": "3D の奥行き",
+         "Name[ko]": "3D 깊이",
+         "Name[pl]": "Głębia 3D",
+         "Name[pt_BR]": "Profundidade 3D",
