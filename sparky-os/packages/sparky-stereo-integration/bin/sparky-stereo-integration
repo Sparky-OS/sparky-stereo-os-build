@@ -89,6 +89,34 @@ sync_menus() {
 	done
 }
 
+# A pack may declare an idempotent per-user initializer. This runs only after
+# its program exists, never as a package maintainer script or for another user.
+# Serializing callbacks avoids concurrent login, package-change and action runs.
+initialize_pack() {
+	local conf=$1 initializer program pack state
+	initializer=$(conf_get "$conf" initialize)
+	[ -n "$initializer" ] || return 0
+	program=$(conf_get "$conf" program)
+	command -v "$program" >/dev/null 2>&1 || return 0
+	case "$initializer" in /*) ;; *) echo "invalid initializer: $initializer" >&2; return 2 ;; esac
+	pack=$(basename "$conf" .conf)
+	state=${XDG_STATE_HOME:-$HOME/.local/state}/sparky-stereo-integration
+	(umask 077; mkdir -p "$state") || return 1
+	(
+		flock -x 9 || exit 1
+		"$initializer"
+	) 9>"$state/$pack.lock"
+}
+
+initialize_packs() {
+	local conf failed=0
+	for conf in "$CONFD"/*.conf; do
+		[ -f "$conf" ] || continue
+		initialize_pack "$conf" || failed=1
+	done
+	return "$failed"
+}
+
 say() { # text: a KDE popup when there is a desktop, the terminal otherwise
 	if have_ui; then kdialog --title "$LOCAL1" --passivepopup "$1" 8 >/dev/null 2>&1 &
 	else echo "$1" >&2; fi
@@ -194,6 +222,7 @@ case "$cmd" in
 			offer "$program"
 			exit $?
 		fi
+		initialize_pack "$conf" || exit $?
 		exec "$worker" "$@"
 		;;
 	install)
@@ -203,6 +232,8 @@ case "$cmd" in
 		packs_of "$pkg" || exit 1
 		install_packages "$pkg" $packs && sync_menus
 		;;
+	initialize) initialize_packs ;;
+	sync) sync_menus; initialize_packs ;;
 	hide-missing)
 		case "${1:-status}" in
 			on) rc_set HideMissing true; sync_menus ;;

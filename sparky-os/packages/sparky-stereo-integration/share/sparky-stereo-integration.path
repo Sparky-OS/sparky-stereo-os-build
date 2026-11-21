@@ -1,0 +1,10 @@
+[Unit]
+Description=Notice installed integration programs and packs
+
+[Path]
+PathChanged=/var/lib/dpkg/status
+PathChanged=/usr/share/sparky-stereo/integrations.d
+Unit=sparky-stereo-integration.service
+
+[Install]
+WantedBy=default.target
