@@ -22,8 +22,8 @@ export DEB_BUILD_OPTIONS="nocheck parallel=${JOBS:-4}" DEB_BUILD_PROFILES=nochec
 export LC_ALL=C.UTF-8
 VERSION=2.1.2-8+stereo3d1
 printf '%s  %s\n' a4c4bf0560d5dadd68e82bbf6b34a60fd5a6b9d1a0752919e8e1d0aa3c6de1ee "$SOURCE_DSC" | sha256sum -c -
-[ ! -e "$BUILD_ROOT/authored" ] && [ ! -e "$OUT/source" ]
-mkdir -p "$BUILD_ROOT" "$OUT/source" "$OUT/authored"
+[ ! -e "$BUILD_ROOT/authored" ] && [ ! -e "$OUT/authored" ]
+mkdir -p "$BUILD_ROOT" "$OUT/authored"
 cp "$(dirname "$SOURCE_DSC")"/ktextaddons_2.1.2.orig.tar.* "$BUILD_ROOT/"
 dpkg-source -x "$SOURCE_DSC" "$BUILD_ROOT/authored"
 cd "$BUILD_ROOT/authored"
@@ -51,9 +51,10 @@ PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-sour
 cd "$BUILD_ROOT/lean-source"
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -j"${JOBS:-4}"
-cp "$BUILD_ROOT"/*+lc1_*.deb "$OUT/"
+# the stage is the source closure, in one folder: the archives, the .dsc and every file it names, the buildinfo and the changes
+cp "$BUILD_ROOT"/*+lc1_*.deb "$BUILD_ROOT"/*+lc1.dsc "$BUILD_ROOT"/*+lc1.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* \
+	"$BUILD_ROOT"/*+lc1_*.buildinfo "$BUILD_ROOT"/*+lc1_*.changes "$OUT/"
 # the release gate: every archive and its HR companions carry a valid lc1 record; the build record is written beside them
 (cd "$OUT" && PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.release check-debs ./*.deb)
-cp "$BUILD_ROOT"/*+lc1.dsc "$BUILD_ROOT"/*+lc1.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$BUILD_ROOT"/*+lc1_*.buildinfo "$BUILD_ROOT"/*+lc1_*.changes "$OUT/source/"
 cp .sparky-lc/source.json "$OUT/native-source.json"
 (cd "$OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
