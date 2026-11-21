@@ -1,0 +1,158 @@
+Description: A 3D render keeps the source's depth, or says it writes fewer bits
+ In a 3D project a 3D preset that names no pixel format writes the depth of the
+ deepest video clip up to its codec's: H.264 10 bits (High 10), H.265 12 (Main
+ 12, as libx265 writes it), FFV1 16, through MLT's RGBA64 frame above 10 bits.
+ When a render writes fewer bits than the deepest clip, the person is told
+ before it runs, in the render dialog and on the command line, and the render
+ goes ahead. A 3D Matroska-FFV1 (lossless) preset is added.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+--- a/data/profiles.xml
++++ b/data/profiles.xml
+@@ -61,6 +61,9 @@
+    audiobitrates="64,128,160,256,384" defaultaudiobitrate="160"
+    args="properties=x265-medium f=matroska vcodec=libx265 crf=%quality:open-gop=0 acodec=aac ab=%audiobitrate+'k' stereo3d=side_by_side"
+    defaultspeedindex="6" speeds="preset=veryslow;preset=slower;preset=slow;preset=medium;preset=fast;preset=faster;preset=veryfast;preset=superfast;preset=ultrafast"/>
++  <profile name="3D Matroska-FFV1 (lossless)" extension="mkv"
++   audiobitrates="64,128,160,256,384" defaultaudiobitrate="160"
++   args="f=matroska vcodec=ffv1 level=3 slicecrc=1 acodec=flac stereo3d=side_by_side"/>
+  </group>
+  <group renderer="avformat" type="av" id="alpha">
+    <name>Video with Alpha</name>
+--- a/src/dialogs/renderwidget.cpp
++++ b/src/dialogs/renderwidget.cpp
+@@ -1051,6 +1051,9 @@ void RenderWidget::slotPrepareExport2(bo
+     if (!request.errorMessages().isEmpty()) {
+         KMessageBox::errorList(this, i18n("The following errors occurred while trying to render"), request.errorMessages());
+     }
++    if (!request.noticeMessages().isEmpty() && !jobs.empty()) {
++        KMessageBox::informationList(this, i18n("The render goes ahead:"), request.noticeMessages());
++    }
+ 
+     // Create jobs
+     if (delayedRendering) {
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -506,6 +506,9 @@ int main(int argc, char *argv[])
+         if (!renderrequest->errorMessages().isEmpty()) {
+             qInfo() << "The following errors occurred while trying to render:\n" << renderrequest->errorMessages().join(QLatin1Char('\n'));
+         }
++        for (const QString &notice : renderrequest->noticeMessages()) {
++            qInfo().noquote() << notice;
++        }
+ 
+         // nothing to render (a request refused with its reason above) is a failed render, not a success
+         int exitCode = renderjobs.empty() ? EXIT_FAILURE : EXIT_SUCCESS;
+--- a/src/render/renderrequest.cpp
++++ b/src/render/renderrequest.cpp
+@@ -15,6 +15,9 @@
+ #include "xml/xml.hpp"
+ 
+ #include <QRegularExpression>
++extern "C" {
++#include <libavutil/pixdesc.h>
++}
+ #include <QTemporaryFile>
+ 
+ // TODO: remove, see generatePlaylistFile()
+@@ -155,6 +158,10 @@ std::vector<RenderRequest::RenderJob> Re
+         }
+     }
+ 
++    if (pCore->currentDoc()->isStereo3DPairProject()) {
++        chooseStereoRenderDepth();
++    }
++
+     QString playlistPath = generatePlaylistFile();
+     if (playlistPath.isEmpty()) {
+         return {};
+@@ -786,3 +793,66 @@ QStringList RenderRequest::errorMessages
+ {
+     return m_errors;
+ }
++
++QStringList RenderRequest::noticeMessages()
++{
++    return m_notices;
++}
++
++// The bits of a sample of a pixel format (FFmpeg's names), 0 when it is not known
++static int pixelFormatDepth(const QString &name)
++{
++    const AVPixelFormat format = av_get_pix_fmt(name.toUtf8().constData());
++    const AVPixFmtDescriptor *descriptor = format == AV_PIX_FMT_NONE ? nullptr : av_pix_fmt_desc_get(format);
++    return descriptor ? descriptor->comp[0].depth : 0;
++}
++
++void RenderRequest::chooseStereoRenderDepth()
++{
++    // "All deep colour depths the standard defines, no caps of our own", and the source's depth kept out of the box: the deepest
++    // video clip of the project, by the pixel format its stream declares
++    int sourceDepth = 0;
++    const std::vector<QString> ids = pCore->projectItemModel()->getAllClipIds();
++    for (const QString &id : ids) {
++        const std::shared_ptr<ProjectClip> clip = pCore->projectItemModel()->getClipByBinID(id);
++        if (!clip || (clip->clipType() != ClipType::AV && clip->clipType() != ClipType::Video)) {
++            continue;
++        }
++        const int index = clip->getProducerIntProperty(QStringLiteral("video_index"));
++        const int depth = pixelFormatDepth(clip->getProducerProperty(QStringLiteral("meta.media.%1.codec.pix_fmt").arg(index)));
++        sourceDepth = qMax(sourceDepth, depth);
++    }
++    if (sourceDepth <= 8) {
++        return;
++    }
++    const QString codec = m_presetParams.value(QStringLiteral("vcodec"));
++    // The most bits each codec carries, by its specification, as the encoder the edition ships writes it: H.264 (ITU-T H.264 Annex
++    // A) High 10 carries 10, and its High 4:4:4 Predictive 14, which libx264 does not write; H.265 (ITU-T H.265 Annex A) Main 10
++    // carries 10 and its format range extensions Main 12 12 and more, of which libx265 writes up to 12; FFV1 (RFC 9043) up to 16.
++    int codecDepth = 0;
++    if (codec == QLatin1String("libx264")) {
++        codecDepth = 10;
++    } else if (codec == QLatin1String("libx265")) {
++        codecDepth = 12;
++    } else if (codec == QLatin1String("ffv1")) {
++        codecDepth = 16;
++    }
++    // A 3D preset that names no pixel format writes the source's depth up to its codec's: 4:2:0, as the presets' 8 bit picture
++    if (m_presetParams.contains(QStringLiteral("stereo3d")) && !m_presetParams.contains(QStringLiteral("pix_fmt")) && codecDepth > 8) {
++        const int depth = qMin(sourceDepth, codecDepth);
++        const QString pixFmt = depth <= 10 ? QStringLiteral("yuv420p10le") : depth <= 12 ? QStringLiteral("yuv420p12le") : QStringLiteral("yuv420p16le");
++        m_presetParams.insert(QStringLiteral("pix_fmt"), pixFmt);
++        if (depth > 10) {
++            // MLT works a frame deeper than 10 bits only in RGBA64 (16 bits a sample)
++            m_presetParams.insert(QStringLiteral("mlt_image_format"), QStringLiteral("rgba64"));
++        }
++    }
++    // what the render writes: its pixel format's bits, or 8 when it names none (MLT's encoder then writes 4:2:0 at 8 bits)
++    const QString pixFmt = m_presetParams.value(QStringLiteral("pix_fmt"));
++    const int written = pixFmt.isEmpty() ? 8 : pixelFormatDepth(pixFmt);
++    if (written > 0 && written < sourceDepth) {
++        m_notices.append(i18n("The deepest clip of this project has %1 bits a sample and this render writes %2: its pictures keep fewer "
++                              "levels of each colour than the clip. The 3D FFV1 preset keeps up to 16 bits, the 3D HEVC presets up to 12.",
++                              sourceDepth, written));
++    }
++}
+--- a/src/render/renderrequest.h
++++ b/src/render/renderrequest.h
+@@ -48,6 +48,8 @@ public:
+     std::vector<RenderJob> process();
+ 
+     QStringList errorMessages();
++    /** @brief What the person is told about a render that goes ahead (a render that writes fewer bits than its sources have) */
++    QStringList noticeMessages();
+ 
+     static QStringList argsByJob(const RenderJob &job, bool addPid = true);
+ 
+@@ -82,6 +84,10 @@ private:
+     bool m_twoPass = false;
+ 
+     QStringList m_errors;
++    QStringList m_notices;
++    /** @brief In a 3D project: each 3D preset writes the depth of the deepest clip its codec carries, and the person is told when
++     *  the render writes fewer bits than that */
++    void chooseStereoRenderDepth();
+ 
+     void setDocGeneralParams(QDomDocument doc, int in, int out);
+     /** @brief In a 3D project, the project's resolution is that of one eye: a render writes two of them side by side. Returns whether

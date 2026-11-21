@@ -1,0 +1,148 @@
+Description: core: stereo3d_unpack puts a 2D picture in both eyes
+ packing=mono: a 2D picture of a 3D project (a 2D clip, a title, a still, a
+ colour) is the same picture for both eyes, at the screen plane. As the first
+ filter of a producer the filter fits the picture, keeping its shape, into each
+ half of the frame, with transparency around it, as MLT pads any picture
+ smaller than its frame; the picture's own alpha is kept, so a title over a 3D
+ clip lets the clip's pair show under it. A picture the producer makes (a
+ colour, a title) has one eye's size, never the frame's. In a producer the
+ filter asks for the producer's own picture with the rescale size a filter
+ after it suggested cleared (qimage and kdenlivetitle take that suggestion
+ over the size asked), and clears the frame's alpha mask once the
+ transparency is in the picture. eye_request=1 asks a frame sequence for one
+ eye's size in a frame of two eyes.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+--- a/src/modules/core/filter_stereo3d_unpack.c
++++ b/src/modules/core/filter_stereo3d_unpack.c
+@@ -45,6 +45,8 @@ typedef enum {
+     packing_side_by_side_quincunx,
+     packing_lines,
+     packing_columns,
++    // a 2D picture in a 3D picture: the same picture for both eyes
++    packing_mono,
+ } packing_t;
+ 
+ static packing_t packing_from_name(const char *name)
+@@ -61,6 +63,7 @@ static packing_t packing_from_name(const
+         {"side_by_side_quincunx", packing_side_by_side_quincunx},
+         {"lines", packing_lines},
+         {"columns", packing_columns},
++        {"mono", packing_mono},
+     };
+     if (name) {
+         for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+@@ -172,6 +175,9 @@ static void stored_view(const uint8_t *s
+             for (int x = 0; x < stored_width; x++)
+                 memcpy(out + (size_t) x * bpp, src + (size_t) y * stride + (size_t) (2 * x + ((slot + y) & 1)) * bpp, bpp);
+             break;
++        case packing_mono:
++            memcpy(out, src + (size_t) y * stride, (size_t) stored_width * bpp);
++            break;
+         default:
+             break;
+         }
+@@ -353,6 +359,8 @@ static int unpack_image(mlt_filter filte
+     mlt_properties frame_props = MLT_FRAME_PROPERTIES(frame);
+     const int in_producer = mlt_properties_get_int(frame_props, "stereo3d_unpack.in_producer");
+     int distort = 0;
++    int rescale_width = 0;
++    int rescale_height = 0;
+     if (in_producer) {
+         *width = mlt_properties_get_int(frame_props, "stereo3d_unpack.width");
+         *height = mlt_properties_get_int(frame_props, "stereo3d_unpack.height");
+@@ -360,10 +368,23 @@ static int unpack_image(mlt_filter filte
+         // own picture, as it is (distort), for the filter fits each view itself
+         distort = mlt_properties_get_int(frame_props, "distort");
+         mlt_properties_set_int(frame_props, "distort", 1);
++        // A producer that scales its own picture (qimage, a title) takes the size a rescale filter after this one suggested for
++        // the frame of two eyes: the own picture is asked for at its own size
++        rescale_width = mlt_properties_get_int(frame_props, "rescale_width");
++        rescale_height = mlt_properties_get_int(frame_props, "rescale_height");
++        mlt_properties_set_int(frame_props, "rescale_width", 0);
++        mlt_properties_set_int(frame_props, "rescale_height", 0);
++    } else if (mlt_properties_get_int(properties, "eye_request") && *width > 1) {
++        // A frame of two eyes side by side is asked for (a 3D project's working frame) and the frames have one view each (a frame
++        // sequence): each frame is asked for at one eye's size
++        *width /= 2;
+     }
+     int error = mlt_frame_get_image(frame, image, format, width, height, 0);
+-    if (in_producer)
++    if (in_producer) {
+         mlt_properties_set_int(frame_props, "distort", distort);
++        mlt_properties_set_int(frame_props, "rescale_width", rescale_width);
++        mlt_properties_set_int(frame_props, "rescale_height", rescale_height);
++    }
+     packing_t packing = packing_from_name(mlt_properties_get(properties, "packing"));
+     if (in_producer && (*width != mlt_properties_get_int(frame_props, "stereo3d_unpack.width")
+                         || *height != mlt_properties_get_int(frame_props, "stereo3d_unpack.height"))) {
+@@ -498,9 +519,10 @@ static int unpack_image(mlt_filter filte
+         const int pw = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_width");
+         const int ph = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_height");
+         uint8_t *frame_out = mlt_pool_alloc((size_t) fw * fh * bpp);
+-        // black, opaque
++        // black and opaque around the views of a 3D clip; around a 2D picture, transparent, as MLT pads any picture smaller than
++        // the frame, so the tracks below show there (a title over a 3D clip)
+         memset(frame_out, 0, (size_t) fw * fh * bpp);
+-        for (size_t i = 0; i < (size_t) fw * fh; i++) {
++        for (size_t i = 0; packing != packing_mono && i < (size_t) fw * fh; i++) {
+             if (deep)
+                 ((uint16_t *) frame_out)[i * 4 + 3] = 65535;
+             else
+@@ -516,6 +538,8 @@ static int unpack_image(mlt_filter filte
+         *width = fw;
+         *height = fh;
+         mlt_frame_set_image(frame, frame_out, fw * fh * bpp, mlt_pool_release);
++        // the transparency is in the picture now: an alpha mask the producer gave is of another size
++        mlt_frame_set_alpha(frame, NULL, 0, NULL);
+         mlt_properties_set_int(frame_props, "width", fw);
+         mlt_properties_set_int(frame_props, "height", fh);
+         return 0;
+@@ -561,8 +585,24 @@ static void announce(mlt_filter filter,
+     mlt_profile profile = mlt_service_profile(MLT_FILTER_SERVICE(filter));
+     const packing_t packing = packing_from_name(mlt_properties_get(properties, "packing"));
+     const char *output = mlt_properties_get(properties, "output");
+-    const int width = mlt_properties_get_int(frame_props, "width");
+-    const int height = mlt_properties_get_int(frame_props, "height");
++    int width = mlt_properties_get_int(frame_props, "width");
++    int height = mlt_properties_get_int(frame_props, "height");
++    if (packing == packing_mono && profile && profile->width >= 4) {
++        // A 2D picture's own size: a file's (meta.media), or, for a picture the producer makes (a colour, a title), one eye of the
++        // frame, never the frame of two eyes (it would be drawn twice as wide and fitted to half its height)
++        mlt_producer original = mlt_frame_get_original_producer(frame);
++        const int ow = original ? mlt_properties_get_int(MLT_PRODUCER_PROPERTIES(original), "meta.media.width") : 0;
++        const int oh = original ? mlt_properties_get_int(MLT_PRODUCER_PROPERTIES(original), "meta.media.height") : 0;
++        const char *resource = original ? mlt_properties_get(MLT_PRODUCER_PROPERTIES(original), "resource") : NULL;
++        const char *service = original ? mlt_properties_get(MLT_PRODUCER_PROPERTIES(original), "mlt_service") : NULL;
++        if (ow > 1 && oh > 1 && resource && *resource && !(service && !strcmp(service, "color"))) {
++            width = ow;
++            height = oh;
++        } else {
++            width = profile->width / 2;
++            height = profile->height;
++        }
++    }
+     if (!profile || packing == packing_none || packing == packing_frame_sequence || !output || width < 2 || height < 2
+         || profile->width < 4 || profile->height < 2)
+         return;
+--- a/src/modules/core/filter_stereo3d_unpack.yml
++++ b/src/modules/core/filter_stereo3d_unpack.yml
+@@ -25,7 +25,16 @@ parameters:
+     type: string
+     description: >
+       side_by_side, top_and_bottom, frame_sequence, checkerboard, side_by_side_quincunx, lines or columns, as the
+-      avformat producer's meta.media.stereo3d.type names them. Nothing is changed without one.
++      avformat producer's meta.media.stereo3d.type names them; mono for a 2D picture in a 3D picture, the same picture
++      for both eyes (as the first filter of a producer, with transparency around it). Nothing is changed without one.
++    mutable: yes
++  - identifier: eye_request
++    title: Ask for one eye
++    type: boolean
++    default: 0
++    description: >
++      With output side_by_side and one view in each frame (frame_sequence), each frame is asked for at half the width asked of
++      the filter, the size of one eye of a frame of two eyes side by side.
+     mutable: yes
+   - identifier: invert
+     title: Right eye first

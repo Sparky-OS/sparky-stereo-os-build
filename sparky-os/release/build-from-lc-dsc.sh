@@ -16,7 +16,10 @@
 # SPARKY_CONTAINER_PREFIX (optional) starts the container name (a lane's own prefix). SPARKY_LC_PREVIOUS_DIR (earlier +lc1 builds the gate compares with) is optional. CPUS (default 4).
 # SPARKY_LC_SIBLINGS_DIR (optional): a folder of .deb files built for this one and not published yet (a library whose new
 # version it depends on); the link gate takes them as edition siblings (lean/debhelper.py, SPARKY_LC_SIBLINGS_FILE).
-# Last update 2026/11/07
+# SPARKY_LC_INSTALL_SIBLINGS=1 (optional, with SPARKY_LC_SIBLINGS_DIR): the siblings are also installed, and kept at their
+# version, before the build dependencies, for a source whose Build-Depends names a version the repository has not published yet
+# (a staged library of the round, ORDER 61f).
+# Last update 2026/11/21
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../repo/build-provenance.sh"
@@ -30,7 +33,7 @@ if [ -n "${SPARKY_LC_PREVIOUS_DIR:-}" ]; then
 	PREV_MOUNT=(-v "$(realpath "$SPARKY_LC_PREVIOUS_DIR")":/prev:ro) PREV_ENV=(-e SPARKY_LC_PREVIOUS_DIR=/prev)
 fi
 if [ -n "${SPARKY_LC_SIBLINGS_DIR:-}" ]; then
-	PREV_MOUNT+=(-v "$(realpath "$SPARKY_LC_SIBLINGS_DIR")":/siblings:ro) PREV_ENV+=(-e SIBLINGS=1)
+	PREV_MOUNT+=(-v "$(realpath "$SPARKY_LC_SIBLINGS_DIR")":/siblings:ro) PREV_ENV+=(-e SIBLINGS=1 -e INSTALL_SIBLINGS="${SPARKY_LC_INSTALL_SIBLINGS:-}")
 fi
 [ ! -e "$OUT" ] || [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 2; }
 mkdir -p "$OUT"
@@ -62,6 +65,14 @@ docker run --ulimit core=1 --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTA
 	mkdir -p /work/link-scratch /work/build && chown -R builder:builder /work
 	cd /work/build
 	runuser -u builder -- dpkg-source -x /src/$DSC tree >/dev/null
+	if [ -n "${SIBLINGS:-}" ] && [ -n "${INSTALL_SIBLINGS:-}" ]; then
+		# the staged siblings first, each kept at its own version against the repository pin
+		mapfile -t staged < <(find /siblings -maxdepth 1 -name "*.deb" ! -name "*-dbgsym_*" ! -name "*-lc-hr_*" | sort)
+		for deb in "${staged[@]}"; do
+			printf "Package: %s\nPin: version %s\nPin-Priority: 1002\n\n" "$(dpkg-deb -f "$deb" Package)" "$(dpkg-deb -f "$deb" Version)"
+		done > /etc/apt/preferences.d/staged-siblings
+		apt-get -y --no-install-recommends install "${staged[@]}" >/work/siblings-install.log 2>&1 || { tail -20 /work/siblings-install.log; exit 1; }
+	fi
 	apt-get -y --no-install-recommends build-dep ./tree >/work/build-dep.log 2>&1 || { tail -20 /work/build-dep.log; exit 1; }
 	cd tree
 	sib=()

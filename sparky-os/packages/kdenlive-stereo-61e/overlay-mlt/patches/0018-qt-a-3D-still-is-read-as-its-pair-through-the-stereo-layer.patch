@@ -1,0 +1,97 @@
+Description: qt: a 3D still is read as its pair, through the stereo layer
+ The image producer asks Sparky Stereo OS's stereo layer (1.23) for a still:
+ JPS, MPO, PNG with sTER, or a pair by the layer's photo policy. A 3D still is
+ given as its two views side by side, the left eye first, and the producer says
+ so (meta.media.stereo3d.type side_by_side, views full), so an editor takes it
+ as any full side-by-side clip. An MPO, two pictures in one file, is no longer
+ refused as an animation. A 2D picture is read as before.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-21
+--- a/src/modules/qt/CMakeLists.txt
++++ b/src/modules/qt/CMakeLists.txt
+@@ -51,6 +51,16 @@ function(mlt_add_qt_module ARG_TARGET)
+     generate_export_header(${ARG_TARGET})
+     target_compile_options(${ARG_TARGET} PRIVATE ${MLT_COMPILE_OPTIONS})
+ 
++    # Sparky Stereo OS's stereo layer reads a 3D still in every mark (JPS, MPO, PNG with sTER, a plain pair by the photo
++    # policy) as its two views: the image producer gives them side by side, the left eye first, and says so
++    if(ARG_QT_VERSION EQUAL 6)
++      find_package(StereoLayer 1.23 CONFIG QUIET)
++      if(StereoLayer_FOUND)
++        target_compile_definitions(${ARG_TARGET} PRIVATE HAVE_STEREO_LAYER)
++        target_link_libraries(${ARG_TARGET} PRIVATE Stereo::Layer)
++      endif()
++    endif()
++
+     target_link_libraries(${ARG_TARGET} PRIVATE
+       mlt++
+       mlt
+--- a/src/modules/qt/qimage_wrapper.cpp
++++ b/src/modules/qt/qimage_wrapper.cpp
+@@ -28,6 +28,9 @@
+ #include <QFileInfo>
+ #include <QImage>
+ #include <QImageReader>
++#ifdef HAVE_STEREO_LAYER
++#include <picture.h>
++#endif
+ #include <QMovie>
+ #include <QMutex>
+ #include <QSysInfo>
+@@ -68,11 +71,41 @@ static void qimage_delete(void *data)
+ }
+ 
+ /// Returns frame count or 0 on error
++#ifdef HAVE_STEREO_LAYER
++// A 3D still, read by the stereo layer as every program of the edition reads it (its file mark, or the photo policy): its two
++// views side by side, the left eye first, or a null image for a 2D picture
++static QImage stereo_still(const QString &filename)
++{
++    const Stereo::Picture picture = Stereo::Picture::load(filename, Stereo::Picture::Options{}, Stereo::OutputMode::Stereo);
++    return picture.isStereo() ? picture.sideBySide() : QImage();
++}
++
++// What the producer says of a 3D still: full side by side, the left eye first, two whole views
++static void announce_stereo_still(mlt_properties props, const QImage &pair)
++{
++    mlt_properties_set(props, "meta.media.stereo3d.type", "side_by_side");
++    mlt_properties_set_int(props, "meta.media.stereo3d.invert", 0);
++    mlt_properties_set(props, "meta.media.stereo3d.views", "full");
++    mlt_properties_set_int(props, "meta.media.width", pair.width());
++    mlt_properties_set_int(props, "meta.media.height", pair.height());
++}
++#endif
++
+ int init_qimage(mlt_producer producer, const char *filename)
+ {
+     if (!createQApplicationIfNeeded(MLT_PRODUCER_SERVICE(producer))) {
+         return 0;
+     }
++#ifdef HAVE_STEREO_LAYER
++    // a 3D still (an MPO has two pictures, which is not an animation) is one picture of two views
++    {
++        const QImage pair = stereo_still(QString::fromUtf8(filename));
++        if (!pair.isNull()) {
++            announce_stereo_still(MLT_PRODUCER_PROPERTIES(producer), pair);
++            return 1;
++        }
++    }
++#endif
+ 
+     QImageReader reader;
+     reader.setDecideFormatFromContent(true);
+@@ -130,6 +163,13 @@ int refresh_qimage(producer_qimage self,
+         // in case the file extension is incorrect.
+         reader.setDecideFormatFromContent(true);
+         reader.setFileName(filename);
++#ifdef HAVE_STEREO_LAYER
++        const QImage stereoPair = stereo_still(filename);
++        if (!stereoPair.isNull()) {
++            qimage = new QImage(stereoPair);
++            announce_stereo_still(producer_props, stereoPair);
++        } else
++#endif
+         if (reader.imageCount() > 1) {
+             QMovie movie(filename);
+             movie.setCacheMode(QMovie::CacheAll);

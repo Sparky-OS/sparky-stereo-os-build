@@ -1,0 +1,115 @@
+Description: 3D stills in the clip's properties, and the monitor after a save
+ A still (MLT reads JPS, MPO, PNG with sTER and a pair by the photo policy as
+ its two views) has the 3D input corrections in its properties, as a video
+ clip; its correction is saved into the file by the stereo layer
+ (Stereo::Picture::saveCorrection), which writes into JPEG pictures, and a
+ picture of another format is refused with that reason. After a save into the
+ file the clip is read again and the project monitor shows its frame at once,
+ never black until the playhead moves.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+--- a/src/bin/projectclip.cpp
++++ b/src/bin/projectclip.cpp
+@@ -6,6 +6,9 @@ This file is part of Kdenlive. See www.k
+ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ */
+ 
++#ifdef HAVE_STEREO_LAYER
++#include <picture.h>
++#endif
+ #include "projectclip.h"
+ #include "audio/audioInfo.h"
+ #include "bin.h"
+@@ -712,6 +715,12 @@ bool ProjectClip::setProducer(std::share
+     if (pCore->currentDoc()) {
+         pCore->currentDoc()->checkStereo3DPairProject();
+     }
++    if (m_refreshMonitorWhenLoaded) {
++        // read again from the file after its 3D correction was saved into it: the project monitor shows the frame where it is, never
++        // a black one until the playhead moves
++        m_refreshMonitorWhenLoaded = false;
++        pCore->refreshProjectMonitorOnce();
++    }
+     return true;
+ }
+ 
+@@ -909,6 +918,46 @@ Stereo3D::Format ProjectClip::stereo3DFo
+ 
+ QString ProjectClip::saveStereo3DCorrection()
+ {
++#ifdef HAVE_STEREO_LAYER
++    if (m_clipType == ClipType::Image) {
++        if (!hasStereo3DCorrection()) {
++            return i18n("This clip has no 3D correction to save.");
++        }
++        // A still's mark is written by the stereo layer, as every picture program of the edition writes it (JPS, MPO, PNG's sTER),
++        // and read back; its refusal says why in the person's language
++        Stereo::Picture::Options options;
++        if (const Stereo3D::InputEntry *entry = Stereo3D::inputEntry(stereo3DInput())) {
++            options.inputLayout = static_cast<Stereo::Picture::Layout>(entry->policyLayout);
++            options.inputOrder = entry->policyOrder == 1 ? Stereo::Picture::EyeOrder::RightFirst : Stereo::Picture::EyeOrder::LeftFirst;
++            options.anaglyph = static_cast<Stereo::Picture::AnaglyphColorPair>(entry->policyAnaglyph);
++            if (QLatin1String(entry->id) == QLatin1String("mono")) {
++                options.view = Stereo::Picture::View::Mono;
++            }
++        }
++        options.swapEyes = stereo3DSwap();
++        const QString path = url();
++        // the layer (1.23) writes a still's mark into a JPEG picture (a JPS, an MPO) only: another format is refused with its reason
++        QFile file(path);
++        const QByteArray head = file.open(QIODevice::ReadOnly) ? file.read(2) : QByteArray();
++        if (head != QByteArray("\xff\xd8", 2)) {
++            return i18n("The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project.",
++                        QFileInfo(path).fileName(),
++                        i18nc("Why a 3D correction could not be saved into a file",
++                              "the 3D mark of a still is written into JPEG pictures (JPS, MPO) only, and this picture is another format."));
++        }
++        const Stereo::Picture::SaveResult result = Stereo::Picture::saveCorrection(path, options);
++        if (!result.success) {
++            qCWarning(KDENLIVE_LOG) << "3D correction not saved into" << path << result.error;
++            return i18n("The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project.",
++                        QFileInfo(path).fileName(), result.error);
++        }
++        resetProducerProperty(QStringLiteral("kdenlive:stereo3d_input"));
++        resetProducerProperty(QStringLiteral("kdenlive:stereo3d_swap"));
++        m_refreshMonitorWhenLoaded = true;
++        reloadProducer(false, false, false);
++        return QString();
++    }
++#endif
+ #ifdef HAVE_STEREO_MARK
+     if (!hasStereo3DCorrection()) {
+         return i18n("This clip has no 3D correction to save.");
+@@ -990,6 +1039,7 @@ QString ProjectClip::saveStereo3DCorrect
+     // The file carries the correction now: the clip's own is taken off and the clip is read again from the file
+     resetProducerProperty(QStringLiteral("kdenlive:stereo3d_input"));
+     resetProducerProperty(QStringLiteral("kdenlive:stereo3d_swap"));
++    m_refreshMonitorWhenLoaded = true;
+     reloadProducer(false, false, false);
+     return QString();
+ #else
+--- a/src/bin/projectclip.h
++++ b/src/bin/projectclip.h
+@@ -461,6 +461,8 @@ private Q_SLOTS:
+ private:
+     /** @brief Attach or take off the stereo3d_unpack filter of a timeline producer, as updateStereoUnpack() says */
+     void applyStereoUnpack(const std::shared_ptr<Mlt::Producer> &producer);
++    /** @brief After a 3D correction was saved into the file the clip is read again: then the project monitor shows its frame again */
++    bool m_refreshMonitorWhenLoaded{false};
+ 
+     QMutex m_producerMutex;
+     QByteArray m_thumbXml;
+--- a/src/mltcontroller/clippropertiescontroller.cpp
++++ b/src/mltcontroller/clippropertiescontroller.cpp
+@@ -762,8 +762,8 @@ QWidget *ClipPropertiesController::const
+         fpBox->addLayout(hlay);
+     }
+ 
+-    if (m_type == ClipType::AV || m_type == ClipType::Video) {
+-        // 3D input format: the person's correction of how the clip's frames hold the two views
++    if (m_type == ClipType::AV || m_type == ClipType::Video || m_type == ClipType::Image) {
++        // 3D input format: the person's correction of how the clip's frames hold the two views (a 3D still is a media file too)
+         fpBox->addLayout(stereoInputProperty());
+     }
+ 
