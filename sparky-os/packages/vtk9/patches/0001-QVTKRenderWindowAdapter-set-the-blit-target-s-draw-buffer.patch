@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 21 Nov 2026 09:30:00 -0300
+Subject: [PATCH] QVTKRenderWindowAdapter: set the blit target's draw buffer
+ through vtkOpenGLState
+
+QVTKRenderWindowAdapter::blit bound the target framebuffer and chose its
+draw buffer with Qt's OpenGL functions, outside vtkOpenGLState.  For the
+right eye of a quad-buffered window (QVTKOpenGLWindow with Crystal Eyes
+stereo) that draw buffer is GL_BACK_RIGHT, while the cache still held the
+GL_BACK it read when paintGL reset it; the first state check of
+BlitDisplayFramebuffer then printed "Error in cache state for
+GL_DRAW_BUFFER got 1027 expected1029" (GL_BACK_RIGHT, GL_BACK) at every
+frame.  The left eye passed only because the check counts GL_BACK_LEFT as
+GL_BACK.  ParaView shows these warnings in its Output Messages window
+(ParaView issue 19038).
+
+Bind the target and set its draw buffer through vtkOpenGLState, as the
+same function already disables the scissor test through it, and as
+QVTKOpenGLNativeWidget's blit moved to the state object in 2018 (VTK merge
+request 4818).  The state object makes the GL calls when its cache
+differs, and keeps the draw buffer of every stacked entry of that
+framebuffer, so the Pop at the end of paintGL leaves the cache as OpenGL
+has it.
+
+Bug: https://gitlab.kitware.com/paraview/paraview/-/issues/19038
+Forwarded: no
+Last-Update: 2026-11-21
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+--- a/GUISupport/Qt/QVTKRenderWindowAdapter.cxx
++++ b/GUISupport/Qt/QVTKRenderWindowAdapter.cxx
+@@ -311,9 +311,13 @@
+       return false;
+     }
+ 
+-    f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, targetId);
+-    const GLenum bufs[1] = { static_cast<GLenum>(targetAttachment) };
+-    f->glDrawBuffers(1, bufs);
++    // Bind the target and select its draw buffer through vtkOpenGLState, as the
++    // scissor test below is, so that its cache follows what OpenGL draws to.
++    // Set directly, the right eye's GL_BACK_RIGHT left the cache at GL_BACK, and
++    // every state check of the blit that follows reported it.
++    auto ostate = this->RenderWindow->GetState();
++    ostate->vtkglBindFramebuffer(GL_DRAW_FRAMEBUFFER, targetId);
++    ostate->vtkglDrawBuffer(static_cast<unsigned int>(targetAttachment));
+ 
+     GLboolean scissorTest = f->glIsEnabled(GL_SCISSOR_TEST);
+     if (scissorTest == GL_TRUE)

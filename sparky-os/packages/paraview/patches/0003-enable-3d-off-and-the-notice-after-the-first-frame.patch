@@ -1,0 +1,287 @@
+Description: Enable 3D off starts flat; the told-once notices stay on screen; a state file's former format is told
+ Patch 0001 makes Crystal Eyes ParaView's configured stereo type, so with Enable 3D
+ off the render view gets the native (mono) widget while the type is still Crystal
+ Eyes, and pqQVTKWidget asked the stereo widget, which was not made, for its stereo
+ format: a null pointer and a crash at every start (Qt/Core/pqQVTKWidget.cxx, the
+ request after "if active stereo requested"). The request is now made only when the
+ stereo-capable widget was made.
+ .
+ The told-once notices (a saved setting or state file asked for a former output
+ format; this desktop shows no 3D areas) were opened as dialogs of the main window.
+ Qt recreates the main window's platform window when the first render-to-texture
+ widget (VTK's QVTKOpenGLNativeWidget in the color map editor) is added to it: on
+ Wayland a dialog over the window it replaces is closed with it, on xcb it stays
+ below the new one, so the notices were never seen. They now open after the view's
+ next frame, once the main window is on screen, and a notice closed with a replaced
+ platform window (watched with QPlatformSurfaceEvent; on xcb closed there) is opened
+ again over the new one (Qt/Core/pqStereoEditionNotice.h, private); their sentences
+ also go to the log.
+ .
+ ParaView's view applies its configured stereo type when its VTK objects are made
+ (vtkSMRenderViewProxy::CreateVTKObjects), which in a state load comes after the
+ state's values: a state file naming Anaglyph opened in the pair without a word. A
+ former output format met there is now noted on the proxy (an annotation) for
+ pqRenderView::keepStereoPair to tell.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-21
+
+--- a/Qt/Core/pqQVTKWidget.cxx
++++ b/Qt/Core/pqQVTKWidget.cxx
+@@ -17,6 +17,7 @@
+ #include "pqCoreUtilities.h"
+ #include "pqEventDispatcher.h"
+ #include "pqQVTKWidgetBase.h"
++#include "pqStereoEditionNotice.h"
+ #include "pqUndoStack.h"
+ #include "vtkPVLogger.h"
+ #include "vtkPVStereoEdition.h"
+@@ -85,7 +86,9 @@
+ 
+   // if active stereo requested, then we need to request appropriate context.
+   auto config = vtkRemotingCoreConfiguration::GetInstance();
+-  if (config->GetStereoType() == VTK_STEREO_CRYSTAL_EYES)
++  // Sparky Stereo OS: Crystal Eyes is the configured type also with Enable 3D off, when the view
++  // gets the native (mono) widget: only the stereo-capable widget takes the stereo format.
++  if (this->useStereo && config->GetStereoType() == VTK_STEREO_CRYSTAL_EYES)
+   {
+ #if PARAVIEW_USING_QVTKOPENGLSTEREOWIDGET
+     auto fmt = baseClass.value<pqQVTKWidgetBase*>()->defaultFormat(/*supports_stereo =*/true);
+@@ -108,18 +111,10 @@
+           told = true;
+           vtkVLogF(PARAVIEW_LOG_APPLICATION_VERBOSITY(),
+             "the stereo pair was requested and the window got one picture");
+-          QTimer::singleShot(0, pqCoreUtilities::mainWidget(),
+-            []()
+-            {
+-              auto* box = new QMessageBox(QMessageBox::Information, QStringLiteral("ParaView"),
+-                QString::fromUtf8(vtkPVStereoEdition::Text(
+-                  "These 3D views are shown flat: this desktop does not show 3D areas inside "
+-                  "windows.")),
+-                QMessageBox::Ok, pqCoreUtilities::mainWidget());
+-              box->setObjectName("Stereo3DFlatNotice");
+-              box->setAttribute(Qt::WA_DeleteOnClose);
+-              box->open();
+-            });
++          const QString text = QString::fromUtf8(vtkPVStereoEdition::Text(
++            "These 3D views are shown flat: this desktop does not show 3D areas inside windows."));
++          vtkLogF(INFO, "%s", text.toUtf8().constData());
++          pqStereoEditionNotice::Open("Stereo3DFlatNotice", text);
+         },
+         Qt::SingleShotConnection);
+     }
+--- a/Qt/Core/pqRenderView.cxx
++++ b/Qt/Core/pqRenderView.cxx
+@@ -37,6 +37,7 @@
+ #include <QGridLayout>
+ #include <QMessageBox>
+ #include <QTimer>
++#include <QWindow>
+ #include <QList>
+ #include <QMenu>
+ #include <QMouseEvent>
+@@ -47,6 +48,7 @@
+ // ParaView includes.
+ #include "pqApplicationCore.h"
+ #include "pqCoreUtilities.h"
++#include "pqStereoEditionNotice.h"
+ #include "pqDataRepresentation.h"
+ #include "pqLinkViewWidget.h"
+ #include "pqLinksModel.h"
+@@ -164,6 +166,7 @@
+     vtkCommand::ModifiedEvent, this, SLOT(onGenericFilmicPresetsChange()));
+ }
+ 
++
+ //-----------------------------------------------------------------------------
+ pqRenderView::pqRenderView(const QString& group, const QString& name, vtkSMViewProxy* renModule,
+   pqServer* server, QObject* _parent /*=null*/)
+@@ -227,15 +230,25 @@
+   {
+     return;
+   }
++  // A former output format a state file gave the view before it was made, replaced there by the
++  // pair (vtkSMRenderViewProxy::CreateVTKObjects) and noted for this view to tell.
++  std::string noted;
++  if (proxy->HasAnnotation("SparkyStereo.FormerOutputFormat"))
++  {
++    noted = proxy->GetAnnotation("SparkyStereo.FormerOutputFormat");
++    proxy->RemoveAnnotation("SparkyStereo.FormerOutputFormat");
++  }
+   const int type = vtkSMPropertyHelper(proxy, "StereoType").GetAsInt();
+   const int serverType = vtkSMPropertyHelper(proxy, "ServerStereoType").GetAsInt();
+   const bool client = vtkPVStereoEdition::IsOutputFormat(type);
+   const bool server = vtkPVStereoEdition::IsOutputFormat(serverType);
+-  if (!client && !server)
++  if (!client && !server && noted.empty())
+   {
+     return;
+   }
+-  const std::string name = vtkPVStereoEdition::OutputFormatName(client ? type : serverType);
++  const std::string name = !noted.empty()
++    ? noted
++    : std::string(vtkPVStereoEdition::OutputFormatName(client ? type : serverType));
+   const bool pair = vtkRemotingCoreConfiguration::GetInstance()->GetUseStereoRendering();
+   if (client)
+   {
+@@ -246,7 +259,10 @@
+   {
+     vtkSMPropertyHelper(proxy, "ServerStereoType").Set(0 /* Same As Client */);
+   }
+-  proxy->UpdateVTKObjects();
++  if (client || server)
++  {
++    proxy->UpdateVTKObjects();
++  }
+   this->render();
+ 
+   static bool told = false;
+@@ -266,15 +282,12 @@
+                                    "ParaView no longer makes itself; the view is shown flat "
+                                    "because Enable 3D is off (View menu).",
+           name));
+-  QTimer::singleShot(0, pqCoreUtilities::mainWidget(),
+-    [text]()
+-    {
+-      auto* box = new QMessageBox(QMessageBox::Information, QStringLiteral("ParaView"), text,
+-        QMessageBox::Ok, pqCoreUtilities::mainWidget());
+-      box->setObjectName("Stereo3DNotice");
+-      box->setAttribute(Qt::WA_DeleteOnClose);
+-      box->open();
+-    });
++  // Shown after the view's next frame, once the main window is on screen (see
++  // pqStereoEditionNotice::Open); the sentence also goes to the log.
++  vtkLogF(INFO, "%s", text.toUtf8().constData());
++  QObject::connect(
++    this, &pqView::endRender, this,
++    [text]() { pqStereoEditionNotice::Open("Stereo3DNotice", text); }, Qt::SingleShotConnection);
+ }
+ 
+ //-----------------------------------------------------------------------------
+--- a/Remoting/Views/vtkSMRenderViewProxy.cxx
++++ b/Remoting/Views/vtkSMRenderViewProxy.cxx
+@@ -2,6 +2,7 @@
+ // SPDX-FileCopyrightText: Copyright (c) 2017, NVIDIA CORPORATION
+ // SPDX-License-Identifier: BSD-3-Clause
+ #include "vtkSMRenderViewProxy.h"
++#include "vtkPVStereoEdition.h"
+ 
+ #include "vtkBoundingBox.h"
+ #include "vtkCamera.h"
+@@ -725,6 +726,15 @@
+   {
+     vtkSMPropertyHelper(this, "StereoCapableWindow").Set(1);
+     vtkSMPropertyHelper(this, "StereoRender").Set(1);
++    // Sparky Stereo OS: a former output format the view was given before it was made (a state
++    // file) is replaced by the configured pair like any other type, and noted for the Qt view
++    // (pqRenderView::keepStereoPair) to tell the person once.
++    const int loaded = vtkSMPropertyHelper(this, "StereoType").GetAsInt();
++    if (vtkPVStereoEdition::IsOutputFormat(loaded))
++    {
++      this->SetAnnotation(
++        "SparkyStereo.FormerOutputFormat", vtkPVStereoEdition::OutputFormatName(loaded));
++    }
+     vtkSMPropertyHelper(this, "StereoType").Set(config->GetStereoType());
+   }
+ 
+--- /dev/null
++++ b/Qt/Core/pqStereoEditionNotice.h
+@@ -0,0 +1,98 @@
++// SPDX-FileCopyrightText: Copyright (c) Kitware Inc.
++// SPDX-License-Identifier: BSD-3-Clause
++// Sparky Stereo OS (ORDER 50, step 5): the told-once notices of the edition's 3D options; a private
++// header of pqCore, not installed.
++#ifndef pqStereoEditionNotice_h
++#define pqStereoEditionNotice_h
++
++#include "pqCoreUtilities.h"
++
++#include <QDateTime>
++#include <QEvent>
++#include <QMessageBox>
++#include <QPlatformSurfaceEvent>
++#include <QPointer>
++#include <QString>
++#include <QTimer>
++#include <QWidget>
++#include <QWindow>
++
++namespace pqStereoEditionNotice
++{
++/// Notes when the platform window under a dialog is about to be destroyed (milliseconds since the epoch).
++class SurfaceWatch : public QObject
++{
++public:
++  using QObject::QObject;
++  qint64 LostAt = 0;
++
++protected:
++  bool eventFilter(QObject* watched, QEvent* event) override
++  {
++    if (event->type() == QEvent::PlatformSurface &&
++      static_cast<QPlatformSurfaceEvent*>(event)->surfaceEventType() ==
++        QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed)
++    {
++      this->LostAt = QDateTime::currentMSecsSinceEpoch();
++      // On xcb the dialog survives but ends below the new window: close it too, so it opens again.
++      if (QWidget* dialog = qobject_cast<QWidget*>(this->parent()))
++      {
++        QTimer::singleShot(300, dialog,
++          [dialog]()
++          {
++            if (dialog->isVisible())
++            {
++              dialog->close();
++            }
++          });
++      }
++    }
++    return QObject::eventFilter(watched, event);
++  }
++};
++
++/// Shows `text` in a dialog of ParaView's main window once that window is on screen, checking
++/// again every quarter second for up to 30 s. On Wayland Qt recreates the main window's platform
++/// window when the first render-to-texture widget (such as VTK's QVTKOpenGLNativeWidget in the
++/// color map editor) is added to it, and the dialog is closed with the window it was opened over
++/// (on xcb it survives below the new one and is closed here): a dialog closed that way (within 3 s
++/// of it), not by the person, is opened again over the new window.
++inline void Open(const char* objectName, const QString& text, int triesLeft = 120)
++{
++  QWidget* mainWidget = pqCoreUtilities::mainWidget();
++  QWindow* handle = mainWidget ? mainWidget->windowHandle() : nullptr;
++  if (!mainWidget || !mainWidget->isVisible() || !handle || !handle->isExposed())
++  {
++    if (triesLeft > 0)
++    {
++      QTimer::singleShot(
++        250, [objectName, text, triesLeft]() { Open(objectName, text, triesLeft - 1); });
++    }
++    return;
++  }
++  auto* box = new QMessageBox(
++    QMessageBox::Information, QStringLiteral("ParaView"), text, QMessageBox::Ok, mainWidget);
++  box->setObjectName(QString::fromLatin1(objectName));
++  box->setAttribute(Qt::WA_DeleteOnClose);
++  auto* watch = new SurfaceWatch(box);
++  QPointer<QWindow> watched = handle;
++  handle->installEventFilter(watch);
++  QObject::connect(box, &QDialog::finished, box,
++    [objectName, text, watch, watched](int)
++    {
++      const bool lost =
++        watch->LostAt != 0 && QDateTime::currentMSecsSinceEpoch() - watch->LostAt < 3000;
++      if (watched)
++      {
++        watched->removeEventFilter(watch);
++      }
++      if (lost)
++      {
++        QTimer::singleShot(250, [objectName, text]() { Open(objectName, text); });
++      }
++    });
++  box->open();
++}
++}
++
++#endif

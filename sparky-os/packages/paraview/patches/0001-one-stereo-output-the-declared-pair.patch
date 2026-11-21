@@ -1,0 +1,708 @@
+Description: ParaView in Sparky Stereo OS offers one stereo output, the declared pair
+ The render views start as a stereo pair handed to the desktop (Crystal Eyes: a
+ quad-buffered window, which the edition's Mesa packs side by side and declares
+ to Stereo KWin), and the desktop makes each screen's format. "Enable 3D", a
+ Render View setting on by default, decides it at ParaView's start (ParaView's
+ own "restart required" notice says so); the View menu has "Enable 3D" and
+ "3D display settings..." (KScreen).
+ .
+ ParaView's own stereo output formats (Red-Blue, Interlaced, Dresden, Anaglyph,
+ Checkerboard, SplitViewportHorizontal) are not offered: --stereo-type takes
+ 'Crystal Eyes' only and refuses the others with a sentence that says what to
+ use instead; the Render View's StereoType and ServerStereoType keep Crystal
+ Eyes, Left, Right and None and are not shown in the properties panel; the
+ screenshot's stereo modes keep No change, No stereo, Left Eye Only, Right Eye
+ Only and Both Eyes. A state file or a saved setting that names one of the six
+ opens in the stereo pair (or flat with Enable 3D off) and the person is told
+ once; a saved screenshot mode among them saves the picture as shown, with a
+ warning. VTK's vtkRenderWindow keeps every stereo type for the other programs
+ that load it. When the desktop gives the view no stereo pair, the person is
+ told once that the views are flat.
+ .
+ Every input, reader, filter, CAVE and remote rendering function stays. The
+ sentences are in the gettext domain paraview-stereo (Clients/ParaView/
+ stereo-po, from the edition's translations patch).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-21
+---
+--- a/Clients/ParaView/CMakeLists.txt
++++ b/Clients/ParaView/CMakeLists.txt
+@@ -182,3 +182,26 @@
+ set_property(GLOBAL
+   PROPERTY
+     paraview_client_xml_destination "${paraview_xml_destination}")
++
++# Sparky Stereo OS: the sentences of ParaView's 3D options (gettext domain paraview-stereo), one
++# catalogue per language in stereo-po/.
++find_program(PARAVIEW_STEREO_MSGFMT msgfmt REQUIRED)
++file(GLOB paraview_stereo_po CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/stereo-po/*.po")
++set(paraview_stereo_mo)
++foreach (paraview_stereo_po_file IN LISTS paraview_stereo_po)
++  get_filename_component(paraview_stereo_lang "${paraview_stereo_po_file}" NAME_WE)
++  set(paraview_stereo_mo_dir "${CMAKE_CURRENT_BINARY_DIR}/stereo-po/${paraview_stereo_lang}")
++  add_custom_command(
++    OUTPUT  "${paraview_stereo_mo_dir}/paraview-stereo.mo"
++    COMMAND "${CMAKE_COMMAND}" -E make_directory "${paraview_stereo_mo_dir}"
++    COMMAND "${PARAVIEW_STEREO_MSGFMT}" -c -o "${paraview_stereo_mo_dir}/paraview-stereo.mo"
++            "${paraview_stereo_po_file}"
++    DEPENDS "${paraview_stereo_po_file}"
++    VERBATIM)
++  list(APPEND paraview_stereo_mo "${paraview_stereo_mo_dir}/paraview-stereo.mo")
++  install(
++    FILES       "${paraview_stereo_mo_dir}/paraview-stereo.mo"
++    DESTINATION "${CMAKE_INSTALL_LOCALEDIR}/${paraview_stereo_lang}/LC_MESSAGES"
++    COMPONENT   runtime)
++endforeach ()
++add_custom_target(paraview_stereo_translations ALL DEPENDS ${paraview_stereo_mo})
+--- a/Clients/ParaView/ParaViewMainWindow.cxx
++++ b/Clients/ParaView/ParaViewMainWindow.cxx
+@@ -17,13 +17,18 @@
+ #include "pqParaViewBehaviors.h"
+ #include "pqParaViewMenuBuilders.h"
+ #include "pqSaveStateReaction.h"
++#include "pqServer.h"
+ #include "pqSettings.h"
+ #include "pqTimer.h"
+ #include "pqWelcomeDialog.h"
+ 
+ #include "vtkCommand.h"
+ #include "vtkPVGeneralSettings.h"
++#include "vtkPVStereoEdition.h"
+ #include "vtkRemotingCoreConfiguration.h"
++#include "vtkSMPropertyHelper.h"
++#include "vtkSMProxy.h"
++#include "vtkSMSessionProxyManager.h"
+ #include "vtkSMSettings.h"
+ #include "vtksys/SystemTools.hxx"
+ 
+@@ -34,6 +39,9 @@
+ 
+ #include <QDragEnterEvent>
+ #include <QMessageBox>
++#include <QProcess>
++#include <QSignalBlocker>
++#include <QTranslator>
+ #include <QTextCodec>
+ #include <QtDebug>
+ 
+@@ -73,8 +81,50 @@
+ };
+ 
+ //-----------------------------------------------------------------------------
++namespace
++{
++// Sparky Stereo OS: the render views' one stereo choice, a Render View setting.
++const char* const Enable3DSetting = ".settings.RenderViewSettings.Enable3D";
++const char* const Enable3DLabel = "Enable 3D";
++const char* const Enable3DDocumentation =
++  "Show the render views in 3D: ParaView hands each view to the desktop as a stereo pair, and the "
++  "desktop makes each screen's format in its 3D display settings (View menu).";
++
++// The Settings dialog shows the setting's label and documentation from the XML through
++// QCoreApplication::translate("ServerManagerXML", ...): give them the person's language.
++class pqStereoEditionTranslator : public QTranslator
++{
++public:
++  using QTranslator::QTranslator;
++  bool isEmpty() const override { return false; }
++  QString translate(const char* context, const char* sourceText, const char* disambiguation = nullptr,
++    int n = -1) const override
++  {
++    (void)disambiguation;
++    (void)n;
++    if (context && sourceText && qstrcmp(context, "ServerManagerXML") == 0 &&
++      (qstrcmp(sourceText, Enable3DLabel) == 0 || qstrcmp(sourceText, Enable3DDocumentation) == 0))
++    {
++      return QString::fromUtf8(vtkPVStereoEdition::Text(sourceText));
++    }
++    return QString();
++  }
++};
++}
++
+ ParaViewMainWindow::ParaViewMainWindow()
+ {
++  // Sparky Stereo OS: with "Enable 3D" on (Render View settings, on unless the person turns it
++  // off) the render views start as a stereo pair handed to the desktop, as --stereo does.
++  QCoreApplication::installTranslator(new pqStereoEditionTranslator(this));
++  auto stereoConfig = vtkRemotingCoreConfiguration::GetInstance();
++  if (!stereoConfig->GetUseStereoRendering() &&
++    vtkSMSettings::GetInstance()->GetSettingAsInt(Enable3DSetting, 1) != 0)
++  {
++    stereoConfig->SetUseStereoRendering(true);
++    stereoConfig->SetStereoType(1 /* VTK_STEREO_CRYSTAL_EYES */);
++  }
++
+   // the debug leaks view should be constructed as early as possible
+   // so that it can monitor vtk objects created at application startup.
+   DebugLeaksViewType* leaksView = nullptr;
+@@ -270,6 +320,52 @@
+   // have been created.
+   pqParaViewMenuBuilders::buildViewMenu(*this->Internals->menu_View, *this);
+ 
++  // Sparky Stereo OS: ParaView's 3D options, Enable 3D and a shortcut to the desktop's 3D display
++  // settings, where each screen's 3D format is chosen.
++  QMenu& viewMenu = *this->Internals->menu_View;
++  viewMenu.addSeparator();
++  QAction* enable3D = viewMenu.addAction(QString::fromUtf8(vtkPVStereoEdition::Text("Enable 3D")));
++  enable3D->setObjectName("actionEnable3D");
++  enable3D->setCheckable(true);
++  enable3D->setChecked(vtkSMSettings::GetInstance()->GetSettingAsInt(Enable3DSetting, 1) != 0);
++  QObject::connect(&viewMenu, &QMenu::aboutToShow, enable3D,
++    [enable3D]()
++    {
++      const QSignalBlocker blocker(enable3D);
++      enable3D->setChecked(vtkSMSettings::GetInstance()->GetSettingAsInt(Enable3DSetting, 1) != 0);
++    });
++  QObject::connect(enable3D, &QAction::toggled, this,
++    [this](bool checked)
++    {
++      vtkSMSettings::GetInstance()->SetSetting(Enable3DSetting, checked ? 1 : 0);
++      if (pqServer* server = pqActiveObjects::instance().activeServer())
++      {
++        if (vtkSMProxy* proxy = server->proxyManager()->GetProxy("settings", "RenderViewSettings"))
++        {
++          vtkSMPropertyHelper(proxy, "Enable3D").Set(checked ? 1 : 0);
++          proxy->UpdateVTKObjects();
++        }
++      }
++      auto* box = new QMessageBox(QMessageBox::Information, QStringLiteral("ParaView"),
++        QString::fromUtf8(vtkPVStereoEdition::Text("This takes effect when ParaView starts again.")),
++        QMessageBox::Ok, this);
++      box->setObjectName("Enable3DRestartNotice");
++      box->setAttribute(Qt::WA_DeleteOnClose);
++      box->open();
++    });
++  QAction* displaySettings =
++    viewMenu.addAction(QString::fromUtf8(vtkPVStereoEdition::Text("3D display settings...")));
++  displaySettings->setObjectName("actionStereoDisplaySettings");
++  QObject::connect(displaySettings, &QAction::triggered, this,
++    [this]()
++    {
++      if (!QProcess::startDetached(QStringLiteral("kcmshell6"), { QStringLiteral("kcm_kscreen") }))
++      {
++        QMessageBox::warning(this, QStringLiteral("ParaView"),
++          QString::fromUtf8(vtkPVStereoEdition::Text("The display settings could not be opened.")));
++      }
++    });
++
+   // Setup the menu to show macros.
+   pqParaViewMenuBuilders::buildMacrosMenu(*this->Internals->menu_Macros);
+ 
+--- a/Qt/Core/pqQVTKWidget.cxx
++++ b/Qt/Core/pqQVTKWidget.cxx
+@@ -4,15 +4,22 @@
+ #include "pqQVTKWidget.h"
+ 
+ #include <QApplication>
++#include <QMessageBox>
++#include <QOpenGLContext>
++#include <QOpenGLWindow>
++#include <QTimer>
+ #include <QResizeEvent>
+ #include <QVBoxLayout>
+ 
+ #include "QVTKOpenGLNativeWidget.h"
++#include "QVTKOpenGLWindow.h"
+ #include "pqApplicationCore.h"
++#include "pqCoreUtilities.h"
+ #include "pqEventDispatcher.h"
+ #include "pqQVTKWidgetBase.h"
+ #include "pqUndoStack.h"
+ #include "vtkPVLogger.h"
++#include "vtkPVStereoEdition.h"
+ #include "vtkRemotingCoreConfiguration.h"
+ #include "vtkRenderWindow.h"
+ #include "vtkSMPropertyHelper.h"
+@@ -84,6 +91,38 @@
+     auto fmt = baseClass.value<pqQVTKWidgetBase*>()->defaultFormat(/*supports_stereo =*/true);
+     baseClass.value<pqQVTKWidgetBase*>()->setFormat(fmt);
+     vtkVLogF(PARAVIEW_LOG_APPLICATION_VERBOSITY(), "requesting stereo-capable context.");
++
++    // Sparky Stereo OS: when the desktop gives the view no stereo pair, the view is flat (one
++    // picture, the left eye's): say so once, after the first frame.
++    if (QOpenGLWindow* window = baseClass.value<pqQVTKWidgetBase*>()->embeddedOpenGLWindow())
++    {
++      QObject::connect(
++        window, &QOpenGLWindow::frameSwapped, this,
++        [window]()
++        {
++          static bool told = false;
++          if (told || !window->context() || window->context()->format().stereo())
++          {
++            return;
++          }
++          told = true;
++          vtkVLogF(PARAVIEW_LOG_APPLICATION_VERBOSITY(),
++            "the stereo pair was requested and the window got one picture");
++          QTimer::singleShot(0, pqCoreUtilities::mainWidget(),
++            []()
++            {
++              auto* box = new QMessageBox(QMessageBox::Information, QStringLiteral("ParaView"),
++                QString::fromUtf8(vtkPVStereoEdition::Text(
++                  "These 3D views are shown flat: this desktop does not show 3D areas inside "
++                  "windows.")),
++                QMessageBox::Ok, pqCoreUtilities::mainWidget());
++              box->setObjectName("Stereo3DFlatNotice");
++              box->setAttribute(Qt::WA_DeleteOnClose);
++              box->open();
++            });
++        },
++        Qt::SingleShotConnection);
++    }
+ #else
+     vtkLogF(WARNING,
+       "we do not support stereo capable context on this platform; stereo request ignored.");
+--- a/Qt/Core/pqRenderView.cxx
++++ b/Qt/Core/pqRenderView.cxx
+@@ -10,8 +10,10 @@
+ #include "vtkPVDataInformation.h"
+ #include "vtkPVRenderView.h"
+ #include "vtkPVRenderViewSettings.h"
++#include "vtkPVStereoEdition.h"
+ #include "vtkPVXMLElement.h"
+ #include "vtkProcessModule.h"
++#include "vtkRemotingCoreConfiguration.h"
+ #include "vtkSMCameraLink.h"
+ #include "vtkSMIntVectorProperty.h"
+ #include "vtkSMInteractionUndoStackBuilder.h"
+@@ -33,6 +35,8 @@
+ // Qt includes.
+ #include <QEvent>
+ #include <QGridLayout>
++#include <QMessageBox>
++#include <QTimer>
+ #include <QList>
+ #include <QMenu>
+ #include <QMouseEvent>
+@@ -42,6 +46,7 @@
+ 
+ // ParaView includes.
+ #include "pqApplicationCore.h"
++#include "pqCoreUtilities.h"
+ #include "pqDataRepresentation.h"
+ #include "pqLinkViewWidget.h"
+ #include "pqLinksModel.h"
+@@ -201,6 +206,75 @@
+   {
+     this->setCursorVisible(false);
+   }
++
++  // Sparky Stereo OS: ParaView's own stereo output formats are not offered.
++  for (const char* name : { "StereoType", "ServerStereoType" })
++  {
++    if (vtkSMProperty* property = viewProxy->GetProperty(name))
++    {
++      pqCoreUtilities::connect(
++        property, vtkCommand::ModifiedEvent, this, SLOT(keepStereoPair()), Qt::QueuedConnection);
++    }
++  }
++  this->keepStereoPair();
++}
++
++//-----------------------------------------------------------------------------
++void pqRenderView::keepStereoPair()
++{
++  vtkSMProxy* proxy = this->getProxy();
++  if (!proxy || !proxy->GetProperty("StereoType") || !proxy->GetProperty("ServerStereoType"))
++  {
++    return;
++  }
++  const int type = vtkSMPropertyHelper(proxy, "StereoType").GetAsInt();
++  const int serverType = vtkSMPropertyHelper(proxy, "ServerStereoType").GetAsInt();
++  const bool client = vtkPVStereoEdition::IsOutputFormat(type);
++  const bool server = vtkPVStereoEdition::IsOutputFormat(serverType);
++  if (!client && !server)
++  {
++    return;
++  }
++  const std::string name = vtkPVStereoEdition::OutputFormatName(client ? type : serverType);
++  const bool pair = vtkRemotingCoreConfiguration::GetInstance()->GetUseStereoRendering();
++  if (client)
++  {
++    vtkSMPropertyHelper(proxy, "StereoType").Set(pair ? 1 /* Crystal Eyes */ : 10 /* None */);
++    vtkSMPropertyHelper(proxy, "StereoRender").Set(pair ? 1 : 0);
++  }
++  if (server)
++  {
++    vtkSMPropertyHelper(proxy, "ServerStereoType").Set(0 /* Same As Client */);
++  }
++  proxy->UpdateVTKObjects();
++  this->render();
++
++  static bool told = false;
++  if (told)
++  {
++    return;
++  }
++  told = true;
++  const QString text = QString::fromStdString(pair
++      ? vtkPVStereoEdition::Format("A saved setting or state file asked for \"%1\" stereo, which "
++                                   "ParaView no longer makes itself: the view is shown as a stereo "
++                                   "pair, and the desktop makes each screen's format, red-blue, "
++                                   "interlaced and checkerboard among them, in its 3D display "
++                                   "settings (View menu).",
++          name)
++      : vtkPVStereoEdition::Format("A saved setting or state file asked for \"%1\" stereo, which "
++                                   "ParaView no longer makes itself; the view is shown flat "
++                                   "because Enable 3D is off (View menu).",
++          name));
++  QTimer::singleShot(0, pqCoreUtilities::mainWidget(),
++    [text]()
++    {
++      auto* box = new QMessageBox(QMessageBox::Information, QStringLiteral("ParaView"), text,
++        QMessageBox::Ok, pqCoreUtilities::mainWidget());
++      box->setObjectName("Stereo3DNotice");
++      box->setAttribute(Qt::WA_DeleteOnClose);
++      box->open();
++    });
+ }
+ 
+ //-----------------------------------------------------------------------------
+--- a/Qt/Core/pqRenderView.h
++++ b/Qt/Core/pqRenderView.h
+@@ -313,6 +313,13 @@
+ 
+ protected Q_SLOTS:
+   /**
++   * Sparky Stereo OS: a stereo type that is one of ParaView's own output formats
++   * (from a state file or a saved setting) is replaced by the stereo pair, or by
++   * a flat view when the views were not made in 3D, and the person is told once.
++   */
++  void keepStereoPair();
++
++  /**
+    * Called when VTK event get trigger to notify that the interaction mode has changed
+    */
+   virtual void onInteractionModeChange();
+--- a/Remoting/Core/vtkPVStereoEdition.h
++++ b/Remoting/Core/vtkPVStereoEdition.h
+@@ -0,0 +1,91 @@
++// SPDX-FileCopyrightText: Copyright (c) Daniel Campos Ramos, Sparky Stereo OS
++// SPDX-License-Identifier: BSD-3-Clause
++/**
++ * @file vtkPVStereoEdition.h
++ * Sparky Stereo OS: ParaView hands its 3D views to the desktop as one stereo
++ * pair (Crystal Eyes: a quad-buffered window, which the edition's Mesa packs
++ * side by side and declares to the compositor), and the desktop makes each
++ * screen's own format. ParaView's own stereo output formats are not offered.
++ *
++ * This header holds the sentences of ParaView's 3D options (gettext domain
++ * "paraview-stereo") and the VTK stereo types that are output formats.
++ * It is used by the client's sources only and is not installed.
++ */
++#ifndef vtkPVStereoEdition_h
++#define vtkPVStereoEdition_h
++
++#include <libintl.h>
++#include <string>
++
++#ifndef PARAVIEW_STEREO_LOCALEDIR
++#define PARAVIEW_STEREO_LOCALEDIR "/usr/share/locale"
++#endif
++
++namespace vtkPVStereoEdition
++{
++/// The sentence `msgid` in the person's language.
++inline const char* Text(const char* msgid)
++{
++  static const bool bound = []()
++  {
++    bindtextdomain("paraview-stereo", PARAVIEW_STEREO_LOCALEDIR);
++    bind_textdomain_codeset("paraview-stereo", "UTF-8");
++    return true;
++  }();
++  (void)bound;
++  return dgettext("paraview-stereo", msgid);
++}
++
++/// `Text(msgid)` with "%1" replaced by `argument`.
++inline std::string Format(const char* msgid, const std::string& argument)
++{
++  std::string text = Text(msgid);
++  const std::string::size_type at = text.find("%1");
++  if (at != std::string::npos)
++  {
++    text.replace(at, 2, argument);
++  }
++  return text;
++}
++
++/// The VTK stereo types that are output formats ParaView would make itself.
++inline bool IsOutputFormat(int type)
++{
++  switch (type)
++  {
++    case 2: // VTK_STEREO_RED_BLUE
++    case 3: // VTK_STEREO_INTERLACED
++    case 6: // VTK_STEREO_DRESDEN
++    case 7: // VTK_STEREO_ANAGLYPH
++    case 8: // VTK_STEREO_CHECKERBOARD
++    case 9: // VTK_STEREO_SPLITVIEWPORT_HORIZONTAL
++      return true;
++    default:
++      return false;
++  }
++}
++
++/// The name ParaView gives an output format.
++inline const char* OutputFormatName(int type)
++{
++  switch (type)
++  {
++    case 2:
++      return "Red-Blue";
++    case 3:
++      return "Interlaced";
++    case 6:
++      return "Dresden";
++    case 7:
++      return "Anaglyph";
++    case 8:
++      return "Checkerboard";
++    case 9:
++      return "SplitViewportHorizontal";
++    default:
++      return "";
++  }
++}
++}
++
++#endif
+--- a/Remoting/Core/vtkRemotingCoreConfiguration.cxx
++++ b/Remoting/Core/vtkRemotingCoreConfiguration.cxx
+@@ -7,6 +7,7 @@
+ #include "vtkLogger.h"
+ #include "vtkMultiProcessController.h"
+ #include "vtkObjectFactory.h"
++#include "vtkPVStereoEdition.h"
+ #include "vtkSmartPointer.h"
+ #include "vtkStringFormatter.h"
+ #include "vtkStringScanner.h"
+@@ -33,35 +34,18 @@
+ 
+ int ParseStereoType(const std::string& value)
+ {
++  // Sparky Stereo OS: the one stereo type is Crystal Eyes, the stereo pair handed to the desktop,
++  // which makes each screen's format; ParaView's own output formats are not offered.
+   if (value == "Crystal Eyes")
+   {
+     return VTK_STEREO_CRYSTAL_EYES;
+   }
+-  else if (value == "Red-Blue")
+-  {
+-    return VTK_STEREO_RED_BLUE;
+-  }
+-  else if (value == "Interlaced")
+-  {
+-    return VTK_STEREO_INTERLACED;
+-  }
+-  else if (value == "Dresden")
+-  {
+-    return VTK_STEREO_DRESDEN;
+-  }
+-  else if (value == "Anaglyph")
+-  {
+-    return VTK_STEREO_ANAGLYPH;
+-  }
+-  else if (value == "Checkerboard")
+-  {
+-    return VTK_STEREO_CHECKERBOARD;
+-  }
+-  else if (value == "SplitViewportHorizontal")
+-  {
+-    return VTK_STEREO_SPLITVIEWPORT_HORIZONTAL;
+-  }
+-  throw CLI::ValidationError("Invalid stereo-type specified.");
++  throw CLI::ValidationError(vtkPVStereoEdition::Format(
++    "The stereo type \"%1\" is not offered: ParaView hands its 3D views to the desktop as a "
++    "stereo pair, and the desktop makes each screen's format, red-blue, interlaced and "
++    "checkerboard among them, in its 3D display settings. Start ParaView with --stereo, or with "
++    "no option: 3D is on unless you turn it off.",
++    value));
+ }
+ }
+ 
+@@ -69,7 +53,7 @@
+ //----------------------------------------------------------------------------
+ vtkRemotingCoreConfiguration::vtkRemotingCoreConfiguration()
+ {
+-  this->StereoType = VTK_STEREO_ANAGLYPH;
++  this->StereoType = VTK_STEREO_CRYSTAL_EYES;
+ 
+   // initialize host names
+   vtksys::SystemInformation sys_info;
+@@ -514,9 +498,10 @@
+   stereoGroup->add_flag("--stereo", this->UseStereoRendering, "Enable stereo rendering.");
+   stereoGroup
+     ->add_option("--stereo-type", this->StereoType,
+-      "Specify the stereo type to use. Possible values are 'Crystal Eyes', "
+-      "'Red-Blue', 'Interlaced', 'Dresden', 'Anaglyph', 'Checkerboard', or "
+-      "'SplitViewportHorizontal'.")
++      vtkPVStereoEdition::Text("Specify the stereo type to use. The only stereo type is 'Crystal "
++                               "Eyes': ParaView hands its 3D views to the desktop as a stereo "
++                               "pair, and the desktop makes each screen's format in its 3D "
++                               "display settings."))
+     ->needs("--stereo")
+     ->transform([](const std::string& value) { return vtk::to_string(::ParseStereoType(value)); });
+ 
+--- a/Remoting/Core/vtkRemotingCoreConfiguration.h
++++ b/Remoting/Core/vtkRemotingCoreConfiguration.h
+@@ -216,6 +216,16 @@
+   vtkGetMacro(StereoType, int);
+   const char* GetStereoTypeAsString() const;
+ 
++  ///@{
++  /**
++   * Sparky Stereo OS: the client sets these from the Render View setting
++   * "Enable 3D" before it makes its first view, when the command line did not
++   * ask for stereo.
++   */
++  vtkSetMacro(UseStereoRendering, bool);
++  vtkSetMacro(StereoType, int);
++  ///@}
++
+   /**
+    * Eye separation to use when using stereo rendering.
+    */
+--- a/Remoting/Views/Resources/utilities_remotingviews.xml
++++ b/Remoting/Views/Resources/utilities_remotingviews.xml
+@@ -8,6 +8,18 @@
+         Application settings for render views.
+       </Documentation>
+ 
++      <!-- Sparky Stereo OS: the render views' one stereo choice. -->
++      <IntVectorProperty name="Enable3D"
++                         label="Enable 3D"
++                         number_of_elements="1"
++                         default_values="1">
++        <BooleanDomain name="bool" />
++        <Documentation>Show the render views in 3D: ParaView hands each view to the desktop as a stereo pair, and the desktop makes each screen's format in its 3D display settings (View menu).</Documentation>
++        <Hints>
++          <RestartRequired/>
++        </Hints>
++      </IntVectorProperty>
++
+       <IntVectorProperty name="ResolveCoincidentTopology"
+                          command="SetResolveCoincidentTopology"
+                          number_of_elements="1"
+@@ -3735,15 +3747,9 @@
+         <EnumerationDomain name="enum">
+           <Entry text="No change" value="-1"/>
+           <Entry text="No stereo" value="0"/>
+-          <Entry text="Red-Blue" value="2"/>
+-          <Entry text="Interlaced" value="3"/>
+           <Entry text="Left Eye Only" value="4"/>
+           <Entry text="Right Eye Only" value="5"/>
+           <Entry text="Both Eyes" value="11"/>
+-          <Entry text="Dresden" value="6"/>
+-          <Entry text="Anaglyph" value="7"/>
+-          <Entry text="Checkerboard" value="8"/>
+-          <Entry text="Side-by-Side Horizontal" value="9"/>
+         </EnumerationDomain>
+       </IntVectorProperty>
+ 
+--- a/Remoting/Views/Resources/views_remotingviews.xml
++++ b/Remoting/Views/Resources/views_remotingviews.xml
+@@ -1099,7 +1099,8 @@
+       <IntVectorProperty command="SetStereoType"
+                          default_values="none"
+                          name="StereoType"
+-                         number_of_elements="1">
++                         number_of_elements="1"
++                         panel_visibility="never">
+         <Documentation>
+           Set the stereo rendering mode to use. In client-server configurations,
+           you may also want to set the ServerStereoType.
+@@ -1107,22 +1108,10 @@
+         <EnumerationDomain name="enum">
+           <Entry text="Crystal Eyes"
+                  value="1" />
+-          <Entry text="Red-Blue"
+-                 value="2" />
+-          <Entry text="Interlaced"
+-                 value="3" />
+           <Entry text="Left"
+                  value="4" />
+           <Entry text="Right"
+                  value="5" />
+-          <Entry text="Dresden"
+-                 value="6" />
+-          <Entry text="Anaglyph"
+-                 value="7" />
+-          <Entry text="Checkerboard"
+-                 value="8" />
+-          <Entry text="SplitViewportHorizontal"
+-                 value="9" />
+           <Entry text="None"
+                  value="10" />
+         </EnumerationDomain>
+@@ -1136,7 +1125,8 @@
+       <IntVectorProperty command="SetServerStereoType"
+                          default_values="0"
+                          name="ServerStereoType"
+-                         number_of_elements="1">
++                         number_of_elements="1"
++                         panel_visibility="never">
+         <Documentation>
+           This property allows you to set a different stereo mode for the server processes.
+           Note that the stereo type selected on the client and server must be *compatible*, i.e.
+@@ -1146,14 +1136,8 @@
+         <EnumerationDomain name="enum">
+           <Entry text="Same As Client" value="0" />
+           <Entry text="Crystal Eyes" value="1" />
+-          <Entry text="Red-Blue" value="2" />
+-          <Entry text="Interlaced" value="3" />
+           <Entry text="Left" value="4" />
+           <Entry text="Right" value="5" />
+-          <Entry text="Dresden" value="6" />
+-          <Entry text="Anaglyph" value="7" />
+-          <Entry text="Checkerboard" value="8" />
+-          <Entry text="SplitViewportHorizontal" value="9" />
+           <Entry text="None" value="10" />
+         </EnumerationDomain>
+         <Hints>
+--- a/Remoting/Views/vtkSMSaveScreenshotProxy.cxx
++++ b/Remoting/Views/vtkSMSaveScreenshotProxy.cxx
+@@ -11,6 +11,7 @@
+ #include "vtkObjectFactory.h"
+ #include "vtkPVLogger.h"
+ #include "vtkPVRenderView.h"
++#include "vtkPVStereoEdition.h"
+ #include "vtkPVXMLElement.h"
+ #include "vtkPointData.h"
+ #include "vtkProcessModule.h"
+@@ -849,7 +850,17 @@
+   this->State->SetTransparentBackground(
+     vtkSMPropertyHelper(this, "TransparentBackground").GetAsInt() != 0);
+   this->State->SetColorPalette(vtkSMPropertyHelper(this, "OverrideColorPalette").GetAsString());
+-  this->State->SetStereoMode(vtkSMPropertyHelper(this, "StereoMode").GetAsInt());
++  int stereoMode = vtkSMPropertyHelper(this, "StereoMode").GetAsInt();
++  if (vtkPVStereoEdition::IsOutputFormat(stereoMode))
++  {
++    // Sparky Stereo OS: a saved choice of a stereo output format ParaView no longer makes.
++    vtkWarningMacro(<< vtkPVStereoEdition::Format(
++                      "The screenshot's stereo mode \"%1\" is not offered: the picture is saved "
++                      "as the view shows it.",
++                      vtkPVStereoEdition::OutputFormatName(stereoMode)));
++    stereoMode = -1;
++  }
++  this->State->SetStereoMode(stereoMode);
+   this->State->SetSeparatorWidth(vtkSMPropertyHelper(this, "SeparatorWidth").GetAsInt());
+   double scolor[3];
+   vtkSMPropertyHelper(this, "SeparatorColor").Get(scolor, 3);
+--- a/Wrapping/Python/paraview/simple/io.py
++++ b/Wrapping/Python/paraview/simple/io.py
+@@ -442,9 +442,8 @@
+ 
+         StereoMode (str)
+             Stereo mode to use, if any. Available values are `"No stereo"`,
+-            `"Red-Blue"`, `"Interlaced"`, `"Left Eye Only"`, `"Right Eye Only"`,
+-            `"Dresden"`, `"Anaglyph"`, `"Checkerboard"`,
+-            `"Side-by-Side Horizontal"`, and the default `"No change"`.
++            `"Left Eye Only"`, `"Right Eye Only"`, `"Both Eyes"`, and the default
++            `"No change"`.
+ 
+         TransparentBackground (int)
+             Set to 1 (or True) to save an image with background set to alpha=0, if
