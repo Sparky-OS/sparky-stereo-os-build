@@ -6,5 +6,35 @@
 # shows the longer text when chosen. It is the last entry so that no other entry changes its place in the menu.
 set -e
 case "${SPARKY_STEREO_RECORD:-off}" in off|none) exit 0 ;; esac
+# 0.1.13 (rows 629/802): each Linux entry records its start through its load_video call (01_sparky_stereo_menu).
+# Debian's 10_linux leaves that call out when GRUB_GFXPAYLOAD_LINUX=text, and a changed 00_header or 10_linux may too:
+# then the start cannot be recorded, and that is said and kept (LOCAL97) instead of a menu that silently never shows.
+case "${SPARKY_STEREO_RECORD:-off}" in
+grubenv|esp:*)
+	lib=${SPARKY_STEREO_LIB:-/usr/lib/sparky-stereo-boot}
+	header=${SPARKY_GRUB_00_HEADER:-/etc/grub.d/00_header}
+	linux=${SPARKY_GRUB_10_LINUX:-/etc/grub.d/10_linux}
+	if ! grep -qs '^quick_boot="1"' "$header" && [ -x "$linux" ]; then
+		known=yes
+		"$header" 2>/dev/null | grep -q '^function load_video {$' || known=no
+		if [ "$known" = yes ]; then
+			"$linux" 2>/dev/null | awk '
+				/^[[:space:]]*menuentry[[:space:]]/ { video = 0 }
+				/^[[:space:]]*load_video[[:space:]]*$/ { video = 1 }
+				/^[[:space:]]*linux[[:space:]]/ { if (!video) missing++ }
+				END { exit (missing > 0) }' || known=no
+		fi
+		if [ -f "$lib/problems.py" ] && command -v python3 >/dev/null; then
+			if [ "$known" = yes ]; then
+				python3 "$lib/problems.py" clear start-record >&2
+			else
+				python3 "$lib/problems.py" record start-record LOCAL97 --repair update-grub >&2
+			fi
+		elif [ "$known" = no ]; then
+			printf 'sparky-stereo-boot: %s\n' "Debian's /etc/grub.d/10_linux wrote its entries in a form sparky-stereo-boot does not know, so a start is not recorded and GRUB's menu cannot show by itself after a start that did not finish. Then: sudo sparky-stereo-boot repair" >&2
+		fi
+	fi
+	;;
+esac
 [ -x /usr/bin/python3 ] && [ -f "${SPARKY_STEREO_BIN:-/usr/bin/sparky-stereo-boot}" ] || exit 0
 exec /usr/bin/python3 "${SPARKY_STEREO_BIN:-/usr/bin/sparky-stereo-boot}" grub-unfinished
