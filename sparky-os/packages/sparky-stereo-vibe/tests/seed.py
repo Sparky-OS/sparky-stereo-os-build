@@ -55,6 +55,17 @@ class SeedTest(unittest.TestCase):
             self.assertFalse(seed.seed('default'))
         self.assertEqual(self.target.read_bytes(), b'person won the race')
 
+    def test_two_identical_physical_cards_are_uncertain(self):
+        import subprocess
+        answers = [subprocess.CompletedProcess([], 0, 'pci-0000:01:00.0\n', ''),
+                   subprocess.CompletedProcess([], 0, json.dumps([
+                       {'id': 'pci-0000:01:00.0', 'name': 'Same GPU'},
+                       {'id': 'pci-0000:02:00.0', 'name': 'Same GPU'}]), ''),
+                   subprocess.CompletedProcess([], 0, json.dumps([
+                       {'index': 0, 'description': 'Same GPU'}]), '')]
+        with patch.object(seed.subprocess, 'run', side_effect=answers):
+            self.assertEqual(seed.gpu_facts(), (None, True))
+
     def test_mapping_never_guesses(self):
         devices = [{'index': 2, 'name': 'Vulkan0', 'description': 'AMD Example'},
                    {'index': 5, 'name': 'CUDA0', 'description': 'NVIDIA Example'}]
