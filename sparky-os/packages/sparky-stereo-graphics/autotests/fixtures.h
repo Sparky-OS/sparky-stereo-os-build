@@ -31,6 +31,7 @@ struct FixtureGpu {
     bool render = true;
     QList<FixtureConnector> connectors;
     bool accessible = true; // the account may open the render node
+    quint64 vram = 0; // amdgpu's mem_info_vram_total, written when not 0
 };
 
 inline QByteArray fixtureEdid(const QString &monitor)
@@ -76,6 +77,9 @@ public:
         write(device + QStringLiteral("/device"), QByteArray("0x%1\n").replace("%1", QByteArray::number(gpu.device, 16).rightJustified(4, '0')));
         write(device + QStringLiteral("/class"), "0x030000\n");
         write(device + QStringLiteral("/boot_vga"), gpu.bootVga ? "1\n" : "0\n");
+        if (gpu.vram) {
+            write(device + QStringLiteral("/mem_info_vram_total"), QByteArray::number(gpu.vram) + '\n');
+        }
         QDir().mkpath(m_dir.filePath(device + QStringLiteral("/drm/") + card));
         if (gpu.render) {
             QDir().mkpath(m_dir.filePath(device + QStringLiteral("/drm/renderD%1").arg(128 + gpu.card)));
@@ -101,6 +105,35 @@ public:
                 write(dir + QStringLiteral("/edid"), "");
             }
         }
+    }
+
+    // ORDER 70, what the compute drivers leave on the system: the KFD's topology (a processor node, then one node for
+    // each AMD card listed by its render node's minor), NVIDIA's own file for each of its cards with the card's UUID,
+    // and the Vulkan driver files the loader reads
+    void addKfdNode(int node, quint64 gpuId, int renderMinor)
+    {
+        const QString dir = QStringLiteral("sys/class/kfd/kfd/topology/nodes/%1").arg(node);
+        write(dir + QStringLiteral("/gpu_id"), QByteArray::number(gpuId) + '\n');
+        write(dir + QStringLiteral("/properties"), "simd_count " + QByteArray(gpuId ? "28" : "0") + "\ndrm_render_minor " + QByteArray::number(gpuId ? renderMinor : 0) + "\n");
+    }
+    void addNvidiaInformation(const QString &slot, const QByteArray &uuid)
+    {
+        write(QStringLiteral("proc/driver/nvidia/gpus/") + slot + QStringLiteral("/information"),
+              "Model: \t\t NVIDIA GeForce RTX 3060\nGPU UUID: \t " + uuid + "\nBus Location: \t " + slot.toLatin1() + "\n");
+    }
+    void addVulkanDriver(const QString &file)
+    {
+        write(QStringLiteral("usr/share/vulkan/icd.d/") + file, "{}\n");
+    }
+    // the workstation's compute drivers: RADV and NVIDIA's Vulkan, the KFD with the APU, NVIDIA's file, libcuda
+    void addHostCompute()
+    {
+        addKfdNode(0, 0, 0);
+        addKfdNode(1, 30608, 128);
+        addNvidiaInformation(QStringLiteral("0000:01:00.0"), "GPU-00000000-1111-2222-3333-444444444444");
+        addVulkanDriver(QStringLiteral("radeon_icd.x86_64.json"));
+        addVulkanDriver(QStringLiteral("nvidia_icd.json"));
+        write(QStringLiteral("usr/lib/x86_64-linux-gnu/libcuda.so.1"), "");
     }
 
     // The firmware's model strings, as the kernel shows them in /sys/class/dmi/id
@@ -151,10 +184,13 @@ public:
     // The workstation: Renoir-class APU and the RTX 3060, screens on both
     static QList<FixtureGpu> host()
     {
-        return {{0, QStringLiteral("0000:0b:00.0"), QStringLiteral("0000:00:08.1"), 0x1002, 0x1638, QStringLiteral("amdgpu"), true, true,
+        QList<FixtureGpu> gpus = {{0, QStringLiteral("0000:0b:00.0"), QStringLiteral("0000:00:08.1"), 0x1002, 0x1638, QStringLiteral("amdgpu"), true, true,
                  {{QStringLiteral("DP-1"), true, QStringLiteral("DELL U2720Q")}, {QStringLiteral("HDMI-A-1"), true, QStringLiteral("SONY TV")}}},
                 {1, QStringLiteral("0000:01:00.0"), QStringLiteral("0000:00:01.1"), 0x10de, 0x2504, QStringLiteral("nvidia"), false, true,
                  {{QStringLiteral("DP-2"), false, {}}, {QStringLiteral("DP-3"), false, {}}, {QStringLiteral("DP-4"), false, {}}, {QStringLiteral("HDMI-A-2"), true, QStringLiteral("LG TV")}}}};
+        // the APU's carve-out as amdgpu counts it on the workstation (536870912 bytes, read 2026-11-21)
+        gpus[0].vram = 536870912;
+        return gpus;
     }
     // A server board: the BMC's chip is the boot VGA and cannot render
     static QList<FixtureGpu> bmc()

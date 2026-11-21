@@ -1,7 +1,7 @@
 #!/bin/sh
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/13
+# Last update 2026/11/21
 # Starts a program on the GPU the Graphics page picked for it:
 #   sparky-stereo-gpu-run [--category players|games|browsers|other | --app ID.desktop | --choice GPU] [--3d] COMMAND [ARGUMENT...]
 # --3d: the program presents 3D, so Automatic is the GPU measured best on this computer, on battery too.
@@ -14,6 +14,14 @@
 # start (exit status 4). A missing or failing sparky-stereo-gpu-env is said, and the program does not start either.
 # A GPU already chosen in the environment (DRI_PRIME, MESA_VK_DEVICE_SELECT, VK_LOADER_DRIVERS_SELECT,
 # __NV_PRIME_RENDER_OFFLOAD) is the caller's explicit choice: it is kept and the page is not asked.
+# --compute (ORDER 70): a program that computes on a card (a partner's engine, as Ollama's service starts) gets the
+# variables of sparky-stereo-gpu-env --print compute-env, which leave only the chosen card visible to its runners (CUDA,
+# ROCm, Vulkan), or none for the processor; nothing is asked, also with a display: a card that cannot be used is said and
+# kept, and the program does not start (exit status 4). A card the caller already chose for computing (CUDA_VISIBLE_DEVICES,
+# HIP_VISIBLE_DEVICES, ROCR_VISIBLE_DEVICES, GGML_VK_VISIBLE_DEVICES) is kept; a Vulkan selection for drawing left in the
+# environment (MESA_VK_DEVICE_SELECT, MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE, __VK_LAYER_NV_optimus) is removed, since
+# Mesa's device selection would read it before the card's own. Its usual call:
+#   sparky-stereo-gpu-run --compute --category partners COMMAND
 set -u
 
 # Said in the system's language when the page's own command cannot answer: the whole LANG, then the bare language,
@@ -65,11 +73,12 @@ say() { # say KEY [STATUS]
 }
 
 if [ "$#" -eq 0 ]; then
-	echo "Usage: sparky-stereo-gpu-run [--category CATEGORY | --app ID.desktop | --choice GPU] [--3d] COMMAND [ARGUMENT...]" >&2
+	echo "Usage: sparky-stereo-gpu-run [--category CATEGORY | --app ID.desktop | --choice GPU] [--3d | --compute] COMMAND [ARGUMENT...]" >&2
 	exit 2
 fi
 choice=
 stereo=
+compute=
 while [ "$#" -gt 0 ]; do
 	case $1 in
 	--category | --app | --choice)
@@ -81,6 +90,10 @@ while [ "$#" -gt 0 ]; do
 		stereo=--3d
 		shift
 		;;
+	--compute)
+		compute=1
+		shift
+		;;
 	--)
 		shift
 		break
@@ -89,6 +102,38 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 [ "$#" -gt 0 ] || { echo "sparky-stereo-gpu-run: no command" >&2; exit 2; }
+if [ -n "$compute" ]; then
+	chosen=
+	for v in CUDA_VISIBLE_DEVICES HIP_VISIBLE_DEVICES ROCR_VISIBLE_DEVICES GGML_VK_VISIBLE_DEVICES; do
+		eval "[ -z \"\${$v+set}\" ]" || chosen=$v
+	done
+	if [ -z "$chosen" ]; then
+		if ! command -v sparky-stereo-gpu-env >/dev/null 2>&1; then
+			say missing
+			say stopped
+			exit 127
+		fi
+		# shellcheck disable=SC2086
+		gpu_env=$(sparky-stereo-gpu-env --shell --print compute-env $choice)
+		status=$?
+		case $status in
+		0)
+			unset MESA_VK_DEVICE_SELECT MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE __VK_LAYER_NV_optimus
+			eval "$gpu_env"
+			;;
+		4 | 5)
+			say stopped
+			exit 4
+			;;
+		*)
+			say failed "$status"
+			say stopped
+			exit "$status"
+			;;
+		esac
+	fi
+	exec "$@"
+fi
 # A GPU the caller already chose wins, as in Plasma's launcher and libmedia-gpu-route
 chosen=
 for v in DRI_PRIME MESA_VK_DEVICE_SELECT VK_LOADER_DRIVERS_SELECT __NV_PRIME_RENDER_OFFLOAD; do

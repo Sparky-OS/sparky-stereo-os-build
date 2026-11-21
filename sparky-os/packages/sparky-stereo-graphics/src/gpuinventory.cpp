@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 
+#include <dlfcn.h>
 #include <unistd.h>
 
 using namespace Qt::StringLiterals;
@@ -243,6 +244,11 @@ QList<Gpu> GpuInventory::read(const QString &root)
             gpu.connectors.append(connector);
         }
 
+        // amdgpu's own count of the card's memory (for an APU, the carve-out the firmware sets aside)
+        if (gpu.driver == u"amdgpu"_s) {
+            gpu.memory = readFirstLine(device + u"/mem_info_vram_total"_s).toULongLong();
+        }
+
         if (!gpu.canRender) {
             gpu.kind = GpuKind::Integrated; // a basic display adapter, built in
         } else if (isIntegratedFamily(gpu.vendorId, gpu.chip, gpu.name)) {
@@ -255,6 +261,52 @@ QList<Gpu> GpuInventory::read(const QString &root)
         gpus.append(gpu);
     }
     return gpus;
+}
+
+// NVML (NVIDIA Management Library, the driver's libnvidia-ml.so.1): nvmlInit_v2, nvmlDeviceGetHandleByPciBusId_v2 with the
+// PCI address as sysfs writes it, nvmlDeviceGetMemoryInfo's total, nvmlShutdown. 0 when any step fails
+static quint64 nvidiaMemory(const QString &pciSlot)
+{
+    void *library = dlopen("libnvidia-ml.so.1", RTLD_NOW | RTLD_LOCAL);
+    if (!library) {
+        return 0;
+    }
+    struct NvmlMemory {
+        unsigned long long total;
+        unsigned long long free;
+        unsigned long long used;
+    };
+    using Init = int (*)();
+    using Shutdown = int (*)();
+    using ByPci = int (*)(const char *, void **);
+    using MemoryInfo = int (*)(void *, NvmlMemory *);
+    const auto init = reinterpret_cast<Init>(dlsym(library, "nvmlInit_v2"));
+    const auto shutdown = reinterpret_cast<Shutdown>(dlsym(library, "nvmlShutdown"));
+    const auto byPci = reinterpret_cast<ByPci>(dlsym(library, "nvmlDeviceGetHandleByPciBusId_v2"));
+    const auto memoryInfo = reinterpret_cast<MemoryInfo>(dlsym(library, "nvmlDeviceGetMemoryInfo"));
+    quint64 total = 0;
+    if (init && shutdown && byPci && memoryInfo && init() == 0) {
+        void *device = nullptr;
+        NvmlMemory memory{};
+        if (byPci(pciSlot.toLatin1().constData(), &device) == 0 && memoryInfo(device, &memory) == 0) {
+            total = memory.total;
+        }
+        shutdown();
+    }
+    dlclose(library);
+    return total;
+}
+
+void GpuInventory::readMemory(QList<Gpu> &gpus, const QString &root)
+{
+    if (QDir::cleanPath(root) != u"/"_s) {
+        return;
+    }
+    for (Gpu &gpu : gpus) {
+        if (gpu.memory == 0 && gpu.vendorId == 0x10de && gpu.driver == u"nvidia"_s) {
+            gpu.memory = nvidiaMemory(gpu.pciSlot);
+        }
+    }
 }
 
 }

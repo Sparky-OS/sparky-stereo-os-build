@@ -117,6 +117,29 @@ Problem fromResolution(const QString &key, const Resolution &resolution, const Q
             problem.alternatives.append({gpu.id, gpu.name});
         }
     }
+    if (key == u"partners"_s) {
+        // the partners can also run on the processor alone (ORDER 70), offered as the person's explicit choice
+        problem.alternatives.append({u"cpu"_s, i18nc("@item:inlistbox the card the partners compute on", "Processor only")});
+    }
+    return problem;
+}
+
+Problem fromCompute(const QString &key, int index, const QList<Gpu> &gpus, const QString &driver)
+{
+    Problem problem;
+    problem.key = key;
+    problem.kind = u"card-no-compute"_s;
+    problem.detail = driver;
+    if (index >= 0 && index < gpus.size()) {
+        problem.requested = gpus.at(index).id;
+        problem.gpu = gpus.at(index).name;
+    }
+    for (const Gpu &gpu : gpus) {
+        if (gpu.usable()) {
+            problem.alternatives.append({gpu.id, gpu.name});
+        }
+    }
+    problem.alternatives.append({u"cpu"_s, i18nc("@item:inlistbox the card the partners compute on", "Processor only")});
     return problem;
 }
 
@@ -239,7 +262,11 @@ static QString addressOf(const QString &id)
 static QJsonArray kindArg(const QString &key)
 {
     const char *k = "@item kind of program inside a sentence: The GPU you chose for %1";
-    const char *word = key == u"players"_s ? "players" : key == u"games"_s ? "games" : key == u"browsers"_s ? "browsers" : "other programs";
+    const char *word = key == u"players"_s ? "players"
+        : key == u"games"_s                ? "games"
+        : key == u"browsers"_s             ? "browsers"
+        : key == u"partners"_s             ? "partners"
+                                           : "other programs";
     return QJsonArray{ctx(k, word)};
 }
 
@@ -399,6 +426,11 @@ Sentences sentences(const Problem &p)
             : ctx("@info %1 is a kind of program", "You chose the discrete GPU for %1, and this computer has none that can draw now.");
         s.args = QJsonArray{kind};
         todo("Choose another GPU in System Settings, Graphics.");
+    } else if (p.kind == u"card-no-compute"_s) {
+        s.key = ctx("@info %1 is a GPU name, %2 a kernel driver",
+                    "The card you chose for partners, %1, cannot run them: no installed driver reaches it for computing (no Vulkan driver for its driver, %2, no CUDA, no ROCm).");
+        s.args = QJsonArray{p.gpu, p.detail};
+        todo("Install a Vulkan driver for this card, or choose another card or Processor only for partners in System Settings, Graphics.");
     } else if (p.kind == u"profile-unreadable"_s) {
         s.key = ctx("@info %1 is a kind of program, %2 says why", "The GPU for %1 follows the power profile, and the power profile could not be read: %2.");
         s.args = QJsonArray{kind, profileArg(p.detail, p.extra)};
@@ -453,7 +485,11 @@ bool keep(Problem problem, const QString &dir)
     } else if (problem.isChoice()) {
         // the other GPUs are only ever the person's explicit choice: "Use NAME", which saves that GPU as the choice
         for (const Alternative &gpu : problem.alternatives) {
-            if (gpu.id != problem.requested) {
+            if (gpu.id == u"cpu"_s) {
+                actions.append(QJsonObject{{u"id"_s, u"use:cpu"_s},
+                                           {u"label"_s, QJsonArray{ctx("@action:button", "Use the processor only")}},
+                                           {u"command"_s, QJsonArray{u"sparky-stereo-gpu-env"_s, u"--use"_s, problem.key, u"cpu"_s}}});
+            } else if (gpu.id != problem.requested) {
                 actions.append(QJsonObject{{u"id"_s, QString(u"use:"_s + gpu.id)},
                                            {u"label"_s, QJsonArray{ctx("@action:button %1 is a GPU name", "Use %1"), gpu.name}},
                                            {u"command"_s, QJsonArray{u"sparky-stereo-gpu-env"_s, u"--use"_s, problem.key, gpu.id}}});
@@ -562,6 +598,9 @@ QString kindInSentence(const QString &key)
     if (key == u"browsers"_s) {
         return i18nc("@item kind of program inside a sentence: The GPU you chose for %1", "browsers");
     }
+    if (key == u"partners"_s) {
+        return i18nc("@item kind of program inside a sentence: The GPU you chose for %1", "partners");
+    }
     return i18nc("@item kind of program inside a sentence: The GPU you chose for %1", "other programs");
 }
 
@@ -647,6 +686,12 @@ QString message(const Problem &p)
                      ? i18nc("@info %1 is a kind of program", "You chose the integrated GPU for %1, and this computer has none that can draw now.", kind)
                      : i18nc("@info %1 is a kind of program", "You chose the discrete GPU for %1, and this computer has none that can draw now.", kind));
         text << i18nc("@info what to do", "Choose another GPU in System Settings, Graphics.");
+    } else if (p.kind == u"card-no-compute"_s) {
+        text << i18nc("@info %1 is a GPU name, %2 a kernel driver",
+                      "The card you chose for partners, %1, cannot run them: no installed driver reaches it for computing (no Vulkan driver for its driver, %2, no CUDA, no ROCm).",
+                      p.gpu,
+                      p.detail);
+        text << i18nc("@info what to do", "Install a Vulkan driver for this card, or choose another card or Processor only for partners in System Settings, Graphics.");
     } else if (p.kind == u"profile-unreadable"_s) {
         text << i18nc("@info %1 is a kind of program, %2 says why",
                       "The GPU for %1 follows the power profile, and the power profile could not be read: %2.",

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "fixtures.h"
+#include "compute.h"
 #include "resolver.h"
 
 #include <QTemporaryDir>
@@ -38,6 +39,8 @@ private Q_SLOTS:
     void environments();
     void appPreferences();
     void categories();
+    void partnersCard();
+    void computeVariables();
 
 private:
     QList<Gpu> read(const QList<FixtureGpu> &gpus)
@@ -550,6 +553,73 @@ void ResolverTest::categories()
     Resolver saver(read(SysfsFixture::host()), QString(), PowerProfile::PowerSaver);
     QCOMPARE(saver.resolveCategory(Category::Browsers, settings).gpuIndex, 0);
     QCOMPARE(saver.resolveCategory(Category::Games, settings).gpuIndex, 1);
+}
+
+void ResolverTest::partnersCard()
+{
+    // ORDER 70: Automatic for the partners' card is the card measured best, whatever the power profile, as for players;
+    // the processor alone is no GPU and nothing missing
+    for (PowerProfile profile : {PowerProfile::PowerSaver, PowerProfile::Balanced, PowerProfile::Performance}) {
+        QCOMPARE(Resolver::automaticTarget(Category::Partners, profile), u"measured"_s);
+    }
+    const QList<Gpu> host = read(SysfsFixture::host());
+    GraphicsSettings settings;
+    const Resolver notMeasured(host, QString(), PowerProfile::PowerSaver);
+    Resolution r = notMeasured.resolveCategory(Category::Partners, settings);
+    QCOMPARE(r.gpuIndex, 1);
+    QCOMPARE(r.reason, u"unmeasured"_s);
+    const Resolver measuredApu(host, QString(), PowerProfile::Performance, u"1002:1638"_s);
+    r = measuredApu.resolveCategory(Category::Partners, settings);
+    QCOMPARE(r.gpuIndex, 0);
+    QCOMPARE(r.reason, u"measured"_s);
+    settings.setRenderChoice(Category::Partners, u"cpu"_s);
+    r = notMeasured.resolveCategory(Category::Partners, settings);
+    QCOMPARE(r.gpuIndex, -1);
+    QCOMPARE(r.reason, u"cpu"_s);
+    QVERIFY(r.problem.isEmpty());
+    QVERIFY(!r.missing);
+    // a card that is not here is said, as for any kind
+    settings.setRenderChoice(Category::Partners, u"pci-0000:42:00.0"_s);
+    r = notMeasured.resolveCategory(Category::Partners, settings);
+    QCOMPARE(r.problem, u"gpu-missing"_s);
+}
+
+void ResolverTest::computeVariables()
+{
+    // ORDER 70: only the chosen card visible to every runner (measured with Ollama 0.40.16 on the workstation: NVIDIA
+    // chosen gives CUDA on the RTX 3060 only; the APU chosen gives Vulkan on the APU only; the processor, no card)
+    auto fixture = std::make_unique<SysfsFixture>();
+    for (const FixtureGpu &gpu : SysfsFixture::host()) {
+        fixture->add(gpu);
+    }
+    fixture->addHostCompute();
+    const QString root = fixture->root();
+    const QList<Gpu> host = GpuInventory::read(root);
+    ComputeAnswer nvidia = Compute::forGpu(host, 1, root);
+    QVERIFY(nvidia.problem.isEmpty());
+    QCOMPARE(nvidia.environment,
+             QStringList({u"CUDA_DEVICE_ORDER=PCI_BUS_ID"_s, u"CUDA_VISIBLE_DEVICES=GPU-00000000-1111-2222-3333-444444444444"_s, u"HIP_VISIBLE_DEVICES=-1"_s,
+                          u"VK_LOADER_DRIVERS_SELECT=*nvidia*"_s, u"DRI_PRIME=pci-0000_01_00_0!"_s}));
+    const ComputeAnswer apu = Compute::forGpu(host, 0, root);
+    QVERIFY(apu.problem.isEmpty());
+    QCOMPARE(apu.environment,
+             QStringList({u"CUDA_DEVICE_ORDER=PCI_BUS_ID"_s, u"CUDA_VISIBLE_DEVICES=-1"_s, u"ROCR_VISIBLE_DEVICES=0"_s, u"HIP_VISIBLE_DEVICES=0"_s,
+                          u"VK_LOADER_DRIVERS_SELECT=*radeon*"_s, u"DRI_PRIME=pci-0000_0b_00_0!"_s}));
+    QCOMPARE(Compute::processor().environment, QStringList({u"CUDA_VISIBLE_DEVICES=-1"_s, u"HIP_VISIBLE_DEVICES=-1"_s, u"GGML_VK_VISIBLE_DEVICES="_s}));
+    QCOMPARE(Compute::vulkanDrivers(u"amdgpu"_s, root), QStringList({u"/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"_s}));
+    QVERIFY(Compute::vulkanDrivers(u"radeon"_s, root).isEmpty());
+    // without NVIDIA's file the card is named by its place among NVIDIA's cards in PCI order
+    QFile::remove(root + u"/proc/driver/nvidia/gpus/0000:01:00.0/information"_s);
+    nvidia = Compute::forGpu(host, 1, root);
+    QVERIFY(nvidia.environment.contains(u"CUDA_VISIBLE_DEVICES=0"_s));
+    // a card no compute driver reaches is said, never replaced: the APU without RADV and without a KFD node
+    QFile::remove(root + u"/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"_s);
+    QDir(root + u"/sys/class/kfd"_s).removeRecursively();
+    const ComputeAnswer none = Compute::forGpu(host, 0, root);
+    QCOMPARE(none.problem, u"card-no-compute"_s);
+    QCOMPARE(none.detail, u"amdgpu"_s);
+    QVERIFY(none.environment.isEmpty());
+    m_fixtures.push_back(std::move(fixture));
 }
 
 QTEST_GUILESS_MAIN(ResolverTest)

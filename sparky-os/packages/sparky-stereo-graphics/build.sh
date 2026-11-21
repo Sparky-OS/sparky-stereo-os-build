@@ -1,13 +1,13 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/16
+# Last update 2026/11/21
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 RECIPE=$HERE
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.15
+VERSION=0.2.16
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -41,7 +41,7 @@ mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 PRIVATE=$(pkg-config --variable=libdir sparky-stereo-problems)
 SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -l"$PRIVATE" --ignore-missing-info -O $(find "$D" -type f \( -name '*.so' -o -path '*/kauth/libexec/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d23+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d23+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)"
+DEPENDS="$SHLIBS, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d23+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d23+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0), mesa-vulkan-drivers"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
@@ -60,7 +60,9 @@ Description: Graphics page for System Settings
   edits KDE's own per-program setting. Automatic puts players, games and any
   program started in 3D on the GPU measured best on the machine whatever the
   power profile, browsers by the power profile, and other programs on the GPU
-  that draws the desktop. Also the copy-back choice of
+  that draws the desktop. Also the card the partners (local AI engines such
+  as Ollama) compute on, or the processor only, with the variables that leave
+  only that card visible to their runners. Also the copy-back choice of
   hardware video decoding, the GPU power switches of power-profiles-daemon,
   and the machine record shipped for measured models.
 EOS
@@ -93,7 +95,7 @@ Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d23+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d23+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)
+Depends: \${shlibs:Depends}, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d23+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d23+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d23+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0), mesa-vulkan-drivers
 Recommends: hwdata, switcheroo-control
 Description: Graphics page for System Settings
  Every graphics processor, the main desktop GPU, where programs draw, the GPU
@@ -102,9 +104,46 @@ EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
 
-  * Rebuilt with complete receipts; no change of behaviour.
+  * ORDER 70, the partners' card (the Partners page design Daniel accepted on
+    2026-11-21: the card is one choice shared with the Graphics page, which
+    gains a Partners row, Automatic the card measured best): [Render] Partners
+    in sparky-stereo-graphicsrc, Automatic as for players and games, any card,
+    or Processor only (cpu), a choice of this row alone; shown with one GPU
+    too.
+  * sparky-stereo-gpu-env --category partners --print compute-env: the
+    variables that leave only the chosen card visible to every runner
+    (CUDA_VISIBLE_DEVICES with the card's UUID, ROCR_VISIBLE_DEVICES and
+    HIP_VISIBLE_DEVICES from the KFD's nodes, the Vulkan loader's driver
+    filter and Mesa's device selection DRI_PRIME=pci-...!), or for the
+    processor the values that hide every card. Measured with Ollama 0.40.16
+    on an RTX 3060 and a Renoir APU with every runner installed: the RTX 3060
+    chosen runs on CUDA alone, the APU chosen on Vulkan alone, the processor
+    on the processor.
+  * A card no compute driver reaches (no Vulkan driver for its kernel driver,
+    no CUDA, no KFD node) is said and kept (card-no-compute, exit status 4),
+    with the other cards and "Use the processor only" as the person's
+    choices; never replaced.
+  * The card's own memory in the inventory (amdgpu's mem_info_vram_total,
+    NVIDIA's through NVML when asked): --print memory, and "memory" in
+    --list --json.
+  * Depends on mesa-vulkan-drivers: the Vulkan drivers and Mesa's device
+    selection layer the card's variables need.
+  * Ten languages.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ${SOURCE_DATE_RFC2822:?}
+
+$PACKAGE (0.2.15) unstable; urgency=medium
+
+  * The Polish and German PolicyKit prompts are kept when the actions are
+    compiled. Nothing else changed.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 20 Nov 2026 19:27:52 +0000
+
+$PACKAGE (0.2.14) unstable; urgency=medium
+
+  * Rebuilt with complete receipts; no change of behaviour.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 13:44:09 +0000
 
 $PACKAGE (0.2.13) unstable; urgency=medium
 

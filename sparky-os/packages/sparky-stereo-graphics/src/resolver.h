@@ -79,13 +79,14 @@ public:
     int presentingIndex() const;
 
     // Pins every choice to a GPU. "auto" is Automatic for that kind of program (stereo: it presents 3D),
-    // "profile" follows the power profile, "integrated"/"discrete" pick a kind, an id picks a GPU
+    // "profile" follows the power profile, "integrated"/"discrete" pick a kind, an id picks a GPU; "cpu" (the partners'
+    // card only) is no GPU, reason "cpu"
     Resolution resolveChoice(const QString &choice, Category category = Category::Other, bool stereo = false) const;
     Resolution resolveCategory(Category category, const GraphicsSettings &settings, bool stereo = false) const;
     Resolution resolveApp(const AppEntry &entry, const GraphicsSettings &settings, bool stereo = false) const;
 
-    // What Automatic means for a kind of program now: "measured" for players, games and any program while it
-    // presents 3D, whatever the profile; for browsers "integrated", "main" or "discrete" by the power profile;
+    // What Automatic means for a kind of program now: "measured" for players, games, the partners' card and any program
+    // while it presents 3D, whatever the profile; for browsers "integrated", "main" or "discrete" by the power profile;
     // "main" (the GPU that draws the desktop) for other programs
     static QString automaticTarget(Category category, PowerProfile profile, bool stereo = false);
     // What the power profile asks for: "integrated", "main" or "discrete"
