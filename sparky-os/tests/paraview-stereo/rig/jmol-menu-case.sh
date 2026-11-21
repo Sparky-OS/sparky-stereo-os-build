@@ -14,5 +14,18 @@ sleep ${MENU_WAIT:-3}
 python3 /rig/capture.py $OUT/shot-menu.png > $OUT/shot-menu.json 2>&1
 python3 /rig/x11_props.py > $OUT/props.json 2>&1
 xwininfo -root -tree > $OUT/tree-menu.txt 2>&1
+if [ -n "${ACT_KEYS:-}" ]; then
+xdotool key --clearmodifiers $ACT_KEYS 2>> $OUT/menu.log
+sleep 8
+python3 /rig/capture.py $OUT/shot-act.png > $OUT/shot-act.json 2>&1
+python3 /rig/kwin_script.py $OUT/kwin.log '
+for (const w of workspace.stackingOrder) {
+  print("WIN|" + w.caption + "|" + w.frameGeometry.x + "," + w.frameGeometry.y + "," + w.frameGeometry.width + "," + w.frameGeometry.height + "|" + w.resourceClass + "|" + (w.minimized ? "min" : "shown"));
+}'
+sleep 1
+grep -o 'WIN|.*' $OUT/kwin.log > $OUT/windows-act.txt
+ps -eo pid,args | grep -E '[k]cmshell|[s]ystemsettings' > $OUT/act-processes.txt
+else
 xdotool key Escape 2>> $OUT/menu.log
+fi
 kill $pid 2>/dev/null; sleep 1

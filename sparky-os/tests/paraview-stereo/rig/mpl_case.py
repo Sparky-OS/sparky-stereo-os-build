@@ -73,6 +73,17 @@ if os.environ.get('ENABLE') == '0':
     off.single_shot = True
     off.add_callback(lambda: shown.set_enabled(False, by_hand=True))
     off.start()
+if os.environ.get('ACT') == 'display':
+    def press():
+        import tkinter
+        for w in shown.toolbar.winfo_children():
+            if isinstance(w, tkinter.Button) and w.cget('text').endswith('...') and '3D' in w.cget('text'):
+                print('pressed:', w.cget('text'), flush=True)
+                w.invoke()
+    act = figure.canvas.new_timer(interval=4000)
+    act.single_shot = True
+    act.add_callback(press)
+    act.start()
 export_timer = figure.canvas.new_timer(interval=int(os.environ.get('EXPORT_MS', 9000)))
 export_timer.single_shot = True
 if not RED:

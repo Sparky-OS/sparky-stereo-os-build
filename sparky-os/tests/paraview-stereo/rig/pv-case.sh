@@ -7,6 +7,9 @@
 #   MENU=1        after the captures, open the View menu (xcb: Alt+V through xdotool) and capture it as shot-menu.png
 #   MENU_KEYS     with MENU=1: keys sent after Alt+V instead of Escape ("Up Up Return": Enable 3D; "Up Return": 3D display
 #                 settings...), then shot-act.png, windows-act.txt, act-processes.txt and settings-after.json
+#   QUIT=1        with MENU_KEYS: then Return (the notice's OK) and Ctrl+Q, waiting up to 30 s for ParaView to exit by
+#                 itself (settings-after-quit.json, quit.txt)
+#   PV_KEEP_SETTINGS=1  keep the user settings file a previous start left (written only when there is none)
 #   WAIT          seconds before the first capture (default 25)
 # Writes in $OUT: paraview.log (stdout and stderr, Wayland debug lines out), wl.txt (the declaration lines), rc.txt,
 # windows.txt (KWin's windows: caption, frame, class), props.json, shot1.png/json, shot2.png/json, tree.txt,
@@ -14,7 +17,9 @@
 # libraries the process has loaded, from /proc/PID/maps).
 mkdir -p $HOME/.config/ParaView
 default_settings='{ "settings": { "GeneralSettings": { "AutoApply": 1 } } }'
-printf '%s\n' "${PV_SETTINGS:-$default_settings}" > $HOME/.config/ParaView/ParaView-UserSettings.json
+if [ "${PV_KEEP_SETTINGS:-}" != 1 ] || [ ! -s $HOME/.config/ParaView/ParaView-UserSettings.json ]; then
+  printf '%s\n' "${PV_SETTINGS:-$default_settings}" > $HOME/.config/ParaView/ParaView-UserSettings.json
+fi
 printf '[General]\nGeneralSettings.ShowWelcomeDialog=0\n' > $HOME/.config/ParaView/ParaView.ini
 args=()
 [ "${PV_NODATA:-}" = 1 ] || args+=(--data=/fixtures/two.vtk)
@@ -64,6 +69,14 @@ for (const w of workspace.stackingOrder) {
     grep -o 'WIN|.*' $OUT/kwin.log | tail -n +$((n + 1)) > $OUT/windows-act.txt
     ps -eo pid,args | grep -E '[k]cmshell|[s]ystemsettings|[k]screen' > $OUT/act-processes.txt
     cp $HOME/.config/ParaView/ParaView-UserSettings.json $OUT/settings-after.json
+    if [ "${QUIT:-}" = 1 ]; then
+      xdotool key --clearmodifiers Return 2>> $OUT/menu.log; sleep 1
+      wid=$(xdotool search --name '^ParaView ' 2>/dev/null | head -1)
+      [ -n "$wid" ] && xdotool windowactivate --sync "$wid" key --clearmodifiers ctrl+q 2>> $OUT/menu.log
+      for i in $(seq 30); do kill -0 $pid 2>/dev/null || break; sleep 1; done
+      kill -0 $pid 2>/dev/null && echo "still running after 30 s" > $OUT/quit.txt || echo "exited by itself" > $OUT/quit.txt
+      cp $HOME/.config/ParaView/ParaView-UserSettings.json $OUT/settings-after-quit.json
+    fi
   else
     xdotool key Escape 2>> $OUT/menu.log
   fi
