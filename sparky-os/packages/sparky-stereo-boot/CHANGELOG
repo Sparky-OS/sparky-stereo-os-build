@@ -1,4 +1,16 @@
 -------------------------------------------------------------------------------
+  Version 0.1.14 (2026-11-21)
+-------------------------------------------------------------------------------
+  * Rows 629/802: when a start cannot be recorded because the person set GRUB_GFXPAYLOAD_LINUX=text (Debian's 10_linux
+    then writes no load_video into its entries), the problem says so in a sentence of its own (LOCAL102, ten
+    languages): the file and the line that set it (/etc/default/grub, or a file of /etc/default/grub.d, the last one
+    grub-mkconfig reads), that GRUB's menu cannot show by itself after a start that did not finish with this setting,
+    and what brings it back (remove or change that line, then sudo update-grub). It no longer offers "repair", which
+    runs update-grub again and cannot help while the setting stays. LOCAL97 stays for Debian's 10_linux or 00_header
+    in a form the package does not know.
+  * The postinst writes the menu again at an upgrade from 0.1.13 too, so the problem is said in its new words at once.
+
+-------------------------------------------------------------------------------
   Version 0.1.13 (2026-11-21)
 -------------------------------------------------------------------------------
   * Rows 629/802: grub2-common's /etc/grub.d/10_linux is no longer diverted (Debian Policy, appendix 7: "Do not

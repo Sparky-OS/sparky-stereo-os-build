@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.13+lc1
+VERSION=0.1.14+lc1
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
@@ -196,8 +196,9 @@ if [ "$1" = configure ]; then
 		rmdir /etc/sparky-stereo-boot 2>/dev/null || :
 	fi
 	# 0.1.11 (ORDER 572b): the Linux entries record each start and the menu shows by itself after one that did not
-	# finish; 0.1.13 records it through load_video, so the menu is written again, as the last step
-	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.13; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	# finish; 0.1.13 records it through load_video and 0.1.14 names a person's GRUB_GFXPAYLOAD_LINUX=text (LOCAL102), so
+	# the menu and that problem are written again, as the last step
+	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.14; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
 		python3 $P run update-grub LOCAL21 -- update-grub || failed=1
 	fi
 	[ -z "$failed" ] || exit 1
