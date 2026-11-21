@@ -228,13 +228,16 @@ def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
 
 
 def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=(),
-               previous_siblings=(), min_free_gib=None, root_min_free_gib=1):
-    """Qualify old/new edition snapshots against the same frozen public indexes."""
+               previous_siblings=(), min_free_gib=None, root_min_free_gib=1,
+               previous_archive_config=None, previous_published_at=None):
+    """Qualify edition snapshots, optionally using a checked dated view for an unsolvable predecessor."""
     archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
     scratch = scratch or os.environ.get('SPARKY_LC_SCRATCH')
     if not archive_config or not scratch:
         raise package.Invalid('check-link needs --archive-config / --scratch (or SPARKY_LC_ARCHIVE_CONFIG / '
                               'SPARKY_LC_SCRATCH); see lean/archive.md')
+    if bool(previous_archive_config) != bool(previous_published_at):
+        raise package.Invalid('dated predecessor needs both --previous-archive-config and --previous-published-at')
     debs = list(map(Path, debs))
     previous_inputs = list(map(Path, previous_siblings))
     if previous_dir:
@@ -251,6 +254,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
     # a refusal before a package's check comes after the checks of the packages before it (ORDER 638)
     _LINK.update(contexts=contexts, smoke=smoke_table, plan=[], private={})
     stop = None
+    dated_count = 0
     try:
         for deb in debs:
             arch = controls[deb]['Architecture']
@@ -260,6 +264,11 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
                 raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
             if arch not in contexts:
                 contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib)
+                if previous_archive_config:
+                    from .historical import PreviousView
+                    selected = [p for p in debs if controls[p]['Architecture'] in (arch, 'all')]
+                    contexts[arch].previous_view = PreviousView(contexts[arch], previous_archive_config,
+                                                              previous_published_at, selected)
             same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
             old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
             contexts[arch].freeze(same_arch + old_arch)
@@ -275,7 +284,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
         results = parallel.ordered(_linked, range(len(_LINK['plan'])))
         side_by_side = min(parallel.processors(), len(_LINK['plan'])) > 1
         for index in range(len(_LINK['plan'])):
-            notes, error = next(results)
+            notes, error, predecessor = next(results)
             if isinstance(error, package.NoSpace) and side_by_side:
                 side_by_side = False
                 # side by side the packages share their disks: from this one on, one at a time, as a single process
@@ -283,8 +292,13 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
                 print(f'lc1: a disk floor was reached with packages checked side by side; {Path(_LINK["plan"][index][0]).name}'
                       ' and the packages after it are checked one at a time')
                 results = map(_linked, range(index, len(_LINK['plan'])))
-                notes, error = next(results)
+                notes, error, predecessor = next(results)
             sys.stdout.write(notes)
+            if previous_archive_config:
+                view = predecessor.get('view', 'none')
+                print(f'lc1: {Path(_LINK["plan"][index][0]).name}: predecessor view={view}')
+                if view == 'dated':
+                    dated_count += 1
             if error is not None:
                 raise error
     finally:
@@ -292,6 +306,8 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
     if stop is not None:
         raise stop
     print(f'lc1: archive-qualified link check passed for {len(debs)} packages')
+    if previous_archive_config:
+        print(f'lc1: dated predecessor baselines: {dated_count} of {len(debs)}')
 
 
 _LINK = {}
@@ -303,13 +319,15 @@ def _linked(index):
     if arch not in _LINK['private']:
         _LINK['private'][arch] = _LINK['contexts'][arch].private()
     out = io.StringIO()
+    context = _LINK['private'][arch]
+    context.predecessor_result = {}
     try:
         with contextlib.redirect_stdout(out):
             linkcheck.check(deb, previous_deb=previous, smoke_table=_LINK['smoke'],
                             archive_context=_LINK['private'][arch], siblings=same_arch, previous_siblings=old_arch)
     except Exception as exc:
-        return out.getvalue(), exc
-    return out.getvalue(), None
+        return out.getvalue(), exc, context.predecessor_result
+    return out.getvalue(), None, context.predecessor_result
 
 
 def main():
@@ -331,6 +349,8 @@ def main():
     link.add_argument('--previous-dir', help='directory holding the pre-lc1 builds to compare with')
     link.add_argument('--smoke', default=str(Path(__file__).with_name('smoke.tsv')), help='programs to start with LD_BIND_NOW=1')
     link.add_argument('--archive-config', help='JSON signed public archive sources (SPARKY_LC_ARCHIVE_CONFIG)')
+    link.add_argument('--previous-archive-config', help='same signed archives in a dated predecessor view')
+    link.add_argument('--previous-published-at', help='predecessor publication instant, ISO 8601 with timezone')
     link.add_argument('--scratch', help='private APT state, verified cache and roots (SPARKY_LC_SCRATCH)')
     link.add_argument('--siblings-file', help='newline-separated authoritative current edition .debs')
     link.add_argument('--previous-siblings-file', help='previous edition snapshot .debs, including unchanged dependencies')
@@ -365,7 +385,8 @@ def main():
             check_link(args.debs, args.previous_dir, args.smoke, args.archive_config, args.scratch,
                        Path(args.siblings_file).read_text().splitlines() if args.siblings_file else (),
                        Path(args.previous_siblings_file).read_text().splitlines() if args.previous_siblings_file else (),
-                       args.min_free_gib, args.root_min_free_gib)
+                       args.min_free_gib, args.root_min_free_gib,
+                       args.previous_archive_config, args.previous_published_at)
         elif args.command == 'check-selection':
             paths = [line.split('\t')[0] for line in Path(args.tsv).read_text().splitlines()
                      if line.split('\t')[-1] != 'source']
