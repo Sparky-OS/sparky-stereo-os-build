@@ -1,0 +1,43 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/21
+# Copyright 2026 under the GNU GPL3 License
+# Installs upstream's release build of Ollama, split by hardware. Nothing is compiled: the files are upstream's, checked again here
+# against release/MANIFEST.sha256 (made by make-orig.sh from the pinned bundles).
+include /usr/share/dpkg/pkg-info.mk
+export DEB_BUILD_MAINT_OPTIONS = hardening=-all
+L = usr/lib/ollama
+
+%:
+	dh $@ --buildsystem=none
+
+override_dh_auto_build:
+	cd release && sha256sum --quiet --strict -c MANIFEST.sha256
+
+override_dh_auto_install:
+	install -d debian/ollama/usr/bin debian/ollama/$(L) debian/ollama-cuda/$(L) debian/ollama-rocm/$(L)
+	install -m 0755 release/payload/bin/ollama debian/ollama/usr/bin/ollama
+	cd release/payload/lib/ollama && find . -mindepth 1 -maxdepth 1 ! -name cuda_v13 ! -name rocm_v7_2 -exec cp -a {} $(CURDIR)/debian/ollama/$(L)/ \;
+	cp -a release/payload/lib/ollama/cuda_v13 debian/ollama-cuda/$(L)/
+	cp -a release/payload/lib/ollama/rocm_v7_2 debian/ollama-rocm/$(L)/
+	# rocBLAS's GPU kernels are code for the card, not the processor: ollama-rocm-data keeps them in /usr/share
+	install -d debian/ollama-rocm-data/usr/share/ollama/rocm_v7_2/rocblas
+	mv debian/ollama-rocm/$(L)/rocm_v7_2/rocblas/library debian/ollama-rocm-data/usr/share/ollama/rocm_v7_2/rocblas/library
+	rmdir debian/ollama-rocm/$(L)/rocm_v7_2/rocblas
+	install -d debian/ollama-rocm/usr/share/doc/ollama-rocm/licences
+	install -m 0644 release/licences/rocm/*.txt debian/ollama-rocm/usr/share/doc/ollama-rocm/licences/
+	install -D -m 0644 release/EXCLUDED.tsv debian/ollama/usr/share/doc/ollama/EXCLUDED.tsv
+
+# Off until the person turns it on: debhelper would enable the user unit on every machine.
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable
+
+# Upstream's executables stay byte for byte as the checksums prove them.
+override_dh_strip:
+override_dh_dwz:
+
+# The libraries are private to Ollama (usr/lib/ollama), not a public ABI.
+override_dh_makeshlibs:
+
+# Private libraries resolve inside usr/lib/ollama; NVIDIA's come from NVIDIA's packages, named in debian/control.
+override_dh_shlibdeps:
+	dh_shlibdeps -Nollama-cuda -l$(CURDIR)/debian/ollama/$(L):$(CURDIR)/debian/ollama-rocm/$(L)/rocm_v7_2 -- --ignore-missing-info

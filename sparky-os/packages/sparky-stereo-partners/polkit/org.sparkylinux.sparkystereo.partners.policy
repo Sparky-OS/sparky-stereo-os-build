@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Sparky Stereo OS</vendor>
+  <vendor_url>https://sparkylinux.org</vendor_url>
+  <action id="org.sparkylinux.sparkystereo.partners.install">
+    <description>Install the local partner engine</description>
+    <description xml:lang="pt_BR">Instalar o motor parceiro local</description>
+    <description xml:lang="zh_TW">安裝本機夥伴引擎</description>
+    <description xml:lang="zh_CN">安装本地伙伴引擎</description>
+    <description xml:lang="ko">로컬 파트너 엔진 설치</description>
+    <description xml:lang="ja">ローカルのパートナーのエンジンをインストール</description>
+    <description xml:lang="pl">Zainstaluj silnik partnera lokalnego</description>
+    <description xml:lang="fr">Installer le moteur du partenaire local</description>
+    <description xml:lang="es">Instalar el motor del colaborador local</description>
+    <description xml:lang="de">Engine des lokalen Partners installieren</description>
+    <message>Authentication is required to install the local partner engine and the runner for this computer's card.</message>
+    <message xml:lang="pt_BR">É preciso autenticar para instalar o motor parceiro local e o executor da placa deste computador.</message>
+    <message xml:lang="zh_TW">安裝本機夥伴引擎和適用於本機顯示卡的執行元件需要驗證身分。</message>
+    <message xml:lang="zh_CN">安装本地伙伴引擎和适用于本机显卡的运行组件需要身份验证。</message>
+    <message xml:lang="ko">로컬 파트너 엔진과 이 컴퓨터의 카드에 맞는 실행기를 설치하려면 인증이 필요합니다.</message>
+    <message xml:lang="ja">ローカルのパートナーのエンジンと、このコンピューターのカード用の実行環境をインストールするには認証が必要です。</message>
+    <message xml:lang="pl">Uwierzytelnienie jest wymagane do instalacji silnika partnera lokalnego oraz środowiska wykonawczego dla karty tego komputera.</message>
+    <message xml:lang="fr">Une authentification est nécessaire pour installer le moteur du partenaire local et le moteur d’exécution pour la carte de cet ordinateur.</message>
+    <message xml:lang="es">Se requiere autenticación para instalar el motor del colaborador local y el entorno de ejecución para la tarjeta de este equipo.</message>
+    <message xml:lang="de">Für die Installation der Engine des lokalen Partners und der Laufzeit für die Karte dieses Computers ist eine Authentifizierung erforderlich.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/sparky-stereo-partners/install-engine</annotate>
+  </action>
+</policyconfig>

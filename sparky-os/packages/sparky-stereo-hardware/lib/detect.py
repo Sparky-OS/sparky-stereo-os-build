@@ -95,6 +95,10 @@ if gpus:
         emit("action", "nvidia-open")
         if laptop == "0":
             emit("action", "nvidia-runtime-pm")
+        # The local partner engine's runner for these cards (Turing and newer run CUDA 13). The setup never installs it: the
+        # Partners page installs it with the engine, when the person turns the engine on (ORDER 70).
+        emit("partner", "ollama-cuda\tNVIDIA " + ", ".join(gpu[0] for gpu in gpus) + ": the CUDA 13 runner of the local partner "
+             "engine, installed with it from the Partners page, never by this setup")
     elif all(listed(gpu, legacy) for gpu in gpus) and amd64:
         # Two drivers give these cards different results, so both are the person's choice (Daniel, 2026-10-14: "where two
         # paths appear differ, make sure it's a user option then and do both"). NVIDIA's runtime power management needs a

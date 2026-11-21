@@ -1,0 +1,24 @@
+Source: sparky-stereo-partners
+Section: System
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, gettext, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, ninja-build, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.2.1)
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-stereo-partners
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3, systemsettings, libkf6config-bin, kwallet6, libglib2.0-bin, pkexec, iproute2,
+ sparky-stereo-graphics (>= 0.2.17), sparky-stereo-hardware, sparky-stereo-apt (>= 20261104), sparky-stereo-problems (>= 0.2.1),
+ qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-layouts
+Description: Partners page for System Settings
+ Who answers each kind of work (text, speech, image, 3D) on this computer or
+ at a provider, with which model and on which card: the local engines
+ (Ollama, installed with the runner for this computer's card, and
+ llama.cpp), turned on and off, Ollama's models downloaded with their size
+ shown first and held on a metered connection; signing in to Ollama's
+ service; providers with their keys in KDE Wallet; and each program's own
+ choice beside the system default. Its command, sparky-stereo-partners,
+ answers programs and tests the same way.

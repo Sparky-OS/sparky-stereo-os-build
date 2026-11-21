@@ -60,8 +60,18 @@ struct Resolution {
 class Resolver
 {
 public:
-    // measuredBest: the machine record's GPU for players and 3D ("pci-0000:03:00.0" or "1002:6660"), empty when not measured
-    Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, const ProfileReading &profile, const QString &measuredBest = QString());
+    // measuredBest: the machine record's GPU for players and 3D ("pci-0000:03:00.0" or "1002:6660"), empty when not measured;
+    // partnersBest: the record's card for the partners ([MeasuredPartners] BestGpu, ORDER 70), empty when not measured
+    Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, const ProfileReading &profile, const QString &measuredBest = QString(),
+             const QString &partnersBest = QString());
+
+    // ORDER 70: the own memory a card needs for the model the Partners page proposes on a computer with such a card: the
+    // smallest it proposes, qwen3.5:2b, used 2.3 to 2.9 GB on the A10 (the main session's measurement, 2026-11-21); a card
+    // with 6 GB or more gets the 4b proposed, which fits there
+    static constexpr quint64 partnersModelMemory = 3ULL * 1024 * 1024 * 1024;
+    // Whether a card can hold that model: an integrated card computes in the computer's own memory (Ollama put the whole
+    // model on the A10's Carrizo), a card whose memory is not known is not ruled out, a discrete card needs partnersModelMemory
+    static bool holdsPartnersModel(const Gpu &gpu);
 
     // The GPU that draws the desktop after the next login: the saved one when it can draw, else what Automatic picks
     int mainIndex() const;
@@ -75,17 +85,20 @@ public:
 
     // The GPU the machine record names, when it is here and usable, else -1
     int measuredIndex() const;
+    // The card the record names for the partners, when it is here and usable, else -1
+    int partnersMeasuredIndex() const;
     // Where players and 3D go on Automatic: the measured GPU, else the first discrete GPU, else the main GPU
     int presentingIndex() const;
 
     // Pins every choice to a GPU. "auto" is Automatic for that kind of program (stereo: it presents 3D),
-    // "profile" follows the power profile, "integrated"/"discrete" pick a kind, an id picks a GPU
+    // "profile" follows the power profile, "integrated"/"discrete" pick a kind, an id picks a GPU; "cpu" (the partners'
+    // card only) is no GPU, reason "cpu"
     Resolution resolveChoice(const QString &choice, Category category = Category::Other, bool stereo = false) const;
     Resolution resolveCategory(Category category, const GraphicsSettings &settings, bool stereo = false) const;
     Resolution resolveApp(const AppEntry &entry, const GraphicsSettings &settings, bool stereo = false) const;
 
-    // What Automatic means for a kind of program now: "measured" for players, games and any program while it
-    // presents 3D, whatever the profile; for browsers "integrated", "main" or "discrete" by the power profile;
+    // What Automatic means for a kind of program now: "measured" for players, games, the partners' card and any program
+    // while it presents 3D, whatever the profile; for browsers "integrated", "main" or "discrete" by the power profile;
     // "main" (the GPU that draws the desktop) for other programs
     static QString automaticTarget(Category category, PowerProfile profile, bool stereo = false);
     // What the power profile asks for: "integrated", "main" or "discrete"
@@ -107,11 +120,17 @@ private:
     int firstOfKind(GpuKind kind) const;
     int defaultIndex() const;
     bool measuredNamesAbsentGpu() const;
+    // Automatic for the partners' card: the record's card; on a computer without one, the card players get when it can hold
+    // the model the page proposes, else the discrete card with the most own memory that can, else an integrated card, else
+    // the processor (reasons "measured", "unmeasured", "unmeasured-memory", "cpu-memory"; "measured-missing" when the
+    // record names a card that is not here)
+    Resolution resolvePartnersAutomatic() const;
 
     QList<Gpu> m_gpus;
     QString m_savedMain;
     ProfileReading m_profile;
     QString m_measuredBest;
+    QString m_partnersBest;
 };
 
 }

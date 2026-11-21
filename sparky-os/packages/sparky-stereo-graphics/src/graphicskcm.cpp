@@ -32,7 +32,7 @@ GraphicsKcm::GraphicsKcm(QObject *parent, const KPluginMetaData &data)
 
 Resolver GraphicsKcm::resolver() const
 {
-    return Resolver(m_gpus, m_settings.mainGpu(), m_profile, m_record.bestGpu);
+    return Resolver(m_gpus, m_settings.mainGpu(), m_profile, m_record.bestGpu, m_record.partnersBestGpu);
 }
 
 int GraphicsKcm::indexOf(const QString &id) const
@@ -68,6 +68,8 @@ QString GraphicsKcm::categoryLabel(Category category) const
         return i18nc("@label kind of program", "Games");
     case Category::Browsers:
         return i18nc("@label kind of program", "Browsers");
+    case Category::Partners:
+        return i18nc("@label kind of program", "Partners");
     case Category::Other:
         break;
     }
@@ -112,6 +114,10 @@ QString GraphicsKcm::reasonTextOf(const QString &reason) const
         return m_record.origin == u"shipped"_s ? i18nc("@info", "measured best for this model") : i18nc("@info", "measured best on this computer");
     }
     if (reason == u"unmeasured"_s) {
+        return i18nc("@info", "not measured on this computer yet");
+    }
+    if (reason == u"unmeasured-memory"_s) {
+        // ORDER 70: the partners' Automatic left out a card too small for the model; the Partners page says that part
         return i18nc("@info", "not measured on this computer yet");
     }
     return i18nc("@info", "your choice");
@@ -169,13 +175,13 @@ void GraphicsKcm::load()
 
 QList<Problem> GraphicsKcm::liveProblems(const GraphicsSettings &settings) const
 {
-    const Resolver r(m_gpus, settings.mainGpu(), m_profile, m_record.bestGpu);
+    const Resolver r(m_gpus, settings.mainGpu(), m_profile, m_record.bestGpu, m_record.partnersBestGpu);
     QList<Problem> list;
     const Problem main = Problems::fromResolution(u"main-gpu"_s, r.mainProblem(), m_gpus, m_root);
     if (!main.isEmpty()) {
         list << main;
     }
-    for (Category category : allCategories()) {
+    for (Category category : renderCategories()) {
         const QString key = categoryKey(category).toLower();
         const Problem problem = Problems::fromResolution(key, r.resolveCategory(category, settings), m_gpus, m_root, m_profile);
         if (!problem.isEmpty()) {
@@ -190,7 +196,7 @@ void GraphicsKcm::syncKept()
     // the page sees the same problems the launchers keep, so a choice made here clears its record at once
     const QList<Problem> live = liveProblems(GraphicsSettings());
     QStringList keys = {u"main-gpu"_s};
-    for (Category category : allCategories()) {
+    for (Category category : renderCategories()) {
         keys << categoryKey(category).toLower();
     }
     for (const QString &key : std::as_const(keys)) {
@@ -215,7 +221,10 @@ QVariantList GraphicsKcm::problems() const
         if (problem.isChoice()) {
             for (const Alternative &gpu : problem.alternatives) {
                 if (gpu.id != problem.requested) {
-                    gpus.append(QVariantMap{{u"id"_s, gpu.id}, {u"text"_s, i18nc("@action:button %1 is a GPU name", "Use %1", gpuLabel(indexOf(gpu.id)))}});
+                    gpus.append(QVariantMap{{u"id"_s, gpu.id},
+                                            {u"text"_s,
+                                             gpu.id == u"cpu"_s ? i18nc("@action:button", "Use the processor only")
+                                                                : i18nc("@action:button %1 is a GPU name", "Use %1", gpuLabel(indexOf(gpu.id)))}});
                 }
             }
         }
@@ -302,7 +311,7 @@ void GraphicsKcm::useGpu(const QString &key, const QString &id)
     if (key == u"main-gpu"_s) {
         setMainChoice(id);
     } else {
-        for (Category category : allCategories()) {
+        for (Category category : renderCategories()) {
             if (categoryKey(category).toLower() == key) {
                 setCategoryChoice(categoryKey(category), id);
             }
@@ -403,7 +412,7 @@ QVariantList GraphicsKcm::gpus() const
         }
         QStringList used;
         if (multiGpu()) {
-            for (Category category : allCategories()) {
+            for (Category category : renderCategories()) {
                 if (r.resolveCategory(category, m_settings).gpuIndex == i) {
                     used << categoryLabel(category);
                 }
@@ -554,9 +563,45 @@ QVariantList GraphicsKcm::categories() const
     return list;
 }
 
+QVariantMap GraphicsKcm::partners() const
+{
+    // ORDER 70: the card the edition's partners compute on, one choice with the Partners page (the same key, [Render]
+    // Partners). Automatic is the card measured best for this computer, as for players and games; Processor only is a
+    // choice of this row alone. Shown with one GPU too
+    const Resolver r = resolver();
+    const Resolution resolution = r.resolveCategory(Category::Partners, m_settings);
+    const QString choice = m_settings.renderChoice(Category::Partners);
+    QVariantList options = choiceOptions(choice);
+    if (choice == u"cpu"_s) {
+        options.removeIf([](const QVariant &option) {
+            return option.toMap().value(u"value"_s).toString() == u"cpu"_s;
+        });
+    }
+    options.append(QVariantMap{{u"value"_s, u"cpu"_s}, {u"text"_s, i18nc("@item:inlistbox the card the partners compute on", "Processor only")}});
+    QString nowText;
+    if (!resolution.problem.isEmpty()) {
+        nowText = Problems::message(Problems::fromResolution(u"partners"_s, resolution, m_gpus, m_root, m_profile));
+    } else if (resolution.reason == u"cpu"_s) {
+        nowText = i18nc("@info", "Now: the processor only");
+    } else if (resolution.reason == u"cpu-memory"_s) {
+        // no card here can hold the model the Partners page proposes (that page says why)
+        nowText = i18nc("@info", "Now: the processor only");
+    } else if (resolution.gpuIndex >= 0) {
+        nowText = i18nc("@info %1 is a GPU name, %2 the reason", "Now: %1, %2", gpuLabel(resolution.gpuIndex), reasonText(resolution));
+    }
+    return QVariantMap{
+        {u"problem"_s, !resolution.problem.isEmpty()},
+        {u"key"_s, categoryKey(Category::Partners)},
+        {u"label"_s, categoryLabel(Category::Partners)},
+        {u"choice"_s, choice},
+        {u"options"_s, options},
+        {u"nowText"_s, nowText},
+    };
+}
+
 void GraphicsKcm::setCategoryChoice(const QString &key, const QString &choice)
 {
-    for (Category category : allCategories()) {
+    for (Category category : renderCategories()) {
         if (categoryKey(category) == key && m_settings.renderChoice(category) != choice) {
             m_settings.setRenderChoice(category, choice);
             updateState();

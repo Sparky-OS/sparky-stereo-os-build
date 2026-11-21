@@ -36,6 +36,10 @@ struct Gpu {
     bool accessible = true; // the person's account may open the render node
     GpuKind kind = GpuKind::Discrete;
     QList<Connector> connectors;
+    // The card's own memory in bytes, 0 when it is not known (ORDER 70: the Partners page proposes a model by it). amdgpu
+    // gives it in sysfs (mem_info_vram_total; for an integrated card the part of the computer's memory set aside for it);
+    // NVIDIA's driver only through NVML, which readMemory() asks
+    quint64 memory = 0;
 
     bool hasScreens() const;
     int connectedCount() const;
@@ -51,6 +55,9 @@ class GpuInventory
 public:
     // Reads root/sys/class/drm and root/usr/share/hwdata/pci.ids, cards in card number order.
     static QList<Gpu> read(const QString &root = QStringLiteral("/"));
+    // Fills the memory sysfs does not give: NVIDIA's cards through NVML (libnvidia-ml.so.1, the driver's own library),
+    // on the running system only (root "/"). Kept apart from read(), which every program start goes through
+    static void readMemory(QList<Gpu> &gpus, const QString &root = QStringLiteral("/"));
 
     static bool isIntegratedFamily(quint16 vendorId, const QString &chip, const QString &name);
     static QString edidMonitorName(const QByteArray &edid);

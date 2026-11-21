@@ -24,6 +24,11 @@ struct MachineRecord {
     QString origin; // "local" (measured or set on this machine), "shipped" (a known model) or empty (written by hand)
     QString known; // the shipped record's name
     std::optional<bool> copyBack; // the machine's copy-back setting
+    // ORDER 70, [MeasuredPartners]: the card the partners (local AI engines) computed fastest on, the model it was measured
+    // with and where the numbers come from; empty when not measured
+    QString partnersBestGpu;
+    QString partnersModel;
+    QString partnersMeasurement;
 
     bool isEmpty() const;
 

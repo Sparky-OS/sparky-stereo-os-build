@@ -44,6 +44,10 @@ def check(name, condition, what):
 out, lines, kinds = plan('nvidia-turing-gtx1660s')
 check('turing', kinds.get('action') == ['nvidia-open'], "the edition's open modules (action nvidia-open), and nothing else")
 check('turing', 'choice' not in kinds, 'no choice between drivers: the open modules have HDMI 3D')
+# The partner engine's runner is the hardware's answer for the Partners page, never a package of this setup (ORDER 70)
+check('turing', [p.split('\t')[0] for p in kinds.get('partner', [])] == ['ollama-cuda'],
+      'the partner line names ollama-cuda, the CUDA 13 runner, for the Partners page')
+check('turing', 'ollama-cuda' not in kinds.get('package', []), 'the setup does not install the runner itself')
 
 for name, label in (('nvidia-pascal-gtx1080', 'pascal'), ('nvidia-maxwell-gtx960m-laptop', 'maxwell laptop')):
     out, lines, kinds = plan(name)
@@ -53,6 +57,7 @@ for name, label in (('nvidia-pascal-gtx1080', 'pascal'), ('nvidia-maxwell-gtx960
     check(label, len(choices) == 2 and choices[0].startswith('nvidia-580\tdefault: ')
           and choices[1].startswith('nouveau\t'), "both drivers said, NVIDIA's 580 marked as the default")
     check(label, any('HDMI 3D' in c for c in choices[1:]), "the nouveau choice says it keeps the edition's HDMI 3D")
+    check(label, 'partner' not in kinds, 'no CUDA 13 runner for the Partners page: these cards run CUDA 12 only (Vulkan serves them)')
     check(label, 'firmware-nvidia-graphics' in kinds.get('package', []), "nouveau's firmware, for the card until a reboot")
     check(label, any(l.startswith("Would install sparky-stereo-nvidia-legacy-580xx-driver-lock and sparky-stereo-cuda-repo") for l in lines)
           or any(l.startswith('Would stop with an ERROR: apt finds no nvidia-legacy-580xx-kernel-dkms') for l in lines),
@@ -68,6 +73,7 @@ check('maxwell laptop', 'nvidia-runtime-pm' not in kinds.get('action', []), 'no 
 
 out, lines, kinds = plan('nvidia-kepler-gtx680')
 check('kepler', 'action' not in kinds, 'no NVIDIA driver: the card keeps nouveau')
+check('kepler', 'partner' not in kinds, 'no runner for the Partners page')
 check('kepler', any("1180: NVIDIA's last driver for it is its legacy 470.xx branch, which the edition does not build" in f
                     for f in kinds.get('found', [])), 'the plan names the 470 branch as the reason')
 

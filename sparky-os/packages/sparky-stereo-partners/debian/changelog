@@ -1,0 +1,72 @@
+sparky-stereo-partners (0.1.2) unstable; urgency=medium
+
+  * The page and its command in all ten languages: the translations lane's
+    eight languages for the 29 sentences of 0.1.1 (order46i); no sentence
+    waits any more (po/pending-translation.txt is gone, and
+    tests/check-lang.py checks all 119 in each catalogue).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 21:00:00 +0000
+
+sparky-stereo-partners (0.1.1) unstable; urgency=medium
+
+  * llama.cpp, the other local engine (Daniel's answer: "Ollama, with
+    llama.cpp as the fallback", a path the person chooses): an interface of
+    its own, llama.cpp on this computer, and its row on the page: install
+    (Debian's llama-server with ggml's Vulkan back end, the size shown first,
+    through the same pkexec helper), turn on and off, its models (the files
+    in ~/.local/share/llama.cpp/models; it downloads no model by itself),
+    "Open the models folder" and "Look again". Its user service,
+    sparky-stereo-llama-server.service, is installed off; it starts
+    llama-server in router mode on 127.0.0.1:8080, offline, on the card the
+    Partners choice names, and lets only this computer's own pages call it
+    from a browser (--cors-origins localhost). Debian's llama.cpp-services is
+    not installed: its system service would start at installation.
+  * Ollama's service: "Sign in…" through the local engine (Ollama's own
+    route: ollama.com's page opens in the browser, and Ollama's key for this
+    computer is linked to the account there), "Check", "Sign out", and
+    whether this computer is signed in, said with what signing in sends
+    (the computer's name and Ollama's key, kept by Ollama in
+    ~/.ollama/id_ed25519). Commands: account, signin, signout (exit status
+    7: not signed in, the address printed).
+  * The page: the Card, Interface and Model lists take the width their
+    longest entry needs (or the page's); a provider's name and address end
+    before its Remove button, elided with the whole text in a tooltip; each
+    engine's name stands at the top of its block, on the line of its state.
+  * The card's Now: line says when Automatic chose the processor because no
+    card has the memory of its own for the proposed model, or left such a
+    card out (sparky-stereo-graphics 0.2.17's reasons).
+  * KDE's text add-ons: KMail's choice also answers Kontact and the Sieve
+    editor (ProgramInfo Also=), resolve prints the interface's protocol
+    (PARTNER_KIND), and the KMail row says that the add-ons can follow only
+    Ollama for now (their llama.cpp add-on is unfinished in 2.1.2, and they
+    know no provider's own address).
+  * Betterbird with ThunderAI (ThunderAI offered, not installed): the
+    command's sync writes the person's managed-storage manifest for the
+    add-on (~/.mozilla/managed-storage/, read by Betterbird when no policy
+    names the add-on) from the page's text choice, unlocked, with no key;
+    after every change of a choice and at login; removed when Betterbird is
+    not installed or the choice is one ThunderAI cannot use.
+  * The page in the eight other languages (the translations lane's order46g:
+    de, es, fr, pl, ja, ko, zh_CN, zh_TW, with the page's name, keywords,
+    category and PolicyKit prompts); tests/check-lang.py runs in the build,
+    and names the sentences waiting for that lane's next run
+    (po/pending-translation.txt).
+  * The command's --help and its plain status, which people read, go
+    through the catalogue.
+  * Twenty-nine new sentences in English and pt_BR; the shipped interfaces'
+    and programs' names in the person's language.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 18:00:00 +0000
+
+sparky-stereo-partners (0.1.0) unstable; urgency=medium
+
+  * First release (ORDER 70): the Partners page of System Settings, a
+    category of its own at the top, with the system defaults for text,
+    speech, image and 3D (interface, model, card), the local engine (install
+    with the runner the hardware setup names, on and off, models with their
+    sizes, downloads held on a metered connection), providers with their
+    keys in KDE Wallet, and each program's own choice; its command
+    sparky-stereo-partners; the system defaults in
+    /etc/xdg/sparky-stereo-partnersrc.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 12:00:00 +0000

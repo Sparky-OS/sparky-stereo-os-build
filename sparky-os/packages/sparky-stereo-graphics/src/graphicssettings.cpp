@@ -13,7 +13,7 @@ using namespace Qt::StringLiterals;
 namespace SparkyGraphics
 {
 
-static const QStringList s_keys = {u"Players"_s, u"Games"_s, u"Browsers"_s, u"Other"_s};
+static const QStringList s_keys = {u"Players"_s, u"Games"_s, u"Browsers"_s, u"Other"_s, u"Partners"_s};
 
 QString categoryKey(Category category)
 {
@@ -23,6 +23,11 @@ QString categoryKey(Category category)
 QList<Category> allCategories()
 {
     return {Category::Players, Category::Games, Category::Browsers, Category::Other};
+}
+
+QList<Category> renderCategories()
+{
+    return allCategories() << Category::Partners;
 }
 
 QString GraphicsSettings::configName()
@@ -39,6 +44,11 @@ static bool validGpuId(const QString &id)
 bool GraphicsSettings::validChoice(const QString &choice)
 {
     return choice == u"auto"_s || choice == u"profile"_s || choice == u"integrated"_s || choice == u"discrete"_s || validGpuId(choice);
+}
+
+bool GraphicsSettings::validChoice(const QString &choice, Category category)
+{
+    return validChoice(choice) || (category == Category::Partners && choice == u"cpu"_s);
 }
 
 std::optional<bool> GraphicsSettings::parseBool(const QString &text)
@@ -66,7 +76,7 @@ GraphicsSettings::GraphicsSettings()
     const KConfigGroup render = config.group(u"Render"_s);
     for (int i = 0; i < s_keys.size(); ++i) {
         const QString choice = render.readEntry(s_keys.at(i), QString());
-        if (validChoice(choice)) {
+        if (validChoice(choice, Category(i))) {
             m_choices[i] = choice;
         }
     }
@@ -113,7 +123,7 @@ QString GraphicsSettings::renderChoice(Category category) const
 
 void GraphicsSettings::setRenderChoice(Category category, const QString &choice)
 {
-    if (validChoice(choice)) {
+    if (validChoice(choice, category)) {
         m_choices[int(category)] = choice;
     }
 }

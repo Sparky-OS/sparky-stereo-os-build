@@ -3,6 +3,9 @@
 
 #include "graphicssettings.h"
 
+#include <KConfig>
+#include <KConfigGroup>
+
 #include <QFile>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -26,6 +29,7 @@ private Q_SLOTS:
     void handEditShows();
     void isDefaultTracksChanges();
     void followTheProfileIsAChoice();
+    void partnersCardIsOneMoreChoice();
     void copyBackRoundTrip();
     void copyBackReadsKConfigBooleans();
 
@@ -209,4 +213,38 @@ void SettingsTest::copyBackReadsKConfigBooleans()
 }
 
 QTEST_GUILESS_MAIN(SettingsTest)
+void SettingsTest::partnersCardIsOneMoreChoice()
+{
+    // ORDER 70: the card the partners compute on is [Render] Partners, Automatic by default, and the processor alone is a
+    // choice of that key only
+    QVERIFY(!allCategories().contains(Category::Partners));
+    QVERIFY(renderCategories().contains(Category::Partners));
+    QCOMPARE(categoryKey(Category::Partners), u"Partners"_s);
+    {
+        GraphicsSettings settings;
+        QCOMPARE(settings.renderChoice(Category::Partners), u"auto"_s);
+        settings.setRenderChoice(Category::Partners, u"cpu"_s);
+        settings.setRenderChoice(Category::Games, u"cpu"_s);
+        QCOMPARE(settings.renderChoice(Category::Games), u"auto"_s);
+        QVERIFY(!settings.isDefault());
+        QVERIFY(settings.save());
+    }
+    QVERIFY(text().contains("Partners=cpu"));
+    QVERIFY(!text().contains("Games="));
+    GraphicsSettings fresh;
+    QCOMPARE(fresh.renderChoice(Category::Partners), u"cpu"_s);
+    QVERIFY(GraphicsSettings::validChoice(u"cpu"_s, Category::Partners));
+    QVERIFY(!GraphicsSettings::validChoice(u"cpu"_s, Category::Players));
+    QVERIFY(!GraphicsSettings::validChoice(u"cpu"_s));
+    // a hand-written processor for a kind that draws is no choice: Automatic stays
+    {
+        KConfig config(GraphicsSettings::configName(), KConfig::SimpleConfig);
+        config.group(u"Render"_s).writeEntry("Players", u"cpu"_s);
+        config.sync();
+    }
+    QCOMPARE(GraphicsSettings().renderChoice(Category::Players), u"auto"_s);
+    fresh.resetToDefaults();
+    QCOMPARE(fresh.renderChoice(Category::Partners), u"auto"_s);
+}
+
 #include "settingstest.moc"

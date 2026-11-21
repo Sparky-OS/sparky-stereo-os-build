@@ -23,10 +23,11 @@ namespace SparkyGraphics
 static const auto s_measured = u"Measured"_s;
 static const auto s_decoding = u"Decoding"_s;
 static const auto s_record = u"Record"_s;
+static const auto s_partners = u"MeasuredPartners"_s;
 
 bool MachineRecord::isEmpty() const
 {
-    return bestGpu.isEmpty() && !copyBack.has_value();
+    return bestGpu.isEmpty() && !copyBack.has_value() && partnersBestGpu.isEmpty();
 }
 
 bool MachineRecord::validGpu(const QString &gpu)
@@ -52,6 +53,17 @@ static void merge(const QString &path, MachineRecord &record)
     }
     if (measured.hasKey("Measurement")) {
         record.measurement = measured.readEntry("Measurement", QString());
+    }
+    const KConfigGroup partners = config.group(s_partners);
+    const QString partnersBest = partners.readEntry("BestGpu", QString()).trimmed().toLower();
+    if (MachineRecord::validGpu(partnersBest)) {
+        record.partnersBestGpu = partnersBest;
+    }
+    if (partners.hasKey("Model")) {
+        record.partnersModel = partners.readEntry("Model", QString());
+    }
+    if (partners.hasKey("Measurement")) {
+        record.partnersMeasurement = partners.readEntry("Measurement", QString());
     }
     const KConfigGroup origin = config.group(s_record);
     if (origin.hasKey("Origin")) {
@@ -240,6 +252,10 @@ static bool removeOurs(const QString &path)
     measured.deleteEntry("Model");
     measured.deleteEntry("Measurement");
     config.group(s_decoding).deleteEntry("CopyBack");
+    KConfigGroup partners = config.group(s_partners);
+    partners.deleteEntry("BestGpu");
+    partners.deleteEntry("Model");
+    partners.deleteEntry("Measurement");
     KConfigGroup origin = config.group(s_record);
     origin.deleteEntry("Origin");
     origin.deleteEntry("Known");
@@ -274,7 +290,8 @@ Result applyKnown(const QString &root, const QString &folder)
     const bool paintOurs = existingPaint.origin == u"shipped"_s || existingPaint.isEmpty();
     const bool paintSame = !paintOurs || existingPaint.programs == wantedPaint.programs;
     if (existing.origin == u"shipped"_s && existing.known == match->name && existing.bestGpu == wanted.bestGpu && existing.model == wanted.model
-        && existing.measurement == wanted.measurement && existing.copyBack == wanted.copyBack) {
+        && existing.measurement == wanted.measurement && existing.copyBack == wanted.copyBack && existing.partnersBestGpu == wanted.partnersBestGpu
+        && existing.partnersModel == wanted.partnersModel && existing.partnersMeasurement == wanted.partnersMeasurement) {
         if (paintSame) {
             return Result::Unchanged;
         }
@@ -289,6 +306,10 @@ Result applyKnown(const QString &root, const QString &folder)
     setOrDelete(measured, "Model", wanted.model);
     setOrDelete(measured, "Measurement", wanted.measurement);
     setOrDelete(config.group(s_decoding), "CopyBack", wanted.copyBack);
+    KConfigGroup partners = config.group(s_partners);
+    setOrDelete(partners, "BestGpu", wanted.partnersBestGpu);
+    setOrDelete(partners, "Model", wanted.partnersModel);
+    setOrDelete(partners, "Measurement", wanted.partnersMeasurement);
     KConfigGroup origin = config.group(s_record);
     origin.writeEntry("Origin", u"shipped"_s);
     origin.writeEntry("Known", match->name);

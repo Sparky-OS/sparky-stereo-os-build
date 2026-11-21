@@ -16,10 +16,16 @@ enum class Category {
     Games,
     Browsers,
     Other,
+    // ORDER 70: the card the edition's partners (local AI engines) compute on; not a kind of program that draws, so it is
+    // not in allCategories()
+    Partners,
 };
 
 QString categoryKey(Category category);
+// The kinds of programs that draw (players, games, browsers, other): menu entries, painting
 QList<Category> allCategories();
+// Every [Render] choice of the page: the kinds of programs and the partners' card
+QList<Category> renderCategories();
 
 // ~/.config/sparky-stereo-graphicsrc. A key that was never written, or that Defaults removed, is the edition's default.
 class GraphicsSettings
@@ -31,7 +37,8 @@ public:
     QString mainGpu() const;
     void setMainGpu(const QString &id);
 
-    // "auto", "profile" (follow the power profile), "integrated", "discrete" or a GPU id
+    // "auto", "profile" (follow the power profile), "integrated", "discrete" or a GPU id; for Partners also "cpu" (the
+    // processor only)
     QString renderChoice(Category category) const;
     void setRenderChoice(Category category, const QString &choice);
 
@@ -53,6 +60,8 @@ public:
 
     static QString configName();
     static bool validChoice(const QString &choice);
+    // The same, for one kind: the partners' card may also be "cpu"
+    static bool validChoice(const QString &choice, Category category);
     // true, on, yes, 1 / false, off, no, 0 in any case; anything else is no value
     static std::optional<bool> parseBool(const QString &text);
 
