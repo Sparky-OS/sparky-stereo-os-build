@@ -1,0 +1,49 @@
+Description: Jmol's menu bar menus in windows of their own over the 3D area
+ Patch 0001 makes popups heavyweight when the 3D area is made
+ (JPopupMenu.setDefaultLightWeightPopupEnabled(false)), but a JPopupMenu
+ copies that default when it is constructed, and JMenu constructs its popup
+ at its first add, so every menu of the menu bar, made before the area, kept
+ a light popup drawn inside the frame, under the area's X window: with Enable
+ 3D on, the Display menu showed only the entries above the area's top edge,
+ and "Enable 3D" could not be seen to turn 3D off. The area now walks the
+ frame's menu bar and gives every popup under it a window of its own.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-21
+
+--- a/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
++++ b/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
+@@ -24,6 +24,8 @@
+ 
+ import javax.swing.JOptionPane;
+ import javax.swing.JPopupMenu;
++import javax.swing.JRootPane;
++import javax.swing.MenuElement;
+ import javax.swing.SwingUtilities;
+ import javax.swing.ToolTipManager;
+ 
+@@ -187,12 +189,24 @@
+     // Swing would draw a light popup inside the frame, under the 3D area: popups and tips get windows of their own
+     JPopupMenu.setDefaultLightWeightPopupEnabled(false);
+     ToolTipManager.sharedInstance().setLightWeightPopupEnabled(false);
++    // a popup menu takes that default when it is made, and the menu bar's were made before the area: theirs too
++    JRootPane root = SwingUtilities.getRootPane(panel);
++    if (root != null && root.getJMenuBar() != null)
++      ownWindows(root.getJMenuBar());
+     place(panel);
+     x.XMapWindow(display, views);
+     x.XMapWindow(display, place);
+     x.XSync(display, 0);
+   }
+ 
++  /** Every popup menu under element (a menu bar, a menu, a popup) shown in a window of its own. */
++  private static void ownWindows(MenuElement element) {
++    if (element instanceof JPopupMenu)
++      ((JPopupMenu) element).setLightWeightPopupEnabled(false);
++    for (MenuElement child : element.getSubElements())
++      ownWindows(child);
++  }
++
+   /** ICCCM 4.1.3.1: the nearest ancestor that carries WM_STATE (the window itself counts). */
+   private NativeLong managedToplevel(NativeLong window) {
+     NativeLong wmState = x.XInternAtom(display, "WM_STATE", 1);
