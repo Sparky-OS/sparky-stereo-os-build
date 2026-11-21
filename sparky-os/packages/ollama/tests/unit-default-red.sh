@@ -14,7 +14,7 @@ printf 'Source: unit-default-red\nSection: misc\nPriority: optional\nMaintainer:
 printf 'unit-default-red (1) unstable; urgency=medium\n\n  * test\n\n -- Test <test@invalid>  Sat, 21 Nov 2026 00:00:00 +0000\n' > "$w/red/debian/changelog"
 printf '#!/usr/bin/make -f\n%%:\n\tdh $@ --buildsystem=none\n' > "$w/red/debian/rules"
 chmod +x "$w/red/debian/rules"
-(cd "$w/red" && dpkg-buildpackage -us -uc -b >/dev/null 2>&1)
+(cd "$w/red" && dpkg-buildpackage -us -uc -b -d >/dev/null 2>&1)
 dpkg -i "$w"/unit-default-red_1_all.deb >/dev/null
 state=$(systemctl --global is-enabled unit-default-red.service 2>&1)
 echo "red control, debhelper's default: systemctl --global is-enabled unit-default-red.service: $state"
