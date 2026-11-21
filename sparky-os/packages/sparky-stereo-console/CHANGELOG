@@ -1,4 +1,20 @@
 -------------------------------------------------------------------------------
+  Version 20261121~sparky9~0 (2026-11-21)
+-------------------------------------------------------------------------------
+  * Rows 629/802: bash's /etc/skel/.bashrc is no longer diverted. The coloured prompt (red for root), the
+    colour aliases, GCC's colours and nano as EDITOR and VISUAL come from /etc/skel/.bash_aliases, which
+    Debian's skel .bashrc reads; a new account gets the same prompt, aliases and variables as before. The
+    postinst gives bash's own .bashrc back at its name, with a person's change to it kept. A person's
+    change to our former copy at /etc/skel/.bashrc is kept as /var/backups/sparky-stereo-console-skel.bashrc
+    (not in /etc/skel, which useradd copies whole into each new account) and said, in the ten languages, on
+    the terminal and in the journal.
+  * The diversions that stay (issue, issue.net, 10-uname, nanorc, zshrc: their owners offer no place of
+    their own) no longer cost the owning package its conffile: when the owner was unpacked earlier in the
+    same dpkg run, the preinst moves its pending PATH.dpkg-new to the diverted name before our file is
+    unpacked (nano's /etc/nanorc was never installed on fresh installs, dpkg recording it "newconffile").
+    The postrm does the reverse and removes only diversions that are this package's.
+
+-------------------------------------------------------------------------------
   Version 20261102~sparky9~0 (2026-11-02)
 -------------------------------------------------------------------------------
   * Keep failed MOTD restoration after removal or purge as an engine-owned repair.
