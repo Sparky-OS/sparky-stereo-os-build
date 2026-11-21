@@ -20,7 +20,7 @@ export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export DEB_BUILD_OPTIONS="nocheck parallel=${JOBS:-4}" DEB_BUILD_PROFILES=nocheck
 export LC_ALL=C.UTF-8
-VERSION=2.1.2-8+stereo3d1
+VERSION=2.1.2-8+stereo3d2
 printf '%s  %s\n' a4c4bf0560d5dadd68e82bbf6b34a60fd5a6b9d1a0752919e8e1d0aa3c6de1ee "$SOURCE_DSC" | sha256sum -c -
 [ ! -e "$BUILD_ROOT/authored" ] && [ ! -e "$OUT/authored" ]
 mkdir -p "$BUILD_ROOT" "$OUT/authored"
@@ -42,7 +42,7 @@ text = text.replace(home, 'Homepage: https://sparkylinux.org\nBugs: https://gith
 path.write_text(text)
 PY
 dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
-	'KDE text add-ons follow System Settings, Partners, when the person set up no instance; Start Ollama opens Partners (ORDER 70).'
+	'KDE text add-ons follow System Settings, Partners, when the person set up no instance; Start Ollama opens Partners; its two sentences in the ten languages (ORDER 70).'
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
