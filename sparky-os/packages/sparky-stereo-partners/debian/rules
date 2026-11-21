@@ -10,3 +10,7 @@ override_dh_auto_install:
 	sparky-stereo-problems catalog sparky-stereo-partners po debian/sparky-stereo-partners/usr/lib/systemd/catalog \
 		--domain kcm_sparkystereo_partners --context "@info" --context "@action:button" \
 		--subject "@title notification|A partner cannot work"
+
+# llama.cpp's user service stays off until the person turns it on on the page
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable

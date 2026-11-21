@@ -75,6 +75,35 @@ void PartnersKcm::refreshModels()
     process->start(command(), {u"models"_s, u"--json"_s});
 }
 
+void PartnersKcm::refreshAccount()
+{
+    m_account.clear();
+    Q_EMIT accountChanged();
+    if (!m_status.value(u"engine"_s).toMap().value(u"on"_s).toBool()) {
+        m_account.insert(u"state"_s, u"off"_s);
+        Q_EMIT accountChanged();
+        return;
+    }
+    auto *process = new QProcess(this);
+    connect(process, &QProcess::finished, this, [this, process]() {
+        m_account = QJsonDocument::fromJson(process->readAllStandardOutput()).toVariant().toMap();
+        if (m_account.isEmpty()) {
+            m_account.insert(u"state"_s, u"unavailable"_s);
+            m_account.insert(u"why"_s, QString::fromUtf8(process->readAllStandardError()).trimmed());
+        }
+        Q_EMIT accountChanged();
+        process->deleteLater();
+    });
+    process->start(command(), {u"account"_s, u"--json"_s});
+}
+
+void PartnersKcm::refresh()
+{
+    refreshStatus();
+    refreshModels();
+    refreshAccount();
+}
+
 void PartnersKcm::load()
 {
     m_pending.clear();
@@ -82,6 +111,7 @@ void PartnersKcm::load()
     Q_EMIT pendingChanged();
     refreshStatus();
     refreshModels();
+    refreshAccount();
     setNeedsSave(false);
 }
 
@@ -168,7 +198,10 @@ void PartnersKcm::act(const QStringList &args, const QString &input)
         if (what == u"download"_s && code == 5) {
             m_heldModel = args.value(1);
         }
-        if (exitStatus != QProcess::NormalExit || code != 0) {
+        if (what == u"signin"_s && exitStatus == QProcess::NormalExit && code == 7) {
+            // not signed in yet: the browser was opened at ollama.com's page; the command's words say what to do next
+            setMessage(QString::fromUtf8(out).trimmed(), true);
+        } else if (exitStatus != QProcess::NormalExit || code != 0) {
             // the command's own words: what failed, why and what to do (and kept by the problems engine)
             setMessage(error.isEmpty() ? i18nc("@info %1 is an exit status", "The step failed (exit status %1).", code) : error);
         }
@@ -177,6 +210,9 @@ void PartnersKcm::act(const QStringList &args, const QString &input)
         refreshStatus();
         if (what == u"download"_s || what == u"engine"_s) {
             refreshModels();
+        }
+        if (what == u"engine"_s || what == u"signin"_s || what == u"signout"_s) {
+            refreshAccount();
         }
     });
     process->start(command(), args);
@@ -199,10 +235,11 @@ void PartnersKcm::setBusy(bool busy)
     }
 }
 
-void PartnersKcm::setMessage(const QString &text)
+void PartnersKcm::setMessage(const QString &text, bool info)
 {
-    if (m_message != text) {
+    if (m_message != text || m_messageIsInfo != info) {
         m_message = text;
+        m_messageIsInfo = info;
         Q_EMIT messageChanged();
     }
 }

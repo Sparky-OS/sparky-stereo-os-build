@@ -12,6 +12,15 @@ Runs=here
 Package=ollama
 Service=ollama.service
 
+# llama.cpp, the other local engine (Daniel's answer: "Ollama, with llama.cpp as the fallback"): offered, chosen by the person
+[Interface][llamacpp-local]
+Name=llama.cpp on this computer
+Kind=openai-compatible
+Url=http://127.0.0.1:8080/v1
+Runs=here
+Package=llama.cpp-tools
+Service=sparky-stereo-llama-server.service
+
 [Interface][vibe-local]
 Name=Vibe on this computer
 Kind=vibe
@@ -51,6 +60,8 @@ Name=KMail, Kontact and the Sieve editor
 Kinds=text
 Package=kdepim-addons
 Note=kde-text-addons
+# Kontact and the Sieve editor share KDE's text add-ons (one settings file), so KMail's choice answers them too
+Also=org.kde.kontact,org.kde.sieveeditor
 
 [ProgramInfo][vibe]
 Name=Vibe

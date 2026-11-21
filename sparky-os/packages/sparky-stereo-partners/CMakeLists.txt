@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.22)
-project(sparky-stereo-partners VERSION 0.1.0)
+project(sparky-stereo-partners VERSION 0.1.1)
 
 set(QT_MIN_VERSION "6.8.0")
 set(KF_MIN_VERSION "6.10.0")
@@ -24,6 +24,8 @@ ki18n_install(po)
 install(PROGRAMS bin/sparky-stereo-partners DESTINATION ${KDE_INSTALL_BINDIR})
 install(PROGRAMS bin/install-engine DESTINATION libexec/sparky-stereo-partners)
 install(FILES share/sparky-stereo-partnersrc DESTINATION /etc/xdg)
+# llama.cpp's user service: installed off (debian/rules: dh_installsystemduser --no-enable), started by the page's Turn on
+install(FILES share/sparky-stereo-llama-server.service DESTINATION ${KDE_INSTALL_SYSTEMDUSERUNITDIR})
 # a category of its own at the top of System Settings (systemsettings 6.7: SettingsBase reads every categories/*.desktop)
 install(FILES share/settings-partners.desktop DESTINATION ${KDE_INSTALL_DATADIR}/systemsettings/categories)
 install(FILES polkit/org.sparkylinux.sparkystereo.partners.policy DESTINATION ${KDE_INSTALL_DATADIR}/polkit-1/actions)

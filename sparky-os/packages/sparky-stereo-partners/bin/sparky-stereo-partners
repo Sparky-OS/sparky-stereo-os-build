@@ -9,18 +9,22 @@
     sparky-stereo-partners set-default KIND [--interface ID] [--model NAME|--no-model]
     sparky-stereo-partners program DESKTOP-ID KIND follow | own [--interface ID] [--model NAME]
     sparky-stereo-partners card auto|cpu|integrated|discrete|profile|pci-...   (the one key, [Render] Partners, as the Graphics page)
-    sparky-stereo-partners engine on|off                  the local engine's user service (ollama.service)
+    sparky-stereo-partners engine on|off [--engine ollama|llamacpp]
+                                                          a local engine's user service (ollama.service, sparky-stereo-llama-server.service)
+    sparky-stereo-partners account [--json] | signin | signout
+                                                          Ollama's service (ollama.com), through the local engine: signed in or not
     sparky-stereo-partners models [--json]               the models the page offers, each with its size from the registry
     sparky-stereo-partners download NAME [--even-if-metered]   the engine downloads one model (its size said first)
     sparky-stereo-partners provider add ID --name NAME --url URL   (the key is read from standard input, kept in KDE Wallet)
     sparky-stereo-partners provider remove ID | provider list [--json]
-    sparky-stereo-partners install-plan [--json] | install [--even-if-metered]   (through pkexec: the engine and this computer's runner)
+    sparky-stereo-partners install-plan [--engine E] | install [--engine E] [--even-if-metered]
+                                                          (through pkexec: the engine and this computer's runner)
 
 The choices live in sparky-stereo-partnersrc: the system's in /etc/xdg (shipped), the person's in ~/.config, key by key as
 KConfig cascades them; this command writes only the person's file, through kwriteconfig6. Keys never go into either file.
 Exit status: 0 done, 1 not known (a value nobody set), 2 wrong arguments, 3 failed (said, and kept by the problems engine), 4 the
 card cannot be used (sparky-stereo-gpu-env said why), 5 held: the connection is metered or its state could not be read,
-6 another program already uses the engine's address.
+6 another program already uses the engine's address, 7 not signed in to Ollama's service (the address to sign in is printed).
 """
 import configparser
 import gettext
@@ -42,6 +46,15 @@ CONFIG = 'sparky-stereo-partnersrc'
 HELPER = '/usr/libexec/sparky-stereo-partners/install-engine'
 KINDS_DEFAULT = ['text', 'speech', 'image', '3d']
 ACCEPT = 'application/vnd.docker.distribution.manifest.v2+json'
+# the two local engines the page offers (Daniel's answer: "Ollama, with llama.cpp as the fallback", a path the person chooses)
+ENGINES = {
+    'ollama': {'interface': 'ollama-local', 'unit': 'ollama.service', 'package': 'ollama', 'url': 'http://127.0.0.1:11434',
+               'name': ('@item the local engine', 'Ollama'), 'problem': 'engine'},
+    'llamacpp': {'interface': 'llamacpp-local', 'unit': 'sparky-stereo-llama-server.service', 'package': 'llama.cpp-tools',
+                 'url': 'http://127.0.0.1:8080/v1', 'name': ('@item the other local engine', 'llama.cpp'), 'problem': 'engine-llamacpp'},
+}
+# where llama.cpp's server finds its model files (its unit's --models-dir): it downloads no model by itself
+LLAMACPP_MODELS = os.path.join(os.environ.get('XDG_DATA_HOME') or os.path.join(os.path.expanduser('~'), '.local', 'share'), 'llama.cpp', 'models')
 
 _tr = gettext.translation(DOMAIN, fallback=True)
 
@@ -153,20 +166,30 @@ def write(groups, name, value):
         raise SystemExit(3)
 
 
-# ---------- the engine ----------
+# ---------- the local engines ----------
 
-def engine_address(settings):
-    url = settings.get(['Interface', 'ollama-local'], 'Url', 'http://127.0.0.1:11434')
+def engine_name(eng):
+    return tr(*ENGINES[eng]['name'])
+
+
+def engine_address(settings, eng='ollama'):
+    url = settings.get(['Interface', ENGINES[eng]['interface']], 'Url', ENGINES[eng]['url']).rstrip('/')
     parts = urllib.parse.urlsplit(url)
-    return url.rstrip('/'), parts.hostname or '127.0.0.1', parts.port or 11434
+    return url, parts.hostname or '127.0.0.1', parts.port or 80
+
+
+def root_of(url):
+    """llama.cpp's interface is its OpenAI-style address (…/v1); its own routes (/health) are at the server's root."""
+    parts = urllib.parse.urlsplit(url)
+    return '%s://%s' % (parts.scheme, parts.netloc)
 
 
 def systemctl(*args):
     return subprocess.run(['systemctl', '--user', *args], capture_output=True, text=True)
 
 
-def unit_state():
-    out = systemctl('show', '-p', 'LoadState,ActiveState,UnitFileState,Result,ExecMainStatus,NRestarts', 'ollama.service')
+def unit_state(eng='ollama'):
+    out = systemctl('show', '-p', 'LoadState,ActiveState,UnitFileState,Result,ExecMainStatus,NRestarts', ENGINES[eng]['unit'])
     state = dict(line.split('=', 1) for line in out.stdout.splitlines() if '=' in line)
     return {'loaded': state.get('LoadState') == 'loaded', 'active': state.get('ActiveState', ''), 'enabled': state.get('UnitFileState', ''),
             'result': state.get('Result', ''), 'status': int(state.get('ExecMainStatus', '0') or 0)}
@@ -200,37 +223,37 @@ def installed(package):
     return status[1] if len(status) == 2 and status[0] == 'installed' else ''
 
 
-def journal_tail(lines=6):
-    out = subprocess.run(['journalctl', '--user', '-u', 'ollama.service', '-n', str(lines), '-o', 'cat', '--no-pager'],
+def journal_tail(eng='ollama', lines=6):
+    out = subprocess.run(['journalctl', '--user', '-u', ENGINES[eng]['unit'], '-n', str(lines), '-o', 'cat', '--no-pager'],
                          capture_output=True, text=True)
     return [line for line in out.stdout.splitlines() if line.strip()]
 
 
-def engine_on(settings):
-    name = tr('@item the local engine', 'Ollama')
-    if not installed('ollama'):
+def engine_on(settings, eng='ollama'):
+    name, unit, problem = engine_name(eng), ENGINES[eng]['unit'], ENGINES[eng]['problem']
+    if not installed(ENGINES[eng]['package']):
         print(PACKAGE + ': ' + tr('@info', '%1 is not installed. Install it on the Partners page.', name), file=sys.stderr)
         return 3
-    url, host, port = engine_address(settings)
-    state = unit_state()
+    url, host, port = engine_address(settings, eng)
+    state = unit_state(eng)
     if state['active'] == 'active' and listening(host, port):
-        clear('engine')
+        clear(problem)
         return 0
     if listening(host, port):
-        keep('engine', '@info', "Another program already uses %1's address, %2 (%3). Close it, then turn %1 on again.",
+        keep(problem, '@info', "Another program already uses %1's address, %2 (%3). Close it, then turn %1 on again.",
              [name, '%s:%d' % (host, port), owner_of(port)])
         return 6
-    systemctl('reset-failed', 'ollama.service')
-    out = systemctl('enable', '--now', 'ollama.service')
+    systemctl('reset-failed', unit)
+    out = systemctl('enable', '--now', unit)
     if out.returncode:
-        keep('engine', '@info', '%1 could not start: %2', [name, (out.stderr.strip().splitlines() or ['systemctl'])[-1]])
+        keep(problem, '@info', '%1 could not start: %2', [name, (out.stderr.strip().splitlines() or ['systemctl'])[-1]])
         return 3
     for _ in range(80):
-        state = unit_state()
+        state = unit_state(eng)
         if state['active'] == 'failed' or (state['active'] == 'inactive' and state['result'] not in ('', 'success')):
             break
         if state['active'] == 'active' and listening(host, port):
-            clear('engine')
+            clear(problem)
             return 0
         time.sleep(0.25)
     if state['status'] == 4:
@@ -238,17 +261,87 @@ def engine_on(settings):
         print(PACKAGE + ': ' + tr('@info', '%1 did not start: the card chosen for partners cannot be used now. See System Settings, Graphics.', name),
               file=sys.stderr)
         return 4
-    why = ' / '.join(journal_tail(3)) or state['result'] or 'unknown'
-    keep('engine', '@info', '%1 could not start: %2', [name, why])
+    why = ' / '.join(journal_tail(eng, 3)) or state['result'] or 'unknown'
+    keep(problem, '@info', '%1 could not start: %2', [name, why])
     return 3
 
 
-def engine_off():
-    out = systemctl('disable', '--now', 'ollama.service')
+def engine_off(eng='ollama'):
+    out = systemctl('disable', '--now', ENGINES[eng]['unit'])
     if out.returncode:
         print(PACKAGE + ': ' + (out.stderr.strip() or 'systemctl failed'), file=sys.stderr)
         return 3
-    clear('engine')
+    clear(ENGINES[eng]['problem'])
+    return 0
+
+
+def llamacpp_models(settings, on):
+    """The models llama.cpp's server offers: its own list while it runs (router mode on the folder), else the folder's files."""
+    out = []
+    if on:
+        url = engine_address(settings, 'llamacpp')[0]
+        try:
+            out = [{'name': m.get('id', ''), 'size': 0, 'sizeText': ''} for m in api(url, '/models').get('data', []) if m.get('id')]
+        except (urllib.error.URLError, OSError, ValueError):
+            out = []
+    if not out:
+        try:
+            for entry in sorted(os.scandir(LLAMACPP_MODELS), key=lambda e: e.name):
+                if entry.is_file() and entry.name.endswith('.gguf'):
+                    size = entry.stat().st_size
+                    out.append({'name': entry.name[:-len('.gguf')], 'size': size, 'sizeText': human(size)})
+        except OSError:
+            pass
+    return out
+
+
+# ---------- Ollama's service (ollama.com), through the local engine ----------
+
+def account(settings, open_browser=False):
+    """Signed in or not, as the local engine answers (it signs the question with its own key, ~/.ollama/id_ed25519)."""
+    url, host, port = engine_address(settings, 'ollama')
+    if not listening(host, port):
+        return {'state': 'off', 'why': tr('@info', 'The local partner is off. Turn it on in System Settings, Partners.')}, 3
+    request = urllib.request.Request(url + '/api/me', data=b'', headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            user = json.load(response)
+        return {'state': 'signed-in', 'name': user.get('name', ''), 'plan': user.get('plan', '')}, 0
+    except urllib.error.HTTPError as error:
+        try:
+            body = json.loads(error.read() or b'{}')
+        except ValueError:
+            body = {}
+        if error.code == 401 and body.get('signin_url', '').startswith('https://ollama.com/'):
+            found = {'state': 'signed-out', 'url': body['signin_url'], 'computer': socket.gethostname()}
+            if open_browser:
+                opener = shutil.which('xdg-open')
+                if opener:
+                    subprocess.Popen([opener, body['signin_url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print(tr('@info %1 an address', 'Finish signing in on ollama.com in your browser, then choose Check. The address: %1', body['signin_url']))
+            return found, 7
+        why = body.get('error') or str(error)
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        why = str(getattr(error, 'reason', error))
+    print(PACKAGE + ': ' + tr('@info %1 why', "Ollama's service could not be reached: %1", why), file=sys.stderr)
+    return {'state': 'unavailable', 'why': why}, 3
+
+
+def signout(settings):
+    url, host, port = engine_address(settings, 'ollama')
+    if not listening(host, port):
+        print(PACKAGE + ': ' + tr('@info', 'The local partner is off. Turn it on in System Settings, Partners.'), file=sys.stderr)
+        return 3
+    try:
+        api(url, '/api/signout', body={}, timeout=30)
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            return 0  # not signed in: nothing to undo
+        print(PACKAGE + ': ' + tr('@info %1 why', "Ollama's service could not be reached: %1", str(error)), file=sys.stderr)
+        return 3
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        print(PACKAGE + ': ' + tr('@info %1 why', "Ollama's service could not be reached: %1", str(getattr(error, 'reason', error))), file=sys.stderr)
+        return 3
     return 0
 
 
@@ -515,7 +608,19 @@ def interfaces(settings):
     return out
 
 
+def program_id(settings, program):
+    """A program listed under another's entry (ProgramInfo Also=) takes that entry's choice: KMail's answers Kontact and the
+    Sieve editor, which share KDE's text add-ons and their one settings file."""
+    if not program or settings.get(['ProgramInfo', program], 'Name'):
+        return program
+    for pid in settings.children('ProgramInfo'):
+        if program in [a for a in settings.get(['ProgramInfo', pid], 'Also', '').split(',') if a]:
+            return pid
+    return program
+
+
 def choice(settings, kind, program=None):
+    program = program_id(settings, program)
     base = ['Default', kind]
     own = ['Program', program, kind] if program else None
     result = {'kind': kind, 'program': program or '', 'own': False}
@@ -528,12 +633,14 @@ def choice(settings, kind, program=None):
     result['url'] = settings.get(iface, 'Url', '')
     result['runs'] = settings.get(iface, 'Runs', 'here') if result['interface'] not in ('', 'none') else ''
     result['name'] = settings.get(iface, 'Name', '')
+    result['protocol'] = settings.get(iface, 'Kind', '') if result['interface'] not in ('', 'none') else ''
     return result
 
 
 def resolve(settings, kind, program, shell):
     c = choice(settings, kind, program)
-    lines = [('PARTNER_INTERFACE', c['interface']), ('PARTNER_URL', c['url']), ('PARTNER_MODEL', c['model']), ('PARTNER_RUNS', c['runs'])]
+    lines = [('PARTNER_INTERFACE', c['interface']), ('PARTNER_KIND', c['protocol']), ('PARTNER_URL', c['url']), ('PARTNER_MODEL', c['model']),
+             ('PARTNER_RUNS', c['runs'])]
     env = gpu_env('--category', 'partners', '--print', 'compute-env')
     status = 0
     if env is None or env.returncode:
@@ -559,6 +666,14 @@ def status(settings):
     engine['on'] = unit['active'] == 'active' and engine['listening']
     if engine['listening'] and unit['active'] != 'active':
         engine['other'] = owner_of(port)
+    l_url, l_host, l_port = engine_address(settings, 'llamacpp')
+    l_unit = unit_state('llamacpp')
+    llamacpp = {'installed': installed('llama.cpp-tools'), 'unit': l_unit, 'address': '%s:%d' % (l_host, l_port),
+                'listening': listening(l_host, l_port), 'folder': LLAMACPP_MODELS, 'size': apt_size('llama.cpp-tools')}
+    llamacpp['on'] = l_unit['active'] == 'active' and llamacpp['listening']
+    if llamacpp['listening'] and l_unit['active'] != 'active':
+        llamacpp['other'] = owner_of(l_port)
+    llamacpp['models'] = llamacpp_models(settings, llamacpp['on']) if llamacpp['installed'] else []
     if engine['on']:
         try:
             engine['models'] = [{'name': m['name'], 'size': m.get('size', 0), 'sizeText': human(m.get('size', 0))} for m in api(url, '/api/tags').get('models', [])]
@@ -579,9 +694,10 @@ def status(settings):
                          'package': settings.get(g, 'Package', ''), 'installed': bool(installed(settings.get(g, 'Package', ''))),
                          'note': settings.get(g, 'Note', ''),
                          'choices': [choice(settings, k, pid) for k in settings.get(g, 'Kinds', '').split(',') if k]})
-    return {'engine': engine, 'card': card, 'proposal': proposal(card), 'defaults': [choice(settings, k) for k in settings.kinds()],
+    return {'engine': engine, 'llamacpp': llamacpp, 'card': card, 'proposal': proposal(card),
+            'defaults': [choice(settings, k) for k in settings.kinds()],
             'interfaces': interfaces(settings), 'programs': programs, 'problems': kept,
-            'ollamaSize': apt_size('ollama')}
+            'ollamaSize': apt_size('ollama'), 'computer': socket.gethostname(), 'ollamaKey': os.path.join(os.path.expanduser('~'), '.ollama', 'id_ed25519')}
 
 
 def apt_size(package):
@@ -638,7 +754,17 @@ def main(argv):
     if cmd == 'card' and rest:
         return card_set(rest[0])
     if cmd == 'engine' and rest and rest[0] in ('on', 'off'):
-        return engine_on(settings) if rest[0] == 'on' else engine_off()
+        eng = opt('--engine') or 'ollama'
+        if eng not in ENGINES:
+            return 2
+        return engine_on(settings, eng) if rest[0] == 'on' else engine_off(eng)
+    if cmd in ('account', 'signin'):
+        found, code = account(settings, open_browser=cmd == 'signin')
+        if cmd == 'account':
+            print(json.dumps(found, ensure_ascii=False) if flag('--json') else found['state'] + ('\t' + found['name'] if found.get('name') else ''))
+        return code
+    if cmd == 'signout':
+        return signout(settings)
     if cmd == 'models':
         data = models(settings)
         print(json.dumps(data, ensure_ascii=False) if flag('--json') else '\n'.join('%s\t%s%s' % (m['name'], m['sizeText'], '\t' + m['error'] if m['error'] else '') for m in data))
@@ -657,7 +783,10 @@ def main(argv):
             return 0
         return 2
     if cmd in ('install-plan', 'install'):
-        args = ['pkexec', HELPER, 'plan' if cmd == 'install-plan' else 'install']
+        eng = opt('--engine') or 'ollama'
+        if eng not in ENGINES:
+            return 2
+        args = ['pkexec', HELPER, 'plan' if cmd == 'install-plan' else 'install', eng]
         if os.geteuid() == 0:
             args = args[1:]
         if cmd == 'install':

@@ -1,3 +1,40 @@
+sparky-stereo-partners (0.1.1) unstable; urgency=medium
+
+  * llama.cpp, the other local engine (Daniel's answer: "Ollama, with
+    llama.cpp as the fallback", a path the person chooses): an interface of
+    its own, llama.cpp on this computer, and its row on the page: install
+    (Debian's llama-server with ggml's Vulkan back end, the size shown first,
+    through the same pkexec helper), turn on and off, its models (the files
+    in ~/.local/share/llama.cpp/models; it downloads no model by itself),
+    "Open the models folder" and "Look again". Its user service,
+    sparky-stereo-llama-server.service, is installed off; it starts
+    llama-server in router mode on 127.0.0.1:8080, offline, on the card the
+    Partners choice names, and lets only this computer's own pages call it
+    from a browser (--cors-origins localhost). Debian's llama.cpp-services is
+    not installed: its system service would start at installation.
+  * Ollama's service: "Sign in…" through the local engine (Ollama's own
+    route: ollama.com's page opens in the browser, and Ollama's key for this
+    computer is linked to the account there), "Check", "Sign out", and
+    whether this computer is signed in, said with what signing in sends
+    (the computer's name and Ollama's key, kept by Ollama in
+    ~/.ollama/id_ed25519). Commands: account, signin, signout (exit status
+    7: not signed in, the address printed).
+  * The page: the Card, Interface and Model lists take the width their
+    longest entry needs (or the page's); a provider's name and address end
+    before its Remove button, elided with the whole text in a tooltip; each
+    engine's name stands at the top of its block, on the line of its state.
+  * The card's Now: line says when Automatic chose the processor because no
+    card has the memory of its own for the proposed model, or left such a
+    card out (sparky-stereo-graphics 0.2.17's reasons).
+  * KDE's text add-ons: KMail's choice also answers Kontact and the Sieve
+    editor (ProgramInfo Also=), resolve prints the interface's protocol
+    (PARTNER_KIND), and the KMail row says that the add-ons can follow only
+    Ollama for now (their llama.cpp add-on is unfinished in 2.1.2, and they
+    know no provider's own address).
+  * Sixteen new sentences in English and pt_BR.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 18:00:00 +0000
+
 sparky-stereo-partners (0.1.0) unstable; urgency=medium
 
   * First release (ORDER 70): the Partners page of System Settings, a

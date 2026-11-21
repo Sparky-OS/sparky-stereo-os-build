@@ -39,21 +39,36 @@ KCM.SimpleKCM {
         }
         return out
     }
-    function modelOptions(current) {
+    readonly property var llamacpp: st.llamacpp || ({})
+    // which engine an install dialog is for (the plan the command just printed)
+    property string planEngine: "ollama"
+
+    function engineName(eng) {
+        return eng === "llamacpp" ? i18nc("@item the other local engine", "llama.cpp") : i18nc("@item the local engine", "Ollama")
+    }
+    // the models a local interface offers: Ollama's (on this computer and from the registry), or llama.cpp's files
+    function modelOptions(current, ifaceId) {
         const out = []
         const seen = {}
-        for (const m of (engine.models || [])) {
-            out.push({value: m.name, text: i18nc("@item:inlistbox %1 a model, %2 its size", "%1 (%2, on this computer)", m.name, m.sizeText)})
-            seen[m.name] = true
-        }
-        for (const m of kcm.models) {
-            if (seen[m.name]) continue
-            let note = m.name === (st.proposal || {}).model ? i18nc("@item:inlistbox", "Proposed for this computer")
-                     : m.note === "small" ? i18nc("@item:inlistbox", "For very small computers") : ""
-            const size = m.sizeText ? m.sizeText : i18nc("@item:inlistbox size not known", "size not read")
-            out.push({value: m.name, text: note ? i18nc("@item:inlistbox %1 a model, %2 its size, %3 a note", "%1 (%2), %3", m.name, size, note)
-                                               : i18nc("@item:inlistbox %1 a model, %2 its size", "%1 (%2)", m.name, size)})
-            seen[m.name] = true
+        if (ifaceId === "llamacpp-local") {
+            for (const m of (llamacpp.models || [])) {
+                out.push({value: m.name, text: m.sizeText ? i18nc("@item:inlistbox %1 a model, %2 its size", "%1 (%2, on this computer)", m.name, m.sizeText) : m.name})
+                seen[m.name] = true
+            }
+        } else {
+            for (const m of (engine.models || [])) {
+                out.push({value: m.name, text: i18nc("@item:inlistbox %1 a model, %2 its size", "%1 (%2, on this computer)", m.name, m.sizeText)})
+                seen[m.name] = true
+            }
+            for (const m of kcm.models) {
+                if (seen[m.name]) continue
+                let note = m.name === (st.proposal || {}).model ? i18nc("@item:inlistbox", "Proposed for this computer")
+                         : m.note === "small" ? i18nc("@item:inlistbox", "For very small computers") : ""
+                const size = m.sizeText ? m.sizeText : i18nc("@item:inlistbox size not known", "size not read")
+                out.push({value: m.name, text: note ? i18nc("@item:inlistbox %1 a model, %2 its size, %3 a note", "%1 (%2), %3", m.name, size, note)
+                                                   : i18nc("@item:inlistbox %1 a model, %2 its size", "%1 (%2)", m.name, size)})
+                seen[m.name] = true
+            }
         }
         if (current && !seen[current]) out.push({value: current, text: current})
         if (!current) out.unshift({value: "", text: i18nc("@item:inlistbox", "No model chosen")})
@@ -82,9 +97,26 @@ KCM.SimpleKCM {
 
     header: Kirigami.InlineMessage {
         visible: kcm.message.length > 0
-        type: Kirigami.MessageType.Warning
+        type: kcm.messageIsInfo ? Kirigami.MessageType.Information : Kirigami.MessageType.Warning
         text: kcm.message
         showCloseButton: true
+    }
+
+    // a label that ends before what stands beside it: elided, the whole text in a tooltip when it does not fit
+    component FittedLabel: QQC2.Label {
+        Layout.fillWidth: true
+        Layout.minimumWidth: Kirigami.Units.gridUnit * 6
+        elide: Text.ElideRight
+        HoverHandler { id: fittedHover }
+        QQC2.ToolTip.visible: truncated && fittedHover.hovered
+        QQC2.ToolTip.text: text
+        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+    }
+    // a list that takes the width its longest entry needs, or the page's when that is less
+    component FittedComboBox: QQC2.ComboBox {
+        implicitContentWidthPolicy: QQC2.ComboBox.WidestText
+        Layout.maximumWidth: root.width - Kirigami.Units.gridUnit * 14
+        textRole: "text"; valueRole: "value"
     }
 
     ColumnLayout {
@@ -107,28 +139,25 @@ KCM.SimpleKCM {
                 readonly property string kind: modelData.kind
                 readonly property string chosen: root.pending("default/" + kind + "/interface", modelData.interface)
                 readonly property var chosenIface: root.iface(chosen)
+                readonly property bool hasModel: !!chosenIface && (chosenIface.kind === "ollama" || chosenIface.id === "llamacpp-local")
                 Layout.fillWidth: true
                 columns: 3
                 columnSpacing: Kirigami.Units.largeSpacing
 
                 QQC2.Label { Layout.preferredWidth: Kirigami.Units.gridUnit * 5; font.bold: true; text: root.kindLabel(kindRow.kind) }
                 QQC2.Label { text: i18nc("@label who answers", "Interface") }
-                QQC2.ComboBox {
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 16
+                FittedComboBox {
                     model: root.interfaceOptions(kindRow.kind)
-                    textRole: "text"; valueRole: "value"
                     currentIndex: Math.max(0, model.findIndex(o => o.value === (kindRow.chosen || "none")))
                     onActivated: kcm.choose("default/" + kindRow.kind + "/interface", ["set-default", kindRow.kind, "--interface", currentValue], currentValue)
                 }
 
-                Item { visible: !!kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"; width: 1; height: 1 }
-                QQC2.Label { visible: !!kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"; text: i18nc("@label", "Model") }
-                QQC2.ComboBox {
-                    visible: !!kindRow.chosenIface && kindRow.chosenIface.kind === "ollama"
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 16
+                Item { visible: kindRow.hasModel; width: 1; height: 1 }
+                QQC2.Label { visible: kindRow.hasModel; text: i18nc("@label", "Model") }
+                FittedComboBox {
+                    visible: kindRow.hasModel
                     readonly property string current: root.pending("default/" + kindRow.kind + "/model", kindRow.modelData.model)
-                    model: root.modelOptions(current)
-                    textRole: "text"; valueRole: "value"
+                    model: root.modelOptions(current, kindRow.chosen)
                     currentIndex: Math.max(0, model.findIndex(o => o.value === current))
                     onActivated: kcm.choose("default/" + kindRow.kind + "/model",
                                             currentValue ? ["set-default", kindRow.kind, "--model", currentValue] : ["set-default", kindRow.kind, "--no-model"], currentValue)
@@ -138,10 +167,8 @@ KCM.SimpleKCM {
                 QQC2.Label { visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"; text: i18nc("@label the card the partners compute on", "Card") }
                 RowLayout {
                     visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"
-                    QQC2.ComboBox {
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 16
+                    FittedComboBox {
                         model: root.cardOptions()
-                        textRole: "text"; valueRole: "value"
                         currentIndex: Math.max(0, model.findIndex(o => o.value === root.pending("card", root.card.choice || "auto")))
                         onActivated: kcm.choose("card", ["card", currentValue], currentValue)
                     }
@@ -163,10 +190,15 @@ KCM.SimpleKCM {
                         const c = Object.assign({}, kindRow.modelData, {interface: kindRow.chosen})
                         if (kindRow.chosenIface && !kindRow.chosenIface.installed)
                             lines.push(i18nc("@info %1 a program", "%1 is not installed.", kindRow.chosenIface.name))
-                        if (kindRow.chosenIface && kindRow.chosenIface.runs === "here" && kindRow.kind === "text")
+                        if (kindRow.chosenIface && kindRow.chosenIface.runs === "here" && kindRow.kind === "text") {
                             lines.push(root.card.problem ? root.card.problem
                                        : root.card.choice === "cpu" ? i18nc("@info", "Now: the processor only")
+                                       // Automatic on a computer where no card can hold the proposed model (Graphics' reason)
+                                       : root.card.reason === "cpu-memory" ? i18nc("@info", "Now: the processor, because no card here has the memory of its own for the model this page proposes.")
                                        : i18nc("@info %1 is a GPU name", "Now: %1", root.card.name || root.card.id || ""))
+                            if (!root.card.problem && root.card.reason === "unmeasured-memory")
+                                lines.push(i18nc("@info", "Automatic leaves out the cards whose own memory cannot hold the model this page proposes."))
+                        }
                         const p = root.privacy(kindRow.kind, c)
                         if (p) lines.push(p)
                         return lines.join("\n")
@@ -175,13 +207,21 @@ KCM.SimpleKCM {
             }
         }
 
-        // ── On this computer
+        // ── On this computer: the two local engines
         Kirigami.Heading { level: 2; text: i18nc("@title:group", "On this computer") }
         GridLayout {
             Layout.fillWidth: true
             columns: 2
             columnSpacing: Kirigami.Units.largeSpacing
-            QQC2.Label { Layout.preferredWidth: Kirigami.Units.gridUnit * 5; font.bold: true; text: i18nc("@item the local engine", "Ollama") }
+            rowSpacing: Kirigami.Units.largeSpacing
+
+            // Ollama: its name stands on the line of its state, at the top of its block
+            QQC2.Label {
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                Layout.alignment: Qt.AlignTop | Qt.AlignLeft
+                font.bold: true
+                text: root.engineName("ollama")
+            }
             ColumnLayout {
                 Layout.fillWidth: true
                 QQC2.Label {
@@ -197,15 +237,15 @@ KCM.SimpleKCM {
                     wrapMode: Text.Wrap
                     font: Kirigami.Theme.smallFont
                     text: i18nc("@info %1 a program, %2 its size", "Installing downloads %1 (%2) and the runner for this computer's card; every size is shown before anything is downloaded.",
-                                i18nc("@item the local engine", "Ollama"), kcm.humanSize(root.st.ollamaSize || 0))
+                                root.engineName("ollama"), kcm.humanSize(root.st.ollamaSize || 0))
                 }
                 RowLayout {
                     QQC2.Button {
                         visible: !root.engine.installed
                         enabled: !kcm.busy
-                        text: i18nc("@action:button %1 a program", "Install %1", i18nc("@item the local engine", "Ollama"))
+                        text: i18nc("@action:button %1 a program", "Install %1", root.engineName("ollama"))
                         icon.name: "download"
-                        onClicked: kcm.act(["install-plan"])
+                        onClicked: { root.planEngine = "ollama"; kcm.act(["install-plan"]) }
                     }
                     QQC2.Button {
                         visible: !!root.engine.installed && !root.engine.on
@@ -266,16 +306,146 @@ KCM.SimpleKCM {
                     text: i18nc("@info %1 the computer's memory", "A model on this computer will be slow and may not fit in its memory (%1).", kcm.humanSize((root.st.proposal || {}).memory || 0))
                 }
             }
+
+            // llama.cpp: Debian's llama-server, the other local engine, chosen by the person
+            QQC2.Label {
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                Layout.alignment: Qt.AlignTop | Qt.AlignLeft
+                font.bold: true
+                text: root.engineName("llamacpp")
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    text: !root.llamacpp.installed ? i18nc("@info", "Not installed")
+                        : root.llamacpp.on ? i18nc("@info %1 an address", "On, answering on this computer only (%1)", root.llamacpp.address)
+                        : i18nc("@info", "Off")
+                }
+                QQC2.Label {
+                    visible: !root.llamacpp.installed
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    font: Kirigami.Theme.smallFont
+                    text: i18nc("@info %1 a size", "Installing downloads Debian's llama-server (%1) and its Vulkan back end, which runs on any card; every size is shown before anything is downloaded.",
+                                kcm.humanSize(root.llamacpp.size || 0))
+                }
+                RowLayout {
+                    QQC2.Button {
+                        visible: !root.llamacpp.installed
+                        enabled: !kcm.busy
+                        text: i18nc("@action:button %1 a program", "Install %1", root.engineName("llamacpp"))
+                        icon.name: "download"
+                        onClicked: { root.planEngine = "llamacpp"; kcm.act(["install-plan", "--engine", "llamacpp"]) }
+                    }
+                    QQC2.Button {
+                        visible: !!root.llamacpp.installed && !root.llamacpp.on
+                        enabled: !kcm.busy
+                        text: i18nc("@action:button", "Turn on")
+                        onClicked: kcm.act(["engine", "on", "--engine", "llamacpp"])
+                    }
+                    QQC2.Button {
+                        visible: !!root.llamacpp.installed && !!root.llamacpp.on
+                        enabled: !kcm.busy
+                        text: i18nc("@action:button", "Turn off")
+                        onClicked: kcm.act(["engine", "off", "--engine", "llamacpp"])
+                    }
+                    QQC2.Button {
+                        visible: !!root.llamacpp.installed
+                        text: i18nc("@action:button", "Open the models folder")
+                        icon.name: "folder-open"
+                        onClicked: Qt.openUrlExternally("file://" + root.llamacpp.folder)
+                    }
+                    QQC2.Button {
+                        visible: !!root.llamacpp.installed
+                        text: i18nc("@action:button", "Look again")
+                        icon.name: "view-refresh"
+                        enabled: !kcm.busy
+                        onClicked: kcm.refresh()
+                    }
+                }
+                Repeater {
+                    model: root.llamacpp.models || []
+                    delegate: QQC2.Label {
+                        required property var modelData
+                        text: modelData.sizeText ? i18nc("@item:inlistbox %1 a model, %2 its size", "%1 (%2)", modelData.name, modelData.sizeText) : modelData.name
+                    }
+                }
+                QQC2.Label {
+                    visible: !!root.llamacpp.installed
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    font: Kirigami.Theme.smallFont
+                    text: i18nc("@info %1 a folder", "llama.cpp downloads no model by itself: put model files (GGUF) in %1, then choose Look again.", root.llamacpp.folder || "")
+                }
+            }
         }
 
         // ── Providers
         Kirigami.Heading { level: 2; text: i18nc("@title:group", "Providers") }
+        // Ollama's service: signed in through the local engine, which signs with its own key
+        RowLayout {
+            visible: !!root.engine.installed
+            Layout.fillWidth: true
+            ColumnLayout {
+                Layout.fillWidth: true
+                FittedLabel { text: i18nc("@item %1 a provider, %2 its address", "%1 (%2)", i18nc("@item", "Ollama's service"), "ollama.com") }
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    font: Kirigami.Theme.smallFont
+                    text: {
+                        const a = kcm.account
+                        switch (a.state) {
+                        case "signed-in": return i18nc("@info %1 an account name", "Signed in as %1.", a.name)
+                        case "signed-out": return i18nc("@info", "Not signed in")
+                        case "off": return i18nc("@info", "Turn Ollama on to sign in.")
+                        case "unavailable": return i18nc("@info %1 why", "Ollama's service could not be reached: %1", a.why || "")
+                        }
+                        return i18nc("@info the page asks the service", "Asking…")
+                    }
+                }
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    font: Kirigami.Theme.smallFont
+                    text: i18nc("@info %1 a computer's name, %2 a file", "Signing in opens ollama.com in your browser and links this computer's name (%1) and Ollama's key for it (kept by Ollama in %2) to your account there.",
+                                root.st.computer || "", root.st.ollamaKey || "")
+                }
+            }
+            QQC2.Button {
+                visible: kcm.account.state === "signed-out" || kcm.account.state === "unavailable"
+                enabled: !kcm.busy && !!root.engine.on
+                text: i18nc("@action:button", "Sign in…")
+                icon.name: "im-user-online"
+                onClicked: kcm.act(["signin"])
+            }
+            QQC2.Button {
+                visible: kcm.account.state === "signed-out"
+                enabled: !kcm.busy
+                text: i18nc("@action:button", "Check")
+                icon.name: "view-refresh"
+                onClicked: kcm.refreshAccount()
+            }
+            QQC2.Button {
+                visible: kcm.account.state === "signed-in"
+                enabled: !kcm.busy
+                text: i18nc("@action:button", "Sign out")
+                icon.name: "im-user-offline"
+                onClicked: kcm.act(["signout"])
+            }
+        }
         Repeater {
             model: root.interfaces.filter(i => i.runs === "provider")
             delegate: RowLayout {
                 required property var modelData
-                QQC2.Label { Layout.preferredWidth: Kirigami.Units.gridUnit * 14; text: i18nc("@item %1 a provider, %2 its address", "%1 (%2)", modelData.name, modelData.url) }
-                QQC2.Label { visible: !!modelData.wallet; text: i18nc("@info", "The key is kept in KDE Wallet."); font: Kirigami.Theme.smallFont }
+                Layout.fillWidth: true
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    FittedLabel { text: i18nc("@item %1 a provider, %2 its address", "%1 (%2)", modelData.name, modelData.url) }
+                    QQC2.Label { visible: !!modelData.wallet; text: i18nc("@info", "The key is kept in KDE Wallet."); font: Kirigami.Theme.smallFont }
+                }
                 QQC2.Button {
                     text: i18nc("@action:button", "Remove")
                     icon.name: "list-remove"
@@ -309,13 +479,19 @@ KCM.SimpleKCM {
                     wrapMode: Text.Wrap
                     font: Kirigami.Theme.smallFont
                     text: {
+                        const lines = []
                         switch (programRow.modelData.note) {
-                        case "own-services": return i18nc("@info", "It uses the services you sign in to in it; this page cannot choose for it.")
-                        case "own-engines": return i18nc("@info", "It uses its own engines and models on this computer; this page cannot choose for it.")
-                        case "kde-text-addons": return i18nc("@info", "KDE's text add-ons follow this choice when you have set up no instance of your own in them.")
-                        case "seeded": return i18nc("@info", "Its presets take this choice when they are set up; a later change here reaches it when they are set up again.")
+                        case "own-services": lines.push(i18nc("@info", "It uses the services you sign in to in it; this page cannot choose for it.")); break
+                        case "own-engines": lines.push(i18nc("@info", "It uses its own engines and models on this computer; this page cannot choose for it.")); break
+                        case "kde-text-addons":
+                            lines.push(i18nc("@info", "KDE's text add-ons follow this choice when you have set up no instance of your own in them."))
+                            // what they can follow, said where it matters: their llama.cpp add-on is unfinished, and they know no provider's own address
+                            if ((programRow.modelData.choices || []).some(c => c.protocol === "openai-compatible"))
+                                lines.push(i18nc("@info", "They can follow only Ollama for now: their llama.cpp add-on is not finished in version 2.1.2, and they cannot reach a provider's own address."))
+                            break
+                        case "seeded": lines.push(i18nc("@info", "Its presets take this choice when they are set up; a later change here reaches it when they are set up again.")); break
                         }
-                        return ""
+                        return lines.join("\n")
                     }
                 }
                 Repeater {
@@ -337,12 +513,10 @@ KCM.SimpleKCM {
                             checked: choiceRow.own
                             onToggled: if (checked) ownCombo.activated(ownCombo.currentIndex)
                         }
-                        QQC2.ComboBox {
+                        FittedComboBox {
                             id: ownCombo
                             enabled: ownChoice.checked
-                            Layout.preferredWidth: Kirigami.Units.gridUnit * 14
                             model: root.interfaceOptions(choiceRow.modelData.kind).filter(o => o.value !== "none")
-                            textRole: "text"; valueRole: "value"
                             currentIndex: Math.max(0, model.findIndex(o => o.value === choiceRow.modelData.interface))
                             onActivated: kcm.choose(choiceRow.pkey, ["program", programRow.modelData.id, choiceRow.modelData.kind, "own", "--interface", currentValue], currentValue)
                         }
@@ -365,11 +539,11 @@ KCM.SimpleKCM {
         id: planDialog
         property var packages: []
         property double total: 0
-        title: i18nc("@title:window %1 a program", "Install %1", i18nc("@item the local engine", "Ollama"))
+        title: i18nc("@title:window %1 a program", "Install %1", root.engineName(root.planEngine))
         subtitle: packages.map(p => i18nc("@item %1 a package, %2 its size", "%1 (%2)", p.name, kcm.humanSize(p.size))).join("\n") + "\n"
                 + i18nc("@info %1 a size", "Downloads %1 in all.", kcm.humanSize(total))
         standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        onAccepted: kcm.act(["install"])
+        onAccepted: kcm.act(root.planEngine === "llamacpp" ? ["install", "--engine", "llamacpp"] : ["install"])
     }
 
     Kirigami.PromptDialog {
