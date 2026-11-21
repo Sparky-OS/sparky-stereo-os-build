@@ -17,6 +17,9 @@ manifest = json.dumps({'schemaVersion': 2, 'mediaType': 'application/vnd.docker.
                        'config': {'mediaType': 'application/vnd.docker.container.image.v1+json', 'digest': 'sha256:' + hashlib.sha256(config).hexdigest(), 'size': len(config)},
                        'layers': [{'mediaType': kind, 'digest': 'sha256:' + hashlib.sha256(data).hexdigest(), 'size': len(data)} for kind, data in layers.items()]}).encode()
 SIZE = len(config) + sum(len(d) for d in layers.values())
+# for pictures of the page: the three Qwen 3.5 models' manifests with the sizes Ollama's registry gave on 2026-11-21 (one layer
+# each of that size, the whole model); their blobs are not here, so nothing of them can be downloaded
+QWEN = {'4b': 3324173757, '2b': 2683396637, '0.8b': 1322069043}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -27,8 +30,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         parts = self.path.split('/')
         if len(parts) == 6 and parts[1] == 'v2' and parts[4] == 'manifests' and parts[3] == 'standin' and parts[5] == 'tiny':
             data, kind = manifest, 'application/vnd.docker.distribution.manifest.v2+json'
+        elif len(parts) == 6 and parts[1] == 'v2' and parts[4] == 'manifests' and parts[3] == 'qwen3.5' and parts[5] in QWEN:
+            data = json.dumps({'schemaVersion': 2, 'mediaType': 'application/vnd.docker.distribution.manifest.v2+json',
+                               'config': {'mediaType': 'application/vnd.docker.container.image.v1+json', 'digest': 'sha256:' + '0' * 64, 'size': 0},
+                               'layers': [{'mediaType': 'application/vnd.ollama.image.model', 'digest': 'sha256:' + '1' * 64, 'size': QWEN[parts[5]]}]}).encode()
+            kind = 'application/vnd.docker.distribution.manifest.v2+json'
         elif len(parts) == 6 and parts[1] == 'v2' and parts[4] == 'blobs' and parts[5].startswith('sha256:') and parts[5][7:] in blobs:
+            if body:
+                # as Ollama's registry does, a blob is a redirect to where its bytes are (the engine asks for the Location)
+                self.send_response(307)
+                # to another origin (127.0.0.2 for 127.0.0.1, both this computer), as the real registry sends a blob to its CDN: the engine follows
+                # a redirect inside the registry's own origin, and takes the Location of one that leaves it (download.go)
+                self.send_header('Location', 'http://127.0.0.2:%d/direct/%s' % (self.server.server_address[1], parts[5][7:]))
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
             data, kind = blobs[parts[5][7:]], 'application/octet-stream'
+        elif len(parts) == 3 and parts[1] == 'direct' and parts[2] in blobs:
+            data, kind = blobs[parts[2]], 'application/octet-stream'
         else:
             self.send_error(404, 'not in the stand-in registry')
             return
@@ -43,6 +62,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sys.stderr.write('standin-registry: %s\n' % (args[0] % args[1:]))
 
 
-server = http.server.ThreadingHTTPServer(('127.0.0.1', int(sys.argv[1])), Handler)
+server = http.server.ThreadingHTTPServer(('', int(sys.argv[1])), Handler)
 print('ready', SIZE, flush=True)
 server.serve_forever()
