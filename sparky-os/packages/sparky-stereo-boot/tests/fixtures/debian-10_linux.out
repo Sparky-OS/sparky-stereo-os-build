@@ -12,6 +12,7 @@ submenu 'Advanced options for Sparky GNU/Linux' $menuentry_id_option 'gnulinux-a
 		initrd	/boot/initrd.img-7.3.1-stereo3d16
 	}
 	menuentry 'Sparky GNU/Linux, with Linux 7.3.0-stereo3d13 (recovery mode)' --class sparky --class gnu-linux --class gnu --class os $menuentry_id_option 'gnulinux-7.3.0-stereo3d13-recovery-1111' {
+		load_video
 		linux	/boot/vmlinuz-7.3.0-stereo3d13 root=UUID=1111 ro single  ${sparky_stereo_check}
 		initrd	/boot/initrd.img-7.3.0-stereo3d13
 	}

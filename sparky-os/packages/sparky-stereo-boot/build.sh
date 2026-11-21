@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.12+lc1
+VERSION=0.1.13+lc1
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
@@ -77,13 +77,11 @@ install -D -m 644 "$HERE/lib/problems.py" "$D/usr/lib/sparky-stereo-boot/problem
 install -D -m 755 "$HERE/grub/35_sparky_stereo_secureboot" "$D/etc/grub.d/35_sparky_stereo_secureboot"
 # the menu is never drawn without a loaded font (0.1.10, ORDER 572): right after Debian's 00_header
 install -D -m 755 "$HERE/grub/01_sparky_stereo_menu" "$D/etc/grub.d/01_sparky_stereo_menu"
-# after a start that did not finish (0.1.11, ORDER 572b): Debian's 10_linux is diverted (preinst) and its name is a link
-# to the program that runs it and writes GRUB's recordfail call into each Linux entry; the menu's last entry says why
-# the menu is shown
-install -D -m 755 "$HERE/grub/10_linux" "$D/usr/lib/sparky-stereo-boot/10_linux"
+# after a start that did not finish (0.1.11, ORDER 572b): each Linux entry records its start through the load_video
+# call Debian's 10_linux writes into it (01_sparky_stereo_menu, 0.1.13), so grub2-common's 10_linux is no longer
+# diverted (rows 629/802: Debian Policy, appendix 7, "Do not attempt to divert a conffile"); the menu's last entry
+# says why the menu is shown
 install -D -m 755 "$HERE/lib/login-check" "$D/usr/lib/sparky-stereo-boot/login-check"
-ln -s /usr/lib/sparky-stereo-boot/10_linux "$D/etc/grub.d/10_linux"
-mkdir -p "$D/etc/sparky-stereo-boot"
 install -D -m 755 "$HERE/grub/90_sparky_stereo_start" "$D/etc/grub.d/90_sparky_stereo_start"
 install -D -m 755 "$HERE/kernel/zz-sparky-stereo-secureboot" "$D/etc/kernel/postinst.d/zz-sparky-stereo-secureboot"
 # two kernels per flavour (0.1.4): the kernel hook records an install, the service waits for apt and dpkg and purges
@@ -114,12 +112,15 @@ cat > "$D/DEBIAN/preinst" <<'SCRIPT'
 # initramfs-tools' update-initramfs.conf moves aside for the edition's (update_initramfs=all)
 set -e
 if [ "$1" = install ] || [ "$1" = upgrade ]; then
-	dpkg-divert --package sparky-stereo-boot --add --rename \
-		--divert /etc/initramfs-tools/update-initramfs.conf.debian /etc/initramfs-tools/update-initramfs.conf >/dev/null
-	# Debian's /etc/grub.d/10_linux moves aside for the program that adds GRUB's recordfail call to its entries (0.1.11)
-	mkdir -p /etc/sparky-stereo-boot
-	dpkg-divert --package sparky-stereo-boot --add --rename \
-		--divert /etc/sparky-stereo-boot/10_linux.debian /etc/grub.d/10_linux >/dev/null
+	f=/etc/initramfs-tools/update-initramfs.conf
+	before=$(dpkg-divert --listpackage "$f")
+	dpkg-divert --package sparky-stereo-boot --add --rename --divert "$f.debian" "$f" >/dev/null
+	# initramfs-tools unpacked earlier in this dpkg run keeps its conffile as $f.dpkg-new until it is configured; our
+	# link at $f is unpacked through that same name and would replace it, so initramfs-tools' conffile would never be
+	# installed (rows 629/802: dpkg recorded it "newconffile"). It goes where dpkg now installs initramfs-tools' copy.
+	if [ -z "$before" ] && [ -e "$f.dpkg-new" ] && [ ! -e "$f.debian.dpkg-new" ]; then
+		mv "$f.dpkg-new" "$f.debian.dpkg-new"
+	fi
 fi
 exit 0
 SCRIPT
@@ -182,8 +183,21 @@ if [ "$1" = configure ]; then
 			echo "sparky-stereo-boot: os-prober failed (exit $?); whether another system is on this computer was not checked" >&2
 		fi
 	fi
-	# 0.1.11 (ORDER 572b): the Linux entries record each start and the menu shows by itself after one that did not finish
-	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.11; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	# 0.1.13 (rows 629/802): grub2-common's 10_linux, diverted by 0.1.11 and 0.1.12, goes back to its name with whatever
+	# the person changed in it. Here and not in the preinst: a preinst removal would make dpkg delete grub2-common's file
+	# as the link our older version shipped at that name (measured). dpkg removed that link at this unpack, so until
+	# here the name was empty; the update-grub below writes the menu again from grub2-common's own file.
+	if [ "$(dpkg-divert --listpackage /etc/grub.d/10_linux)" = sparky-stereo-boot ]; then
+		if [ "$(readlink /etc/grub.d/10_linux)" = /usr/lib/sparky-stereo-boot/10_linux ]; then
+			rm -f /etc/grub.d/10_linux
+		fi
+		dpkg-divert --package sparky-stereo-boot --remove --rename \
+			--divert /etc/sparky-stereo-boot/10_linux.debian /etc/grub.d/10_linux >/dev/null
+		rmdir /etc/sparky-stereo-boot 2>/dev/null || :
+	fi
+	# 0.1.11 (ORDER 572b): the Linux entries record each start and the menu shows by itself after one that did not
+	# finish; 0.1.13 records it through load_video, so the menu is written again, as the last step
+	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.13; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
 		python3 $P run update-grub LOCAL21 -- update-grub || failed=1
 	fi
 	[ -z "$failed" ] || exit 1
@@ -245,9 +259,16 @@ remove|abort-install|abort-upgrade)
 		fi
 		dpkg-divert --package sparky-stereo-boot --remove --rename \
 			--divert /etc/initramfs-tools/update-initramfs.conf.debian /etc/initramfs-tools/update-initramfs.conf >/dev/null
+		# initramfs-tools unpacked in this same dpkg run waits to be configured with its conffile at the diverted name:
+		# it goes back to the name dpkg will now look for (the preinst's move, undone; rows 629/802)
+		f=/etc/initramfs-tools/update-initramfs.conf
+		if [ -e "$f.debian.dpkg-new" ] && [ ! -e "$f.dpkg-new" ]; then
+			mv "$f.debian.dpkg-new" "$f.dpkg-new"
+		fi
 	fi
-	# Debian's /etc/grub.d/10_linux comes back (0.1.11)
-	if [ "$1" = remove ] || [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.11; then
+	# Debian's /etc/grub.d/10_linux comes back, when 0.1.11 or 0.1.12 diverted it and 0.1.13's postinst never ran; only
+	# at a removal: 0.1.13 adds no diversion, and on abort-upgrade the older version keeps its own
+	if [ "$1" = remove ] && [ "$(dpkg-divert --listpackage /etc/grub.d/10_linux)" = sparky-stereo-boot ]; then
 		if [ "$(readlink /etc/grub.d/10_linux)" = /usr/lib/sparky-stereo-boot/10_linux ]; then
 			rm -f /etc/grub.d/10_linux
 		fi
