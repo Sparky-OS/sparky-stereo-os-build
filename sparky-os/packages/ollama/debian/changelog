@@ -1,3 +1,15 @@
+ollama (0.40.16+ds-3) unstable; urgency=medium
+
+  * The source package is made the same every time from the same recipe:
+    every file of debian/, the Lean toolkit prepare-lean.py copies in
+    included, gets the recipe's date and modes before dpkg-source packs it
+    (reproducible.py normalize-tree). The debian tarball of +ds-2 carried
+    the toolkit's checkout times and the build's umask, so the exact rebuild
+    of +ds-2 gave the same five archives byte for byte but another source
+    package; +ds-2 is superseded by this version. No change in the programs.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 13:55:45 +0000
+
 ollama (0.40.16+ds-2) unstable; urgency=medium
 
   * The service starts the engine on the card chosen for partners, and only
