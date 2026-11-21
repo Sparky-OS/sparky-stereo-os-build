@@ -458,7 +458,20 @@ def provider_add(provider, name, url, secret):
         if not tool:
             print(PACKAGE + ': ' + tr('@info', 'KDE Wallet is not installed (kwallet-query), so the key cannot be kept. Nothing was saved.'), file=sys.stderr)
             return 3
-        out = subprocess.run([tool, '-w', 'provider-' + provider, '-f', PACKAGE, wallet_name()], input=secret, capture_output=True, text=True)
+        wallet = wallet_name()
+        probe = subprocess.run([tool, '-l', '-f', PACKAGE, wallet], capture_output=True, text=True, timeout=60)
+        if 'not found' in probe.stdout + probe.stderr:
+            # no wallet yet (a new account): KDE Wallet makes it through its own dialog, where the person sets its password
+            gdbus = shutil.which('gdbus')
+            opened = subprocess.run([gdbus or 'gdbus', 'call', '--session', '--dest', 'org.kde.kwalletd6', '--object-path', '/modules/kwalletd6',
+                                     '--method', 'org.kde.KWallet.open', wallet, '0', PACKAGE], capture_output=True, text=True, timeout=600) \
+                if gdbus else None
+            handle = re.match(r'\((-?\d+),\)', opened.stdout.strip()) if opened else None
+            if not handle or int(handle.group(1)) < 0:
+                why = (opened.stderr.strip() if opened else 'gdbus is not installed') or tr('@info', 'the wallet was not made')
+                keep('wallet', '@info', 'The key of %1 could not be kept in KDE Wallet: %2', [name, why])
+                return 3
+        out = subprocess.run([tool, '-w', 'provider-' + provider, '-f', PACKAGE, wallet], input=secret, capture_output=True, text=True)
         if out.returncode:
             keep('wallet', '@info', 'The key of %1 could not be kept in KDE Wallet: %2', [name, out.stderr.strip() or out.stdout.strip()])
             return 3
