@@ -1,0 +1,26 @@
+Source: stereo-matplotlib
+Section: python
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), dh-sequence-python3, pybuild-plugin-pyproject, python3-all, python3-setuptools, gettext,
+ python3-matplotlib <!nocheck>, python3-numpy <!nocheck>, python3-pil <!nocheck>, libstereo-policy1 <!nocheck>
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: python3-stereo-matplotlib
+Architecture: all
+Depends: ${python3:Depends}, ${misc:Depends}, python3-matplotlib (>= 3.10), python3-numpy, python3-pil,
+ python3-stereo-declare (>= 1.11.0), libstereo-declare1 (>= 1.11.0), libstereo-policy1, libx11-6
+Recommends: python3-tk, ffmpeg
+Suggests: python3-pyqt6
+Description: Matplotlib's 3D plots in stereo
+ A module for Matplotlib (stereo_matplotlib) that shows a figure's 3D axes
+ to each eye from its own camera: two parallel cameras whose offset is fitted
+ so that every point of the figure stays inside the depth the person set for
+ the desktop. An interactive figure in a Tk or Qt window on X11 shows its 3D
+ area as a pair on Sparky Stereo OS's desktop, with Enable 3D and the 3D
+ display settings in its toolbar; stills are written as PNG with the stereo
+ mark (sTER, .pns) or JPEG with the JPS block, animations as marked
+ side-by-side frames or video.
