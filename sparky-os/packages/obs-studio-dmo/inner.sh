@@ -24,7 +24,12 @@ version = sys.argv[1]
 control = open('debian/control').read()
 old = [l for l in control.split('\n') if l.startswith('Maintainer:')][0]
 control = control.replace(old, 'Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nOriginal-' + old, 1)
-control = control.replace('Homepage: https://obsproject.com', 'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues', 1)
+import re
+control = control.replace('Homepage: https://obsproject.com', 'Homepage: https://sparkylinux.org', 1)
+if re.search(r'(?m)^Bugs:', control):
+    control = re.sub(r'(?m)^Bugs:.*$', 'Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues', control, count=1)
+else:
+    control = control.replace('Homepage: https://sparkylinux.org', 'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues', 1)
 open('debian/control', 'w').write(control)
 entry = f"""obs-studio-dmo ({version}) unstable; urgency=medium
 
