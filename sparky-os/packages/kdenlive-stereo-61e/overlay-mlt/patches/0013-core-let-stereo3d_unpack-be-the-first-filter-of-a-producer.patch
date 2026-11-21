@@ -1,0 +1,318 @@
+Description: core: let stereo3d_unpack be the first filter of a producer
+ An editor that takes the views of each 3D clip out side by side, so a project of
+ clips with different packings has full side by side frames, needs the filter in
+ the clip's producer, not on the consumer. There the producer's rescaling and
+ padding filters (swscale, resize) decide the picture's size and shape from the
+ frame's width, height, meta.media.width, meta.media.height and aspect_ratio when
+ the frame is made, and ask the producer for a picture of the profile's size, so
+ the filter got a packed frame already padded to the profile (a half top and
+ bottom 1920x1080 frame in a 3840x1080 profile gave 7680x540, the views pillarboxed).
+ .
+ With in_producer=1, as the first of the producer's filters, the filter tells the
+ others in filter_process the size of both views side by side and their shape,
+ asks the producer for its own size, and checks it got it. target_views=half is for
+ a profile whose frames carry half views squeezed to half their width (1920x1080
+ side by side): the shape given is halved, so a pair fills such a frame as the
+ profile's own views do; full, or nothing, for whole views. Frame sequences are
+ passed on as they are in this place. Without in_producer nothing changes.
+ .
+ Measured on colour fixtures (left view red, right view blue, a white square),
+ profile 3840x1080 and 1920x1080: side by side full and half, top and bottom full
+ and half, right eye first; the square comes out square at the full profile and
+ half as wide at the half profile, left view on the left.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-20
+
+--- a/src/modules/core/filter_stereo3d_unpack.c
++++ b/src/modules/core/filter_stereo3d_unpack.c
+@@ -23,6 +23,7 @@
+ #include <framework/mlt_log.h>
+ #include <framework/mlt_pool.h>
+ #include <framework/mlt_producer.h>
++#include <framework/mlt_profile.h>
+ 
+ #ifdef HAVE_STEREO_POLICY
+ #include <stereo-policy.h>
+@@ -178,6 +179,89 @@ static void scale_view(const uint8_t *sr
+     }
+ }
+ 
++// One axis of a resampling: for each output position, the weights of the input samples it takes. Shrinking, each output
++// sample is the average of the input it covers (area integration); growing, it is the linear interpolation of its two neighbours.
++typedef struct
++{
++    int first;
++    int count;
++    float *weights;
++} taps_t;
++
++static taps_t *axis_taps(int in, int out)
++{
++    taps_t *taps = calloc((size_t) out, sizeof(taps_t));
++    const double scale = (double) in / out;
++    for (int o = 0; o < out; o++) {
++        taps_t *t = &taps[o];
++        if (scale > 1.0) {
++            const double start = o * scale, end = start + scale;
++            t->first = (int) start;
++            int last = (int) end;
++            if (last >= in)
++                last = in - 1;
++            t->count = last - t->first + 1;
++            t->weights = calloc((size_t) t->count, sizeof(float));
++            for (int i = 0; i < t->count; i++) {
++                const double a = t->first + i > start ? t->first + i : start;
++                const double b = t->first + i + 1 < end ? t->first + i + 1 : end;
++                t->weights[i] = (float) ((b > a ? b - a : 0) / scale);
++            }
++        } else {
++            double centre = (o + 0.5) * scale - 0.5;
++            if (centre < 0)
++                centre = 0;
++            t->first = (int) centre;
++            const double w = centre - t->first;
++            t->count = t->first + 1 < in ? 2 : 1;
++            t->weights = calloc(2, sizeof(float));
++            t->weights[0] = (float) (t->count == 2 ? 1 - w : 1);
++            t->weights[1] = (float) w;
++        }
++    }
++    return taps;
++}
++
++static void free_taps(taps_t *taps, int out)
++{
++    for (int o = 0; o < out; o++)
++        free(taps[o].weights);
++    free(taps);
++}
++
++// The samples of a view resampled to the size it takes in a frame of a producer's profile (RGBA, 8 bits)
++static void resample_view(const uint8_t *src, int sw, int sh, uint8_t *dst, int dst_stride, int dw, int dh)
++{
++    taps_t *xt = axis_taps(sw, dw);
++    taps_t *yt = axis_taps(sh, dh);
++    float *rows = calloc((size_t) sh * dw * 4, sizeof(float));
++    for (int y = 0; y < sh; y++) {
++        const uint8_t *in = src + (size_t) y * sw * 4;
++        float *out = rows + (size_t) y * dw * 4;
++        for (int x = 0; x < dw; x++) {
++            const taps_t *t = &xt[x];
++            for (int i = 0; i < t->count; i++) {
++                const uint8_t *p = in + (size_t) (t->first + i) * 4;
++                for (int c = 0; c < 4; c++)
++                    out[x * 4 + c] += t->weights[i] * p[c];
++            }
++        }
++    }
++    for (int y = 0; y < dh; y++) {
++        const taps_t *t = &yt[y];
++        uint8_t *out = dst + (size_t) y * dst_stride;
++        for (int x = 0; x < dw * 4; x++) {
++            float v = 0;
++            for (int i = 0; i < t->count; i++)
++                v += t->weights[i] * rows[(size_t) (t->first + i) * dw * 4 + x];
++            out[x] = v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t) (v + 0.5f);
++        }
++    }
++    free(rows);
++    free_taps(xt, dw);
++    free_taps(yt, dh);
++}
++
+ static void set_view(view_t *view, const uint8_t *data, int width, int height)
+ {
+     if (view->width != width || view->height != height) {
+@@ -203,8 +287,31 @@ static int filter_get_image(mlt_frame fr
+     // The full colour picture: asking for it here makes the producer convert from what it decoded straight to RGBA,
+     // so that views that are interleaved at the pixel are not mixed by a conversion to a subsampled format
+     *format = mlt_image_rgba;
++    // As the first filter of a producer the filter asks the producer for its own picture, never for one the size of what
++    // the filter gives, which filter_process told the producer's other filters
++    mlt_properties frame_props = MLT_FRAME_PROPERTIES(frame);
++    const int in_producer = mlt_properties_get_int(frame_props, "stereo3d_unpack.in_producer");
++    int distort = 0;
++    if (in_producer) {
++        *width = mlt_properties_get_int(frame_props, "stereo3d_unpack.width");
++        *height = mlt_properties_get_int(frame_props, "stereo3d_unpack.height");
++        // In a chain the producer's rescaling and padding are links, before every filter: they are asked for the producer's
++        // own picture, as it is (distort), for the filter fits each view itself
++        distort = mlt_properties_get_int(frame_props, "distort");
++        mlt_properties_set_int(frame_props, "distort", 1);
++    }
+     int error = mlt_frame_get_image(frame, image, format, width, height, 0);
++    if (in_producer)
++        mlt_properties_set_int(frame_props, "distort", distort);
+     packing_t packing = packing_from_name(mlt_properties_get(properties, "packing"));
++    if (in_producer && (*width != mlt_properties_get_int(frame_props, "stereo3d_unpack.width")
++                        || *height != mlt_properties_get_int(frame_props, "stereo3d_unpack.height"))) {
++        // The producer gave another size than the one the other filters were told about: nothing is changed, and that is said
++        mlt_log_error(MLT_FILTER_SERVICE(filter), "the producer gave %dx%d, not %dx%d: the views are not taken out\n", *width,
++                      *height, mlt_properties_get_int(frame_props, "stereo3d_unpack.width"),
++                      mlt_properties_get_int(frame_props, "stereo3d_unpack.height"));
++        packing = packing_none;
++    }
+     if (error || !*image || *format != mlt_image_rgba || packing == packing_none)
+         return error;
+ 
+@@ -303,8 +410,10 @@ static int filter_get_image(mlt_frame fr
+         if (keep) {
+             eye_width = stored_width;
+             eye_height = stored_height;
+-            mlt_frame_set_aspect_ratio(frame,
+-                                       mlt_frame_get_aspect_ratio(frame) * vw / stored_width * stored_height / vh);
++            // In a producer's chain filter_process already gave the frame the shape of what the filter makes
++            if (!in_producer)
++                mlt_frame_set_aspect_ratio(frame,
++                                           mlt_frame_get_aspect_ratio(frame) * vw / stored_width * stored_height / vh);
+         }
+         uint8_t *stored = mlt_pool_alloc((size_t) stored_width * stored_height * 4);
+         for (int slot = 0; slot < 2; slot++) {
+@@ -320,6 +429,33 @@ static int filter_get_image(mlt_frame fr
+         mlt_pool_release(stored);
+     }
+ 
++    if (in_producer && sbs) {
++        // As the first filter of a producer: each view fitted, keeping its shape, to its half of a frame of the profile's size,
++        // as filter_process told the other filters
++        const int fw = mlt_properties_get_int(frame_props, "stereo3d_unpack.out_width");
++        const int fh = mlt_properties_get_int(frame_props, "stereo3d_unpack.out_height");
++        const int pw = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_width");
++        const int ph = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_height");
++        uint8_t *frame_out = mlt_pool_alloc((size_t) fw * fh * 4);
++        for (size_t i = 0; i < (size_t) fw * fh; i++) {
++            frame_out[i * 4] = frame_out[i * 4 + 1] = frame_out[i * 4 + 2] = 0;
++            frame_out[i * 4 + 3] = 255;
++        }
++        const int x0 = (fw / 2 - pw) / 2;
++        const int y0 = (fh - ph) / 2;
++        for (int e = 0; e < 2; e++)
++            resample_view(eyes[e], eye_width, eye_height, frame_out + ((size_t) y0 * fw + e * (fw / 2) + x0) * 4, fw * 4, pw, ph);
++        mlt_pool_release(eyes[0]);
++        mlt_pool_release(eyes[1]);
++        *image = frame_out;
++        *width = fw;
++        *height = fh;
++        mlt_frame_set_image(frame, frame_out, fw * fh * 4, mlt_pool_release);
++        mlt_properties_set_int(frame_props, "width", fw);
++        mlt_properties_set_int(frame_props, "height", fh);
++        return 0;
++    }
++
+     // What was asked for: both views side by side with the left one first (the full side by side), or one of them
+     int out_width = sbs ? eye_width * 2 : eye_width;
+     uint8_t *out = mlt_pool_alloc((size_t) out_width * eye_height * 4);
+@@ -346,8 +482,76 @@ static int filter_get_image(mlt_frame fr
+     return 0;
+ }
+ 
++// As the first filter of a producer (in_producer=1), the filter takes the views out of the producer's own picture and fits each,
++// keeping its shape, to its half of a frame of the profile's size, the left eye in the left half: the one resize an editor makes
++// of any clip to its project, here per eye. When the frame is made it tells the producer's other filters (rescaling, padding)
++// the profile's size and sample aspect ratio, so they have nothing left to do. target_views=half is for a profile whose frames
++// carry half views, squeezed to half their width (a 1920x1080 side by side profile): each half is shown twice as wide, so a view
++// is fitted to that shape. With output left or right it gives that view at the size of a view and says so. Frame sequences are
++// passed on as they are here.
++static void announce(mlt_filter filter, mlt_frame frame)
++{
++    mlt_properties properties = MLT_FILTER_PROPERTIES(filter);
++    mlt_properties frame_props = MLT_FRAME_PROPERTIES(frame);
++    mlt_profile profile = mlt_service_profile(MLT_FILTER_SERVICE(filter));
++    const packing_t packing = packing_from_name(mlt_properties_get(properties, "packing"));
++    const char *output = mlt_properties_get(properties, "output");
++    const int width = mlt_properties_get_int(frame_props, "width");
++    const int height = mlt_properties_get_int(frame_props, "height");
++    if (!profile || packing == packing_none || packing == packing_frame_sequence || !output || width < 2 || height < 2
++        || profile->width < 4 || profile->height < 2)
++        return;
++    int vw, vh;
++    view_size(frame, packing, width, height, &vw, &vh);
++    if (strcmp(output, "side_by_side")) {
++        // One view (left or right): the view restored to the size of a view, its sample aspect ratio the frame's, for the
++        // producer's other filters to scale and pad as any picture (a thumbnail of a 3D clip)
++        mlt_properties_set_int(frame_props, "stereo3d_unpack.in_producer", 1);
++        mlt_properties_set_int(frame_props, "stereo3d_unpack.width", width);
++        mlt_properties_set_int(frame_props, "stereo3d_unpack.height", height);
++        mlt_properties_set_int(frame_props, "width", vw);
++        mlt_properties_set_int(frame_props, "height", vh);
++        mlt_properties_set_int(frame_props, "meta.media.width", vw);
++        mlt_properties_set_int(frame_props, "meta.media.height", vh);
++        return;
++    }
++    double aspect = mlt_frame_get_aspect_ratio(frame);
++    if (aspect <= 0)
++        aspect = 1.0;
++    // the shape of a view, and the shape of the half of the profile's frame it goes into
++    const double view_shape = vw * aspect / vh;
++    const char *target = mlt_properties_get(properties, "target_views");
++    const int fw = profile->width;
++    const int fh = profile->height;
++    const double half_shape = (fw / 2) * mlt_profile_sar(profile) * (target && !strcmp(target, "half") ? 2 : 1) / fh;
++    int pw = fw / 2;
++    int ph = fh;
++    if (view_shape >= half_shape)
++        ph = (int) (fh * half_shape / view_shape + 0.5);
++    else
++        pw = (int) ((fw / 2) * view_shape / half_shape + 0.5);
++    if (pw < 1)
++        pw = 1;
++    if (ph < 1)
++        ph = 1;
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.in_producer", 1);
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.width", width);
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.height", height);
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.out_width", fw);
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.out_height", fh);
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.picture_width", pw);
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.picture_height", ph);
++    mlt_properties_set_int(frame_props, "width", fw);
++    mlt_properties_set_int(frame_props, "height", fh);
++    mlt_properties_set_int(frame_props, "meta.media.width", fw);
++    mlt_properties_set_int(frame_props, "meta.media.height", fh);
++    mlt_frame_set_aspect_ratio(frame, mlt_profile_sar(profile));
++}
++
+ static mlt_frame filter_process(mlt_filter filter, mlt_frame frame)
+ {
++    if (mlt_properties_get_int(MLT_FILTER_PROPERTIES(filter), "in_producer"))
++        announce(filter, frame);
+     mlt_frame_push_service(frame, filter);
+     mlt_frame_push_get_image(frame, filter_get_image);
+     return frame;
+--- a/src/modules/core/filter_stereo3d_unpack.yml
++++ b/src/modules/core/filter_stereo3d_unpack.yml
+@@ -15,7 +15,8 @@ description: >
+   side by side with the left one first. It asks for the full colour picture, so views that are interleaved at the pixel
+   are not mixed by a conversion to a subsampled format. A frame sequence is paired from consecutive frames.
+ notes: >
+-  Meant for a consumer's preview, where nothing in the chain scales the picture before it gets here.
++  Meant for a consumer's preview, where nothing in the chain scales the picture before it gets here, or, with
++  in_producer, as the first filter of a producer, before the producer's own rescaling and padding filters.
+ parameters:
+   - identifier: packing
+     argument: yes
+@@ -53,3 +54,23 @@ parameters:
+     description: With resource, the position in the filter's frames of the first frame of the file.
+     default: 0
+     mutable: yes
++  - identifier: in_producer
++    title: First filter of a producer
++    type: boolean
++    description: >
++      The filter is the first of a producer's filters, before its rescaling and padding filters: it takes the views out of
++      the producer's own picture and fits each, keeping its shape, to its half of a frame of the profile's size, the left
++      eye in the left half (the one resize an editor makes of a clip to its project), and tells the other filters that size
++      and the profile's sample aspect ratio when the frame is made. With output left or right it gives that view at the
++      size of a view and says that size, for the producer's own filters to scale and pad as any picture (a thumbnail).
++      Frame sequences are passed on as they are.
++    default: 0
++    mutable: no
++  - identifier: target_views
++    title: Views of the profile
++    type: string
++    description: >
++      With in_producer, half when the profile's frames carry half views, squeezed to half their width (a 1920x1080 side by
++      side profile), so each view is fitted to a half shown twice as wide; full, or nothing, for a profile whose views are
++      whole pictures (3840x1080 for two 1920x1080 views).
++    mutable: no

@@ -1,0 +1,344 @@
+Description: core: stereo3d_unpack keeps a deep source's bits
+ The filter asked every producer for RGBA, 8 bits a sample, so a 10 bit clip taken
+ apart in a producer (in_producer, a 3D clip in a Kdenlive project) lost its depth
+ before the encoder, whatever the encoder asked for. When what asks for the frame
+ wants more than 8 bits a sample (yuv420p10, yuv444p10, yuv422p16, rgba64), the
+ filter now asks for RGBA64, copies, scales and fits the views at 16 bits a sample
+ (the fitting sums in double, so a full alpha stays full), and hands back the
+ format that was asked for. An opaque picture then carries no alpha mask: with
+ the mask the conversion leaves, Kdenlive's track compositing (qtblend) took the
+ picture as one with transparency and drew it black under Kdenlive's headless
+ render (QT_QPA_PLATFORM=offscreen). An 8 bit request is served in RGBA as before;
+ a frame sequence is still paired in RGBA.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+
+--- a/src/modules/core/filter_stereo3d_unpack.c
++++ b/src/modules/core/filter_stereo3d_unpack.c
+@@ -20,6 +20,7 @@
+ #include <framework/mlt_factory.h>
+ #include <framework/mlt_filter.h>
+ #include <framework/mlt_frame.h>
++#include <framework/mlt_image.h>
+ #include <framework/mlt_log.h>
+ #include <framework/mlt_pool.h>
+ #include <framework/mlt_producer.h>
+@@ -126,30 +127,37 @@ static void view_size(mlt_frame frame, p
+ 
+ // The samples one view has in the frame, slot 0 being the first view of the packing and 1 the second. The first view
+ // is at the left, on top, in the first row, in the first column, or at the top left pixel.
+-static void stored_view(
+-    const uint8_t *src, int width, int height, packing_t packing, int slot, uint8_t *dst, int stored_width, int stored_height)
++static void stored_view(const uint8_t *src,
++                        int width,
++                        int height,
++                        packing_t packing,
++                        int slot,
++                        uint8_t *dst,
++                        int stored_width,
++                        int stored_height,
++                        int bpp)
+ {
+-    const int stride = width * 4;
++    const int stride = width * bpp;
+     for (int y = 0; y < stored_height; y++) {
+-        uint8_t *out = dst + (size_t) y * stored_width * 4;
++        uint8_t *out = dst + (size_t) y * stored_width * bpp;
+         switch (packing) {
+         case packing_side_by_side:
+         case packing_side_by_side_quincunx:
+-            memcpy(out, src + (size_t) y * stride + (size_t) slot * stored_width * 4, (size_t) stored_width * 4);
++            memcpy(out, src + (size_t) y * stride + (size_t) slot * stored_width * bpp, (size_t) stored_width * bpp);
+             break;
+         case packing_top_and_bottom:
+-            memcpy(out, src + (size_t) (y + slot * stored_height) * stride, (size_t) stored_width * 4);
++            memcpy(out, src + (size_t) (y + slot * stored_height) * stride, (size_t) stored_width * bpp);
+             break;
+         case packing_lines:
+-            memcpy(out, src + (size_t) (2 * y + slot) * stride, (size_t) stored_width * 4);
++            memcpy(out, src + (size_t) (2 * y + slot) * stride, (size_t) stored_width * bpp);
+             break;
+         case packing_columns:
+             for (int x = 0; x < stored_width; x++)
+-                memcpy(out + (size_t) x * 4, src + (size_t) y * stride + (size_t) (2 * x + slot) * 4, 4);
++                memcpy(out + (size_t) x * bpp, src + (size_t) y * stride + (size_t) (2 * x + slot) * bpp, bpp);
+             break;
+         case packing_checkerboard:
+             for (int x = 0; x < stored_width; x++)
+-                memcpy(out + (size_t) x * 4, src + (size_t) y * stride + (size_t) (2 * x + ((slot + y) & 1)) * 4, 4);
++                memcpy(out + (size_t) x * bpp, src + (size_t) y * stride + (size_t) (2 * x + ((slot + y) & 1)) * bpp, bpp);
+             break;
+         default:
+             break;
+@@ -157,9 +165,35 @@ static void stored_view(
+     }
+ }
+ 
++// Bilinear scaling of the samples of a view to the size it is shown at, 16 bits a sample (RGBA64)
++static void scale_view16(const uint16_t *src, int sw, int sh, uint16_t *dst, int dw, int dh)
++{
++    for (int y = 0; y < dh; y++) {
++        double fy = dh > 1 && sh > 1 ? (double) y * (sh - 1) / (dh - 1) : 0;
++        int y0 = (int) fy;
++        int y1 = y0 + 1 < sh ? y0 + 1 : y0;
++        double wy = fy - y0;
++        for (int x = 0; x < dw; x++) {
++            double fx = dw > 1 && sw > 1 ? (double) x * (sw - 1) / (dw - 1) : 0;
++            int x0 = (int) fx;
++            int x1 = x0 + 1 < sw ? x0 + 1 : x0;
++            double wx = fx - x0;
++            for (int c = 0; c < 4; c++) {
++                double top = src[((size_t) y0 * sw + x0) * 4 + c] * (1 - wx) + src[((size_t) y0 * sw + x1) * 4 + c] * wx;
++                double bottom = src[((size_t) y1 * sw + x0) * 4 + c] * (1 - wx) + src[((size_t) y1 * sw + x1) * 4 + c] * wx;
++                dst[((size_t) y * dw + x) * 4 + c] = (uint16_t) (top * (1 - wy) + bottom * wy + 0.5);
++            }
++        }
++    }
++}
++
+ // Bilinear scaling of the samples of a view to the size it is shown at
+-static void scale_view(const uint8_t *src, int sw, int sh, uint8_t *dst, int dw, int dh)
++static void scale_view(const uint8_t *src, int sw, int sh, uint8_t *dst, int dw, int dh, int bpp)
+ {
++    if (bpp == 8) {
++        scale_view16((const uint16_t *) src, sw, sh, (uint16_t *) dst, dw, dh);
++        return;
++    }
+     for (int y = 0; y < dh; y++) {
+         double fy = dh > 1 && sh > 1 ? (double) y * (sh - 1) / (dh - 1) : 0;
+         int y0 = (int) fy;
+@@ -229,32 +263,39 @@ static void free_taps(taps_t *taps, int
+     free(taps);
+ }
+ 
+-// The samples of a view resampled to the size it takes in a frame of a producer's profile (RGBA, 8 bits)
+-static void resample_view(const uint8_t *src, int sw, int sh, uint8_t *dst, int dst_stride, int dw, int dh)
++// The samples of a view resampled to the size it takes in a frame of a producer's profile: RGBA, 8 bits a sample (bpp 4),
++// or RGBA64, 16 bits a sample (bpp 8), for a source deeper than 8 bits
++static void resample_view(const uint8_t *src, int sw, int sh, uint8_t *dst, int dst_stride, int dw, int dh, int bpp)
+ {
++    const int deep = bpp == 8;
+     taps_t *xt = axis_taps(sw, dw);
+     taps_t *yt = axis_taps(sh, dh);
+-    float *rows = calloc((size_t) sh * dw * 4, sizeof(float));
++    // double sums: at 16 bits a sample float's error leaves a full alpha at 65534, which reads as a picture with transparency
++    double *rows = calloc((size_t) sh * dw * 4, sizeof(double));
+     for (int y = 0; y < sh; y++) {
+-        const uint8_t *in = src + (size_t) y * sw * 4;
+-        float *out = rows + (size_t) y * dw * 4;
++        double *out = rows + (size_t) y * dw * 4;
+         for (int x = 0; x < dw; x++) {
+             const taps_t *t = &xt[x];
+             for (int i = 0; i < t->count; i++) {
+-                const uint8_t *p = in + (size_t) (t->first + i) * 4;
++                const size_t at = ((size_t) y * sw + (size_t) (t->first + i)) * 4;
+                 for (int c = 0; c < 4; c++)
+-                    out[x * 4 + c] += t->weights[i] * p[c];
++                    out[x * 4 + c] += t->weights[i] * (deep ? ((const uint16_t *) src)[at + c] : src[at + c]);
+             }
+         }
+     }
++    const double top = deep ? 65535.0 : 255.0;
+     for (int y = 0; y < dh; y++) {
+         const taps_t *t = &yt[y];
+         uint8_t *out = dst + (size_t) y * dst_stride;
+         for (int x = 0; x < dw * 4; x++) {
+-            float v = 0;
++            double v = 0;
+             for (int i = 0; i < t->count; i++)
+                 v += t->weights[i] * rows[(size_t) (t->first + i) * dw * 4 + x];
+-            out[x] = v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t) (v + 0.5f);
++            v = v <= 0 ? 0 : v >= top - 0.5 ? top : v + 0.5;
++            if (deep)
++                ((uint16_t *) out)[x] = (uint16_t) v;
++            else
++                out[x] = (uint8_t) v;
+         }
+     }
+     free(rows);
+@@ -273,20 +314,27 @@ static void set_view(view_t *view, const
+     memcpy(view->data, data, (size_t) width * height * 4);
+ }
+ 
+-static int filter_get_image(mlt_frame frame,
+-                            uint8_t **image,
+-                            mlt_image_format *format,
+-                            int *width,
+-                            int *height,
+-                            int writable)
++static int unpack_image(mlt_filter filter,
++                        mlt_frame frame,
++                        uint8_t **image,
++                        mlt_image_format *format,
++                        int *width,
++                        int *height)
+ {
+-    mlt_filter filter = mlt_frame_pop_service(frame);
+     mlt_properties properties = MLT_FILTER_PROPERTIES(filter);
+     private_data *pdata = (private_data *) filter->child;
+ 
+     // The full colour picture: asking for it here makes the producer convert from what it decoded straight to RGBA,
+-    // so that views that are interleaved at the pixel are not mixed by a conversion to a subsampled format
+-    *format = mlt_image_rgba;
++    // so that views that are interleaved at the pixel are not mixed by a conversion to a subsampled format. When what asks for
++    // the frame wants more than 8 bits a sample (a 10 bit encoder), it is RGBA64, 16 bits a sample, so a deeper source keeps its
++    // depth through the views; a frame sequence is paired in RGBA.
++    const mlt_image_format asked = *format;
++    const int deep = (asked == mlt_image_yuv420p10 || asked == mlt_image_yuv444p10 || asked == mlt_image_yuv422p16
++                      || asked == mlt_image_rgba64)
++                     && packing_from_name(mlt_properties_get(properties, "packing")) != packing_frame_sequence;
++    const mlt_image_format working = deep ? mlt_image_rgba64 : mlt_image_rgba;
++    const int bpp = deep ? 8 : 4;
++    *format = working;
+     // As the first filter of a producer the filter asks the producer for its own picture, never for one the size of what
+     // the filter gives, which filter_process told the producer's other filters
+     mlt_properties frame_props = MLT_FRAME_PROPERTIES(frame);
+@@ -312,7 +360,7 @@ static int filter_get_image(mlt_frame fr
+                       mlt_properties_get_int(frame_props, "stereo3d_unpack.height"));
+         packing = packing_none;
+     }
+-    if (error || !*image || *format != mlt_image_rgba || packing == packing_none)
++    if (error || !*image || *format != working || packing == packing_none)
+         return error;
+ 
+     const int invert = mlt_properties_get_int(properties, "invert");
+@@ -393,7 +441,7 @@ static int filter_get_image(mlt_frame fr
+         if (right->width == eye_width && right->height == eye_height)
+             memcpy(eyes[1], right->data, eye_bytes);
+         else
+-            scale_view(right->data, right->width, right->height, eyes[1], eye_width, eye_height);
++            scale_view(right->data, right->width, right->height, eyes[1], eye_width, eye_height, 4);
+         pthread_mutex_unlock(&pdata->mutex);
+     } else {
+         int stored_width = sw;
+@@ -415,16 +463,16 @@ static int filter_get_image(mlt_frame fr
+                 mlt_frame_set_aspect_ratio(frame,
+                                            mlt_frame_get_aspect_ratio(frame) * vw / stored_width * stored_height / vh);
+         }
+-        uint8_t *stored = mlt_pool_alloc((size_t) stored_width * stored_height * 4);
++        uint8_t *stored = mlt_pool_alloc((size_t) stored_width * stored_height * bpp);
+         for (int slot = 0; slot < 2; slot++) {
+-            stored_view(*image, sw, sh, packing, slot, stored, stored_width, stored_height);
++            stored_view(*image, sw, sh, packing, slot, stored, stored_width, stored_height, bpp);
+             // The first view is the left eye's unless the stream says the right eye's comes first
+             uint8_t **eye = &eyes[slot ^ (invert ? 1 : 0)];
+-            *eye = mlt_pool_alloc((size_t) eye_width * eye_height * 4);
++            *eye = mlt_pool_alloc((size_t) eye_width * eye_height * bpp);
+             if (stored_width == eye_width && stored_height == eye_height)
+-                memcpy(*eye, stored, (size_t) eye_width * eye_height * 4);
++                memcpy(*eye, stored, (size_t) eye_width * eye_height * bpp);
+             else
+-                scale_view(stored, stored_width, stored_height, *eye, eye_width, eye_height);
++                scale_view(stored, stored_width, stored_height, *eye, eye_width, eye_height, bpp);
+         }
+         mlt_pool_release(stored);
+     }
+@@ -436,21 +484,25 @@ static int filter_get_image(mlt_frame fr
+         const int fh = mlt_properties_get_int(frame_props, "stereo3d_unpack.out_height");
+         const int pw = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_width");
+         const int ph = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_height");
+-        uint8_t *frame_out = mlt_pool_alloc((size_t) fw * fh * 4);
++        uint8_t *frame_out = mlt_pool_alloc((size_t) fw * fh * bpp);
++        // black, opaque
++        memset(frame_out, 0, (size_t) fw * fh * bpp);
+         for (size_t i = 0; i < (size_t) fw * fh; i++) {
+-            frame_out[i * 4] = frame_out[i * 4 + 1] = frame_out[i * 4 + 2] = 0;
+-            frame_out[i * 4 + 3] = 255;
++            if (deep)
++                ((uint16_t *) frame_out)[i * 4 + 3] = 65535;
++            else
++                frame_out[i * 4 + 3] = 255;
+         }
+         const int x0 = (fw / 2 - pw) / 2;
+         const int y0 = (fh - ph) / 2;
+         for (int e = 0; e < 2; e++)
+-            resample_view(eyes[e], eye_width, eye_height, frame_out + ((size_t) y0 * fw + e * (fw / 2) + x0) * 4, fw * 4, pw, ph);
++            resample_view(eyes[e], eye_width, eye_height, frame_out + ((size_t) y0 * fw + e * (fw / 2) + x0) * bpp, fw * bpp, pw, ph, bpp);
+         mlt_pool_release(eyes[0]);
+         mlt_pool_release(eyes[1]);
+         *image = frame_out;
+         *width = fw;
+         *height = fh;
+-        mlt_frame_set_image(frame, frame_out, fw * fh * 4, mlt_pool_release);
++        mlt_frame_set_image(frame, frame_out, fw * fh * bpp, mlt_pool_release);
+         mlt_properties_set_int(frame_props, "width", fw);
+         mlt_properties_set_int(frame_props, "height", fh);
+         return 0;
+@@ -458,16 +510,16 @@ static int filter_get_image(mlt_frame fr
+ 
+     // What was asked for: both views side by side with the left one first (the full side by side), or one of them
+     int out_width = sbs ? eye_width * 2 : eye_width;
+-    uint8_t *out = mlt_pool_alloc((size_t) out_width * eye_height * 4);
++    uint8_t *out = mlt_pool_alloc((size_t) out_width * eye_height * bpp);
+     if (sbs) {
+         for (int y = 0; y < eye_height; y++) {
+-            memcpy(out + (size_t) y * out_width * 4, eyes[0] + (size_t) y * eye_width * 4, (size_t) eye_width * 4);
+-            memcpy(out + ((size_t) y * out_width + eye_width) * 4,
+-                   eyes[1] + (size_t) y * eye_width * 4,
+-                   (size_t) eye_width * 4);
++            memcpy(out + (size_t) y * out_width * bpp, eyes[0] + (size_t) y * eye_width * bpp, (size_t) eye_width * bpp);
++            memcpy(out + ((size_t) y * out_width + eye_width) * bpp,
++                   eyes[1] + (size_t) y * eye_width * bpp,
++                   (size_t) eye_width * bpp);
+         }
+     } else {
+-        memcpy(out, eyes[want_right ? 1 : 0], (size_t) eye_width * eye_height * 4);
++        memcpy(out, eyes[want_right ? 1 : 0], (size_t) eye_width * eye_height * bpp);
+     }
+     mlt_pool_release(eyes[0]);
+     mlt_pool_release(eyes[1]);
+@@ -475,7 +527,7 @@ static int filter_get_image(mlt_frame fr
+     *image = out;
+     *width = out_width;
+     *height = eye_height;
+-    mlt_frame_set_image(frame, out, out_width * eye_height * 4, mlt_pool_release);
++    mlt_frame_set_image(frame, out, out_width * eye_height * bpp, mlt_pool_release);
+     mlt_properties frame_properties = MLT_FRAME_PROPERTIES(frame);
+     mlt_properties_set_int(frame_properties, "width", out_width);
+     mlt_properties_set_int(frame_properties, "height", eye_height);
+@@ -548,6 +600,32 @@ static void announce(mlt_filter filter,
+     mlt_frame_set_aspect_ratio(frame, mlt_profile_sar(profile));
+ }
+ 
++static int filter_get_image(mlt_frame frame,
++                            uint8_t **image,
++                            mlt_image_format *format,
++                            int *width,
++                            int *height,
++                            int writable)
++{
++    (void) writable;
++    mlt_filter filter = mlt_frame_pop_service(frame);
++    const mlt_image_format asked = *format;
++    int error = unpack_image(filter, frame, image, format, width, height);
++    // A deep request gets the format it asked for (yuv420p10, yuv444p10, yuv422p16) from the views worked in RGBA64, so what
++    // follows (a transition such as qtblend) is handed the picture as a decoder would hand it. An opaque picture carries no alpha
++    // mask after the conversion: with one, qtblend composites it as a picture with transparency, through 8 bits.
++    if (!error && *format == mlt_image_rgba64 && asked != mlt_image_rgba64
++        && (asked == mlt_image_yuv420p10 || asked == mlt_image_yuv444p10 || asked == mlt_image_yuv422p16) && frame->convert_image) {
++        struct mlt_image_s img;
++        mlt_image_set_values(&img, *image, *format, *width, *height);
++        const int opaque = mlt_image_is_opaque(&img);
++        error = frame->convert_image(frame, image, format, asked);
++        if (!error && opaque)
++            mlt_frame_set_alpha(frame, NULL, 0, NULL);
++    }
++    return error;
++}
++
+ static mlt_frame filter_process(mlt_filter filter, mlt_frame frame)
+ {
+     if (mlt_properties_get_int(MLT_FILTER_PROPERTIES(filter), "in_producer"))
+--- a/src/modules/core/filter_stereo3d_unpack.yml
++++ b/src/modules/core/filter_stereo3d_unpack.yml
+@@ -13,7 +13,8 @@ description: >
+   Takes the views out of a stereoscopic 3D video, whatever the packing of its frames (the frame packing arrangement
+   types of H.264 Table D-8 and H.265 Table D.8, Matroska's StereoMode), and gives the left view, the right view or both
+   side by side with the left one first. It asks for the full colour picture, so views that are interleaved at the pixel
+-  are not mixed by a conversion to a subsampled format. A frame sequence is paired from consecutive frames.
++  are not mixed by a conversion to a subsampled format: RGBA, or RGBA64 (16 bits a sample) when what asks for the frame
++  wants more than 8 bits a sample, so a 10 bit source keeps its depth. A frame sequence is paired from consecutive frames.
+ notes: >
+   Meant for a consumer's preview, where nothing in the chain scales the picture before it gets here, or, with
+   in_producer, as the first filter of a producer, before the producer's own rescaling and padding filters.

@@ -1,0 +1,157 @@
+Description: A 3D project's resolution is one eye's in its renders
+ A program's 3D options are "enable 3D, render resolution per eye, and a shortcut
+ to Display Settings", and a program "never stretches or squeezes an eye". In a 3D
+ project (its packing taken from its clips) the project's resolution is now that of
+ one eye: a project of 1920x1080 renders 3840x1080, each eye a 1920x1080 picture.
+ The render document's profile is doubled in width (its display aspect ratio with
+ it), every clip's stereo3d_unpack filter fits its views to whole pictures
+ (target_views=full), and a side by side clip with half views, which the project
+ left as it was, gets the filter too. A project whose frame already holds two whole
+ views (3840x1080) and a project whose packing the person declared by hand are
+ written as before. With side by side marked, FFmpeg's Matroska muxer writes the
+ DisplayWidth and DisplayHeight of one plane, which RFC 9559 section 18.10 asks for:
+ "the DisplayWidth/DisplayHeight in pixels is the number of pixels for one plane
+ (1920x1080 for that full HD stream)".
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+
+--- a/src/render/renderrequest.cpp
++++ b/src/render/renderrequest.cpp
+@@ -219,6 +219,11 @@ std::vector<RenderRequest::RenderJob> Re
+         modified = true;
+     }
+ 
++    // In a 3D project each eye is written at the project's resolution
++    if (prepareStereoRender(doc)) {
++        modified = true;
++    }
++
+     if (!playlistContent.second.isEmpty()) {
+         // Save back the modified xml
+         if (modified) {
+@@ -231,6 +236,7 @@ std::vector<RenderRequest::RenderJob> Re
+             file.close();
+         }
+         doc.setContent(playlistContent.first);
++        prepareStereoRender(doc, true);
+     }
+ 
+     std::vector<RenderSection> sections;
+@@ -452,6 +458,104 @@ void RenderRequest::setDocGeneralParams(
+     }
+ }
+ 
++bool RenderRequest::prepareStereoRender(QDomDocument &doc, bool profileOnly)
++{
++    // A 3D project's resolution is one eye's ("render resolution per eye"): a project of 1920x1080 writes 3840x1080, each eye a
++    // 1920x1080 picture, nothing squeezed. The monitors show the project's frame, both eyes in it at half width, and hand them to
++    // the compositor as they are. A project whose own frame already holds two whole views (3840x1080) is written as it is, and a
++    // project whose packing the person declared by hand (its clips are not taken apart) too.
++    KdenliveDoc *project = pCore->currentDoc();
++    if (!project || !project->isStereo3DAutomatic()) {
++        return false;
++    }
++    const Stereo3D::Format stereo = project->stereo3DFormat();
++    if (stereo.packing != Stereo3D::Packing::SideBySide || stereo.rightFirst) {
++        return false;
++    }
++    QDomNodeList profiles = doc.elementsByTagName(QStringLiteral("profile"));
++    if (profiles.isEmpty()) {
++        return false;
++    }
++    QDomElement profile = profiles.at(0).toElement();
++    const int width = profile.attribute(QStringLiteral("width")).toInt();
++    const int height = profile.attribute(QStringLiteral("height")).toInt();
++    const int sarNum = qMax(1, profile.attribute(QStringLiteral("sample_aspect_num"), QStringLiteral("1")).toInt());
++    const int sarDen = qMax(1, profile.attribute(QStringLiteral("sample_aspect_den"), QStringLiteral("1")).toInt());
++    if (width < 2 || height < 2 || Stereo3D::fullSizeViews(QSize(qRound(double(width) * sarNum / sarDen), height), Stereo3D::Packing::SideBySide)) {
++        return false;
++    }
++    for (int i = 0; i < profiles.count(); ++i) {
++        QDomElement p = profiles.at(i).toElement();
++        p.setAttribute(QStringLiteral("width"), 2 * p.attribute(QStringLiteral("width")).toInt());
++        p.setAttribute(QStringLiteral("display_aspect_num"), 2 * p.attribute(QStringLiteral("display_aspect_num")).toInt());
++        p.setAttribute(QStringLiteral("description"), p.attribute(QStringLiteral("description")) + QStringLiteral(" (3D, two eyes)"));
++    }
++    if (profileOnly) {
++        return true;
++    }
++    // Every 3D clip's views fitted to whole pictures, each to its half of the doubled frame: the filters the project has, and a filter
++    // for a clip the project left as it is (side by side with half views, the kind of the project's own frame)
++    int added = 0;
++    for (const QString &tag : {QStringLiteral("chain"), QStringLiteral("producer")}) {
++        QDomNodeList services = doc.elementsByTagName(tag);
++        for (int i = 0; i < services.count(); ++i) {
++            QDomElement service = services.at(i).toElement();
++            const QString binId = Xml::getXmlProperty(service, QStringLiteral("kdenlive:id"));
++            const std::shared_ptr<ProjectClip> clip = binId.isEmpty() ? nullptr : pCore->projectItemModel()->getClipByBinID(binId);
++            const Stereo3D::Format format = clip ? clip->stereo3DFormat() : Stereo3D::Format();
++            // a clip already side by side, left eye first, whose frame is the doubled frame itself (two whole views of the project's
++            // size, square samples) is taken as it is, decoded at its own depth: the project's filter for it (made for half views)
++            // goes. Any other clip, an anamorphic one included, is fitted by the filter: MLT's own scaling of a frame of another size
++            // or shape is not one per eye.
++            bool asItIs = false;
++            if (clip && format.packing == Stereo3D::Packing::SideBySide && !format.rightFirst) {
++                const double sar = clip->getProducerProperty(QStringLiteral("aspect_ratio")).toDouble() > 0
++                                       ? clip->getProducerProperty(QStringLiteral("aspect_ratio")).toDouble()
++                                       : 1.0;
++                asItIs = clip->getProducerIntProperty(QStringLiteral("meta.media.width")) == 2 * width
++                         && clip->getProducerIntProperty(QStringLiteral("meta.media.height")) == height && qFuzzyCompare(sar, 1.0)
++                         && sarNum == sarDen;
++            }
++            bool hasUnpack = false;
++            QList<QDomElement> unneeded;
++            for (QDomElement filter = service.firstChildElement(QStringLiteral("filter")); !filter.isNull();
++                 filter = filter.nextSiblingElement(QStringLiteral("filter"))) {
++                if (Xml::getXmlProperty(filter, QStringLiteral("kdenlive:stereo3d_unpack")) == QLatin1String("1")) {
++                    if (asItIs) {
++                        unneeded << filter;
++                    } else {
++                        Xml::setXmlProperty(filter, QStringLiteral("target_views"), QStringLiteral("full"));
++                        hasUnpack = true;
++                    }
++                }
++            }
++            for (QDomElement &filter : unneeded) {
++                service.removeChild(filter);
++            }
++            if (hasUnpack || asItIs || !clip || !Stereo3D::bothViewsInFrame(format.packing)) {
++                continue;
++            }
++            QDomElement filter = doc.createElement(QStringLiteral("filter"));
++            filter.setAttribute(QStringLiteral("id"), QStringLiteral("kdenlive_stereo3d_render_%1").arg(++added));
++            Xml::setXmlProperty(filter, QStringLiteral("mlt_service"), QStringLiteral("stereo3d_unpack"));
++            Xml::setXmlProperty(filter, QStringLiteral("packing"), Stereo3D::mltName(format.packing));
++            Xml::setXmlProperty(filter, QStringLiteral("invert"), format.rightFirst ? QStringLiteral("1") : QStringLiteral("0"));
++            Xml::setXmlProperty(filter, QStringLiteral("output"), QStringLiteral("side_by_side"));
++            Xml::setXmlProperty(filter, QStringLiteral("in_producer"), QStringLiteral("1"));
++            Xml::setXmlProperty(filter, QStringLiteral("target_views"), QStringLiteral("full"));
++            Xml::setXmlProperty(filter, QStringLiteral("kdenlive:stereo3d_unpack"), QStringLiteral("1"));
++            // first of the producer's filters
++            const QDomElement first = service.firstChildElement(QStringLiteral("filter"));
++            if (first.isNull()) {
++                service.appendChild(filter);
++            } else {
++                service.insertBefore(filter, first);
++            }
++        }
++    }
++    return true;
++}
++
+ void RenderRequest::setDocTwoPassParams(int pass, QDomDocument &doc, const QString &outputFile)
+ {
+     if (pass != 1 && pass != 2) {
+--- a/src/render/renderrequest.h
++++ b/src/render/renderrequest.h
+@@ -84,6 +84,9 @@ private:
+     QStringList m_errors;
+ 
+     void setDocGeneralParams(QDomDocument doc, int in, int out);
++    /** @brief In a 3D project, the project's resolution is that of one eye: a render writes two of them side by side. Returns whether
++     *  the document was changed; with profileOnly only its profile (a wrapper of the project's document). */
++    static bool prepareStereoRender(QDomDocument &doc, bool profileOnly = false);
+     void setDocTwoPassParams(int pass, QDomDocument &doc, const QString &outputFile);
+     std::vector<RenderSection> getGuideSections();
+ 
