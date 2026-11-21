@@ -3,8 +3,11 @@
 # Copyright 2026 under the GNU GPL3 License
 # Sparky Stereo OS: Ollama 0.40.16+ds from upstream's release build, split by hardware (ollama, ollama-cuda, ollama-rocm).
 # make-orig.sh makes the two upstream tarballs from the inputs release.tsv pins (the only step that may read the network, and only
-# for an input DOWNLOADS lacks); the package is then built in a container with no network, its payload qualified by Lean Code
-# without compilation (prepare-lean.py), checked by lean.release check-debs and lintian.
+# for an input DOWNLOADS lacks); the package is then built in a container, its payload qualified by Lean Code without compilation
+# (prepare-lean.py) and checked by Lean Code's link and start gate, lean.release check-debs and lintian. The gate's APT reads the
+# public archives SPARKY_LC_ARCHIVE_DIR/sources.json names (Debian, and NVIDIA's repository for ollama-cuda's dependencies), so
+# that step has the network, as release/build-dh-lean.sh's has; the gate runs the packages' programs in bubblewrap with no network.
+# SPARKY_LC_ARCHIVE_DIR (required): the gate's folder, mounted at /archive (sparky-os/lean/archive.md).
 # Usage: build.sh OUT DOWNLOADS [PACKAGING_COMMIT]   (OUT an empty folder; DOWNLOADS keeps the pinned inputs)
 # IMAGE: a Debian testing image with dpkg-dev, debhelper, lintian, python3, python3-yaml, node-acorn, zstd, xz-utils, git and curl.
 set -euo pipefail
@@ -14,6 +17,8 @@ OUT=$(realpath -m "${1:?empty output folder}")
 DL=$(realpath -m "${2:?downloads folder}")
 PACKAGING_COMMIT=$(git -C "$TREE" rev-parse --verify "${3:-HEAD}^{commit}")
 IMAGE=${IMAGE:?a build image}
+ARCHIVE=$(realpath "${SPARKY_LC_ARCHIVE_DIR:?the link gate folder: sources.json and its keyrings (sparky-os/lean/archive.md)}")
+[ -f "$ARCHIVE/sources.json" ] || { echo "no $ARCHIVE/sources.json" >&2; exit 2; }
 UPV=0.40.16+ds
 SRC=ollama-$UPV
 mkdir -p "$OUT" "$DL"
@@ -50,8 +55,12 @@ echo "packaging: $PACKAGING_COMMIT"
 DEBV=$(dpkg-parsechangelog -l "$WORK/$SRC/debian/changelog" -S Version)
 [ "${DEBV%-*}" = "$UPV" ] || { echo "debian/changelog is $DEBV, not $UPV" >&2; exit 1; }
 
+mkdir -p "$WORK/link-scratch"
+# the gate isolates each case with bubblewrap, which needs the container's /proc unmasked (as release/build-dh-lean.sh)
 docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}ollama-build" --pull=never --platform linux/amd64 --cpus "${CPUS:-4}" \
-	--ulimit core=1 --network none --user "$(id -u):$(id -g)" -e HOME=/tmp "${SPARKY_PROV_ARGS[@]}" \
+	--ulimit core=1 --user "$(id -u):$(id -g)" -e HOME=/tmp "${SPARKY_PROV_ARGS[@]}" \
+	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch --mount "type=bind,src=$ARCHIVE,dst=/archive,readonly" \
 	--mount "type=bind,src=$WORK,dst=/work" --mount "type=bind,src=$TREE/sparky-os,dst=/toolkit,readonly" \
 	--mount "type=bind,src=$WORK/recipe,dst=/recipe,readonly" "$IMAGE" bash -c '
 set -euo pipefail
