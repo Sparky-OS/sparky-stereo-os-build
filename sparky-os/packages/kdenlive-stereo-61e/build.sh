@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/21
 # Copyright 2026 under the GNU GPL3 License
-# ORDER 61e: builds MLT 7.40.0-1+stereo3d7+lc1 and then Kdenlive 26.08.1-1+stereo3d8+lc1 (amd64) from the sources make-sources.sh
+# ORDER 61e: builds MLT 7.40.0-1+stereo3d8+lc1 and then Kdenlive 26.08.1-1+stereo3d9+lc1 (amd64) from the sources make-sources.sh
 # makes, each with the link and start gate (release/build-from-lc-dsc.sh): MLT's gate compares with the published +stereo3d6, and
 # Kdenlive's takes the new MLT as an edition sibling, since its Depends names it.
 # Usage: build.sh WORK REPO IMAGE
@@ -26,6 +26,6 @@ for f in "$REPO"/pool/main/m/mlt/*_7.40.0-1+stereo3d6+lc1_*.deb; do cp "$f" "$WO
 rm -f "$WORK"/previous-mlt/libmlt-perl_*.deb "$WORK"/previous-mlt/libmlt-perl-*.deb
 for f in "$REPO"/pool/main/k/kdenlive/*_26.08.1-1+stereo3d6+lc1_*.deb; do cp "$f" "$WORK/previous-kdenlive/"; done
 SPARKY_LC_PREVIOUS_DIR="$WORK/previous-mlt" bash "$TOP/release/build-from-lc-dsc.sh" \
-	"$WORK"/sources/source-mlt/mlt_7.40.0-1+stereo3d7+lc1.dsc amd64 "$IMG" "$REPO" "$WORK/mlt"
+	"$WORK"/sources/source-mlt/mlt_7.40.0-1+stereo3d8+lc1.dsc amd64 "$IMG" "$REPO" "$WORK/mlt"
 SPARKY_LC_PREVIOUS_DIR="$WORK/previous-kdenlive" SPARKY_LC_SIBLINGS_DIR="$WORK/mlt" bash "$TOP/release/build-from-lc-dsc.sh" \
-	"$WORK"/sources/source-kdenlive/kdenlive_26.08.1-1+stereo3d8+lc1.dsc amd64 "$IMG" "$REPO" "$WORK/kdenlive"
+	"$WORK"/sources/source-kdenlive/kdenlive_26.08.1-1+stereo3d9+lc1.dsc amd64 "$IMG" "$REPO" "$WORK/kdenlive"
