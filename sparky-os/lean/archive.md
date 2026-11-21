@@ -79,7 +79,8 @@ The candidate replaces only its own same-name entry in its side's universe.
 Identical unchanged inputs share their verified content-addressed bytes across both sides.
 A predecessor whose executable or runtime libraries do not resolve in the qualified environment cannot establish a passing baseline.
 
-Each architecture gets separate APT state and one frozen signed-index view for candidate and predecessor comparisons.
+By default, each architecture gets separate APT state and one frozen signed-index view for candidate and predecessor comparisons.
+The explicit [archive-transition rule](#a-dated-view-for-an-archive-transition) below is the only exception for a predecessor; the candidate always stays in its frozen view.
 Downloads use APT's selected URL, signed size and SHA-256, then independently check the archive control identity against the signed index before extraction.
 Each case asks APT for the signed records of all its downloaded identities together, `apt-cache show NAME:ARCH=VERSION ...`, at most 1024 identities and 128 KiB of arguments per call.
 A record already read is reused for the rest of the run for the same identity and SHA-256 under the same local index digest: the public indexes are frozen for the architecture's context, and the local index is the only other source APT reads.
