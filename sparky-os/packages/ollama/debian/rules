@@ -8,7 +8,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=-all
 L = usr/lib/ollama
 
 %:
-	dh $@
+	dh $@ --buildsystem=none
 
 override_dh_auto_build:
 	cd release && sha256sum --quiet --strict -c MANIFEST.sha256
