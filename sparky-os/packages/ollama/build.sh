@@ -8,6 +8,8 @@
 # public archives SPARKY_LC_ARCHIVE_DIR/sources.json names (Debian, and NVIDIA's repository for ollama-cuda's dependencies), so
 # that step has the network, as release/build-dh-lean.sh's has; the gate runs the packages' programs in bubblewrap with no network.
 # SPARKY_LC_ARCHIVE_DIR (required): the gate's folder, mounted at /archive (sparky-os/lean/archive.md).
+# SPARKY_LC_SIBLINGS_FILE (optional): the edition .deb files the gate may resolve against, one path per line (ollama depends on
+#   sparky-stereo-graphics, whose closure is the edition's own Qt and KDE packages); their folders are mounted read only.
 # Usage: build.sh OUT DOWNLOADS [PACKAGING_COMMIT]   (OUT an empty folder; DOWNLOADS keeps the pinned inputs)
 # IMAGE: a Debian testing image with dpkg-dev, debhelper, lintian, python3, python3-yaml, node-acorn, zstd, xz-utils, git and curl.
 set -euo pipefail
@@ -56,9 +58,14 @@ DEBV=$(dpkg-parsechangelog -l "$WORK/$SRC/debian/changelog" -S Version)
 [ "${DEBV%-*}" = "$UPV" ] || { echo "debian/changelog is $DEBV, not $UPV" >&2; exit 1; }
 
 mkdir -p "$WORK/link-scratch"
+SIBLING_ARGS=()
+if [ -n "${SPARKY_LC_SIBLINGS_FILE:-}" ]; then
+	SIBLING_ARGS=(-v "$(realpath "$SPARKY_LC_SIBLINGS_FILE")":/siblings.list:ro -e SPARKY_LC_SIBLINGS_FILE=/siblings.list)
+	while read -r dir; do SIBLING_ARGS+=(-v "$dir":"$dir":ro); done < <(xargs -d '\n' -n1 dirname < "$SPARKY_LC_SIBLINGS_FILE" | sort -u)
+fi
 # the gate isolates each case with bubblewrap, which needs the container's /proc unmasked (as release/build-dh-lean.sh)
 docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}ollama-build" --pull=never --platform linux/amd64 --cpus "${CPUS:-4}" \
-	--ulimit core=1 --user "$(id -u):$(id -g)" -e HOME=/tmp "${SPARKY_PROV_ARGS[@]}" \
+	--ulimit core=1 --user "$(id -u):$(id -g)" -e HOME=/tmp "${SPARKY_PROV_ARGS[@]}" "${SIBLING_ARGS[@]}" \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch --mount "type=bind,src=$ARCHIVE,dst=/archive,readonly" \
 	--mount "type=bind,src=$WORK,dst=/work" --mount "type=bind,src=$TREE/sparky-os,dst=/toolkit,readonly" \
