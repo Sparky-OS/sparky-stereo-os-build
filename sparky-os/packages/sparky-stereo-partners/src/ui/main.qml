@@ -117,7 +117,7 @@ KCM.SimpleKCM {
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 16
                     model: root.interfaceOptions(kindRow.kind)
                     textRole: "text"; valueRole: "value"
-                    currentIndex: Math.max(0, indexOfValue(kindRow.chosen || "none"))
+                    currentIndex: Math.max(0, model.findIndex(o => o.value === (kindRow.chosen || "none")))
                     onActivated: kcm.choose("default/" + kindRow.kind + "/interface", ["set-default", kindRow.kind, "--interface", currentValue], currentValue)
                 }
 
@@ -129,7 +129,7 @@ KCM.SimpleKCM {
                     readonly property string current: root.pending("default/" + kindRow.kind + "/model", kindRow.modelData.model)
                     model: root.modelOptions(current)
                     textRole: "text"; valueRole: "value"
-                    currentIndex: Math.max(0, indexOfValue(current))
+                    currentIndex: Math.max(0, model.findIndex(o => o.value === current))
                     onActivated: kcm.choose("default/" + kindRow.kind + "/model",
                                             currentValue ? ["set-default", kindRow.kind, "--model", currentValue] : ["set-default", kindRow.kind, "--no-model"], currentValue)
                 }
@@ -142,7 +142,7 @@ KCM.SimpleKCM {
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 16
                         model: root.cardOptions()
                         textRole: "text"; valueRole: "value"
-                        currentIndex: Math.max(0, indexOfValue(root.pending("card", root.card.choice || "auto")))
+                        currentIndex: Math.max(0, model.findIndex(o => o.value === root.pending("card", root.card.choice || "auto")))
                         onActivated: kcm.choose("card", ["card", currentValue], currentValue)
                     }
                     QQC2.Button {
@@ -343,7 +343,7 @@ KCM.SimpleKCM {
                             Layout.preferredWidth: Kirigami.Units.gridUnit * 14
                             model: root.interfaceOptions(choiceRow.modelData.kind).filter(o => o.value !== "none")
                             textRole: "text"; valueRole: "value"
-                            currentIndex: Math.max(0, indexOfValue(choiceRow.modelData.interface))
+                            currentIndex: Math.max(0, model.findIndex(o => o.value === choiceRow.modelData.interface))
                             onActivated: kcm.choose(choiceRow.pkey, ["program", programRow.modelData.id, choiceRow.modelData.kind, "own", "--interface", currentValue], currentValue)
                         }
                     }
