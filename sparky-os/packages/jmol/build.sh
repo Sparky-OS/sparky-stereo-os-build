@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS, ORDER 50 steps 4 and 5: jmol 16.3.55+dfsg-1+stereo3d2+lc1, Debian testing's own source plus patches/ (Jmol's
+# Sparky Stereo OS, ORDER 50 steps 4 and 5: jmol 16.3.55+dfsg-1+stereo3d3+lc1, Debian testing's own source plus patches/ (Jmol's
 # display as a declared 3D area, Enable 3D, the preset). All three binary packages are Architecture: all
 # (--build=source,all).
 #   build.sh DEBIAN.dsc WORK   (disposable container with jmol's build dependencies, bubblewrap, clang, python3,
@@ -26,11 +26,18 @@ c = Path('debian/control').read_text()
 old = 'Package: libjmol-java\nArchitecture: all\nSection: java\nDepends: ${java:Depends},\n'
 assert c.count(old) == 1, 'Debian control changed'
 # the jar loads both libraries through JNA when the display becomes a 3D area (Stereo3D.java); shlibs cannot see that
-Path('debian/control').write_text(c.replace(old, old + '         libstereo-declare1 (>= 1.7.0),\n         libx11-6,\n', 1))
+c = c.replace(old, old + '         libstereo-declare1 (>= 1.7.0),\n         libx11-6,\n', 1)
+old = 'Package: jmol\nArchitecture: all\nDepends: default-jre,\n'
+assert c.count(old) == 1, 'Debian control changed'
+# the Display menu's "3D display settings..." runs kcmshell6 (libkf6kcmutils-bin) with KScreen's page (kcm_kscreen, in
+# kscreen); kde-cli-tools as the main session's ruling names it (kscreen depends on it too)
+c = c.replace(old, old + '         kde-cli-tools,\n         kscreen,\n         libkf6kcmutils-bin,\n', 1)
+Path('debian/control').write_text(c)
 PY
 DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" -R)
-# one changelog entry per edition version: +stereo3d1 (jmol.items), +stereo3d2 (jmol-stereo3d2.items)
-for entry in 1:jmol.items 2:jmol-stereo3d2.items; do
+# one changelog entry per edition version: +stereo3d1 (jmol.items), +stereo3d2 (jmol-stereo3d2.items), +stereo3d3
+# (jmol-stereo3d3.items)
+for entry in 1:jmol.items 2:jmol-stereo3d2.items 3:jmol-stereo3d3.items; do
 	VERSION=16.3.55+dfsg-1+stereo3d${entry%%:*}
 	n=0
 	while IFS= read -r item; do
