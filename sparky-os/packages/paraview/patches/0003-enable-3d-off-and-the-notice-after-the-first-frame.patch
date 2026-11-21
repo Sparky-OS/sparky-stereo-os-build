@@ -1,0 +1,98 @@
+Description: Enable 3D off starts flat; the told-once notice after the view has drawn
+ Patch 0001 makes Crystal Eyes ParaView's configured stereo type, so with Enable 3D
+ off the render view gets the native (mono) widget while the type is still Crystal
+ Eyes, and pqQVTKWidget asked the stereo widget, which was not made, for its stereo
+ format: a null pointer and a crash at every start (Qt/Core/pqQVTKWidget.cxx, the
+ request after "if active stereo requested"). The request is now made only when the
+ stereo-capable widget was made.
+ .
+ The notice that a saved setting or state file asked for one of ParaView's former
+ output formats was opened while ParaView was still starting; Qt then replaces the
+ main window's platform window when the view's OpenGL window is put in it, and the
+ notice was closed with the old one before it was ever on screen (measured: opened
+ 2.4 s before the main window's first show, closed 0.7 s after its second). It now
+ opens after the view's next frame (pqView::endRender), once the main window is
+ exposed, and its sentence also goes to the log at INFO.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-21
+
+--- a/Qt/Core/pqQVTKWidget.cxx
++++ b/Qt/Core/pqQVTKWidget.cxx
+@@ -85,7 +85,9 @@
+ 
+   // if active stereo requested, then we need to request appropriate context.
+   auto config = vtkRemotingCoreConfiguration::GetInstance();
+-  if (config->GetStereoType() == VTK_STEREO_CRYSTAL_EYES)
++  // Sparky Stereo OS: Crystal Eyes is the configured type also with Enable 3D off, when the view
++  // gets the native (mono) widget: only the stereo-capable widget takes the stereo format.
++  if (this->useStereo && config->GetStereoType() == VTK_STEREO_CRYSTAL_EYES)
+   {
+ #if PARAVIEW_USING_QVTKOPENGLSTEREOWIDGET
+     auto fmt = baseClass.value<pqQVTKWidgetBase*>()->defaultFormat(/*supports_stereo =*/true);
+--- a/Qt/Core/pqRenderView.cxx
++++ b/Qt/Core/pqRenderView.cxx
+@@ -37,6 +37,7 @@
+ #include <QGridLayout>
+ #include <QMessageBox>
+ #include <QTimer>
++#include <QWindow>
+ #include <QList>
+ #include <QMenu>
+ #include <QMouseEvent>
+@@ -164,6 +165,32 @@
+     vtkCommand::ModifiedEvent, this, SLOT(onGenericFilmicPresetsChange()));
+ }
+ 
++
++namespace
++{
++// Sparky Stereo OS: a told-once notice over ParaView's main window, opened once that window is
++// on screen; checked again every quarter second for up to 30 s, after which the log line is all.
++void openStereoNotice(const char* objectName, const QString& text, int triesLeft = 120)
++{
++  QWidget* mainWidget = pqCoreUtilities::mainWidget();
++  QWindow* handle = mainWidget ? mainWidget->windowHandle() : nullptr;
++  if (!mainWidget || !mainWidget->isVisible() || !handle || !handle->isExposed())
++  {
++    if (triesLeft > 0)
++    {
++      QTimer::singleShot(250,
++        [objectName, text, triesLeft]() { openStereoNotice(objectName, text, triesLeft - 1); });
++    }
++    return;
++  }
++  auto* box = new QMessageBox(
++    QMessageBox::Information, QStringLiteral("ParaView"), text, QMessageBox::Ok, mainWidget);
++  box->setObjectName(QString::fromLatin1(objectName));
++  box->setAttribute(Qt::WA_DeleteOnClose);
++  box->open();
++}
++}
++
+ //-----------------------------------------------------------------------------
+ pqRenderView::pqRenderView(const QString& group, const QString& name, vtkSMViewProxy* renModule,
+   pqServer* server, QObject* _parent /*=null*/)
+@@ -266,15 +293,13 @@
+                                    "ParaView no longer makes itself; the view is shown flat "
+                                    "because Enable 3D is off (View menu).",
+           name));
+-  QTimer::singleShot(0, pqCoreUtilities::mainWidget(),
+-    [text]()
+-    {
+-      auto* box = new QMessageBox(QMessageBox::Information, QStringLiteral("ParaView"), text,
+-        QMessageBox::Ok, pqCoreUtilities::mainWidget());
+-      box->setObjectName("Stereo3DNotice");
+-      box->setAttribute(Qt::WA_DeleteOnClose);
+-      box->open();
+-    });
++  // Shown once the view has drawn: a dialog opened while ParaView is still starting is closed
++  // with the main window's first platform window, which Qt replaces when the view's OpenGL window
++  // is put in it. The sentence also goes to the log.
++  vtkLogF(INFO, "%s", text.toUtf8().constData());
++  QObject::connect(
++    this, &pqView::endRender, this, [text]() { ::openStereoNotice("Stereo3DNotice", text); },
++    Qt::SingleShotConnection);
+ }
+ 
+ //-----------------------------------------------------------------------------
