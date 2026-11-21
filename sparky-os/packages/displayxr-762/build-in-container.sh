@@ -3,9 +3,9 @@ set -euo pipefail
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export DEB_BUILD_OPTIONS=parallel=4
 unset DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XAUTHORITY
-job=/work/package-build14b/displayxr-problem
+job=/work/package-build14c/displayxr-problem
 mkdir -p "$job"
-cp /work/package-source14b/displayxr-problem/displayxr-runtime_2.66.3-1+stereo3d9+lc1.dsc /work/package-source14b/displayxr-problem/displayxr-runtime_2.66.3-1+stereo3d9+lc1.debian.tar.xz /work/source-inputs/displayxr/displayxr-runtime_2.66.3.orig*.tar.xz "$job/"
+cp /work/package-source14c/displayxr-problem/displayxr-runtime_2.66.3-1+stereo3d9+lc1.dsc /work/package-source14c/displayxr-problem/displayxr-runtime_2.66.3-1+stereo3d9+lc1.debian.tar.xz /work/source-inputs/displayxr/displayxr-runtime_2.66.3.orig*.tar.xz "$job/"
 cd "$job"
 if [ ! -d source ]; then dpkg-source -x displayxr-runtime_2.66.3-1+stereo3d9+lc1.dsc source; fi
 cd source
