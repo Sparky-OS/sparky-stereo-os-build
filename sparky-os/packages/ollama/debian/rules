@@ -19,6 +19,10 @@ override_dh_auto_install:
 	cd release/payload/lib/ollama && find . -mindepth 1 -maxdepth 1 ! -name cuda_v13 ! -name rocm_v7_2 -exec cp -a {} $(CURDIR)/debian/ollama/$(L)/ \;
 	cp -a release/payload/lib/ollama/cuda_v13 debian/ollama-cuda/$(L)/
 	cp -a release/payload/lib/ollama/rocm_v7_2 debian/ollama-rocm/$(L)/
+	# rocBLAS's GPU kernels are code for the card, not the processor: ollama-rocm-data keeps them in /usr/share
+	install -d debian/ollama-rocm-data/usr/share/ollama/rocm_v7_2/rocblas
+	mv debian/ollama-rocm/$(L)/rocm_v7_2/rocblas/library debian/ollama-rocm-data/usr/share/ollama/rocm_v7_2/rocblas/library
+	rmdir debian/ollama-rocm/$(L)/rocm_v7_2/rocblas
 	install -d debian/ollama-rocm/usr/share/doc/ollama-rocm/licences
 	install -m 0644 release/licences/rocm/*.txt debian/ollama-rocm/usr/share/doc/ollama-rocm/licences/
 	install -D -m 0644 release/EXCLUDED.tsv debian/ollama/usr/share/doc/ollama/EXCLUDED.tsv

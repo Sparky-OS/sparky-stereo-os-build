@@ -9,9 +9,10 @@ It is the local engine the edition's Partners page turns on: nothing runs and no
 | --- | --- | --- |
 | `ollama` | `/usr/bin/ollama`, the processor runners and llama.cpp's libraries in `/usr/lib/ollama`, the Vulkan runner (AMD, Intel and NVIDIA cards) and the user service | 120 MB |
 | `ollama-cuda` | the CUDA 13 runner (`/usr/lib/ollama/cuda_v13/libggml-cuda.so`), for NVIDIA cards of the Turing generation and newer | 281 MB, plus NVIDIA's CUDA 13 libraries from NVIDIA's repository |
-| `ollama-rocm` | the ROCm 7.2 runner with AMD's ROCm 7.2.1 libraries | about 2.7 GB |
+| `ollama-rocm` | the ROCm 7.2 runner with AMD's ROCm 7.2.1 libraries | about 2.06 GB |
+| `ollama-rocm-data` | rocBLAS's GPU kernels (code for the AMD card, not the processor), in `/usr/share/ollama`, linked from `ollama-rocm` | 671 MB |
 
-The runner packages Enhance `ollama`; which one a computer gets is the hardware setup's answer, never every one of them.
+The runner packages Enhance `ollama`. rocBLAS's kernels are architecture-independent data, so they are an `Architecture: all` package in `/usr/share`, where Lean Code's link gate takes another machine's ELF files as data (the gate's rule follows Debian's handling of QEMU's guest firmware); which one a computer gets is the hardware setup's answer, never every one of them.
 
 ## How the release is checked
 
@@ -23,7 +24,7 @@ The package build checks every installed file against `release/MANIFEST.sha256` 
 ## What is left out, and why
 
 `release/EXCLUDED.tsv` (installed as `/usr/share/doc/ollama/EXCLUDED.tsv`) lists each file with its size, SHA-256 and reason:
-- **NVIDIA's CUDA libraries** (`libcudart`, `libcublas`, `libcublasLt`, `libnvrtc`, `libnvrtc-builtins`, `libnvJitLink`, `libnvfatbin`): NVIDIA's CUDA EULA (last updated 2026-01-26) lets "applications developed by you" carry the files of its Attachment A, and `libnvfatbin` is not in that list. The edition did not develop Ollama, so these come from NVIDIA's repository on the person's machine: `ollama-cuda` depends on NVIDIA's `cuda-cudart-13-*`, `libcublas-13-*`, `cuda-nvrtc-13-*`, `libnvjitlink-13-*` and `libnvfatbin-13-*`, which put `/usr/local/cuda-13/targets/x86_64-linux/lib` on the loader's path.
+- **NVIDIA's CUDA libraries** (`libcudart`, `libcublas`, `libcublasLt`, `libnvrtc`, `libnvrtc-builtins`, `libnvJitLink`, `libnvfatbin`): NVIDIA's CUDA EULA (last updated 2026-01-26) lets "applications developed by you" carry the files of its Attachment A, and `libnvfatbin` is not in that list. The edition did not develop Ollama, so these come from NVIDIA's repository on the person's machine: `ollama-cuda` depends on NVIDIA's `cuda-cudart-13-*`, `libcublas-13-*` and `cuda-nvrtc-13-*` (what the runner links, and what cuBLASLt opens) and recommends `libnvjitlink-13-*` and `libnvfatbin-13-*` (in upstream's bundle, linked by nothing; NVIDIA's `libnvjitlink-13-5` also declares a `Provides` in capitals that its signed index lists in lowercase, which Lean Code's link gate refuses), which put `/usr/local/cuda-13/targets/x86_64-linux/lib` on the loader's path.
 - **The CUDA 12 runner** (1.32 GB): NVIDIA's CUDA 12 runtime (`libcudart.so.12`) has no package in NVIDIA's repository for Debian 13 nor in Debian, so the runner could not load. Cards that run only CUDA 12 (Maxwell, Pascal and Volta on NVIDIA's 580 driver) use the Vulkan runner.
 - **GCC's OpenMP library**: no file of the bundle links it.
 - **libdrm, libdrm_amdgpu, libnuma and libelf** of the ROCm bundle: Debian ships them, and `ollama-rocm` depends on Debian's.
