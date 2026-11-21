@@ -12,6 +12,8 @@ caption = importlib.machinery.SourceFileLoader('vibe_captions', str(ROOT/'bin/ca
 
 class CaptionsTest(unittest.TestCase):
     def setUp(self):
+        self.gpu = patch.object(caption.runpy, 'run_path', return_value={'gpu_facts': lambda: (None, False)})
+        self.gpu.start();self.addCleanup(self.gpu.stop)
         self.tmp = tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.media = Path(self.tmp.name)/'name with spaces.mkv';self.media.write_bytes(b'original movie')
         self.output = self.media.with_suffix('.srt')
