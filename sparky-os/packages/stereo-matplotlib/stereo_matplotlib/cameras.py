@@ -121,9 +121,22 @@ def _recording(figure, found):
     """Record every point Matplotlib projects with an Axes3D's own matrix while the figure is drawn."""
     matrices = {}
     saved = {}
+    cubes = {}
+    skipping = [0]
     for ax in figure.axes:
         if isinstance(ax, Axes3D):
             saved[ax] = ax.__dict__.get('get_proj')
+            cubes[ax] = ax.__dict__.get('_transformed_cube')
+
+            # the axis code projects all eight corners of the box to decide its layout; only the panes it draws are
+            # on screen (projected_points adds their corners), so these projections are not counted
+            def cube(vals, own=ax._transformed_cube):
+                skipping[0] += 1
+                try:
+                    return own(vals)
+                finally:
+                    skipping[0] -= 1
+            ax._transformed_cube = cube
 
             def get_proj(ax=ax):
                 m = eye_projection(ax, 0.0)
@@ -133,6 +146,8 @@ def _recording(figure, found):
     plain, clipped = proj3d._proj_transform_vec, proj3d._proj_transform_vec_clip
 
     def note(vec, M):
+        if skipping[0]:
+            return
         entry = matrices.get(id(M))
         if entry is None or entry[1] is not M:
             return
@@ -159,6 +174,11 @@ def _recording(figure, found):
         yield
     finally:
         proj3d._proj_transform_vec, proj3d._proj_transform_vec_clip = plain, clipped
+        for ax, own in cubes.items():
+            if own is None:
+                ax.__dict__.pop('_transformed_cube', None)
+            else:
+                ax._transformed_cube = own
         for ax, own in saved.items():
             if own is None:
                 ax.__dict__.pop('get_proj', None)
@@ -173,6 +193,14 @@ def projected_points(figure, renderer):
     check_internals()
     with _recording(figure, found):
         figure.draw(renderer)
+    for ax in figure.axes:
+        if isinstance(ax, Axes3D):
+            corners = _drawn_pane_corners(ax)
+            if corners is not None:
+                m = eye_projection(ax, 0.0)
+                vw = m @ corners
+                depth = vw[3] if ax._focal_length != np.inf else vw[2] / 2.0
+                found.setdefault(ax, []).append(np.vstack([vw[0] / vw[3], vw[1] / vw[3], depth]))
     result = {}
     for ax, parts in found.items():
         xyd = np.hstack(parts) if parts else np.zeros((3, 0))
@@ -181,6 +209,24 @@ def projected_points(figure, renderer):
         per_offset = disparity_per_offset(ax, xyd[2]) * scale
         result[ax] = np.column_stack([px, per_offset]) if xyd.shape[1] else np.zeros((0, 3))
     return result
+
+
+def _drawn_pane_corners(ax):
+    """The corners (homogeneous, 4 x N) of the panes Matplotlib draws: for each axis the plane active_pane() picks,
+    in the corner order of Axes3D._transformed_cube."""
+    if not ax.axison:
+        return None
+    columns = []
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        if not axis.pane.get_visible():
+            continue
+        mins, maxs, _, highs = axis._get_coord_info()
+        i = axis._axinfo['i']
+        plane = axis._PLANES[2 * i + 1] if highs[i] else axis._PLANES[2 * i]
+        x0, x1, y0, y1, z0, z1 = mins[0], maxs[0], mins[1], maxs[1], mins[2], maxs[2]
+        cube = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0), (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+        columns += [cube[k] + (1.0,) for k in plane]
+    return np.array(columns, dtype=float).T if columns else None
 
 
 def fit(points, limits, size):
