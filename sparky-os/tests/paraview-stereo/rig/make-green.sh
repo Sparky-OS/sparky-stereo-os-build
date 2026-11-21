@@ -1,12 +1,12 @@
 #!/bin/bash
 # (copied from lane 50e and adapted: several stage folders, the base image FROM, dbgsym left out)
-# usage: STAGE="DIR..." PKGS="names" TAG=green-x make-green.sh  -- sci50f-rig:TAG = sci50f-rig:1 plus the staged packages installed
+# usage: STAGE="DIR..." (or empty) PKGS="names" TAG=green-x make-green.sh  -- sci50f-rig:TAG = sci50f-rig:1 plus the staged packages installed
 # by apt from a flat repository of the stage (Origin "Sparky Stereo OS", so the edition's pin applies as in a round), with
 # apt's simulation of the install kept in $S/runs/apt-TAG.txt.
 set -euo pipefail
 S=/var/lib/sparky-lanes/science-paraview-50f; L=/K3D/partners/queue/science-paraview-edition-build-and-vtk-draw-buffer-50f
 export DOCKER_HOST=unix://$L/docker.sock
-: "${STAGE:?}" "${PKGS:?}" "${TAG:?}"
+: "${STAGE?}" "${PKGS:?}" "${TAG:?}"   # STAGE may be empty: published and Debian packages only
 F=$S/flat/$TAG; rm -rf "$F"; mkdir -p "$F"
 for st in $STAGE; do cp "$st"/*.deb "$F/"; done; rm -f "$F"/*-dbgsym_*.deb
 python3 -I $S/rig/flat-index.py "$F"
