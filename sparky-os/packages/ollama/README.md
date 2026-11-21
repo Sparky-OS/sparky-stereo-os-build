@@ -7,7 +7,7 @@ It is the local engine the edition's Partners page turns on: nothing runs and no
 
 | Package | What it holds | Installed size, measured |
 | --- | --- | --- |
-| `ollama` | `/usr/bin/ollama`, the processor runners and llama.cpp's libraries in `/usr/lib/ollama`, the Vulkan runner (AMD, Intel and NVIDIA cards) and the user service | about 121 MB |
+| `ollama` | `/usr/bin/ollama`, the processor runners and llama.cpp's libraries in `/usr/lib/ollama`, the Vulkan runner (AMD, Intel and NVIDIA cards) and the user service | 120 MB |
 | `ollama-cuda` | the CUDA 13 runner (`/usr/lib/ollama/cuda_v13/libggml-cuda.so`), for NVIDIA cards of the Turing generation and newer | 281 MB, plus NVIDIA's CUDA 13 libraries from NVIDIA's repository |
 | `ollama-rocm` | the ROCm 7.2 runner with AMD's ROCm 7.2.1 libraries | about 2.7 GB |
 
@@ -43,12 +43,12 @@ Which graphics card it uses is upstream's own rule until the Graphics page gives
 ## Building
 
 ```sh
-IMAGE=<a Debian testing build image> SPARKY_SCRATCH=<scratch on an SSD> bash sparky-os/packages/ollama/build.sh OUT DOWNLOADS
+IMAGE=<a Debian testing build image> SPARKY_SCRATCH=<scratch on an SSD> SPARKY_LC_ARCHIVE_DIR=<the link gate folder> bash sparky-os/packages/ollama/build.sh OUT DOWNLOADS
 ```
 
 The first run fetches the inputs into `DOWNLOADS` (about 2.6 GB) with `ORIG_NETWORK=bridge`; later runs read them from there with no network.
 The orig tarballs `make-orig.sh` makes are kept in `DOWNLOADS/orig-0.40.16+ds` and reused (the same inputs give the same bytes); delete that folder to make them again.
-The build needs about 15 GB of scratch at its peak.
+The build needs about 15 GB of scratch at its peak. Lean Code's link and start gate needs `SPARKY_LC_ARCHIVE_DIR` with a `sources.json` naming Debian forky and NVIDIA's repository for Debian 13 with their keyrings (`sparky-os/lean/archive.md`); its step reads them over the network, and the gate runs the programs with none.
 
 ## Credits
 
