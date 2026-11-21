@@ -7,7 +7,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 RECIPE=$HERE
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.16
+VERSION=0.2.17
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -104,6 +104,24 @@ EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
 
+  * ORDER 70, Automatic for the partners' card: a machine record names the
+    card the partners compute fastest on ([MeasuredPartners] BestGpu, Model,
+    Measurement), written from a shipped model's file as the players' record
+    is. The Lenovo ideapad 310-15ABR (the A10) has one: the integrated
+    Carrizo (qwen3.5:2b, 128 tokens, three runs on 2026-11-21: a median of
+    3.73 tokens a second, against the processor's 3.43 and the discrete
+    Hainan's 3.17, whose own memory held 12% of the model).
+  * On a computer without that record, a card whose own memory cannot hold
+    the model the Partners page proposes (3 GiB, the smallest it proposes)
+    is not Automatic's pick for the partners: the card players get when it
+    can, else the discrete card with the most own memory that can, else an
+    integrated card (it computes in the computer's memory), else the
+    processor, each said. The person's own choice is kept as before.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ${SOURCE_DATE_RFC2822:?}
+
+$PACKAGE (0.2.16) unstable; urgency=medium
+
   * ORDER 70, the partners' card (the Partners page design Daniel accepted on
     2026-11-21: the card is one choice shared with the Graphics page, which
     gains a Partners row, Automatic the card measured best): [Render] Partners
@@ -130,7 +148,7 @@ $PACKAGE ($VERSION) unstable; urgency=medium
     selection layer the card's variables need.
   * Ten languages.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ${SOURCE_DATE_RFC2822:?}
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 05:22:07 +0000
 
 $PACKAGE (0.2.15) unstable; urgency=medium
 

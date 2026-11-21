@@ -139,6 +139,10 @@ void MachineRecordTest::theA10IsAKnownModel()
     QCOMPARE(known.record.model, u"Lenovo ideapad 310-15ABR"_s);
     QVERIFY(known.record.measurement.contains(u"589.6"_s));
     QVERIFY(known.record.measurement.contains(u"65.3"_s));
+    // ORDER 70: for the partners the Carrizo was fastest (the main session's run of 2026-11-21, qwen3.5:2b, three runs)
+    QCOMPARE(known.record.partnersBestGpu, u"1002:9874"_s);
+    QCOMPARE(known.record.partnersModel, u"qwen3.5:2b"_s);
+    QVERIFY(known.record.partnersMeasurement.contains(u"3.73"_s));
 }
 
 void MachineRecordTest::matching_data()
@@ -181,6 +185,7 @@ void MachineRecordTest::applyKnownWritesTheA10sRecordOnce()
     QCOMPARE(record.origin, u"shipped"_s);
     QCOMPARE(record.known, u"lenovo-ideapad-310-15abr"_s);
     QCOMPARE(record.model, u"Lenovo ideapad 310-15ABR"_s);
+    QCOMPARE(record.partnersBestGpu, u"1002:9874"_s);
     // libmedia-gpu-route reads the same key in the same group, in every account
     QVERIFY2(text(file).contains("[Decoding]\nCopyBack=false"), text(file).constData());
     QVERIFY(QFile::permissions(file) & QFileDevice::ReadOther);

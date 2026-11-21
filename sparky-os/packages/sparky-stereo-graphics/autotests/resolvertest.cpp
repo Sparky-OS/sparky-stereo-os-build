@@ -40,6 +40,7 @@ private Q_SLOTS:
     void appPreferences();
     void categories();
     void partnersCard();
+    void partnersCardHoldsTheModel();
     void computeVariables();
 
 private:
@@ -568,9 +569,15 @@ void ResolverTest::partnersCard()
     Resolution r = notMeasured.resolveCategory(Category::Partners, settings);
     QCOMPARE(r.gpuIndex, 1);
     QCOMPARE(r.reason, u"unmeasured"_s);
+    // the players' record is not a measurement of the partners (2026-11-21): its card is taken when it can hold the model,
+    // and said as not measured for them; the partners' own record is "measured"
     const Resolver measuredApu(host, QString(), PowerProfile::Performance, u"1002:1638"_s);
     r = measuredApu.resolveCategory(Category::Partners, settings);
     QCOMPARE(r.gpuIndex, 0);
+    QCOMPARE(r.reason, u"unmeasured"_s);
+    const Resolver partnersMeasured(host, QString(), PowerProfile::Performance, u"1002:1638"_s, u"10de:2504"_s);
+    r = partnersMeasured.resolveCategory(Category::Partners, settings);
+    QCOMPARE(r.gpuIndex, 1);
     QCOMPARE(r.reason, u"measured"_s);
     settings.setRenderChoice(Category::Partners, u"cpu"_s);
     r = notMeasured.resolveCategory(Category::Partners, settings);
@@ -582,6 +589,46 @@ void ResolverTest::partnersCard()
     settings.setRenderChoice(Category::Partners, u"pci-0000:42:00.0"_s);
     r = notMeasured.resolveCategory(Category::Partners, settings);
     QCOMPARE(r.problem, u"gpu-missing"_s);
+}
+
+void ResolverTest::partnersCardHoldsTheModel()
+{
+    // ORDER 70, 2026-11-21: the A10's record names the Carrizo for the partners, whatever players get
+    QList<FixtureGpu> a10 = SysfsFixture::a10();
+    a10[1].vram = 2ULL * 1024 * 1024 * 1024; // a discrete card of 2 GiB
+    const QList<Gpu> laptop = read(a10);
+    GraphicsSettings settings;
+    const Resolver recorded(laptop, QString(), PowerProfile::Balanced, u"1002:6660"_s, u"1002:9874"_s);
+    Resolution r = recorded.resolveCategory(Category::Partners, settings);
+    QCOMPARE(r.gpuIndex, 0);
+    QCOMPARE(r.reason, u"measured"_s);
+    QCOMPARE(recorded.resolveCategory(Category::Players, settings).gpuIndex, 1);
+    // without the record: players' card cannot hold the model, so not Automatic's pick for the partners; the integrated card
+    const Resolver unrecorded(laptop, QString(), PowerProfile::Balanced, u"1002:6660"_s);
+    r = unrecorded.resolveCategory(Category::Partners, settings);
+    QCOMPARE(r.gpuIndex, 0);
+    QCOMPARE(r.reason, u"unmeasured-memory"_s);
+    // a record naming a card that is not here is said, and the rule still applies
+    const Resolver elsewhere(laptop, QString(), PowerProfile::Balanced, u"1002:6660"_s, u"10de:2504"_s);
+    QCOMPARE(elsewhere.resolveCategory(Category::Partners, settings).gpuIndex, 0);
+    // a discrete card with room keeps it (the workstation's RTX 3060: its memory not in sysfs, so not ruled out)
+    const QList<Gpu> host = read(SysfsFixture::host());
+    QCOMPARE(Resolver(host, QString(), PowerProfile::Balanced).resolveCategory(Category::Partners, settings).gpuIndex, 1);
+    // one discrete card too small for the model and no other: the processor, said as Automatic's answer
+    QList<FixtureGpu> small = {SysfsFixture::a10().at(1)};
+    small[0].bootVga = true;
+    small[0].connectors = {{QStringLiteral("DP-1"), true, {}}};
+    small[0].vram = 1ULL * 1024 * 1024 * 1024;
+    const QList<Gpu> one = read(small);
+    r = Resolver(one, QString(), PowerProfile::Balanced).resolveCategory(Category::Partners, settings);
+    QCOMPARE(r.gpuIndex, -1);
+    QCOMPARE(r.reason, u"cpu-memory"_s);
+    QVERIFY(r.problem.isEmpty());
+    // players on that computer still get their only card
+    QCOMPARE(Resolver(one, QString(), PowerProfile::Balanced).resolveCategory(Category::Players, settings).gpuIndex, 0);
+    // the person's own choice of that card is kept: the rule is Automatic's only
+    settings.setRenderChoice(Category::Partners, one.at(0).id);
+    QCOMPARE(Resolver(one, QString(), PowerProfile::Balanced).resolveCategory(Category::Partners, settings).gpuIndex, 0);
 }
 
 void ResolverTest::computeVariables()

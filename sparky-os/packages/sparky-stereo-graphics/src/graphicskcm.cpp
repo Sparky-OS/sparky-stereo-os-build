@@ -32,7 +32,7 @@ GraphicsKcm::GraphicsKcm(QObject *parent, const KPluginMetaData &data)
 
 Resolver GraphicsKcm::resolver() const
 {
-    return Resolver(m_gpus, m_settings.mainGpu(), m_profile, m_record.bestGpu);
+    return Resolver(m_gpus, m_settings.mainGpu(), m_profile, m_record.bestGpu, m_record.partnersBestGpu);
 }
 
 int GraphicsKcm::indexOf(const QString &id) const
@@ -116,6 +116,10 @@ QString GraphicsKcm::reasonTextOf(const QString &reason) const
     if (reason == u"unmeasured"_s) {
         return i18nc("@info", "not measured on this computer yet");
     }
+    if (reason == u"unmeasured-memory"_s) {
+        // ORDER 70: the partners' Automatic left out a card too small for the model; the Partners page says that part
+        return i18nc("@info", "not measured on this computer yet");
+    }
     return i18nc("@info", "your choice");
 }
 
@@ -171,7 +175,7 @@ void GraphicsKcm::load()
 
 QList<Problem> GraphicsKcm::liveProblems(const GraphicsSettings &settings) const
 {
-    const Resolver r(m_gpus, settings.mainGpu(), m_profile, m_record.bestGpu);
+    const Resolver r(m_gpus, settings.mainGpu(), m_profile, m_record.bestGpu, m_record.partnersBestGpu);
     QList<Problem> list;
     const Problem main = Problems::fromResolution(u"main-gpu"_s, r.mainProblem(), m_gpus, m_root);
     if (!main.isEmpty()) {
@@ -578,6 +582,9 @@ QVariantMap GraphicsKcm::partners() const
     if (!resolution.problem.isEmpty()) {
         nowText = Problems::message(Problems::fromResolution(u"partners"_s, resolution, m_gpus, m_root, m_profile));
     } else if (resolution.reason == u"cpu"_s) {
+        nowText = i18nc("@info", "Now: the processor only");
+    } else if (resolution.reason == u"cpu-memory"_s) {
+        // no card here can hold the model the Partners page proposes (that page says why)
         nowText = i18nc("@info", "Now: the processor only");
     } else if (resolution.gpuIndex >= 0) {
         nowText = i18nc("@info %1 is a GPU name, %2 the reason", "Now: %1, %2", gpuLabel(resolution.gpuIndex), reasonText(resolution));

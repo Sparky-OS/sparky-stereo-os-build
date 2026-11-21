@@ -210,7 +210,7 @@ static int died(const QString &unit, const QString &root)
     const QList<Gpu> gpus = GpuInventory::read(root);
     const GraphicsSettings settings;
     const MachineRecord record = MachineRecord::read();
-    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu);
+    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu, record.partnersBestGpu);
     const Resolution resolution = resolver.resolveApp(entry, settings, false);
     if (!resolution.problem.isEmpty() || resolution.gpuIndex < 0 || resolution.environment.isEmpty()) {
         return 0;
@@ -268,7 +268,7 @@ static int useApp(const QString &id, const QString &gpuId, const QString &root)
     const QList<Gpu> gpus = GpuInventory::read(root);
     const GraphicsSettings settings;
     const MachineRecord record = MachineRecord::read();
-    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu);
+    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu, record.partnersBestGpu);
     for (AppPreference preference : {AppPreference::MainGpu, AppPreference::OtherGpu}) {
         AppEntry other = entry;
         other.preference = preference;
@@ -506,7 +506,7 @@ int main(int argc, char **argv)
     }
     const GraphicsSettings settings;
     const MachineRecord record = MachineRecord::read();
-    const Resolver resolver(gpus, settings.mainGpu(), powerProfile, record.bestGpu);
+    const Resolver resolver(gpus, settings.mainGpu(), powerProfile, record.bestGpu, record.partnersBestGpu);
 
     if (session) {
         // The saved main GPU that cannot draw is said and kept, never replaced: KWin's own order draws this login, as
@@ -707,10 +707,15 @@ int main(int argc, char **argv)
         }
         return 0;
     }
-    if (resolution.reason == u"cpu"_s) {
-        // the partners' card set to the processor only: no GPU to name
-        if (print == u"id"_s || print == u"reason"_s) {
+    if (resolution.reason == u"cpu"_s || resolution.reason == u"cpu-memory"_s) {
+        // the partners' card set to the processor only, or Automatic on a computer where no card can hold the model the
+        // Partners page proposes (ORDER 70): no GPU to name
+        if (print == u"id"_s) {
             out << "cpu\n";
+            return 0;
+        }
+        if (print == u"reason"_s) {
+            out << resolution.reason << '\n';
             return 0;
         }
         if (print == u"gpu"_s) {
