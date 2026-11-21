@@ -119,6 +119,25 @@ class Fit(unittest.TestCase):
         self.assertGreater(len(points[ax]), 50, 'panes, grid, ticks and labels are projected and counted')
         plt.close(figure)
 
+    def test_undrawn_corner_not_counted(self):
+        figure, ax = scene()
+        ax.set_axis_on()
+        renderer = figure.canvas.get_renderer()
+        points = cameras.projected_points(figure, renderer)[ax]
+        m = cameras.eye_projection(ax, 0.0)
+        corners = [(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
+        def place(c):
+            v = m @ np.array([c[0], c[1], c[2], 1.0])
+            return ax.transData.transform([[v[0] / v[3], v[1] / v[3]]])[0], v[3]
+        nearest = min(corners, key=lambda c: place(c)[1])
+        xy = place(nearest)[0]
+        close = np.hypot(points[:, 0] - xy[0], points[:, 1] - xy[1]) < 0.5
+        self.assertFalse(close.any(), 'the corner nearest the camera, which no pane draws, is not counted')
+        far = max(corners, key=lambda c: place(c)[1])
+        xy = place(far)[0]
+        self.assertTrue((np.hypot(points[:, 0] - xy[0], points[:, 1] - xy[1]) < 0.5).any(), 'the far corner of the panes is')
+        plt.close(figure)
+
     def test_flat_scene_has_no_offset(self):
         figure = plt.figure()
         figure.add_subplot().plot([0, 1], [0, 1])
