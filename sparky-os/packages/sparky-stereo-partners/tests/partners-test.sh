@@ -108,6 +108,8 @@ echo "== who answers"
 check "resolve text: exit 0" "$(cmd resolve --kind text)" 0
 check "resolve text: the engine's address and the model" "$(grep -E '^PARTNER_(URL|MODEL|RUNS)=' "$T/out" | tr '\n' ' ')" "PARTNER_URL=http://127.0.0.1:11434 PARTNER_MODEL=standin:tiny PARTNER_RUNS=here "
 check "resolve text: the interface's protocol, for KDE's text add-ons" "$(grep '^PARTNER_KIND=' "$T/out")" "PARTNER_KIND=ollama"
+check "resolve text: the interface's name" "$(grep '^PARTNER_NAME=' "$T/out")" "PARTNER_NAME=Ollama on this computer"
+
 check "resolve text: the card's variables" "$(grep -c -E '^(CUDA_VISIBLE_DEVICES|HIP_VISIBLE_DEVICES)=' "$T/out")" 2
 
 echo "== a provider, and a program's own choice"
@@ -123,6 +125,24 @@ check "the page's KMail row knows the add-ons cannot follow a provider" "$(json 
 check "the default is untouched" "$(as sparky-stereo-partners resolve --kind text 2>/dev/null | grep '^PARTNER_URL=')" "PARTNER_URL=http://127.0.0.1:11434"
 check "KMail follows the default again" "$(cmd program org.kde.kmail2 text follow; as sparky-stereo-partners resolve --kind text --program org.kde.kmail2 2>/dev/null | grep '^PARTNER_URL=')" "0
 PARTNER_URL=http://127.0.0.1:11434"
+
+echo "== Betterbird's ThunderAI: the person's managed-storage manifest follows the text choice"
+manifest="$home/.mozilla/managed-storage/thunderai@micz.it.json"
+check "Betterbird not installed: sync writes nothing" "$(cmd sync; [ -e "$manifest" ] && echo there || echo absent)" "0
+absent"
+mkdir -p /opt/betterbird && printf '#!/bin/sh\n' >/opt/betterbird/betterbird && chmod 755 /opt/betterbird/betterbird
+check "Betterbird installed: sync writes the manifest" "$(cmd sync; [ -e "$manifest" ] && echo there || echo absent)" "0
+there"
+check "the manifest: ThunderAI's own keys for Ollama, unlocked, no key" "$(python3 -I -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["name"], m["type"], json.dumps(m["data"], sort_keys=True))' "$manifest")" 'thunderai@micz.it storage {"connection_type": "ollama_api", "ollama_host": "http://127.0.0.1:11434", "ollama_model": "standin:tiny"}'
+check "text on llama.cpp: the manifest follows at once" "$(cmd set-default text --interface llamacpp-local; python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1]))["data"]; print(d["connection_type"], d["openai_comp_host"], d["openai_comp_use_v1"])' "$manifest")" "0
+openai_comp_api http://127.0.0.1:8080 True"
+check "Betterbird's own choice, a provider: no key in the file" "$(cmd program eu.betterbird.Betterbird text own --interface provider-acme; python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1]))["data"]; print(d["openai_comp_host"], [k for k in d if "key" in k])' "$manifest")" "0
+https://api.example.invalid []"
+cmd program eu.betterbird.Betterbird text follow >/dev/null; cmd set-default text --interface ollama-local >/dev/null
+rm -rf /opt/betterbird
+check "Betterbird removed: sync takes our manifest away" "$(cmd sync; [ -e "$manifest" ] && echo there || echo absent)" "0
+absent"
+check "the plain status is for people, in their language" "$(LANGUAGE=pt_BR as sparky-stereo-partners status | grep -c '^Placa: ')" 1
 
 echo "== the card that cannot be used"
 check "card: a card that is not here (exit 0: the choice is saved, as on the Graphics page)" "$(cmd card pci-0000:42:00.0)" 0

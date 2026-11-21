@@ -490,6 +490,7 @@ KCM.SimpleKCM {
                                 lines.push(i18nc("@info", "They can follow only Ollama for now: their llama.cpp add-on is not finished in version 2.1.2, and they cannot reach a provider's own address."))
                             break
                         case "seeded": lines.push(i18nc("@info", "Its presets take this choice when they are set up; a later change here reaches it when they are set up again.")); break
+                        case "thunderai": lines.push(i18nc("@info", "When you add the ThunderAI add-on in Betterbird, it starts from this choice; what you set in ThunderAI wins, and a provider's key is entered there.")); break
                         }
                         return lines.join("\n")
                     }
