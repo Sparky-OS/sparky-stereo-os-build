@@ -21,6 +21,12 @@ It retains unreadable paths and reads binary controls and source descriptors.
 It records the published indexes' hashes; archive hashes are compared only for staged binaries matching an indexed identity, including Architecture-Variant.
 An explicit binary Source version takes precedence over its binary version.
 
+For several storage roots or explicit stage paths, use `scoped-inventory.py --root STORAGE --stages STAGES.txt --published TREE --output EVIDENCE`.
+Repeat `--root` for each permitted storage root; `STAGES.txt` contains one literal directory per line, including output folders whose names do not begin with `stage`.
+It records and excludes symlink files, symlink directories and explicitly named paths with a symlink ancestor.
+Directory discovery and file discovery inside each stage each have their own `--depth` bound (default four); missing and unreadable paths remain in `search-errors.txt`.
+Run `python3 tools/publication-reconcile/test_scoped_inventory.py` to check those boundaries.
+
 The acceptance-rules input is a private, reviewed JSON list, in first-match order.
 Each row has root, source, version, decision and reason; null source/version matches any value under that root.
 A candidate rule means the coordinator accepted that generation, not that its build is qualified.
