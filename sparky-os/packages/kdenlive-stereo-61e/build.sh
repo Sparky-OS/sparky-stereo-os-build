@@ -20,6 +20,10 @@ bash "$HERE/make-sources.sh" "$WORK/sources" "$REPO/pool/main" "$IMG"
 # the published builds the gate compares with: copies, never links (a staged or published file must not change)
 mkdir -p "$WORK/previous-mlt" "$WORK/previous-kdenlive"
 for f in "$REPO"/pool/main/m/mlt/*_7.40.0-1+stereo3d6+lc1_*.deb; do cp "$f" "$WORK/previous-mlt/"; done
+# The published libmlt-perl +stereo3d6 depends on perlapi-5.42.3, which Debian testing no longer has (perl 5.44.0-3 there on
+# 2026-11-21): it cannot be installed today, so it cannot be the gate's baseline; its successor here is built against
+# today's perl. Every other predecessor stays.
+rm -f "$WORK"/previous-mlt/libmlt-perl_*.deb "$WORK"/previous-mlt/libmlt-perl-*.deb
 for f in "$REPO"/pool/main/k/kdenlive/*_26.08.1-1+stereo3d6+lc1_*.deb; do cp "$f" "$WORK/previous-kdenlive/"; done
 SPARKY_LC_PREVIOUS_DIR="$WORK/previous-mlt" bash "$TOP/release/build-from-lc-dsc.sh" \
 	"$WORK"/sources/source-mlt/mlt_7.40.0-1+stereo3d7+lc1.dsc amd64 "$IMG" "$REPO" "$WORK/mlt"

@@ -32,4 +32,4 @@ bash sparky-os/packages/kdenlive-stereo-61e/build.sh WORK /path/to/published-tre
 ```
 
 `make-sources.sh` packs both sources with `repo/lc-successor.py --in-place --overlay --reapply-patches` (the whole new series is applied before packing), dated by this folder's last commit; `build.sh` builds MLT, then Kdenlive with the new MLT as the link gate's edition sibling (`release/build-from-lc-dsc.sh`, `SPARKY_LC_SIBLINGS_DIR`).
-The published builds of +stereo3d6 are copied into `previous-*` for the gate's comparison.
+The published builds of +stereo3d6 are copied into `previous-*` for the gate's comparison, but for libmlt-perl: the published one depends on `perlapi-5.42.3`, which Debian testing no longer has (perl 5.44.0-3 on 2026-11-21), so it cannot be installed and cannot be the gate's baseline; the one built here links today's perl.
