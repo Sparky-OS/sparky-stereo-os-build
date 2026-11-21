@@ -1,0 +1,85 @@
+Description: obs-ffmpeg: the custom FFmpeg output carries the stereo layout
+ The custom FFmpeg output hands its encoder the canvas's layout as side data (stream and frames) and its muxer as
+ codecpar side data, as the standard recording does.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 2)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-21
+---
+diff --git a/plugins/obs-ffmpeg/obs-ffmpeg-output.c b/plugins/obs-ffmpeg/obs-ffmpeg-output.c
+index d54726b..696333b 100644
+--- a/plugins/obs-ffmpeg/obs-ffmpeg-output.c
++++ b/plugins/obs-ffmpeg/obs-ffmpeg-output.c
+@@ -16,6 +16,7 @@
+ ******************************************************************************/
+ 
+ #include <obs-module.h>
++#include <libavutil/stereo3d.h>
+ #include <util/deque.h>
+ #include <util/threading.h>
+ #include <util/dstr.h>
+@@ -119,6 +120,25 @@ static bool open_video_codec(struct ffmpeg_data *data)
+ 		strlist_free(opts);
+ 	}
+ 
++	/* The canvas's stereo layout: the encoder writes the frame packing arrangement SEI where it can (the edition's
++	 * FFmpeg reads the stream's initial layout and each frame's), the muxer the container's mark. */
++	uint32_t stereo_flags = 0;
++	const enum obs_stereo3d_type stereo = obs_get_video_stereo3d(&stereo_flags);
++	if (stereo != OBS_STEREO3D_2D) {
++		size_t size = 0;
++		AVStereo3D *initial = av_stereo3d_alloc_size(&size);
++		AVBufferRef *buffer = initial ? av_buffer_create((uint8_t *)initial, size, NULL, NULL, 0) : NULL;
++		if (buffer) {
++			initial->type = (enum AVStereo3DType)stereo;
++			initial->flags = (stereo_flags & OBS_STEREO3D_FLAG_INVERT) ? AV_STEREO3D_FLAG_INVERT : 0;
++			if (!av_frame_side_data_add(&context->decoded_side_data, &context->nb_decoded_side_data,
++						    AV_FRAME_DATA_STEREO3D, &buffer, 0))
++				av_buffer_unref(&buffer);
++		} else {
++			av_free(initial);
++		}
++	}
++
+ 	ret = avcodec_open2(context, data->vcodec, NULL);
+ 	if (ret < 0) {
+ 		ffmpeg_log_error(LOG_WARNING, data, "Failed to open video codec: %s", av_err2str(ret));
+@@ -148,6 +168,26 @@ static bool open_video_codec(struct ffmpeg_data *data)
+ 
+ 	avcodec_parameters_from_context(data->video->codecpar, context);
+ 
++	if (stereo != OBS_STEREO3D_2D) {
++		AVStereo3D *per_frame = av_stereo3d_create_side_data(data->vframe);
++		size_t size = 0;
++		AVStereo3D *stream = av_stereo3d_alloc_size(&size);
++		const int flags = (stereo_flags & OBS_STEREO3D_FLAG_INVERT) ? AV_STEREO3D_FLAG_INVERT : 0;
++		if (per_frame) {
++			per_frame->type = (enum AVStereo3DType)stereo;
++			per_frame->flags = flags;
++		}
++		if (stream) {
++			stream->type = (enum AVStereo3DType)stereo;
++			stream->flags = flags;
++			if (!av_packet_side_data_add(&data->video->codecpar->coded_side_data,
++						     &data->video->codecpar->nb_coded_side_data, AV_PKT_DATA_STEREO3D,
++						     (uint8_t *)stream, size, 0))
++				av_free(stream);
++		}
++		blog(LOG_INFO, "[ffmpeg output] stereo layout %d from the canvas", (int)stereo);
++	}
++
+ 	return true;
+ }
+ 
+@@ -407,6 +447,11 @@ static inline bool open_output_file(struct ffmpeg_data *data)
+ 		}
+ 	}
+ 
++	if (obs_get_video_stereo3d(NULL) != OBS_STEREO3D_2D && data->output->oformat &&
++	    strstr(data->output->oformat->name, "mp4")) {
++		/* FFmpeg's MP4 muxer writes the st3d box only at this strictness (movenc.c, mov_write_video_tag) */
++		data->output->strict_std_compliance = FF_COMPLIANCE_UNOFFICIAL;
++	}
+ 	ret = avformat_write_header(data->output, &dict);
+ 	if (ret < 0) {
+ 		ffmpeg_log_error(LOG_WARNING, data, "Error opening '%s': %s", data->config.url, av_err2str(ret));
