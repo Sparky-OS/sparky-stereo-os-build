@@ -1,13 +1,16 @@
 Description: Brazilian Portuguese for the sentences of ORDER 61e
- The eight sentences the patches 0010 and 0011 add, in Brazilian Portuguese; the
- other eight required languages are the translations lane's.
+ The sentences the patches 0010, 0011 and 0014 to 0017 add (the first milestone's
+ eight, then the clip's 3D corrections, the monitors' 3D options, the moved Right
+ Eye First and the unknown render preset), in Brazilian Portuguese; the other
+ eight required languages are the translations lane's.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed
-Last-Update: 2026-11-20
+Last-Update: 2026-11-21
 
+diff --git a/po/pt_BR/kdenlive.po b/po/pt_BR/kdenlive.po
 --- a/po/pt_BR/kdenlive.po
 +++ b/po/pt_BR/kdenlive.po
-@@ -47987,3 +47987,31 @@ msgstr "Linhas entrelaçadas"
+@@ -47987,3 +47987,81 @@ msgstr "Linhas entrelaçadas"
  msgctxt "The video shown in 3D by the compositor, in the monitor itself"
  msgid "3D"
  msgstr "3D"
@@ -39,3 +42,53 @@ Last-Update: 2026-11-20
 +
 +msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
 +msgstr "As predefinições 3D gravam lado a lado, o olho esquerdo primeiro, e os quadros deste projeto estão empacotados: %1. Defina o Formato do projeto como Automático (pelos clipes) no menu 3D estereoscópico do monitor do projeto."
++
++msgid "This clip has no 3D correction to save."
++msgstr "Este clipe não tem correção 3D para salvar."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "o formato dele não tem marca 3D que possa ser gravada (Matroska, WebM e MP4 têm)."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "a marca do formato dele não tem valor para este formato de entrada 3D."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "o próprio fluxo de vídeo declara outro formato 3D, e a declaração do fluxo vem antes da marca do contêiner."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "a marca não pode ser acrescentada a este arquivo MP4 sem mover os dados de mídia dele."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "gravar a marca de um arquivo Matroska precisa do mkvpropedit (MKVToolNix), que não está instalado."
++
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "a gravação falhou (%1)."
++
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "Não foi possível salvar a correção 3D em %1: %2 O arquivo ficou como estava, e a correção continua no projeto."
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "Esta compilação do Kdenlive não consegue gravar uma marca 3D em um arquivo."
++
++msgid "Enable 3D"
++msgstr "Ativar 3D"
++
++msgid "Display Settings…"
++msgstr "Configurações da tela…"
++
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "O formato deste projeto estava definido como “%2” com o olho direito primeiro. A ordem dos olhos agora é de cada clipe: %1 clipe de vídeo tem esse formato de entrada 3D nas propriedades, e o projeto toma o formato dos clipes."
++msgstr[1] "O formato deste projeto estava definido como “%2” com o olho direito primeiro. A ordem dos olhos agora é de cada clipe: %1 clipes de vídeo têm esse formato de entrada 3D nas propriedades, e o projeto toma o formato dos clipes."
++
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "O Kdenlive não tem uma predefinição de renderização chamada “%1”: nada foi renderizado. As predefinições de renderização são:"
++
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "Não foi possível abrir as Configurações da tela: o programa “%1” não pôde ser iniciado. Ele vem com os módulos de configuração do KDE, e os formatos 3D das telas estão na página Configurações da tela das Configurações do sistema."

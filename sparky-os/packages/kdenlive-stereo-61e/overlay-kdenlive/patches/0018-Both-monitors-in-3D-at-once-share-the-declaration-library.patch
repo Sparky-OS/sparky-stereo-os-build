@@ -1,0 +1,105 @@
+Description: Both monitors in 3D at once share the declaration library
+ Each monitor's 3D area set up libstereo-declare on its own event queue, but the
+ library is set up once in a process: stereo_declare_wayland_init() answers -EBUSY
+ to a second call. With 3D on by default in both monitors (patch 0009), opening a
+ 3D clip in the clip monitor while the project monitor showed one in 3D made the
+ second monitor say "the stereo declaration library could not start" and show the
+ packed frame. The library is now set up once, on an event queue of its own, for
+ every 3D area of the process, and ended by the last one; each area declares its
+ own surface.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+
+--- a/src/monitor/stereolayer.cpp
++++ b/src/monitor/stereolayer.cpp
+@@ -155,6 +155,52 @@ bool createBuffer(Buffer &buffer, wl_shm
+ 
+ }
+ 
++namespace
++{
++// libstereo-declare is set up once in a process (stereo_declare_wayland_init() answers -EBUSY to a second call), on an event queue
++// of its own, and declares any number of surfaces: the 3D areas of the project monitor and the clip monitor share it, and the last
++// one to go ends it
++struct SharedDeclaration
++{
++    int users{0};
++    wl_event_queue *queue{nullptr};
++};
++
++SharedDeclaration &sharedDeclaration()
++{
++    static SharedDeclaration shared;
++    return shared;
++}
++
++bool acquireDeclaration(wl_display *display)
++{
++    SharedDeclaration &shared = sharedDeclaration();
++    if (shared.users == 0) {
++        shared.queue = wl_display_create_queue(display);
++        if (!shared.queue || stereo_declare_wayland_init(display, shared.queue) != 0) {
++            if (shared.queue) {
++                wl_event_queue_destroy(shared.queue);
++                shared.queue = nullptr;
++            }
++            return false;
++        }
++        wl_display_roundtrip_queue(display, shared.queue);
++    }
++    ++shared.users;
++    return true;
++}
++
++void releaseDeclaration()
++{
++    SharedDeclaration &shared = sharedDeclaration();
++    if (shared.users > 0 && --shared.users == 0) {
++        stereo_declare_wayland_finish();
++        wl_event_queue_destroy(shared.queue);
++        shared.queue = nullptr;
++    }
++}
++}
++
+ struct StereoLayer::Private
+ {
+     QPointer<QWidget> area;
+@@ -230,13 +276,12 @@ bool StereoLayer::Private::createLayer()
+     display = waylandDisplay();
+     queue = wl_display_create_queue(display);
+     registry = readGlobals(display, queue, globals);
+-    if (stereo_declare_wayland_init(display, queue) != 0) {
++    if (!acquireDeclaration(display)) {
+         destroyLayer();
+         failure = i18nc("Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1", "the stereo declaration library could not start.");
+         return false;
+     }
+     stereoInitialized = true;
+-    wl_display_roundtrip_queue(display, queue);
+     if (!stereo_supported_wayland()) {
+         destroyLayer();
+         failure = i18nc("Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1", "the compositor does not take stereo content.");
+@@ -262,7 +307,7 @@ void StereoLayer::Private::destroyLayer(
+         declared = false;
+     }
+     if (stereoInitialized) {
+-        stereo_declare_wayland_finish();
++        releaseDeclaration();
+         stereoInitialized = false;
+     }
+     if (viewport) {
+@@ -422,8 +467,11 @@ void StereoLayer::showEyes(const QImage
+         }
+         return;
+     }
+-    // Nothing is listened to on the queue of the layer but the release of buffers
++    // Nothing is listened to on the queue of the layer but the release of buffers; the declaration library's answers come on its own
+     wl_display_dispatch_queue_pending(d->display, d->queue);
++    if (sharedDeclaration().queue) {
++        wl_display_dispatch_queue_pending(d->display, sharedDeclaration().queue);
++    }
+ 
+     // each view as the frame carries it; where that cannot be a texture, scaled to the area's pixels
+     QImage leftView = letterboxed(left, d->area->size(), sampleAspect > 0 ? sampleAspect : 1.0);
