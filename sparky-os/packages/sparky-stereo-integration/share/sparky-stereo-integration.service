@@ -1,0 +1,13 @@
+[Unit]
+StartLimitIntervalSec=0
+Description=Initialize available integration packs for this user
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-integration sync
+TimeoutStartSec=90
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=default.target

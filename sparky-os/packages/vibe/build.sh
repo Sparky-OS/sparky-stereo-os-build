@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS: Vibe 3.2.2 from upstream's signed release, in a throwaway sparky-pkg-base:amd64 container.
+# Sparky Stereo OS: Vibe 3.3.5 from upstream's signed release, in a throwaway sparky-pkg-base:amd64 container.
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/05
 # Copyright 2026 under the GNU GPL3 License
 # Upstream releases the .deb it builds (Tauri, Rust, WebKitGTK; the engine vibe-server is a Rust binary with
@@ -13,7 +13,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 . "$HERE/../../repo/build-provenance.sh"
 WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/vibe/build}
-VER=3.2.2
+VER=3.3.5
 mkdir -p "$WORK"
 sparky_provenance_init sparky-pkg-base:amd64
 docker run --ulimit core=1 --rm --platform linux/amd64 "${SPARKY_PROV_ARGS[@]}" -e HOST_UID=$(id -u) -e VER=$VER -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro -v "$HERE/../..":/toolkit:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '

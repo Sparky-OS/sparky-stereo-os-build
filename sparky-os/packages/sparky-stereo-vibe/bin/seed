@@ -1,0 +1,103 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Create Vibe's data-home store once; do not start Vibe or download anything."""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+PRESETS = Path('/usr/share/sparky-stereo/vibe/presets')
+PT = os.environ.get('LC_ALL', os.environ.get('LC_MESSAGES', os.environ.get('LANG', ''))).startswith('pt_BR')
+
+
+def data_home():
+    return Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
+
+
+def match_device(name, devices):
+    """Only one exact, case-insensitive name/description match is certain."""
+    name = name.strip().casefold()
+    matches = [d['index'] for d in devices if name and name in
+               {str(d.get('name', '')).strip().casefold(), str(d.get('description', '')).strip().casefold()}]
+    return matches[0] if len(matches) == 1 else None
+
+
+def gpu_facts():
+    try:
+        choice = subprocess.run(['sparky-stereo-gpu-env', '--app', 'vibe.desktop', '--print', 'id'],
+                                text=True, capture_output=True, timeout=15)
+        if choice.returncode:
+            print(choice.stderr.strip(), file=sys.stderr)
+            return None, False
+        inventory = json.loads(subprocess.run(['sparky-stereo-gpu-env', '--list', '--json'],
+                                             text=True, capture_output=True, timeout=15, check=True).stdout)
+        selected = [gpu for gpu in inventory if gpu.get('id') == choice.stdout.strip()]
+        name = selected[0].get('name', '') if len(selected) == 1 else ''
+        if sum(gpu.get('name', '').casefold() == name.casefold() for gpu in inventory) != 1:
+            name = ''
+        result = subprocess.run(['vibe-server', 'devices'], text=True, capture_output=True,
+                                timeout=30, check=True)
+        devices = json.loads(result.stdout)
+        return match_device(name, devices), bool(devices)
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+        notice = 'Mapeamento de GPU indisponível; gpuDevice permanece nulo' if PT else 'Vibe GPU mapping unavailable; keeping gpuDevice null'
+        print(f'{notice}: {error}', file=sys.stderr)
+        return None, False
+
+
+def memory_kib():
+    for line in Path('/proc/meminfo').read_text().splitlines():
+        if line.startswith('MemTotal:'):
+            return int(line.split()[1])
+    raise RuntimeError('MemTotal is missing from /proc/meminfo')
+
+
+def seed(preset=None):
+    folder = data_home() / 'github.com.thewh1teagle.vibe'
+    target = folder / 'app_config.json'
+    # This shortcut avoids querying hardware for an existing person. The actual
+    # creation below is exclusive even if another process creates the store now.
+    if os.path.lexists(target):
+        return False
+    device, has_gpu = gpu_facts()
+    preset = preset or ('default' if memory_kib() >= 8 * 1024 * 1024 or has_gpu else 'light')
+    values = json.loads((PRESETS / (preset + '.json')).read_text())
+    values['model.gpuDevice'] = device
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.app_config.', dir=folder)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(values, stream, ensure_ascii=False, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            # link creates the name exclusively and atomically publishes the
+            # complete JSON. EEXIST includes dangling symlinks. Never rename over it.
+            os.link(temporary, target)
+        except FileExistsError:
+            return False
+        directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return True
+    finally:
+        os.unlink(temporary)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--preset', choices=['default', 'light', 'basic'])
+    args = parser.parse_args()
+    try:
+        seed(args.preset)
+    except (OSError, ValueError, RuntimeError) as error:
+        notice = 'As configurações do Vibe não foram inicializadas' if PT else 'Vibe settings were not initialized'
+        print(f'{notice}: {error}', file=sys.stderr)
+        sys.exit(1)

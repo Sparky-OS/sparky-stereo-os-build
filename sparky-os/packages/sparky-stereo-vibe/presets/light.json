@@ -1,0 +1,56 @@
+{
+  "model.gpuDevice": null,
+  "ai": {
+    "connection": {
+      "model": "",
+      "ollamaBaseUrl": "http://localhost:11434",
+      "openaiBaseUrl": "https://api.openai.com/v1",
+      "platform": "ollama"
+    },
+    "tasks": {
+      "dictation": {
+        "enabled": false,
+        "preset": "punctuation",
+        "prompt": "Output only the requested content. No introductions, explanations, or commentary.\n\nThis is dictated speech. Fix punctuation, capitalization and obvious speech-to-text mistakes. Keep every word and the original language; do not add, remove, translate, summarize or rephrase anything. Return the corrected text only.\n\n\"\"\"\n{text}\n\"\"\""
+      },
+      "summary": {
+        "autoOnFinish": false,
+        "enabled": false,
+        "preset": "summary",
+        "prompt": "Output only the requested content. No introductions, explanations, or commentary.\n\nWrite a concise summary of this transcript in {language} using markdown. Include:\n- A short overview paragraph\n- 3-5 key takeaways as bullet points\n- Action items as a checklist if there are any\n\n\"\"\"\n{transcript}\n\"\"\""
+      }
+    }
+  },
+  "transcription.saveTranscripts": false,
+  "general.theme": "dark",
+  "general.closeToTray": true,
+  "analytics_enabled": false,
+  "general.firstRun": false,
+  "transcription.autoExport": {
+    "destination": "beside",
+    "enabled": true,
+    "folder": null,
+    "formats": [
+      "srt",
+      "json",
+      "md"
+    ],
+    "replace": false
+  },
+  "recording.meetingDetectionEnabled": false,
+  "transcription.ffmpegOptions": {
+    "custom_command": null,
+    "normalize_loudness": true
+  },
+  "handoff.pairing": {},
+  "transcription.stableTimestamps": false,
+  "transcript.exportOptions": {
+    "content": "transcript",
+    "format": "pdf",
+    "showSpeakers": true,
+    "showTimestamps": true,
+    "theme": "light"
+  },
+  "general.updateChannel": "stable",
+  "transcript.lines": "original"
+}

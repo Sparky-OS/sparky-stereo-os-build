@@ -18,13 +18,14 @@ Description: offline speech transcription with Whisper models
  anything away: subtitles (SRT, VTT), text and JSON, speaker labels, many
  languages, batch files and a command line.
  .
- This is upstream's own build of Vibe 3.2.2 (MIT,
+ This is upstream's own build of Vibe 3.3.5 (MIT,
  https://github.com/thewh1teagle/vibe), repackaged after its signature was
  checked against the key in the tagged source. The source package carries
  the tagged source and the signed release.
  .
  At run time: the models (Whisper, voice activity detection, speaker
- separation) are not in the package. Vibe downloads the ones you choose from
- huggingface.co when you ask, and it can check GitHub for a newer release.
+ separation) are not in the package. With no speech model installed, Vibe
+ can automatically download its default model on first start. Additional
+ models can be selected in Vibe. It can check GitHub for a newer release.
  Recognition runs on the CPU, and on the GPU through Vulkan when a Vulkan
  driver is present (vibe-server, the engine, is built on ggml).
