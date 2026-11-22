@@ -13,6 +13,16 @@ VERSION=0.1.2
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the date of the recipe: build-provenance.sh}
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME="Daniel Ramos (Capitain Jack)"
 mkdir -p "$OUT"
+: "${LAYER:?the pinned stereo-layer siblings, installed before the build dependencies}"
+(cd "$LAYER" && sha256sum --check --quiet "$HERE/layer-1.23.2.sha256")
+export SPARKY_LC_SIBLINGS_FILE="$OUT/layer-siblings.txt"
+: >"$SPARKY_LC_SIBLINGS_FILE"
+while read -r sum filename; do
+    realpath "$LAYER/$filename" >>"$SPARKY_LC_SIBLINGS_FILE"
+done <"$HERE/layer-1.23.2.sha256"
+for package in libstereo-layer1 libstereo-policy1 libstereo-layer-dev libstereo-policy-dev; do
+    test "$(dpkg-query -W -f='${Version}' "$package")" = 1.23.2-1+lc1
+done
 WORK=$(mktemp -d "$OUT/.camera.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 SRC=$WORK/source   # not named package-version: dch renames a folder that is

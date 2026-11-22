@@ -27,7 +27,7 @@ QString previewInput(const stereo_policy_input_format &format)
     case STEREO_POLICY_LAYOUT_COLUMNS: return QStringLiteral("StereoColumnInterleaved");
     case STEREO_POLICY_LAYOUT_CHECKERBOARD: return QStringLiteral("StereoCheckerboard");
     case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX: return QStringLiteral("StereoSideBySideQuincunx");
-    case STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL: return QStringLiteral("StereoFrameSequence");
+    case STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL: return {}; // PreviewSource does not preserve the source frame ordinal.
     case STEREO_POLICY_LAYOUT_DEPTH_SIDE_BY_SIDE:
         return format.order == STEREO_POLICY_DEPTH_FIRST ? QStringLiteral("StereoDepthSideBySideDepthFirst") : QStringLiteral("StereoDepthSideBySide");
     case STEREO_POLICY_LAYOUT_DEPTH_TOP_AND_BOTTOM:

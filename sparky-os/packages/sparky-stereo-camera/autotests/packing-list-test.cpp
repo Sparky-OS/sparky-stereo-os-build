@@ -26,7 +26,7 @@ private Q_SLOTS:
     {
         using Sparky::Camera::packingById;
         QCOMPARE(packingById(QStringLiteral("mono")).videoOutput, QStringLiteral("StereoNone"));
-        QCOMPARE(packingById(QStringLiteral("frameSequentialRightFirst")).videoOutput, QStringLiteral("StereoFrameSequence"));
+        QVERIFY(packingById(QStringLiteral("frameSequentialRightFirst")).videoOutput.isEmpty());
         QVERIFY(packingById(QStringLiteral("frameSequentialRightFirst")).swapEyes);
         QVERIFY(packingById(QStringLiteral("blockLacedLeftFirst")).videoOutput.isEmpty());
         QVERIFY(packingById(QStringLiteral("unknown-future-format")).id.isEmpty());

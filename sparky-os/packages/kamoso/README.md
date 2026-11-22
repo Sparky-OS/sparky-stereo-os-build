@@ -1,9 +1,14 @@
-# kamoso +stereo3d1 (ORDER 570)
+# Kamoso stereo viewfinder
 
-Debian's kamoso 26.04.0-1 with one patch, `patches/0001-follow-the-session-default-camera.patch` (DEP-3 header inside): with no camera chosen
-in Kamoso, it takes the camera the session names as its default video source (PipeWire's "default" metadata, key default.video.source,
-which the Camera page of System Settings sets); a camera the person picks in Kamoso's own list stays theirs (kamosorc, `deviceChosen`).
-Build: `apt-get source kamoso`, copy the patch into debian/patches with a `series` file, `dch --newversion 26.04.0-1+stereo3d1`,
-`dpkg-buildpackage -us -uc -b`. Proof (rig of the lane): follow-kamoso.sh, three defaults, red on the published build, green on this one.
-Not yet through the Lean Code route: Debian's source is not an lc1 source, so the +lc1 successor is the publication round's step.
-Upstream (invent.kde.org/multimedia/kamoso): nothing merged or open for this on 2026-11-15; open MR 62 (remember the chosen camera, camera switcher) is related.
+The recipe preserves the session default camera patch and adds a viewfinder that reads the Camera page's packing choice.
+The edition's stereo layer separates the views, and Qt Multimedia places their native sample grids in a declared child surface.
+Enable 3D uses the shared action; the settings drawer links to Camera Settings and Display Settings.
+The original GStreamer viewfinder remains the 3D-off path.
+
+The recipe requires the exact stereo-layer siblings in `layer-1.23.2.sha256` through `LAYER`.
+Install those siblings before installing build dependencies, and keep the same packages available to the link gate.
+`build.sh` verifies their checksums and installed version and passes their paths to the gate.
+The existing Lean Code preparation and release checks remain in place.
+The binary dependencies explicitly require stereo-layer and stereo-policy 1.23.2 or later.
+
+With `BUILD_TESTING=ON`, CTest checks native eye sizes and pixels through GStreamer's appsink and Qt's video sink, caps declarations, both eye orders, and temporal gaps and discontinuities.

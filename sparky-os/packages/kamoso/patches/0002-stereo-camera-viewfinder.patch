@@ -1,0 +1,793 @@
+Description: Present camera pairs in a declared child video surface
+ Read the Camera page choice, unpack with stereo-layer and pass complete views
+ at their native sample size to the edition Qt video surface. Keep the original
+ GStreamer sink when Enable 3D is off.
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-22
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -26,7 +26,7 @@
+ 
+ option(BUILD_DOC "Whether to build the documentation" ON)
+ 
+-find_package(Qt6 NO_MODULE REQUIRED COMPONENTS Core Gui Widgets Quick)
++find_package(Qt6 NO_MODULE REQUIRED COMPONENTS Core Gui Widgets Quick Multimedia)
+ find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS Config KIO I18n Purpose Notifications)
+ 
+ if (BUILD_DOC)
+@@ -45,6 +45,8 @@
+ endif()
+ 
+ find_package(PkgConfig REQUIRED)
++find_package(StereoLayer 1.23.2 REQUIRED)
++pkg_check_modules(GStreamerApp REQUIRED IMPORTED_TARGET gstreamer-app-1.0)
+ pkg_check_modules(GStreamer IMPORTED_TARGET gstreamer-1.0>=${GSTREAMER_MIN_VERSION})
+ pkg_check_modules(GStreamerVideo IMPORTED_TARGET gstreamer-video-1.0)
+ 
+@@ -67,3 +69,7 @@
+ install(FILES org.kde.kamoso.appdata.xml DESTINATION ${KDE_INSTALL_METAINFODIR})
+ 
+ feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
++
++if(BUILD_TESTING)
++    add_subdirectory(autotests)
++endif()
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -12,6 +12,7 @@
+     kamoso.cpp
+     previewfetcher.cpp
+     video/webcamcontrol.cpp
++    video/stereopreview.cpp
+ 
+     resources.qrc
+ )
+@@ -20,7 +21,8 @@
+ target_link_libraries(kamoso
+     Qt::Core Qt::Gui Qt::Widgets Qt::Quick
+     KF6::KIOFileWidgets KF6::ConfigGui KF6::I18n KF6::Notifications
+-    PkgConfig::GStreamerVideo PkgConfig::GStreamer
++    PkgConfig::GStreamerVideo PkgConfig::GStreamer PkgConfig::GStreamerApp
++    Qt6::Multimedia Stereo::Layer Stereo::Policy
+ )
+ 
+ install(TARGETS kamoso ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+--- a/src/device.h
++++ b/src/device.h
+@@ -32,6 +32,7 @@
+         QString filters() const { return m_filters; }
+ 
+         GstElement* createElement();
++        GstStructure *properties() const { return gst_device_get_properties(m_device); }
+ 
+         void reset();
+ 
+--- a/src/kamosoSettings.kcfg
++++ b/src/kamosoSettings.kcfg
+@@ -17,6 +17,7 @@
+ 		</entry>
+ 	</group>
+     <group name="WebcamSettings">
++        <entry name="stereoEnabled" type="bool"><default>true</default></entry>
+         <entry name="mirrored" type="bool">
+             <default>true</default>
+             <label>Vertically mirror the camera view.</label>
+--- a/src/qml/Main.qml
++++ b/src/qml/Main.qml
+@@ -12,6 +12,8 @@
+ import org.kde.kamoso 3.0
+ import org.kde.coreaddons as KCoreAddons
+ import org.freedesktop.gstreamer.Qt6GLVideoItem
++import QtMultimedia
++import org.sparky.stereo as Stereo
+ 
+ Kirigami.ApplicationWindow
+ {
+@@ -24,6 +26,7 @@
+     Component.onCompleted: {
+         width = 700
+         height = width*3/4
++        WebcamControl.stereoSink = stereoVideo.videoSink
+     }
+ 
+     function awesomeAnimation(path) {
+@@ -73,6 +76,12 @@
+                                 properties: "x,y"; duration: 700; easing.type: Easing.InCubic }
+             }
+         ]
++    }
++
++    Stereo.Enable3DAction {
++        id: enable3D
++        checked: WebcamControl.stereoEnabled
++        onTriggered: WebcamControl.stereoEnabled = checked
+     }
+ 
+     property Mode lastMode: photoMode
+@@ -192,7 +201,10 @@
+                 id: configView
+ 
+                 header: QQC2.Control {
+-                    height: effectsGalleryHeading.height + Kirigami.Units.largeSpacing
++                    height: stereoControls.implicitHeight + Kirigami.Units.largeSpacing
++                    Column {
++                    id: stereoControls
++                    width: parent.width
+                     Kirigami.Heading {
+                         id: effectsGalleryHeading
+                         level: 1
+@@ -200,6 +212,10 @@
+                         elide: Text.ElideRight
+                         text: i18n("Effects Gallery")
+                     }
++                    QQC2.CheckBox { action: enable3D }
++                    QQC2.Button { text: i18n("Camera Settings"); onClicked: WebcamControl.openCameraSettings() }
++                    QQC2.Button { text: i18n("Display Settings"); onClicked: WebcamControl.openDisplaySettings() }
++                    }
+                 }
+             }
+         }
+@@ -239,9 +255,28 @@
+         }
+ 
+         GstGLQt6VideoItem {
++            visible: !WebcamControl.stereoPreviewActive
+             acceptEvents: false
+             objectName: "sink"
+             anchors.fill: parent
++        }
++
++        VideoOutput {
++            id: stereoVideo
++            anchors.fill: parent
++            visible: WebcamControl.stereoPreviewActive
++            fillMode: VideoOutput.PreserveAspectFit
++            stereoInput: WebcamControl.stereoFrame ? VideoOutput.StereoSideBySideFull : VideoOutput.StereoNone
++            stereoShapeFallback: false
++        }
++        QQC2.Label {
++            anchors.bottom: parent.bottom
++            anchors.left: parent.left
++            anchors.right: parent.right
++            wrapMode: Text.WordWrap
++            color: "white"
++            visible: WebcamControl.stereoEnabled && (WebcamControl.stereoMessage.length > 0 || (WebcamControl.stereoFrame && WebcamControl.flatOutput))
++            text: WebcamControl.stereoFrame && WebcamControl.flatOutput ? i18n("This display is in 2D. Showing the left eye.") : WebcamControl.stereoMessage
+         }
+ 
+         Text {
+--- a/src/video/webcamcontrol.h
++++ b/src/video/webcamcontrol.h
+@@ -19,10 +19,19 @@
+ 
+ namespace QGst { namespace Quick { class VideoSurface; } }
+ 
++namespace Stereo { class ScreenMode; }
+ class Device;
++class StereoPreview;
++class QVideoSink;
+ class WebcamControl : public QObject
+ {
+     Q_OBJECT
++    Q_PROPERTY(bool stereoEnabled READ stereoEnabled WRITE setStereoEnabled NOTIFY stereoChanged)
++    Q_PROPERTY(bool stereoPreviewActive READ stereoPreviewActive NOTIFY stereoChanged)
++    Q_PROPERTY(bool flatOutput READ flatOutput NOTIFY stereoChanged)
++    Q_PROPERTY(bool stereoFrame READ stereoFrame NOTIFY stereoChanged)
++    Q_PROPERTY(QString stereoMessage READ stereoMessage NOTIFY stereoChanged)
++    Q_PROPERTY(QVideoSink *stereoSink READ stereoSink WRITE setStereoSink NOTIFY stereoChanged)
+     Q_PROPERTY(QString currentDevice READ currentDevice NOTIFY currentDeviceChanged)
+     Q_PROPERTY(bool readyForCapture READ readyForCapture NOTIFY readyForCaptureChanged)
+     public:
+@@ -37,6 +46,17 @@
+                 Q_EMIT mirroredChanged(m);
+             }
+         }
++
++        bool stereoEnabled() const;
++        void setStereoEnabled(bool enabled);
++        bool stereoPreviewActive() const { return m_pairActive; }
++        bool flatOutput() const;
++        bool stereoFrame() const { return m_stereoFrame; }
++        QString stereoMessage() const { return m_stereoMessage; }
++        QVideoSink *stereoSink() const { return m_stereoSink; }
++        void setStereoSink(QVideoSink *sink);
++        Q_INVOKABLE void openCameraSettings();
++        Q_INVOKABLE void openDisplaySettings();
+ 
+         QString currentDevice() const { return m_currentDevice; }
+         bool mirrored() const { return m_mirror; }
+@@ -54,6 +74,7 @@
+         void setExtraFilters(const QString &extraFilters);
+ 
+     Q_SIGNALS:
++        void stereoChanged();
+         void photoTaken(const QString &photoUrl);
+         void mirroredChanged(bool mirrored);
+         void currentDeviceChanged();
+@@ -66,10 +87,18 @@
+         void updateSourceFilter();
+         void setVideoSettings();
+ 
++        void setStereoMessage(const QString &message);
++        Stereo::ScreenMode *m_screenMode = nullptr;
++        StereoPreview *m_stereoPreview = nullptr;
++        QVideoSink *m_stereoSink = nullptr;
++        bool m_pairActive = false;
++        bool m_stereoFrame = false;
++        QString m_stereoMessage;
+         QString m_extraFilters;
+         QString m_tmpVideoPath;
+         QUrl m_videoDestination;
+         QString m_currentDevice;
++        guint m_busWatch = 0;
+         GstPointer<GstPipeline> m_pipeline;
+         GstPointer<GstElement> m_cameraSource;
+         GstPointer<GstElement> m_viewfinder;
+--- a/src/video/webcamcontrol.cpp
++++ b/src/video/webcamcontrol.cpp
+@@ -6,6 +6,10 @@
+ 
+ 
+ #include "webcamcontrol.h"
++#include "stereopreview.h"
++#include <stereo-layer/screenmode.h>
++#include <QVideoSink>
++#include <QProcess>
+ #include "kamosoSettings.h"
+ #include <devicemanager.h>
+ #include <kamosodirmodel.h>
+@@ -202,6 +206,17 @@
+ 
+ WebcamControl::WebcamControl()
+ {
++    QQuickWindow::setDefaultAlphaBuffer(true);
++    m_screenMode = new Stereo::ScreenMode(this);
++    connect(m_screenMode, &Stereo::ScreenMode::modeChanged, this, &WebcamControl::stereoChanged);
++    m_stereoPreview = new StereoPreview(this);
++    connect(m_stereoPreview, &StereoPreview::failed, this, &WebcamControl::setStereoMessage);
++    connect(m_stereoPreview, &StereoPreview::stereoFrameChanged, this, [this](bool stereo) {
++        if (m_stereoFrame != stereo) {
++            m_stereoFrame = stereo;
++            Q_EMIT stereoChanged();
++        }
++    });
+     QQmlApplicationEngine* engine = new QQmlApplicationEngine(this);
+     engine->rootContext()->setContextObject(new KLocalizedContext(engine));
+     m_kamoso = new Kamoso(this);
+@@ -219,6 +234,8 @@
+ 
+     engine->load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+     auto rootObject = qobject_cast<QQuickWindow *> (engine->rootObjects().constFirst());
++    m_screenMode->setScreen(rootObject->screen());
++    connect(rootObject, &QWindow::screenChanged, m_screenMode, &Stereo::ScreenMode::setScreen);
+     m_surface = rootObject->findChild<QQuickItem *>("sink");
+     Q_ASSERT(m_surface);
+ 
+@@ -231,6 +248,7 @@
+ 
+ WebcamControl::~WebcamControl()
+ {
++    stop();
+     DeviceManager::self()->save();
+     Settings::self()->save();
+     delete m_kamoso;
+@@ -238,9 +256,16 @@
+ 
+ void WebcamControl::stop()
+ {
++    if (m_busWatch) {
++        g_source_remove(m_busWatch);
++        m_busWatch = 0;
++    }
+     if(m_pipeline) {
+         gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
+         m_pipeline.reset(nullptr);
++        m_cameraSource.reset(nullptr);
++        m_viewfinder.reset(nullptr);
++        m_currentDevice.clear();
+     }
+ }
+ 
+@@ -264,6 +289,45 @@
+ 
+     WebcamControl* wc = static_cast<WebcamControl*>(user_data);
+     wc->setReadyForCapture(is_ready);
++}
++
++bool WebcamControl::flatOutput() const { return m_screenMode->mode() == Stereo::OutputMode::Mono; }
++bool WebcamControl::stereoEnabled() const { return Settings::stereoEnabled(); }
++void WebcamControl::setStereoMessage(const QString &message)
++{
++    if (m_stereoMessage == message)
++        return;
++    m_stereoMessage = message;
++    Q_EMIT stereoChanged();
++}
++void WebcamControl::setStereoSink(QVideoSink *sink)
++{
++    m_stereoSink = sink;
++    m_stereoPreview->setSink(sink);
++    Q_EMIT stereoChanged();
++}
++void WebcamControl::setStereoEnabled(bool enabled)
++{
++    if (enabled == stereoEnabled())
++        return;
++    Settings::setStereoEnabled(enabled);
++    Settings::self()->save();
++    stop();
++    m_viewfinder.reset(nullptr);
++    m_currentDevice.clear();
++    if (auto *window = m_surface ? m_surface->window() : nullptr) {
++        window->scheduleRenderJob(new PlayWebcam(this), QQuickWindow::BeforeSynchronizingStage);
++        window->update();
++    }
++    Q_EMIT stereoChanged();
++}
++void WebcamControl::openCameraSettings()
++{
++    QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_sparkystereo_camera")});
++}
++void WebcamControl::openDisplaySettings()
++{
++    QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_kscreen")});
+ }
+ 
+ bool WebcamControl::playDevice(Device *device)
+@@ -280,8 +344,26 @@
+     if (m_pipeline)
+         gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
+ 
++    auto *properties = device->properties();
++    const QString packing = StereoPreview::cameraPacking(properties);
++    if (properties)
++        gst_structure_free(properties);
++    setStereoMessage(stereoEnabled() && packing.isEmpty()
++        ? i18n("Choose this camera's packing in Camera Settings to show a pair in 3D.") : QString());
++    m_stereoPreview->setPacking(packing);
++    m_stereoPreview->setMirrored(m_mirror);
++    const bool pairActive = stereoEnabled();
++    if (m_pairActive != pairActive) {
++        m_pipeline.reset(nullptr);
++        m_viewfinder.reset(nullptr);
++        m_pairActive = pairActive;
++    }
++    Q_EMIT stereoChanged();
++
+     if (!m_cameraSource) {
+         m_cameraSource.reset(gst_element_factory_make("wrappercamerabinsrc", ""));
++        if (m_cameraSource)
++            gst_object_ref_sink(m_cameraSource.data());
+         g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
+         g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
+                          G_CALLBACK(captureReadyChanged), this);
+@@ -296,6 +378,13 @@
+     }
+     if (!m_viewfinder) {
+         Q_ASSERT(m_surface);
++        if (m_pairActive) {
++            m_viewfinder.reset(m_stereoPreview->createSink());
++            if (!m_viewfinder) {
++                setStereoMessage(i18n("The 3D viewfinder could not start."));
++                return false;
++            }
++        } else {
+         m_viewfinder.reset(gst_bin_new("viewfinder"));
+         auto glupload = gst_element_factory_make_full("glupload", nullptr);
+         auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
+@@ -309,6 +398,8 @@
+         GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
+         gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
+         gst_object_unref(sink_pad);
++        }
++        gst_object_ref_sink(m_viewfinder.data());
+     }
+ 
+     GstElement* source;
+@@ -320,7 +411,9 @@
+ 
+     if (!m_pipeline) {
+         m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
+-        gst_bus_add_watch (gst_pipeline_get_bus(m_pipeline.data()), &webcamWatch, this);
++        auto *bus = gst_pipeline_get_bus(m_pipeline.data());
++        m_busWatch = gst_bus_add_watch(bus, &webcamWatch, this);
++        gst_object_unref(bus);
+         g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
+         g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
+     }
+@@ -453,11 +546,14 @@
+     if (prevstate != GST_STATE_NULL)
+         gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
+ 
+-    QString filters = QStringLiteral("videoflip video-direction=auto");
+-    if (m_mirror)
++    m_stereoPreview->setMirrored(m_mirror);
++    QString filters = m_pairActive ? QString() : QStringLiteral("videoflip video-direction=auto");
++    if (m_mirror && !m_pairActive)
+         filters += QStringLiteral(" ! videoflip video-direction=horiz");
+ 
+-    if (!m_extraFilters.isEmpty()) {
++    if (m_pairActive && !m_extraFilters.isEmpty())
++        setStereoMessage(i18n("This effect is not available per eye. Choose no effect to use the 3D viewfinder."));
++    if (!m_extraFilters.isEmpty() && !m_pairActive) {
+         if (!filters.isEmpty())
+             filters.prepend(QStringLiteral(" ! "));
+         filters.prepend(m_extraFilters);
+--- /dev/null
++++ b/src/video/stereopreview.h
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#pragma once
++#include <QObject>
++#include <QImage>
++#include <QPointer>
++#include <QVideoSink>
++#include <stereo-policy.h>
++#include <gst/gst.h>
++#include <gst/video/video.h>
++#include <atomic>
++
++class StereoPreview : public QObject
++{
++    Q_OBJECT
++    friend class StereoPreviewTest;
++public:
++    explicit StereoPreview(QObject *parent = nullptr);
++    void setSink(QVideoSink *sink);
++    void setPacking(const QString &id);
++    void setMirrored(bool mirrored);
++    GstElement *createSink();
++    bool hasPacking() const;
++    static QString cameraPacking(GstStructure *properties);
++Q_SIGNALS:
++    void failed(const QString &message);
++    void stereoFrameChanged(bool stereo);
++private:
++    void present(const QImage &image, bool discontinuity, quint64 offset, GstVideoMultiviewMode mode, GstVideoMultiviewFlags flags);
++    QPointer<QVideoSink> m_sink;
++    stereo_policy_input_format m_format {};
++    QImage m_first;
++    quint64 m_firstOffset = GST_BUFFER_OFFSET_NONE;
++    bool m_mirrored = true;
++    bool m_unknownPacking = false;
++    std::atomic_uint64_t m_generation = 0;
++    std::atomic_bool m_pending = false;
++};
+--- /dev/null
++++ b/src/video/stereopreview.cpp
+@@ -0,0 +1,191 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "stereopreview.h"
++#include <stereo-layer/picture.h>
++#include <KLocalizedString>
++#include <QSettings>
++#include <QVideoFrame>
++#include <gst/app/gstappsink.h>
++#include <gst/video/video.h>
++#include <linux/videodev2.h>
++#include <sys/ioctl.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <cstring>
++
++StereoPreview::StereoPreview(QObject *parent) : QObject(parent) {}
++void StereoPreview::setSink(QVideoSink *sink) { m_sink = sink; }
++void StereoPreview::setMirrored(bool mirrored) { m_mirrored = mirrored; }
++bool StereoPreview::hasPacking() const
++{
++    return m_format.id && m_format.view != STEREO_POLICY_VIEW_MONO
++        && (m_format.layout != STEREO_POLICY_LAYOUT_NONE || m_format.anaglyph != STEREO_POLICY_ANAGLYPH_NONE);
++}
++void StereoPreview::setPacking(const QString &id)
++{
++    ++m_generation;
++    m_unknownPacking = false;
++    m_format = {};
++    m_first = {};
++    for (size_t i = 0; i < stereo_policy_input_format_count(); ++i) {
++        const auto *entry = stereo_policy_input_format_at(i);
++        if (id == QLatin1String(entry->id)) {
++            m_format = *entry;
++            return;
++        }
++    }
++    m_unknownPacking = !id.isEmpty();
++    if (m_unknownPacking)
++        Q_EMIT failed(i18n("The saved camera packing is unavailable. Choose it again in Camera Settings."));
++}
++QString StereoPreview::cameraPacking(GstStructure *properties)
++{
++    if (!properties)
++        return {};
++    const char *path = gst_structure_get_string(properties, "api.v4l2.path");
++    if (!path)
++        path = gst_structure_get_string(properties, "device.path");
++    if (!path) {
++        const char *objectPath = gst_structure_get_string(properties, "object.path");
++        if (objectPath && g_str_has_prefix(objectPath, "v4l2:"))
++            path = objectPath + 5;
++    }
++    if (!path)
++        return {};
++    const int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
++    if (fd < 0)
++        return {};
++    v4l2_capability capability {};
++    const bool found = ioctl(fd, VIDIOC_QUERYCAP, &capability) == 0;
++    close(fd);
++    if (!found)
++        return {};
++    QString key = QString::fromUtf8(reinterpret_cast<const char *>(capability.bus_info))
++        + QLatin1Char('|') + QString::fromUtf8(reinterpret_cast<const char *>(capability.card));
++    key.replace(QLatin1Char('/'), QLatin1Char('_'));
++    key.replace(QLatin1Char('\\'), QLatin1Char('_'));
++    QSettings store(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("sparky-stereo-camera"), QStringLiteral("cameras"));
++    store.beginGroup(key);
++    return store.value(QStringLiteral("packing")).toString();
++}
++GstElement *StereoPreview::createSink()
++{
++    auto *bin = gst_parse_bin_from_description("videoconvert ! video/x-raw,format=RGBA ! appsink name=stereosink max-buffers=1 drop=true sync=false", true, nullptr);
++    if (!bin)
++        return nullptr;
++    auto *sink = gst_bin_get_by_name(GST_BIN(bin), "stereosink");
++    GstAppSinkCallbacks callbacks {};
++    callbacks.new_sample = [](GstAppSink *sink, gpointer data) -> GstFlowReturn {
++        auto *self = static_cast<StereoPreview *>(data);
++        GstSample *sample = gst_app_sink_pull_sample(sink);
++        if (!sample)
++            return GST_FLOW_EOS;
++        // A skipped frame invalidates a temporal pair; never pair across a gap.
++        if (self->m_pending.exchange(true)) {
++            gst_sample_unref(sample);
++            return GST_FLOW_OK;
++        }
++        const auto generation = self->m_generation.load();
++        GstVideoInfo info;
++        GstVideoFrame frame;
++        GstBuffer *buffer = gst_sample_get_buffer(sample);
++        if (!gst_video_info_from_caps(&info, gst_sample_get_caps(sample)) || !gst_video_frame_map(&frame, &info, buffer, GST_MAP_READ)) {
++            self->m_pending = false;
++            gst_sample_unref(sample);
++            return GST_FLOW_ERROR;
++        }
++        QImage image(static_cast<const uchar *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
++                     GST_VIDEO_FRAME_WIDTH(&frame), GST_VIDEO_FRAME_HEIGHT(&frame),
++                     GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0), QImage::Format_RGBA8888);
++        const QImage copy = image.copy();
++        const bool discontinuity = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT);
++        const quint64 offset = GST_BUFFER_OFFSET(buffer);
++        const auto mode = GST_VIDEO_INFO_MULTIVIEW_MODE(&info);
++        const auto flags = GST_VIDEO_INFO_MULTIVIEW_FLAGS(&info);
++        gst_video_frame_unmap(&frame);
++        gst_sample_unref(sample);
++        QMetaObject::invokeMethod(self, [self, copy, discontinuity, offset, mode, flags, generation] {
++            if (generation == self->m_generation.load())
++                self->present(copy, discontinuity, offset, mode, flags);
++            self->m_pending = false;
++        }, Qt::QueuedConnection);
++        return GST_FLOW_OK;
++    };
++    gst_app_sink_set_callbacks(GST_APP_SINK(sink), &callbacks, this, nullptr);
++    gst_object_unref(sink);
++    return bin;
++}
++void StereoPreview::present(const QImage &image, bool discontinuity, quint64 offset, GstVideoMultiviewMode mode, GstVideoMultiviewFlags flags)
++{
++    if (!m_sink || m_unknownPacking)
++        return;
++    auto input = m_format;
++    int declaredLayout = STEREO_POLICY_LAYOUT_NONE;
++    switch (mode) {
++    case GST_VIDEO_MULTIVIEW_MODE_SIDE_BY_SIDE: declaredLayout = STEREO_POLICY_LAYOUT_SIDE_BY_SIDE; break;
++    case GST_VIDEO_MULTIVIEW_MODE_SIDE_BY_SIDE_QUINCUNX: declaredLayout = STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX; break;
++    case GST_VIDEO_MULTIVIEW_MODE_TOP_BOTTOM: declaredLayout = STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM; break;
++    case GST_VIDEO_MULTIVIEW_MODE_ROW_INTERLEAVED: declaredLayout = STEREO_POLICY_LAYOUT_ROWS; break;
++    case GST_VIDEO_MULTIVIEW_MODE_COLUMN_INTERLEAVED: declaredLayout = STEREO_POLICY_LAYOUT_COLUMNS; break;
++    case GST_VIDEO_MULTIVIEW_MODE_CHECKERBOARD: declaredLayout = STEREO_POLICY_LAYOUT_CHECKERBOARD; break;
++    case GST_VIDEO_MULTIVIEW_MODE_FRAME_BY_FRAME: declaredLayout = STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL; break;
++    default: break;
++    }
++    if (declaredLayout != STEREO_POLICY_LAYOUT_NONE) {
++        input.layout = declaredLayout;
++        input.order = flags & GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST ? STEREO_POLICY_RIGHT_FIRST : STEREO_POLICY_LEFT_FIRST;
++        input.anaglyph = STEREO_POLICY_ANAGLYPH_NONE;
++        input.view = STEREO_POLICY_VIEW_STEREO;
++    }
++    using Picture = Stereo::Picture;
++    Picture picture;
++    const auto order = Picture::EyeOrder(input.order);
++    const bool stereo = input.view != STEREO_POLICY_VIEW_MONO
++        && (input.layout != STEREO_POLICY_LAYOUT_NONE || input.anaglyph != STEREO_POLICY_ANAGLYPH_NONE);
++    if (!stereo) {
++        picture.original = image;
++    } else if (input.layout == STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL) {
++        if (discontinuity)
++            m_first = {};
++        if (offset == GST_BUFFER_OFFSET_NONE) {
++            m_first = {};
++            Q_EMIT failed(i18n("This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."));
++            return;
++        }
++        if (offset % 2 == 0) {
++            m_first = image;
++            m_firstOffset = offset;
++            return;
++        }
++        if (m_first.isNull() || offset != m_firstOffset + 1) {
++            m_first = {};
++            return;
++        }
++        picture = Picture::fromViewsInTurn(m_first, image, order);
++        m_first = {};
++    } else if (input.anaglyph != STEREO_POLICY_ANAGLYPH_NONE) {
++        picture = Picture::fromAnaglyph(image, Picture::AnaglyphColorPair(input.anaglyph));
++    } else {
++        picture = Picture::fromPackedImage(image, Picture::Layout(input.layout), order);
++    }
++    if (stereo && !picture.isStereo()) {
++        Q_EMIT failed(i18n("This camera frame cannot provide the selected pair. Check its packing in Camera Settings."));
++        return;
++    }
++    if (m_mirrored) {
++        picture.left = picture.left.mirrored(true, false);
++        picture.right = picture.right.mirrored(true, false);
++        picture.original = picture.original.mirrored(true, false);
++    }
++    const QImage packed = (stereo ? picture.sideBySide() : picture.original).convertToFormat(QImage::Format_RGBA8888);
++    QVideoFrameFormat format(packed.size(), QVideoFrameFormat::Format_RGBA8888);
++    format.setStereoMode(stereo ? QVideoFrameFormat::StereoMode::SideBySide : QVideoFrameFormat::StereoMode::None);
++    QVideoFrame video(format);
++    if (!video.map(QVideoFrame::WriteOnly))
++        return;
++    for (int y = 0; y < packed.height(); ++y)
++        memcpy(video.bits(0) + y * video.bytesPerLine(0), packed.constScanLine(y), size_t(packed.width()) * 4);
++    video.unmap();
++    Q_EMIT stereoFrameChanged(stereo);
++    m_sink->setVideoFrame(video);
++}
+--- /dev/null
++++ b/autotests/CMakeLists.txt
+@@ -0,0 +1,6 @@
++find_package(Qt6 REQUIRED COMPONENTS Test)
++add_executable(stereopreview-test stereopreview-test.cpp ../src/video/stereopreview.cpp)
++target_include_directories(stereopreview-test PRIVATE ../src/video)
++target_link_libraries(stereopreview-test PRIVATE Qt6::Test Qt6::Multimedia KF6::I18n Stereo::Layer Stereo::Policy PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
++add_test(NAME stereopreview COMMAND stereopreview-test)
++set_tests_properties(stereopreview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+--- /dev/null
++++ b/autotests/stereopreview-test.cpp
+@@ -0,0 +1,129 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "stereopreview.h"
++#include <QtTest>
++#include <QVideoFrame>
++#include <gst/app/gstappsrc.h>
++#include <cstring>
++
++class StereoPreviewTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase() { gst_init(nullptr, nullptr); }
++    void temporalOrderAndGaps()
++    {
++        QVideoSink output;
++        StereoPreview preview;
++        preview.setSink(&output);
++        preview.setMirrored(false);
++        QSignalSpy frames(&output, &QVideoSink::videoFrameChanged);
++        QSignalSpy errors(&preview, &StereoPreview::failed);
++        QImage red(4, 3, QImage::Format_RGBA8888), blue(red.size(), red.format());
++        red.fill(Qt::red); blue.fill(Qt::blue);
++        const auto send = [&](const QImage &image, quint64 offset, bool discontinuity = false) {
++            preview.present(image, discontinuity, offset, GST_VIDEO_MULTIVIEW_MODE_NONE, GST_VIDEO_MULTIVIEW_FLAGS_NONE);
++        };
++        preview.setPacking(QStringLiteral("frameSequentialLeftFirst"));
++        send(blue, 1); // Attaching halfway through a pair cannot supply its first eye.
++        QCOMPARE(frames.size(), 0);
++        send(red, 2);
++        send(blue, 3);
++        QCOMPARE(frames.size(), 1);
++        QCOMPARE(output.videoFrame().toImage().pixelColor(0, 0), QColor(Qt::red));
++        QCOMPARE(output.videoFrame().toImage().pixelColor(4, 0), QColor(Qt::blue));
++        send(red, 4);
++        send(blue, 7); // No pair across missing frames.
++        QCOMPARE(frames.size(), 1);
++        send(red, 8);
++        send(blue, 9, true);
++        QCOMPARE(frames.size(), 1);
++        send(red, GST_BUFFER_OFFSET_NONE);
++        QCOMPARE(errors.size(), 1);
++        QCOMPARE(frames.size(), 1);
++        preview.setPacking(QStringLiteral("frameSequentialRightFirst"));
++        send(blue, 10);
++        send(red, 11);
++        QCOMPARE(frames.size(), 2);
++        QCOMPARE(output.videoFrame().toImage().pixelColor(0, 0), QColor(Qt::red));
++        QCOMPARE(output.videoFrame().toImage().pixelColor(4, 0), QColor(Qt::blue));
++    }
++    void packed_data()
++    {
++        QTest::addColumn<QString>("packing");
++        QTest::addColumn<bool>("vertical");
++        QTest::addColumn<bool>("reverse");
++        QTest::addColumn<QSize>("eyeSize");
++        QTest::addColumn<bool>("declared");
++        for (const QSize size : {QSize(8, 6), QSize(4, 6)}) {
++            for (bool vertical : {false, true}) {
++                for (bool reverse : {false, true}) {
++                    const QString id = (vertical ? QStringLiteral("topBottom") : QStringLiteral("sideBySide"))
++                        + (reverse ? QStringLiteral("RightFirst") : QStringLiteral("LeftFirst"));
++                    QTest::newRow(qPrintable(id + QString::number(size.width()))) << id << vertical << reverse << size << false;
++                    QTest::newRow(qPrintable(id + QString::number(size.width()) + QStringLiteral("-caps"))) << id << vertical << reverse << size << true;
++                }
++            }
++        }
++    }
++    void packed()
++    {
++        QFETCH(QString, packing);
++        QFETCH(bool, vertical);
++        QFETCH(bool, reverse);
++        QFETCH(QSize, eyeSize);
++        QFETCH(bool, declared);
++        QImage left(eyeSize, QImage::Format_RGBA8888), right(eyeSize, QImage::Format_RGBA8888);
++        for (int y = 0; y < eyeSize.height(); ++y) {
++            for (int x = 0; x < eyeSize.width(); ++x) {
++                left.setPixelColor(x, y, QColor(255, x * 16, y * 16));
++                right.setPixelColor(x, y, QColor(x * 16, y * 16, 255));
++            }
++        }
++        QImage input(vertical ? QSize(eyeSize.width(), eyeSize.height() * 2) : QSize(eyeSize.width() * 2, eyeSize.height()), QImage::Format_RGBA8888);
++        for (int y = 0; y < input.height(); ++y) {
++            for (int x = 0; x < input.width(); ++x) {
++                const bool second = vertical ? y >= eyeSize.height() : x >= eyeSize.width();
++                input.setPixelColor(x, y, (second != reverse ? right : left).pixelColor(x % eyeSize.width(), y % eyeSize.height()));
++            }
++        }
++        QVideoSink output;
++        StereoPreview preview;
++        preview.setSink(&output);
++        preview.setMirrored(false);
++        preview.setPacking(declared ? QStringLiteral("automatic") : packing);
++        QVERIFY(declared || preview.hasPacking());
++        auto *pipeline = gst_pipeline_new(nullptr);
++        auto *source = gst_element_factory_make("appsrc", nullptr);
++        auto *sink = preview.createSink();
++        QVERIFY(source && sink);
++        auto *caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGBA", "width", G_TYPE_INT, input.width(), "height", G_TYPE_INT, input.height(), "framerate", GST_TYPE_FRACTION, 30, 1, nullptr);
++        if (declared) {
++            gst_caps_set_simple(caps, "multiview-mode", G_TYPE_STRING, vertical ? "top-bottom" : "side-by-side",
++                                "multiview-flags", GST_TYPE_VIDEO_MULTIVIEW_FLAGSET,
++                                reverse ? GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST : GST_VIDEO_MULTIVIEW_FLAGS_NONE,
++                                GST_FLAG_SET_MASK_EXACT, nullptr);
++        }
++        g_object_set(source, "caps", caps, "format", GST_FORMAT_TIME, nullptr);
++        gst_caps_unref(caps);
++        gst_bin_add_many(GST_BIN(pipeline), source, sink, nullptr);
++        QVERIFY(gst_element_link(source, sink));
++        const auto cleanup = qScopeGuard([pipeline] { gst_element_set_state(pipeline, GST_STATE_NULL); gst_object_unref(pipeline); });
++        QVERIFY(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE);
++        auto *buffer = gst_buffer_new_allocate(nullptr, input.sizeInBytes(), nullptr);
++        gst_buffer_fill(buffer, 0, input.constBits(), input.sizeInBytes());
++        GST_BUFFER_PTS(buffer) = 0;
++        GST_BUFFER_DURATION(buffer) = GST_SECOND / 30;
++        GST_BUFFER_OFFSET(buffer) = 0;
++        QCOMPARE(gst_app_src_push_buffer(GST_APP_SRC(source), buffer), GST_FLOW_OK);
++        QTRY_VERIFY_WITH_TIMEOUT(output.videoFrame().isValid(), 60000);
++        const auto frame = output.videoFrame();
++        QCOMPARE(frame.surfaceFormat().stereoMode(), QVideoFrameFormat::StereoMode::SideBySide);
++        QCOMPARE(frame.size(), QSize(eyeSize.width() * 2, eyeSize.height()));
++        const auto result = frame.toImage();
++        QCOMPARE(result.copy(0, 0, eyeSize.width(), eyeSize.height()).convertToFormat(left.format()), left);
++        QCOMPARE(result.copy(eyeSize.width(), 0, eyeSize.width(), eyeSize.height()).convertToFormat(right.format()), right);
++    }
++};
++QTEST_MAIN(StereoPreviewTest)
++#include "stereopreview-test.moc"
