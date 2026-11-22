@@ -1,4 +1,20 @@
 -------------------------------------------------------------------------------
+  Version 0.1.46 (2026-11-22)
+-------------------------------------------------------------------------------
+  * --verify names a person's change to a file that maintainer scripts keep through ucf, for every package (row
+    813). Such a file is in no package's file list, so neither dpkg --verify nor dpkg-stereo judged it:
+    sparky-stereo-console's /etc/issue, /etc/issue.net, /etc/nanorc, /etc/zsh/zshrc and 10-uname at the names it
+    diverts, samba-common's smb.conf, grub's /etc/default/grub. It is read against the md5sum ucf recorded for what it
+    last wrote (/var/lib/ucf/hashfile) and the package ucfr registered for it (/var/lib/ucf/registry): other bytes are
+    "EDITED    PATH (kept by PACKAGE through ucf) (changed by the person: left as they made it)", not counted, as a
+    conffile the person changed after an upgrade; a file that is gone is "MISSING   PATH (kept by PACKAGE through
+    ucf)" and counted, as a projected conffile removed by hand. A path that a package also lists as its own conffile
+    stays with that package's judgement (nfs-common's /etc/default/nfs-common, which Lean Code projects, so ucf's
+    md5sum of the original never matches it on an untouched system). Files only root can read are counted and said
+    once (LOCAL23), and the check is then incomplete (exit 2). Nothing in /var/lib/ucf is written; the dpkg hooks do
+    not read it.
+
+-------------------------------------------------------------------------------
   Version 0.1.45 (2026-11-22)
 -------------------------------------------------------------------------------
   * A lean conffile without a record is judged where dpkg keeps it, and not only once (rows 629 and 802). 0.1.44's
