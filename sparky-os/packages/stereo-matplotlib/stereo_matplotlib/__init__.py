@@ -29,7 +29,7 @@ from .writers import StereoFileExists, write_jps, write_pns
 
 __all__ = ['show', 'StereoFigure', 'save_stereo_figure', 'iter_stereo_frames', 'save_stereo_frames',
            'save_stereo_video', 'render_pair', 'person_limits', 'StereoFileExists', 'InternalsChanged']
-__version__ = '0.1.1'
+__version__ = '0.1.2'
 
 KWIN_DEFAULT_LIMITS = (10.0, 4.0)   # SunkLimit, PoppedLimit of Stereo KWin's [StereoDepth], a view 1920 wide
 

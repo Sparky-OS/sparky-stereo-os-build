@@ -1,0 +1,2 @@
+Sparky Stereo OS (ORDER 50 step 5, continuation 2): the View menu's "3D display settings..." runs kcmshell6 with KScreen's page, so libkf6kcmutils-bin (kcmshell6), kscreen (kcm_kscreen) and kde-cli-tools are Depends of paraview.
+Sparky Stereo OS (ORDER 50 step 5, continuation 2): "3D display settings..." starts kcmshell6 without ParaView's QT_QPA_PLATFORM, so KScreen's page follows the desktop session; with ParaView on xcb inside a Wayland session the page had asked for the X11 backend, which aborts (patch 0004).

@@ -14,5 +14,14 @@ if [ -n "${LIVE:-}" ]; then
 fi
 sleep 2
 python3 /rig/capture.py $OUT/shot2.png > $OUT/shot2.json 2>&1
+[ -n "${ACT:-}" ] && { sleep 4; python3 /rig/capture.py $OUT/shot-act.png > $OUT/shot-act.json 2>&1
+python3 /rig/kwin_script.py $OUT/kwin.log '
+for (const w of workspace.stackingOrder) {
+  print("WIN|" + w.caption + "|" + w.frameGeometry.x + "," + w.frameGeometry.y + "," + w.frameGeometry.width + "," + w.frameGeometry.height + "|" + w.resourceClass + "|" + (w.minimized ? "min" : "shown"));
+}'
+sleep 1
+grep -o 'WIN|.*' $OUT/kwin.log > $OUT/windows-act.txt
+ps -eo pid,args | grep -E '[k]cmshell|[s]ystemsettings' > $OUT/act-processes.txt
+}
 wait $pid
 echo "case python rc=$?" >> $OUT/mpl.log

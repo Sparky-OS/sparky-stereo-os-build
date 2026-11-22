@@ -1,6 +1,8 @@
 # paraview (ORDER 50, step 5)
 
-ParaView 6.1.1+dfsg1-3+stereo3d1+lc1: Debian testing's own source, offering one stereo output, the declared pair.
+ParaView 6.1.1+dfsg1-3+stereo3d2+lc1: Debian testing's own source, offering one stereo output, the declared pair.
++stereo3d2 adds kde-cli-tools, kscreen and libkf6kcmutils-bin to paraview's Depends: the View menu's "3D display settings..." runs kcmshell6 (libkf6kcmutils-bin) with KScreen's page (kcm_kscreen, in kscreen), and a dependency a designed feature needs is a Depends (memory design-check-every-default; the main session's ruling, continuation 2).
+Patch 0004 starts that page without ParaView's QT_QPA_PLATFORM: with ParaView on xcb inside a Wayland session, KScreen's page had asked for the X11 backend, which aborts ("Process org.kde.KScreen received signal 6"), and showed no display.
 
 ## Design followed
 - /K3D/CLAUDE.md: every source hands Stereo KWin full side by side, left eye first, declared once; a program's 3D options are only enable 3D, render resolution per eye and a shortcut to Display Settings; a program that renders its own 3D scene offers no swap.
