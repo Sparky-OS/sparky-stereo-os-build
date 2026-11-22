@@ -45,7 +45,15 @@ PY
 (cd source && python3 /toolkit/repo/provenance-files.py . 's1-*')
 python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" source
 dpkg-source -b source
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/source "$VERSION+lc1" --toolkit /toolkit
+# A recipe's preserve-source.tsv (PATTERN, a tab, REASON per line) keeps source files a consumer other than the compiler
+# reads as text authored (lean.debian_prepare --preserve-source); kf6-kirigami: its KDevelop app template
+preserve=()
+if [ -f /recipe/preserve-source.tsv ]; then
+	while IFS=$'\t' read -r pattern reason; do
+		[ -n "$pattern" ] && [ "${pattern#\#}" = "$pattern" ] && preserve+=(--preserve-source "$pattern" "$reason")
+	done < /recipe/preserve-source.tsv
+fi
+PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/source "$VERSION+lc1" --toolkit /toolkit "${preserve[@]}"
 apt-get -y update > /work/apt-update.log 2>&1
 apt-get -y --no-install-recommends build-dep /work/source > /work/build-dep.log 2>&1
 id -u builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
