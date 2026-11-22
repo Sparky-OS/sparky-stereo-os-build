@@ -6,8 +6,8 @@
 #include <QList>
 #include <QString>
 
-// The packings a two-lens camera can deliver in one picture: the stereo layer's input list (Stereo::FileChoiceList),
-// with its ids and its words, so a camera is described the way a file is. Cameras have no mark and no frame sequence.
+// Every entry comes from the shared input list, including temporal inputs.
+// An input without a preview mapping stays in the list and uses the visible preview refusal.
 namespace Sparky::Camera
 {
 struct Packing {
