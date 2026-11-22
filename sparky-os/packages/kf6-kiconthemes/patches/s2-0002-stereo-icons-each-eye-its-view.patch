@@ -5,7 +5,8 @@ Description: Stereo icon themes: an icon the theme has in stereo gives each eye 
  while it polishes and synchronizes it). KIconEngine now loads each eye's view of an
  icon's stereo picture in those passes: from the widget window being painted, or from an item that names the
  eye it asks for on the application (_q_stereo_icon_eye). The view gets the plain icon's state effect and overlays and is
- cached per eye. Outside those passes, and for an icon without a stereo picture, every
+ cached per eye. A raster pair is read whole and each view scaled on its own, as the plain
+ icon is scaled, so the views never blend where they meet (loadStereoIcon() too). Outside those passes, and for an icon without a stereo picture, every
  load is the plain icon as before, so a 2D output is unchanged. The stereo picture comes
  from the first theme in the order of inheritance that has the icon, as with
  loadStereoIcon(). No depth is added: each view is the picture the theme carries.
@@ -36,10 +37,10 @@ index 8d084d1..30b7f99 100644
  add_executable(kiconloader_benchmark kiconloader_benchmark.cpp)
 diff --git a/autotests/kiconengine_stereotest.cpp b/autotests/kiconengine_stereotest.cpp
 new file mode 100644
-index 0000000..746fa4b
+index 0000000..46f7124
 --- /dev/null
 +++ b/autotests/kiconengine_stereotest.cpp
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,195 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +
@@ -186,6 +187,10 @@ index 0000000..746fa4b
 +        QCOMPARE(middle(icon.pixmap(QSize(32, 32))), QColor(Qt::red));
 +        QCOMPARE(middle(icon.pixmap(QSize(32, 32), 1.25)), QColor(Qt::red));
 +        QCOMPARE(middle(icon.pixmap(QSize(16, 16))), QColor(Qt::red));
++        // Each view is scaled on its own: the left view's last column has nothing of the right view
++        const QImage leftScaled = icon.pixmap(QSize(32, 32), 1.25).toImage();
++        QCOMPARE(leftScaled.width(), 40);
++        QCOMPARE(leftScaled.pixelColor(leftScaled.width() - 1, leftScaled.height() / 2), QColor(Qt::red));
 +        // An icon without a stereo picture is the plain icon in both eyes
 +        QCOMPARE(middle(plain.pixmap(QSize(32, 32))), QColor(Qt::yellow));
 +        // A disabled icon gets the plain icon's effect over the eye's view
@@ -193,6 +198,9 @@ index 0000000..746fa4b
 +
 +        window->setProperty("_q_stereo_eye", 2);
 +        QCOMPARE(middle(icon.pixmap(QSize(32, 32))), QColor(Qt::green));
++        const QImage rightScaled = icon.pixmap(QSize(32, 32), 1.5).toImage();
++        QCOMPARE(rightScaled.width(), 48);
++        QCOMPARE(rightScaled.pixelColor(0, rightScaled.height() / 2), QColor(Qt::green));
 +        QImage image(32, 32, QImage::Format_ARGB32_Premultiplied);
 +        image.fill(Qt::transparent);
 +        QPainter painter(&image);
@@ -321,10 +329,10 @@ index 10094de..e0e508d 100644
  }
  
 diff --git a/src/kiconloader.cpp b/src/kiconloader.cpp
-index 45dcec1..8863bfa 100644
+index 45dcec1..d916ebc 100644
 --- a/src/kiconloader.cpp
 +++ b/src/kiconloader.cpp
-@@ -937,6 +937,81 @@ QString KIconLoaderPrivate::locate(const QString &fileName)
+@@ -937,6 +937,100 @@ QString KIconLoaderPrivate::locate(const QString &fileName)
  
  // Finds the absolute path to an icon.
  
@@ -337,6 +345,31 @@ index 45dcec1..8863bfa 100644
 +        }
 +    }
 +    return QString();
++}
++
++// The two views of a stereo picture (both views side by side, left view first), each of the given size in device
++// pixels. A raster picture is read whole and each view scaled on its own, as a plain icon is scaled, so that the views
++// never blend where they meet; a vector picture is drawn at twice the width of one view.
++static bool readStereoViews(const QString &path, const QSize &pixels, QImage *left, QImage *right)
++{
++    QImageReader reader(path);
++    const QByteArray format = reader.format();
++    if (format == "svg" || format == "svgz") {
++        reader.setScaledSize(QSize(pixels.width() * 2, pixels.height()));
++    }
++    const QImage picture = reader.read();
++    if (picture.isNull()) {
++        qCWarning(KICONTHEMES) << "Could not read the stereo icon" << path << reader.errorString();
++        return false;
++    }
++    const int width = picture.width() / 2;
++    *left = picture.copy(0, 0, width, picture.height());
++    *right = picture.copy(width, 0, width, picture.height());
++    if (left->size() != pixels) {
++        *left = left->scaled(pixels, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
++        *right = right->scaled(pixels, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
++    }
++    return true;
 +}
 +
 +static thread_local int t_stereoEye = 0;
@@ -371,16 +404,10 @@ index 45dcec1..8863bfa 100644
 +    QImage image;
 +    const QString stereoPath = findStereoIconPath(name, std::min(size.width(), size.height()), scale);
 +    if (!stereoPath.isEmpty()) {
-+        // Both views side by side, left view first, read at twice the width of one view; the eye keeps its half
-+        const QSize pixels = (QSizeF(size) * scale).toSize();
-+        QImageReader reader(stereoPath);
-+        reader.setScaledSize(QSize(pixels.width() * 2, pixels.height()));
-+        const QImage picture = reader.read();
-+        if (picture.isNull()) {
-+            qCWarning(KICONTHEMES) << "Could not read the stereo icon" << stereoPath << reader.errorString();
-+        } else {
-+            const int width = picture.width() / 2;
-+            image = picture.copy(eye == 1 ? 0 : width, 0, width, picture.height());
++        QImage left;
++        QImage right;
++        if (readStereoViews(stereoPath, (QSizeF(size) * scale).toSize(), &left, &right)) {
++            image = eye == 1 ? left : right;
 +        }
 +    }
 +    if (image.isNull()) {
@@ -406,7 +433,7 @@ index 45dcec1..8863bfa 100644
  bool KIconLoader::loadStereoIcon(const QString &name, const QSize &size, qreal scale, QPixmap *left, QPixmap *right) const
  {
      if (name.isEmpty() || size.isEmpty() || scale <= 0 || !left || !right) {
-@@ -945,14 +1020,7 @@ bool KIconLoader::loadStereoIcon(const QString &name, const QSize &size, qreal s
+@@ -945,30 +1039,18 @@ bool KIconLoader::loadStereoIcon(const QString &name, const QSize &size, qreal s
  
      d->initIconThemes();
  
@@ -422,7 +449,28 @@ index 45dcec1..8863bfa 100644
      if (path.isEmpty()) {
          return false;
      }
-@@ -1158,6 +1226,19 @@ QPixmap KIconLoader::loadScaledIcon(const QString &_name,
+ 
+-    // Both views side by side, left view first: a picture twice as wide as one view
+-    const QSize pixels = (QSizeF(size) * scale).toSize();
+-    QImageReader reader(path);
+-    reader.setScaledSize(QSize(pixels.width() * 2, pixels.height()));
+-    const QImage picture = reader.read();
+-    if (picture.isNull()) {
+-        qCWarning(KICONTHEMES) << "Could not read the stereo icon" << path << reader.errorString();
++    QImage leftView;
++    QImage rightView;
++    if (!readStereoViews(path, (QSizeF(size) * scale).toSize(), &leftView, &rightView)) {
+         return false;
+     }
+-    const int width = picture.width() / 2;
+-    *left = QPixmap::fromImage(picture.copy(0, 0, width, picture.height()));
+-    *right = QPixmap::fromImage(picture.copy(width, 0, width, picture.height()));
++    *left = QPixmap::fromImage(std::move(leftView));
++    *right = QPixmap::fromImage(std::move(rightView));
+     left->setDevicePixelRatio(scale);
+     right->setDevicePixelRatio(scale);
+     return true;
+@@ -1158,6 +1240,19 @@ QPixmap KIconLoader::loadScaledIcon(const QString &_name,
      bool iconWasUnknown = false;
      QString path;
  
