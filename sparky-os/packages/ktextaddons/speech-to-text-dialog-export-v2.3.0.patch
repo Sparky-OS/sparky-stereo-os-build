@@ -1,0 +1,57 @@
+Description: Export the speech-to-text settings dialog, as ktextaddons 2.3.0 does
+ Upstream exported SpeechToTextConfigureDialog in 2.3.0 and installs its header, so a
+ program can open the library's own settings, where the person chooses the engine.
+ 2.1.2 kept it for its tests only, and Debian builds with BUILD_TESTING off, so no
+ program could show the choice. Taken from the commit, the dialog's part only: its
+ export, its documentation and its CamelCase header (the configure widget keeps its
+ 2.1.2 form, the version number is not taken).
+Origin: backport, https://invent.kde.org/libraries/ktextaddons/-/commit/46f09141c23910dfe20278281c62bb88610ad2e2
+Author: Laurent Montel
+Applied-Upstream: v2.3.0, commit 46f09141 (Export class), 2026-10-05
+Last-Update: 2026-11-22
+---
+diff --git a/textspeechtotext/CMakeLists.txt b/textspeechtotext/CMakeLists.txt
+index 3ac533b..720c299 100644
+--- a/textspeechtotext/CMakeLists.txt
++++ b/textspeechtotext/CMakeLists.txt
+@@ -134,6 +134,7 @@ ecm_generate_headers(TextSpeechToTextWidget_Camelcasespeechtotext_HEADERS
+     SpeechToTextAction
+     SpeechToTextToolButtonWidget
+     SpeechToTextMenu
++    SpeechToTextConfigureDialog
+     REQUIRED_HEADERS TextSpeechToTextWidget_speechtotext_HEADERS
+     PREFIX TextSpeechToText
+     RELATIVE speechtotext/widgets
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotextconfiguredialog.h b/textspeechtotext/speechtotext/widgets/speechtotextconfiguredialog.h
+index b9ae4e4..e8413c4 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotextconfiguredialog.h
++++ b/textspeechtotext/speechtotext/widgets/speechtotextconfiguredialog.h
+@@ -5,7 +5,7 @@
+ */
+ 
+ #pragma once
+-#include "speechtotext_private_export.h"
++#include "textspeechtotext_export.h"
+ #include <QDialog>
+ namespace TextSpeechToText
+ {
+@@ -14,11 +14,18 @@ class SpeechToTextConfigureWidget;
+  * @brief The SpeechToTextConfigureDialog class
+  * \author Laurent Montel <montel@kde.org>
+  */
+-class TEXTSPEECHTOTEXT_TESTS_EXPORT SpeechToTextConfigureDialog : public QDialog
++class TEXTSPEECHTOTEXT_EXPORT SpeechToTextConfigureDialog : public QDialog
+ {
+     Q_OBJECT
+ public:
++    /*!
++     * \brief SpeechToTextConfigureDialog
++     * \param parent
++     */
+     explicit SpeechToTextConfigureDialog(QWidget *parent = nullptr);
++    /*!
++     * \brief ~SpeechToTextConfigureDialog
++     */
+     ~SpeechToTextConfigureDialog() override;
+ 
+ private:

@@ -1,0 +1,1692 @@
+Description: Every speech-to-text engine says why it cannot dictate; Vibe's server starts at the press
+ Three changes to the library as the edition ships it, each said to the person in one
+ sentence, never only in the log.
+ .
+ An engine chosen that is not there is said, and no other engine is taken in its place:
+ the manager no longer falls back to the first engine of an unordered table. The loader
+ keeps why an engine cannot take a dictation (SpeechToTextEngineLoader::
+ engineNotReadyReason): it is not installed; its program is missing (an engine skipped
+ for its X-KTextAddons-RequiredExecutable names itself with X-KTextAddons-Engine and
+ X-KTextAddons-EngineName, so the sentence names Vibe and vibe-server); or this version
+ only lists it. With nothing chosen anywhere, the first engine that can take a
+ dictation is used, in name order.
+ .
+ The Google and Whisper engines of 2.1.2 only log "Not implemented yet", also at
+ 2.3.0's tag for Google; 2.3.0's Whisper engine needs faster-whisper and ctranslate2 in
+ a Python environment of its own, which Debian does not ship. Both stay listed, as
+ upstream has them, with X-KTextAddons-NotAvailable in their metadata: the settings
+ say "not available in this version" as soon as one is chosen (a message under the
+ engine list), and so does a dictation asked of it.
+ .
+ The Vibe engine starts vibe-server when the person presses the dictation button, so
+ the model loads while they speak, and sends the recording when they stop; the server
+ is stopped when the answer is in, when the dictation is dropped, when the program
+ quits, or when the recording cannot start (a microphone that does not open), and a
+ server that fails while the person speaks is said at once and ends the capture. The
+ manager gains cancel(): the capture stops, nothing is given, and the engine's work
+ for the dictation ends with its plugin; it is called by Escape on the library's
+ dictation button while it records, when the requester of the dictation is destroyed
+ (its window closed), and when the application quits. A second dictation while Vibe
+ still transcribes the first waits and says so. The engine logs the server's process
+ number when it starts it and when it ends it.
+ .
+ Tests in the library's framework, with the stand-in vibe-server (a set model-load and
+ answer time, and the times it started, was ready, was asked and was terminated): the
+ engine through the plugin interface, the manager through its public interface, and
+ the settings message.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-22
+---
+diff --git a/textspeechtotext/speechtotext/plugins/google/CMakeLists.txt b/textspeechtotext/speechtotext/plugins/google/CMakeLists.txt
+index 5253d2a..30af07a 100644
+--- a/textspeechtotext/speechtotext/plugins/google/CMakeLists.txt
++++ b/textspeechtotext/speechtotext/plugins/google/CMakeLists.txt
+@@ -28,3 +28,5 @@ target_link_libraries(
+ )
+ 
+ install(TARGETS speechtotext_google DESTINATION ${KDE_INSTALL_PLUGINDIR}/kf6/speechtotext/)
++# in the build tree it sits where the library's tests look for it
++set_target_properties(speechtotext_google PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/kf6/speechtotext")
+diff --git a/textspeechtotext/speechtotext/plugins/google/google.json b/textspeechtotext/speechtotext/plugins/google/google.json
+new file mode 100644
+index 0000000..add0dc0
+--- /dev/null
++++ b/textspeechtotext/speechtotext/plugins/google/google.json
+@@ -0,0 +1,3 @@
++{
++    "X-KTextAddons-NotAvailable": true
++}
+diff --git a/textspeechtotext/speechtotext/plugins/google/google.json.license b/textspeechtotext/speechtotext/plugins/google/google.json.license
+new file mode 100644
+index 0000000..292c714
+--- /dev/null
++++ b/textspeechtotext/speechtotext/plugins/google/google.json.license
+@@ -0,0 +1,2 @@
++SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++SPDX-License-Identifier: CC0-1.0
+diff --git a/textspeechtotext/speechtotext/plugins/google/googlespeechtotextclient.h b/textspeechtotext/speechtotext/plugins/google/googlespeechtotextclient.h
+index 9c22f49..4a21a43 100644
+--- a/textspeechtotext/speechtotext/plugins/google/googlespeechtotextclient.h
++++ b/textspeechtotext/speechtotext/plugins/google/googlespeechtotextclient.h
+@@ -11,7 +11,7 @@
+ class GoogleSpeechToTextClient : public TextSpeechToText::SpeechToTextClient
+ {
+     Q_OBJECT
+-    Q_PLUGIN_METADATA(IID "org.kde.texttospeech.google")
++    Q_PLUGIN_METADATA(IID "org.kde.texttospeech.google" FILE "google.json")
+     Q_INTERFACES(TextSpeechToText::SpeechToTextClient)
+ public:
+     explicit GoogleSpeechToTextClient(QObject *parent = nullptr);
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/CMakeLists.txt b/textspeechtotext/speechtotext/plugins/vibe/autotests/CMakeLists.txt
+index e3b5637..0ce9e8b 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/autotests/CMakeLists.txt
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/CMakeLists.txt
+@@ -16,3 +16,32 @@ foreach(present 0 1)
+     target_compile_definitions(vibespeechtotextloadertest${present} PRIVATE EXPECT_VIBE=${present} PLUGIN_BUILD_ROOT="${CMAKE_BINARY_DIR}/plugins")
+     add_dependencies(vibespeechtotextloadertest${present} speechtotext_vibe)
+ endforeach()
++
++# the engine as a program gets it, through the loader and the plugin interface: when its server runs, how soon the text comes
++ecm_add_test(vibespeechtotextplugintest.cpp
++    TEST_NAME vibespeechtotextplugintest
++    NAME_PREFIX textspeechtotext-vibe-
++    LINK_LIBRARIES Qt::Test KF6::TextSpeechToText
++)
++target_compile_definitions(vibespeechtotextplugintest PRIVATE PLUGIN_BUILD_ROOT="${CMAKE_BINARY_DIR}/plugins")
++add_dependencies(vibespeechtotextplugintest speechtotext_vibe speechtotext_google speechtotext_whisper)
++
++# what the manager says when the engine chosen cannot take a dictation: with and without vibe-server, one process each
++foreach(present 0 1)
++    ecm_add_test(speechtotextmanagertest.cpp
++        TEST_NAME speechtotextmanagertest${present}
++        NAME_PREFIX textspeechtotext-vibe-
++        LINK_LIBRARIES Qt::Test Qt::Multimedia KF6::TextSpeechToText
++    )
++    target_compile_definitions(speechtotextmanagertest${present} PRIVATE EXPECT_VIBE=${present} PLUGIN_BUILD_ROOT="${CMAKE_BINARY_DIR}/plugins")
++    add_dependencies(speechtotextmanagertest${present} speechtotext_vibe speechtotext_google speechtotext_whisper)
++endforeach()
++
++# the settings say why the engine chosen cannot take a dictation, as soon as it is chosen
++ecm_add_test(speechtotextenginemessagetest.cpp
++    TEST_NAME speechtotextenginemessagetest
++    NAME_PREFIX textspeechtotext-vibe-
++    LINK_LIBRARIES Qt::Test Qt::Widgets KF6::TextSpeechToText KF6::WidgetsAddons KF6::ConfigCore
++)
++target_compile_definitions(speechtotextenginemessagetest PRIVATE PLUGIN_BUILD_ROOT="${CMAKE_BINARY_DIR}/plugins")
++add_dependencies(speechtotextenginemessagetest speechtotext_vibe speechtotext_google speechtotext_whisper)
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/data/vibe-server-standin.py b/textspeechtotext/speechtotext/plugins/vibe/autotests/data/vibe-server-standin.py
+index 8411662..9496376 100755
+--- a/textspeechtotext/speechtotext/plugins/vibe/autotests/data/vibe-server-standin.py
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/data/vibe-server-standin.py
+@@ -9,6 +9,10 @@ routes/transcriptions.rs. STANDIN_MODE chooses the behaviour; STANDIN_RECORD is
+ its process number (pid), the form fields it received (request.json) and the audio (audio.wav).
+ STANDIN_CLIP names a 16 kHz mono WAV: in mode "clip" the answer is STANDIN_TEXT only when the received
+ audio's loudness follows the clip's, otherwise "UNRECOGNISED AUDIO".
++STANDIN_LOAD_SECONDS is how long its "model load" takes before the ready line (or before the failure of the modes
++noload and noready); STANDIN_ANSWER_SECONDS how long it takes to answer a transcription. It writes the times
++(seconds since the epoch) when it started, was ready, received the request and was terminated, in started, ready,
++request and terminated.
+ """
+ import email.parser
+ import email.policy
+@@ -19,11 +23,14 @@ import os
+ import signal
+ import struct
+ import sys
++import time
+ import wave
+ 
+ MODE = os.environ.get('STANDIN_MODE', 'ok')
+ RECORD = os.environ.get('STANDIN_RECORD', '')
+ TEXT = os.environ.get('STANDIN_TEXT', 'Text from the stand-in server.')
++LOAD_SECONDS = float(os.environ.get('STANDIN_LOAD_SECONDS', '0'))
++ANSWER_SECONDS = float(os.environ.get('STANDIN_ANSWER_SECONDS', '0'))
+ 
+ 
+ def record(name, data):
+@@ -32,6 +39,10 @@ def record(name, data):
+             stream.write(data)
+ 
+ 
++def stamp(name):
++    record(name, ('%.3f' % time.time()).encode())
++
++
+ def envelope(samples, rate):
+     step = max(1, rate // 50)
+     return [math.sqrt(sum(s * s for s in samples[i:i + step]) / step) for i in range(0, len(samples) - step + 1, step)]
+@@ -80,6 +91,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             self.answer(404, {'error': {'code': 'not_found', 'message': 'not found'}})
+ 
+     def do_POST(self):
++        stamp('request')
+         length = int(self.headers.get('Content-Length', '0'))
+         body = self.rfile.read(length)
+         message = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
+@@ -103,6 +115,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
+         else:
+             text = TEXT
+         record('request.json', json.dumps(fields, indent=1).encode())
++        time.sleep(ANSWER_SECONDS)
+         if self.path != '/v1/audio/transcriptions':
+             self.answer(404, {'error': {'code': 'not_found', 'message': 'not found'}})
+         elif MODE == 'invalid-audio':
+@@ -115,7 +128,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             self.answer(200, {'text': text})
+ 
+ 
++def terminated(*_):
++    stamp('terminated')
++    os._exit(0)
++
++
+ def main():
++    stamp('started')
+     record('pid', str(os.getpid()).encode())
+     record('argv.json', json.dumps(sys.argv[1:]).encode())
+     if sys.argv[1:2] == ['devices']:
+@@ -124,17 +143,19 @@ def main():
+     if sys.argv[1:2] != ['serve']:
+         print('stand-in: only "serve" is understood', file=sys.stderr)
+         return 2
++    signal.signal(signal.SIGTERM, terminated)
++    time.sleep(LOAD_SECONDS)
+     if MODE == 'noload':
+         print('Error: failed to load model %s: invalid model file' % sys.argv[2], file=sys.stderr)
+         return 1
+     if MODE == 'noready':
+         print('Error: Address already in use (os error 98)', file=sys.stderr)
+         return 1
+-    signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+     if MODE == 'silent':
+         signal.pause()
+     host = sys.argv[sys.argv.index('--host') + 1] if '--host' in sys.argv else '127.0.0.1'
+     server = http.server.HTTPServer((host, 0), Handler)
++    stamp('ready')
+     print(json.dumps({'status': 'ready', 'port': server.server_address[1], 'version': 'stand-in', 'commit': 'stand-in'}), flush=True)
+     server.serve_forever()
+ 
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/speechtotextenginemessagetest.cpp b/textspeechtotext/speechtotext/plugins/vibe/autotests/speechtotextenginemessagetest.cpp
+new file mode 100644
+index 0000000..cb9eff1
+--- /dev/null
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/speechtotextenginemessagetest.cpp
+@@ -0,0 +1,82 @@
++/*
++  SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++
++  SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++// The speech-to-text settings say why the engine chosen cannot take a dictation, as soon as it is chosen.
++#include "speechtotext/widgets/speechtotextconfigurewidget.h"
++
++#include <KConfigGroup>
++#include <KMessageWidget>
++#include <KSharedConfig>
++#include <QComboBox>
++#include <QStandardPaths>
++#include <QTemporaryDir>
++#include <QTest>
++#include <TextSpeechToText/SpeechToTextEngineLoader>
++
++using namespace Qt::Literals::StringLiterals;
++
++class SpeechToTextEngineMessageTest : public QObject
++{
++    Q_OBJECT
++private:
++    QTemporaryDir mBin;
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        QStandardPaths::setTestModeEnabled(true);
++        QVERIFY(mBin.isValid());
++        // no vibe-server and no Partners command here
++        qputenv("PATH", (mBin.path() + ":/usr/bin:/bin"_L1).toLocal8Bit());
++        QCoreApplication::setLibraryPaths({QStringLiteral(PLUGIN_BUILD_ROOT)});
++        QVERIFY(TextSpeechToText::SpeechToTextEngineLoader::self()->speechToTextEngineInfos().contains(u"whisper"_s));
++    }
++
++    void shouldSayWhyTheChosenEngineCannotDictate_data()
++    {
++        QTest::addColumn<QString>("engine");
++        QTest::addColumn<QString>("message");
++        QTest::newRow("whisper") << u"whisper"_s
++                                 << u"The Whisper speech-to-text engine is not available in this version: choose another engine in the speech-to-text settings."_s;
++        QTest::newRow("google") << u"google"_s
++                                << u"The Google speech-to-text engine is not available in this version: choose another engine in the speech-to-text settings."_s;
++    }
++
++    void shouldSayWhyTheChosenEngineCannotDictate()
++    {
++        QFETCH(QString, engine);
++        QFETCH(QString, message);
++        TextSpeechToText::SpeechToTextConfigureWidget w;
++        auto combo = w.findChild<QComboBox *>(u"mEngine"_s);
++        QVERIFY(combo);
++        auto text = w.findChild<KMessageWidget *>(u"mEngineMessage"_s);
++        QVERIFY2(text, "the settings have no place to say why");
++        // the person picks the engine in the list
++        combo->setCurrentIndex(combo->findData(engine == u"whisper"_s ? u"google"_s : u"whisper"_s));
++        combo->setCurrentIndex(combo->findData(engine));
++        QVERIFY(!text->isHidden());
++        QCOMPARE(text->text(), message);
++    }
++
++    void shouldSayTheStoredEngineIsMissing()
++    {
++        KConfigGroup group(KSharedConfig::openConfig(), u"SpeechToText"_s);
++        group.writeEntry("engine", u"vibe"_s);
++        group.sync();
++        TextSpeechToText::SpeechToTextConfigureWidget w;
++        w.loadSettings();
++        auto text = w.findChild<KMessageWidget *>(u"mEngineMessage"_s);
++        QVERIFY2(text, "the settings have no place to say why");
++        QVERIFY(!text->isHidden());
++        QCOMPARE(text->text(),
++                 u"The Vibe speech-to-text engine needs vibe-server, which is not installed: install it, or choose another engine in the speech-to-text settings."_s);
++        group.deleteEntry("engine");
++        group.sync();
++    }
++};
++
++QTEST_MAIN(SpeechToTextEngineMessageTest)
++#include "speechtotextenginemessagetest.moc"
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/speechtotextmanagertest.cpp b/textspeechtotext/speechtotext/plugins/vibe/autotests/speechtotextmanagertest.cpp
+new file mode 100644
+index 0000000..ae8b068
+--- /dev/null
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/speechtotextmanagertest.cpp
+@@ -0,0 +1,157 @@
++/*
++  SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++
++  SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++// What a program hears from KDE's speech-to-text manager when the engine chosen cannot take a dictation, through the
++// public interface only. EXPECT_VIBE says whether vibe-server is on PATH; the loader is one per process, so each
++// case of the two is its own test program.
++#include <QAudioDevice>
++#include <QDir>
++#include <QFile>
++#include <QMediaDevices>
++#include <QRegularExpression>
++#include <QSignalSpy>
++#include <QStandardPaths>
++#include <QTemporaryDir>
++#include <QTest>
++#include <TextSpeechToText/SpeechToTextEngineLoader>
++#include <TextSpeechToText/SpeechToTextManager>
++
++using namespace Qt::Literals::StringLiterals;
++using TextSpeechToText::SpeechToTextManager;
++
++// the process number of the last vibe-server the engine started, from its own log line
++static QString s_serverProcess;
++static QtMessageHandler s_previousHandler = nullptr;
++static void readServerProcess(QtMsgType type, const QMessageLogContext &context, const QString &message)
++{
++    static const QRegularExpression started(u"vibe-server started, process (\\d+)"_s);
++    if (const auto match = started.match(message); match.hasMatch()) {
++        s_serverProcess = match.captured(1);
++    }
++    if (s_previousHandler) {
++        s_previousHandler(type, context, message);
++    }
++}
++
++class SpeechToTextManagerTest : public QObject
++{
++    Q_OBJECT
++private:
++    QTemporaryDir mBin;
++
++    // the sentence the program gets for a dictation it asks for now, and whether recording started
++    QString dictate()
++    {
++        QSignalSpy failed(SpeechToTextManager::self(), &SpeechToTextManager::speechToTextFailedFor);
++        SpeechToTextManager::self()->speechToText(this);
++        const bool recording = SpeechToTextManager::self()->isRecording();
++        SpeechToTextManager::self()->stop();
++        if (recording) {
++            return u"(recording started)"_s;
++        }
++        return failed.isEmpty() ? QString() : failed.at(0).at(1).toString();
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        QStandardPaths::setTestModeEnabled(true);
++        QVERIFY(mBin.isValid());
++        s_previousHandler = qInstallMessageHandler(readServerProcess);
++        if (EXPECT_VIBE) {
++            const QString program = mBin.filePath(u"vibe-server"_s);
++            QVERIFY(QFile::copy(QFINDTESTDATA("data/vibe-server-standin.py"), program));
++            QVERIFY(QFile::setPermissions(program, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
++        }
++        QFile model(mBin.filePath(u"model.bin"_s));
++        QVERIFY(model.open(QIODevice::WriteOnly));
++        model.write("not a real model");
++        model.close();
++        const QString store = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/github.com.thewh1teagle.vibe"_L1;
++        QVERIFY(QDir().mkpath(store));
++        QFile config(store + "/app_config.json"_L1);
++        QVERIFY(config.open(QIODevice::WriteOnly));
++        config.write(R"({"model.path": ")" + model.fileName().toUtf8() + R"(", "analytics_enabled": false})");
++        config.close();
++        // vibe-server is in this folder or nowhere; no Partners command
++        qputenv("PATH", (mBin.path() + ":/usr/bin:/bin"_L1).toLocal8Bit());
++        QCoreApplication::setLibraryPaths({QStringLiteral(PLUGIN_BUILD_ROOT)});
++        const auto engines = TextSpeechToText::SpeechToTextEngineLoader::self()->speechToTextEngineInfos();
++        QVERIFY(engines.contains(u"google"_s));
++        QVERIFY(engines.contains(u"whisper"_s));
++        QCOMPARE(engines.contains(u"vibe"_s), bool(EXPECT_VIBE));
++    }
++
++    // an engine chosen that is not installed is said, and no other engine is taken in its place
++    void shouldSayTheChosenEngineIsMissing()
++    {
++        SpeechToTextManager::self()->switchEngine(u"nosuchengine"_s);
++        QVERIFY(!SpeechToTextManager::self()->isReady());
++        QCOMPARE(dictate(), u"The speech-to-text engine nosuchengine is not installed: install it, or choose another engine in the speech-to-text settings."_s);
++        QVERIFY(!SpeechToTextManager::self()->isReady());
++    }
++
++    void shouldNameTheMissingProgram()
++    {
++        if (EXPECT_VIBE) {
++            QSKIP("vibe-server is installed in this case");
++        }
++        SpeechToTextManager::self()->switchEngine(u"vibe"_s);
++        QCOMPARE(dictate(), u"The Vibe speech-to-text engine needs vibe-server, which is not installed: install it, or choose another engine in the speech-to-text settings."_s);
++    }
++
++    // the engines this version only lists say so when a dictation is asked of them
++    void shouldSayTheEngineIsNotAvailable_data()
++    {
++        QTest::addColumn<QString>("engine");
++        QTest::addColumn<QString>("message");
++        QTest::newRow("whisper") << u"whisper"_s
++                                 << u"The Whisper speech-to-text engine is not available in this version: choose another engine in the speech-to-text settings."_s;
++        QTest::newRow("google") << u"google"_s
++                                << u"The Google speech-to-text engine is not available in this version: choose another engine in the speech-to-text settings."_s;
++    }
++
++    void shouldSayTheEngineIsNotAvailable()
++    {
++        QFETCH(QString, engine);
++        QFETCH(QString, message);
++        SpeechToTextManager::self()->switchEngine(engine);
++        QCOMPARE(dictate(), message);
++    }
++
++    // with nothing chosen, the engine that can take a dictation is used: Vibe where it is installed
++    void shouldUseTheReadyEngineWhenNothingIsChosen()
++    {
++        SpeechToTextManager::self()->switchEngine(QString());
++        if (EXPECT_VIBE) {
++            QVERIFY(SpeechToTextManager::self()->isReady());
++        } else {
++            QCOMPARE(dictate(), u"No speech-to-text engine is ready for dictation: choose one in the speech-to-text settings."_s);
++        }
++    }
++
++    // a microphone that cannot be opened ends the dictation, and the server started at the press with it
++    void shouldStopTheServerWhenTheMicrophoneFails()
++    {
++        if (!EXPECT_VIBE) {
++            QSKIP("needs vibe-server");
++        }
++        if (!QMediaDevices::defaultAudioInput().isNull()) {
++            QSKIP("this computer has a microphone: the case needs one that cannot be opened");
++        }
++        QTemporaryDir record;
++        qputenv("STANDIN_MODE", "ok");
++        qputenv("STANDIN_RECORD", record.path().toUtf8());
++        SpeechToTextManager::self()->switchEngine(u"vibe"_s);
++        s_serverProcess.clear();
++        QCOMPARE(dictate(), u"The microphone could not be opened for dictation."_s);
++        QVERIFY2(!s_serverProcess.isEmpty(), "the server was not started at the press");
++        QTRY_VERIFY_WITH_TIMEOUT(!QFile::exists("/proc/"_L1 + s_serverProcess), 7000);
++    }
++};
++
++QTEST_GUILESS_MAIN(SpeechToTextManagerTest)
++#include "speechtotextmanagertest.moc"
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextjobtest.cpp b/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextjobtest.cpp
+index 4bb7cf4..a96c504 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextjobtest.cpp
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextjobtest.cpp
+@@ -11,6 +11,7 @@
+ #include <QJsonArray>
+ #include <QJsonDocument>
+ #include <QJsonObject>
++#include <QElapsedTimer>
+ #include <QSignalSpy>
+ #include <QTemporaryDir>
+ #include <QTest>
+@@ -63,6 +64,20 @@ private:
+         return !pid.isEmpty() && !QFile::exists("/proc/"_L1 + QString::fromLatin1(pid));
+     }
+ 
++    // the server the job started is running now (started, not ended)
++    static bool serverRunning(const QString &record)
++    {
++        const QByteArray pid = readFile(record + "/pid"_L1);
++        return !pid.isEmpty() && QFile::exists("/proc/"_L1 + QString::fromLatin1(pid));
++    }
++
++    VibeSpeechToTextSettings settingsWithTimes(const QString &mode, const QString &record, const QString &load) const
++    {
++        auto s = settings(mode, record);
++        s.environment.insert(u"STANDIN_LOAD_SECONDS"_s, load);
++        return s;
++    }
++
+ private Q_SLOTS:
+     void initTestCase()
+     {
+@@ -99,14 +114,14 @@ private Q_SLOTS:
+         auto job = new VibeSpeechToTextJob;
+         job->setSettings(settings(u"ok"_s, record.path()));
+         const QByteArray pcm = tone();
+-        job->setAudio(pcm, 16000);
+         QSignalSpy finished(job, &VibeSpeechToTextJob::finished);
+         QSignalSpy failed(job, &VibeSpeechToTextJob::failed);
+         bool goneWhenDone = false;
+         connect(job, &VibeSpeechToTextJob::finished, this, [&goneWhenDone, &record]() {
+             goneWhenDone = serverGone(record.path());
+         });
+-        job->start();
++        job->startServer();
++        job->transcribe(pcm, 16000);
+         QVERIFY(finished.wait(20000));
+         QCOMPARE(failed.count(), 0);
+         QCOMPARE(finished.at(0).at(0).toString(), u"Text from the stand-in server."_s);
+@@ -132,9 +147,9 @@ private Q_SLOTS:
+         auto s = settings(u"ok"_s, record.path());
+         s.language = u"pt"_s;
+         job->setSettings(s);
+-        job->setAudio(tone(), 16000);
+         QSignalSpy finished(job, &VibeSpeechToTextJob::finished);
+-        job->start();
++        job->startServer();
++        job->transcribe(tone(), 16000);
+         QVERIFY(finished.wait(20000));
+         const QJsonObject request = QJsonDocument::fromJson(readFile(record.filePath(u"request.json"_s))).object();
+         QCOMPARE(request.value("language"_L1).toString(), u"pt"_s);
+@@ -160,14 +175,14 @@ private Q_SLOTS:
+         QTemporaryDir record;
+         auto job = new VibeSpeechToTextJob;
+         job->setSettings(settings(mode, record.path()));
+-        job->setAudio(tone(), 16000);
+         QSignalSpy finished(job, &VibeSpeechToTextJob::finished);
+         QSignalSpy failed(job, &VibeSpeechToTextJob::failed);
+         bool goneWhenDone = false;
+         connect(job, &VibeSpeechToTextJob::failed, this, [&goneWhenDone, &record]() {
+             goneWhenDone = serverGone(record.path());
+         });
+-        job->start();
++        job->startServer();
++        job->transcribe(tone(), 16000);
+         QVERIFY(failed.wait(20000));
+         QVERIFY(goneWhenDone);
+         QCOMPARE(finished.count(), 0);
+@@ -180,14 +195,13 @@ private Q_SLOTS:
+         QTemporaryDir record;
+         auto job = new VibeSpeechToTextJob;
+         job->setSettings(settings(u"silent"_s, record.path()));
+-        job->setAudio(tone(), 16000);
+         job->setReadyTimeout(1500);
+         QSignalSpy failed(job, &VibeSpeechToTextJob::failed);
+         bool goneWhenDone = false;
+         connect(job, &VibeSpeechToTextJob::failed, this, [&goneWhenDone, &record]() {
+             goneWhenDone = serverGone(record.path());
+         });
+-        job->start();
++        job->startServer();
+         QVERIFY(failed.wait(20000));
+         QVERIFY(goneWhenDone);
+         QCOMPARE(failed.at(0).at(0).toString(), u"Vibe's speech engine did not start: it did not answer within 1 second."_s);
+@@ -201,25 +215,110 @@ private Q_SLOTS:
+         auto s = settings(u"ok"_s, record.path());
+         s.serverProgram = record.filePath(u"missing/vibe-server"_s);
+         job->setSettings(s);
+-        job->setAudio(tone(), 16000);
+         QSignalSpy failed(job, &VibeSpeechToTextJob::failed);
+-        job->start();
+-        QVERIFY(failed.wait(20000));
++        job->startServer();
++        QVERIFY(failed.count() == 1 || failed.wait(20000));
+         QVERIFY(failed.at(0).at(0).toString().startsWith(u"Vibe's speech engine did not start: "_s));
+         QVERIFY(!QFile::exists(record.filePath(u"pid"_s)));
+     }
+ 
+-    void shouldStartNothingWithoutAudio()
++    void shouldSayNothingWasRecordedAndStopTheServer()
+     {
+         QTemporaryDir record;
+         auto job = new VibeSpeechToTextJob;
+         job->setSettings(settings(u"ok"_s, record.path()));
+-        job->setAudio({}, 16000);
+         QSignalSpy failed(job, &VibeSpeechToTextJob::failed);
+-        job->start();
++        bool goneWhenDone = false;
++        connect(job, &VibeSpeechToTextJob::failed, this, [&goneWhenDone, &record]() {
++            goneWhenDone = serverGone(record.path());
++        });
++        job->startServer();
++        QTRY_VERIFY_WITH_TIMEOUT(serverRunning(record.path()), 10000);
++        job->transcribe({}, 16000);
+         QCOMPARE(failed.count(), 1);
+         QCOMPARE(failed.at(0).at(0).toString(), u"Nothing was recorded from the microphone."_s);
+-        QVERIFY(!QFile::exists(record.filePath(u"pid"_s)));
++        QVERIFY(goneWhenDone);
++        QVERIFY(!QFile::exists(record.filePath(u"request"_s)));
++    }
++
++    // the server starts with the dictation: the model loads while the person speaks
++    void shouldStartTheServerBeforeTheRecordingEnds()
++    {
++        QTemporaryDir record;
++        auto job = new VibeSpeechToTextJob;
++        job->setSettings(settings(u"ok"_s, record.path()));
++        QSignalSpy finished(job, &VibeSpeechToTextJob::finished);
++        job->startServer();
++        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(record.filePath(u"ready"_s)), 10000);
++        QVERIFY(serverRunning(record.path()));
++        QVERIFY(!QFile::exists(record.filePath(u"request"_s)));
++        job->transcribe(tone(), 16000);
++        QVERIFY(finished.wait(20000));
++        QTRY_VERIFY(serverGone(record.path()));
++    }
++
++    // with a model that takes 2 s to load and a person who speaks longer than that, the text comes without that wait;
++    // the order of the first build (the server started only when the person stops) waits for the whole load
++    void shouldAnswerWithoutWaitingForTheModelLoad()
++    {
++        QTemporaryDir early;
++        auto job = new VibeSpeechToTextJob;
++        job->setSettings(settingsWithTimes(u"ok"_s, early.path(), u"2"_s));
++        QSignalSpy finished(job, &VibeSpeechToTextJob::finished);
++        job->startServer();
++        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(early.filePath(u"ready"_s)), 15000); // the person is still speaking
++        QElapsedTimer waited;
++        waited.start();
++        job->transcribe(tone(), 16000);
++        QVERIFY(finished.wait(20000));
++        const qint64 serverStartedEarly = waited.elapsed();
++
++        QTemporaryDir late;
++        job = new VibeSpeechToTextJob;
++        job->setSettings(settingsWithTimes(u"ok"_s, late.path(), u"2"_s));
++        QSignalSpy finishedLate(job, &VibeSpeechToTextJob::finished);
++        waited.restart();
++        job->startServer(); // started only when the person stops, as the first build did
++        job->transcribe(tone(), 16000);
++        QVERIFY(finishedLate.wait(20000));
++        const qint64 serverStartedLate = waited.elapsed();
++        qInfo() << "from the end of the recording to the text: server started with the dictation" << serverStartedEarly
++                << "ms, server started at the end" << serverStartedLate << "ms, model load 2000 ms";
++        QVERIFY2(serverStartedLate >= 2000, qPrintable(QString::number(serverStartedLate)));
++        QVERIFY2(serverStartedEarly < serverStartedLate - 1000, qPrintable(QString::number(serverStartedEarly)));
++    }
++
++    // a server that cannot load the model is said at once, while the person still speaks, and is gone
++    void shouldSayAFailureWhileThePersonStillSpeaks()
++    {
++        QTemporaryDir record;
++        auto job = new VibeSpeechToTextJob;
++        job->setSettings(settingsWithTimes(u"noload"_s, record.path(), u"1"_s));
++        QSignalSpy failed(job, &VibeSpeechToTextJob::failed);
++        bool goneWhenDone = false;
++        connect(job, &VibeSpeechToTextJob::failed, this, [&goneWhenDone, &record]() {
++            goneWhenDone = serverGone(record.path());
++        });
++        job->startServer();
++        QVERIFY(failed.wait(20000)); // no transcribe(): the recording has not ended
++        QVERIFY(failed.at(0).at(0).toString().startsWith(u"Vibe could not load the speech model model.bin: "_s));
++        QVERIFY(goneWhenDone);
++    }
++
++    // a dictation that is dropped (cancelled, the program closing) ends its server and gives nothing
++    void shouldStopTheServerWhenTheDictationIsDropped()
++    {
++        QTemporaryDir record;
++        auto job = new VibeSpeechToTextJob;
++        job->setSettings(settings(u"ok"_s, record.path()));
++        QSignalSpy finished(job, &VibeSpeechToTextJob::finished);
++        QSignalSpy failed(job, &VibeSpeechToTextJob::failed);
++        job->startServer();
++        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(record.filePath(u"ready"_s)), 10000);
++        delete job;
++        QVERIFY(serverGone(record.path()));
++        QVERIFY(QFile::exists(record.filePath(u"terminated"_s)));
++        QCOMPARE(finished.count() + failed.count(), 0);
+     }
+ 
+     void shouldNameTheMissingModelAndStartNoServer()
+@@ -229,9 +328,8 @@ private Q_SLOTS:
+         auto s = settings(u"ok"_s, record.path());
+         s.modelPath.clear();
+         job->setSettings(s);
+-        job->setAudio(tone(), 16000);
+         QSignalSpy failed(job, &VibeSpeechToTextJob::failed);
+-        job->start();
++        job->startServer();
+         QCOMPARE(failed.count(), 1);
+         const QString message = failed.at(0).at(0).toString();
+         QVERIFY2(message.startsWith(u"No speech model is selected in Vibe. Vibe's recommended model for this computer is ggml-"_s), qPrintable(message));
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextplugintest.cpp b/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextplugintest.cpp
+new file mode 100644
+index 0000000..dbeb233
+--- /dev/null
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextplugintest.cpp
+@@ -0,0 +1,207 @@
++/*
++  SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++
++  SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++// The Vibe engine as a program gets it, through the library's loader and the plugin interface only: when its server
++// runs, how soon the text comes, and what is said. It uses no class of the engine itself, so it runs against any build.
++#include <QDir>
++#include <QElapsedTimer>
++#include <QFile>
++#include <QSignalSpy>
++#include <QStandardPaths>
++#include <QTemporaryDir>
++#include <QTest>
++#include <QtEndian>
++#include <TextSpeechToText/SpeechToTextClient>
++#include <TextSpeechToText/SpeechToTextEngineLoader>
++#include <TextSpeechToText/SpeechToTextPlugin>
++#include <cmath>
++
++using namespace Qt::Literals::StringLiterals;
++
++class VibeSpeechToTextPluginTest : public QObject
++{
++    Q_OBJECT
++private:
++    QTemporaryDir mBin;
++
++    static QByteArray tone()
++    {
++        QByteArray pcm;
++        for (int i = 0; i < 16000; ++i) {
++            const auto sample = static_cast<qint16>(8000 * std::sin(2 * M_PI * 440 * i / 16000.0));
++            char bytes[2];
++            qToLittleEndian(sample, bytes);
++            pcm.append(bytes, 2);
++        }
++        return pcm;
++    }
++
++    static QByteArray readFile(const QString &path)
++    {
++        QFile file(path);
++        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
++    }
++
++    static bool serverRunning(const QString &record)
++    {
++        const QByteArray pid = readFile(record + "/pid"_L1);
++        return !pid.isEmpty() && QFile::exists("/proc/"_L1 + QString::fromLatin1(pid));
++    }
++
++    static bool serverGone(const QString &record)
++    {
++        const QByteArray pid = readFile(record + "/pid"_L1);
++        return !pid.isEmpty() && !QFile::exists("/proc/"_L1 + QString::fromLatin1(pid));
++    }
++
++    // the stand-in reads these from the environment the engine gives vibe-server
++    static void standin(const QString &mode, const QString &record, const char *loadSeconds = "0", const char *answerSeconds = "0")
++    {
++        qputenv("STANDIN_MODE", mode.toUtf8());
++        qputenv("STANDIN_RECORD", record.toUtf8());
++        qputenv("STANDIN_LOAD_SECONDS", loadSeconds);
++        qputenv("STANDIN_ANSWER_SECONDS", answerSeconds);
++    }
++
++    static TextSpeechToText::SpeechToTextPlugin *vibe()
++    {
++        auto client = TextSpeechToText::SpeechToTextEngineLoader::self()->createSpeechToTextClient(u"vibe"_s);
++        if (!client) {
++            return nullptr;
++        }
++        auto plugin = client->createTextToSpeech();
++        return plugin && plugin->loadSettings() ? plugin : nullptr;
++    }
++
++    // the person speaks for a while: what the microphone gives goes into the engine's device
++    static void speak(TextSpeechToText::SpeechToTextPlugin *plugin)
++    {
++        if (QIODevice *device = plugin->audioDevice(); device && device->isOpen()) {
++            device->write(tone());
++        }
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        QStandardPaths::setTestModeEnabled(true);
++        QVERIFY(mBin.isValid());
++        const QString program = mBin.filePath(u"vibe-server"_s);
++        QVERIFY(QFile::copy(QFINDTESTDATA("data/vibe-server-standin.py"), program));
++        QVERIFY(QFile::setPermissions(program, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
++        QFile model(mBin.filePath(u"model.bin"_s));
++        QVERIFY(model.open(QIODevice::WriteOnly));
++        model.write("not a real model");
++        model.close();
++        // the model selected in Vibe, in Vibe's own store
++        const QString store = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/github.com.thewh1teagle.vibe"_L1;
++        QVERIFY(QDir().mkpath(store));
++        QFile config(store + "/app_config.json"_L1);
++        QVERIFY(config.open(QIODevice::WriteOnly));
++        config.write(R"({"model.path": ")" + model.fileName().toUtf8() + R"(", "analytics_enabled": false})");
++        config.close();
++        qputenv("PATH", (mBin.path() + ":/usr/bin:/bin"_L1).toLocal8Bit());
++        QCoreApplication::setLibraryPaths({QStringLiteral(PLUGIN_BUILD_ROOT)});
++        QVERIFY(TextSpeechToText::SpeechToTextEngineLoader::self()->speechToTextEngineInfos().contains(u"vibe"_s));
++    }
++
++    // the server is up while the person is still speaking, and gone when the text is in
++    void shouldRunTheServerDuringTheRecording()
++    {
++        QTemporaryDir record;
++        standin(u"ok"_s, record.path());
++        std::unique_ptr<TextSpeechToText::SpeechToTextPlugin> plugin(vibe());
++        QVERIFY(plugin);
++        QSignalSpy done(plugin.get(), &TextSpeechToText::SpeechToTextPlugin::speechToTextDone);
++        bool goneWhenDone = false;
++        connect(plugin.get(), &TextSpeechToText::SpeechToTextPlugin::speechToTextDone, this, [&goneWhenDone, &record]() {
++            goneWhenDone = serverGone(record.path());
++        });
++        plugin->speechToText();
++        speak(plugin.get());
++        QTRY_VERIFY_WITH_TIMEOUT(serverRunning(record.path()), 10000);
++        QVERIFY(!QFile::exists(record.filePath(u"request"_s)));
++        plugin->stop();
++        QVERIFY(done.wait(20000));
++        QCOMPARE(done.at(0).at(0).toString(), u"Text from the stand-in server."_s);
++        QVERIFY(goneWhenDone);
++    }
++
++    // a model that takes 2 s to load, a person who speaks for 4 s: the text comes without waiting for the load
++    void shouldAnswerWithoutWaitingForTheModelLoad()
++    {
++        QTemporaryDir record;
++        standin(u"ok"_s, record.path(), "2");
++        std::unique_ptr<TextSpeechToText::SpeechToTextPlugin> plugin(vibe());
++        QVERIFY(plugin);
++        QSignalSpy done(plugin.get(), &TextSpeechToText::SpeechToTextPlugin::speechToTextDone);
++        plugin->speechToText();
++        speak(plugin.get());
++        QTest::qWait(4000);
++        QElapsedTimer waited;
++        waited.start();
++        plugin->stop();
++        QVERIFY(done.wait(20000));
++        const qint64 elapsed = waited.elapsed();
++        qInfo() << "from the end of the recording to the text:" << elapsed << "ms (model load 2000 ms)";
++        QVERIFY2(elapsed < 1500, qPrintable(QString::number(elapsed)));
++    }
++
++    // a model that does not load is said while the person still speaks, and the server is gone
++    void shouldSayAFailureWhileThePersonStillSpeaks()
++    {
++        QTemporaryDir record;
++        standin(u"noload"_s, record.path(), "1");
++        std::unique_ptr<TextSpeechToText::SpeechToTextPlugin> plugin(vibe());
++        QVERIFY(plugin);
++        QSignalSpy failed(plugin.get(), &TextSpeechToText::SpeechToTextPlugin::speechToTextFailed);
++        plugin->speechToText();
++        speak(plugin.get());
++        QVERIFY(failed.wait(10000)); // stop() was never called
++        QVERIFY2(failed.at(0).at(0).toString().startsWith(u"Vibe could not load the speech model model.bin: "_s), qPrintable(failed.at(0).at(0).toString()));
++        QVERIFY(serverGone(record.path()));
++    }
++
++    // a dictation dropped before its end (the engine's plugin deleted: cancelled, the program closing) ends its server
++    void shouldStopTheServerWhenTheDictationIsDropped()
++    {
++        QTemporaryDir record;
++        standin(u"ok"_s, record.path());
++        auto plugin = vibe();
++        QVERIFY(plugin);
++        plugin->speechToText();
++        speak(plugin);
++        QTRY_VERIFY_WITH_TIMEOUT(serverRunning(record.path()), 10000);
++        delete plugin;
++        QTRY_VERIFY_WITH_TIMEOUT(serverGone(record.path()), 7000);
++        QVERIFY(QFile::exists(record.filePath(u"terminated"_s)));
++        QVERIFY(!QFile::exists(record.filePath(u"request"_s)));
++    }
++
++    // one server and one model in memory: a second dictation while the first is transcribed waits and says so
++    void shouldSayThatTheEarlierDictationIsStillTranscribed()
++    {
++        QTemporaryDir record;
++        standin(u"ok"_s, record.path(), "0", "3");
++        std::unique_ptr<TextSpeechToText::SpeechToTextPlugin> plugin(vibe());
++        QVERIFY(plugin);
++        QSignalSpy done(plugin.get(), &TextSpeechToText::SpeechToTextPlugin::speechToTextDone);
++        QSignalSpy failed(plugin.get(), &TextSpeechToText::SpeechToTextPlugin::speechToTextFailed);
++        plugin->speechToText();
++        speak(plugin.get());
++        QTRY_VERIFY_WITH_TIMEOUT(serverRunning(record.path()), 10000);
++        plugin->stop();
++        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(record.filePath(u"request"_s)), 10000);
++        plugin->speechToText();
++        QCOMPARE(failed.count(), 1);
++        QCOMPARE(failed.at(0).at(0).toString(), u"Vibe is still transcribing your previous dictation: wait for its text, then start again."_s);
++        QVERIFY(done.wait(20000));
++        QCOMPARE(done.at(0).at(0).toString(), u"Text from the stand-in server."_s);
++    }
++};
++
++QTEST_GUILESS_MAIN(VibeSpeechToTextPluginTest)
++#include "vibespeechtotextplugintest.moc"
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/vibe.json b/textspeechtotext/speechtotext/plugins/vibe/vibe.json
+index f9ee56a..177e4e9 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/vibe.json
++++ b/textspeechtotext/speechtotext/plugins/vibe/vibe.json
+@@ -1,3 +1,5 @@
+ {
++    "X-KTextAddons-Engine": "vibe",
++    "X-KTextAddons-EngineName": "Vibe",
+     "X-KTextAddons-RequiredExecutable": "vibe-server"
+ }
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.cpp b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.cpp
+index 444a670..cccd1fa 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.cpp
++++ b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.cpp
+@@ -60,6 +60,11 @@ VibeSpeechToTextJob::VibeSpeechToTextJob(QObject *parent)
+ 
+ VibeSpeechToTextJob::~VibeSpeechToTextJob()
+ {
++    // a dropped dictation (cancelled, its window closed, the program quitting) ends its server and says nothing
++    mDone = true;
++    if (mServer) {
++        mServer->disconnect(this);
++    }
+     stopServer();
+ }
+ 
+@@ -68,12 +73,6 @@ void VibeSpeechToTextJob::setSettings(const VibeSpeechToTextSettings &settings)
+     mSettings = settings;
+ }
+ 
+-void VibeSpeechToTextJob::setAudio(const QByteArray &pcm, int sampleRate)
+-{
+-    mPcm = pcm;
+-    mSampleRate = sampleRate;
+-}
+-
+ void VibeSpeechToTextJob::setReadyTimeout(int milliseconds)
+ {
+     mReadyTimeout = milliseconds;
+@@ -99,14 +98,18 @@ QByteArray VibeSpeechToTextJob::wavFile(const QByteArray &pcm, int sampleRate)
+     return wav;
+ }
+ 
+-void VibeSpeechToTextJob::start()
++bool VibeSpeechToTextJob::isDone() const
+ {
+-    if (mSettings.serverProgram.isEmpty()) {
+-        done(false, i18n("Vibe's speech engine did not start: %1", i18n("vibe-server is not installed.")));
++    return mDone;
++}
++
++void VibeSpeechToTextJob::startServer()
++{
++    if (mServer || mDone) {
+         return;
+     }
+-    if (mPcm.isEmpty()) {
+-        done(false, i18n("Nothing was recorded from the microphone."));
++    if (mSettings.serverProgram.isEmpty()) {
++        done(false, i18n("Vibe's speech engine did not start: %1", i18n("vibe-server is not installed.")));
+         return;
+     }
+     if (mSettings.modelPath.isEmpty()) {
+@@ -123,9 +126,30 @@ void VibeSpeechToTextJob::start()
+     connect(mServer, &QProcess::errorOccurred, this, &VibeSpeechToTextJob::serverError);
+     // port 0: the server takes a free port and says which in its ready line; it also ends with its parent
+     mServer->start(mSettings.serverProgram, {u"serve"_s, mSettings.modelPath, u"--host"_s, u"127.0.0.1"_s, u"--port"_s, u"0"_s});
++    qCInfo(SPEECHTOTEXT_VIBE_LOG) << "vibe-server started, process" << mServer->processId();
+     mReadyTimer->start(mReadyTimeout);
+ }
+ 
++void VibeSpeechToTextJob::transcribe(const QByteArray &pcm, int sampleRate)
++{
++    if (mDone || mAudioGiven) {
++        return;
++    }
++    if (pcm.isEmpty()) {
++        done(false, i18n("Nothing was recorded from the microphone."));
++        return;
++    }
++    mPcm = pcm;
++    mSampleRate = sampleRate;
++    mAudioGiven = true;
++    if (!mServer) {
++        startServer();
++    }
++    if (mReady && !mDone) {
++        sendAudio(mPort);
++    }
++}
++
+ void VibeSpeechToTextJob::readServerOutput()
+ {
+     mServerOutput.append(mServer->readAllStandardOutput());
+@@ -138,8 +162,12 @@ void VibeSpeechToTextJob::readServerOutput()
+         const int port = ready.value("port"_L1).toInt();
+         if (ready.value("status"_L1).toString() == "ready"_L1 && port > 0 && port < 65536) {
+             mReady = true;
++            mPort = port;
+             mReadyTimer->stop();
+-            sendAudio(port);
++            // the model loaded while the person spoke; the recording goes as soon as it is complete
++            if (mAudioGiven) {
++                sendAudio(port);
++            }
+         }
+     }
+ }
+@@ -234,11 +262,13 @@ void VibeSpeechToTextJob::stopServer()
+     if (!mServer || mServer->state() == QProcess::NotRunning) {
+         return;
+     }
++    const qint64 process = mServer->processId();
+     mServer->terminate();
+     if (!mServer->waitForFinished(5000)) {
+         mServer->kill();
+         mServer->waitForFinished(2000);
+     }
++    qCInfo(SPEECHTOTEXT_VIBE_LOG) << "vibe-server ended by the engine, process" << process;
+ }
+ 
+ void VibeSpeechToTextJob::done(bool success, const QString &textOrMessage)
+@@ -248,7 +278,7 @@ void VibeSpeechToTextJob::done(bool success, const QString &textOrMessage)
+     }
+     mDone = true;
+     mReadyTimer->stop();
+-    // the server runs only while a recording is transcribed
++    // the server runs only from the start of the dictation to its answer
+     stopServer();
+     if (success) {
+         Q_EMIT finished(textOrMessage);
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.h b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.h
+index 0ff6d19..d50c32e 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.h
++++ b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.h
+@@ -16,9 +16,11 @@ class QNetworkReply;
+ class QTimer;
+ 
+ /*!
+- * One transcription: starts vibe-server on a free port of this computer with the chosen model, sends it the recording
+- * as 16 kHz mono WAV through its local HTTP API (/v1/audio/transcriptions) and stops it again, whatever the outcome.
+- * Emits finished() or failed() once, then deletes itself.
++ * One dictation: starts vibe-server on a free port of this computer with the chosen model when the person starts
++ * speaking (startServer(), so the model loads while they speak), sends it the recording as 16 kHz mono WAV through its
++ * local HTTP API (/v1/audio/transcriptions) once they stop (transcribe()), and stops it again, whatever the outcome.
++ * A failure is said as soon as it happens, also while the person still speaks. Emits finished() or failed() once,
++ * then deletes itself; deleting it earlier (a cancelled dictation) stops the server and emits nothing.
+  */
+ class LIBVIBESPEECHTOTEXT_EXPORT VibeSpeechToTextJob : public QObject
+ {
+@@ -28,9 +30,16 @@ public:
+     ~VibeSpeechToTextJob() override;
+ 
+     void setSettings(const VibeSpeechToTextSettings &settings);
+-    void setAudio(const QByteArray &pcm, int sampleRate);
+     void setReadyTimeout(int milliseconds);
+-    void start();
++    /*!
++     * Starts vibe-server with the model; it loads while the recording goes on.
++     */
++    void startServer();
++    /*!
++     * The recording is complete: it is sent as soon as the server is ready (at once when it already is).
++     */
++    void transcribe(const QByteArray &pcm, int sampleRate);
++    [[nodiscard]] bool isDone() const;
+ 
+     /*!
+      * A WAV file (RIFF, PCM, one channel, 16 bits) around \a pcm, the form vibe-server reads without converting.
+@@ -55,6 +64,8 @@ private:
+     QByteArray mPcm;
+     int mSampleRate = 16000;
+     int mReadyTimeout = 120000;
++    int mPort = 0;
++    bool mAudioGiven = false;
+     QProcess *mServer = nullptr;
+     QNetworkAccessManager *const mNetwork;
+     QTimer *const mReadyTimer;
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextplugin.cpp b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextplugin.cpp
+index 5c45fe7..dda05cd 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextplugin.cpp
++++ b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextplugin.cpp
+@@ -34,8 +34,22 @@ void VibeSpeechToTextPlugin::speechToText()
+         Q_EMIT speechToTextFailed(VibeSpeechToTextSettings::missingModelMessage(mSettings.recommendedModelHere()));
+         return;
+     }
++    if (mJob && !mJob->isDone()) {
++        // one server, one model in memory: the earlier dictation's text comes first
++        Q_EMIT speechToTextFailed(i18n("Vibe is still transcribing your previous dictation: wait for its text, then start again."));
++        return;
++    }
+     clear();
+-    mAudio->open(QIODevice::WriteOnly);
++    auto job = new VibeSpeechToTextJob(this);
++    mJob = job;
++    job->setSettings(mSettings);
++    connect(job, &VibeSpeechToTextJob::finished, this, &VibeSpeechToTextPlugin::speechToTextDone);
++    connect(job, &VibeSpeechToTextJob::failed, this, &VibeSpeechToTextPlugin::speechToTextFailed);
++    // the person pressed the button: the server starts now, so the model loads while they speak
++    job->startServer();
++    if (!job->isDone()) {
++        mAudio->open(QIODevice::WriteOnly);
++    }
+ }
+ 
+ void VibeSpeechToTextPlugin::stop()
+@@ -43,12 +57,10 @@ void VibeSpeechToTextPlugin::stop()
+     mAudio->close();
+     const QByteArray pcm = mAudio->data();
+     clear();
+-    auto job = new VibeSpeechToTextJob(this);
+-    job->setSettings(mSettings);
+-    job->setAudio(pcm, sampleRate());
+-    connect(job, &VibeSpeechToTextJob::finished, this, &VibeSpeechToTextPlugin::speechToTextDone);
+-    connect(job, &VibeSpeechToTextJob::failed, this, &VibeSpeechToTextPlugin::speechToTextFailed);
+-    job->start();
++    // a dictation whose server already failed was said then; nothing is left to send
++    if (mJob && !mJob->isDone()) {
++        mJob->transcribe(pcm, sampleRate());
++    }
+ }
+ 
+ int VibeSpeechToTextPlugin::sampleRate() const
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextplugin.h b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextplugin.h
+index 333994f..c438fdb 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextplugin.h
++++ b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextplugin.h
+@@ -8,12 +8,15 @@
+ 
+ #include "speechtotext/speechtotextplugin.h"
+ #include "vibespeechtotextsettings.h"
++#include <QPointer>
+ 
+ class QBuffer;
++class VibeSpeechToTextJob;
+ 
+ /*!
+- * Dictation with Vibe's engine: the microphone is recorded into a buffer while the person speaks; when they stop,
+- * vibe-server is started with the model selected in Vibe, transcribes the recording and is stopped again.
++ * Dictation with Vibe's engine: when the person starts dictating, vibe-server is started with the model selected in
++ * Vibe, which loads while the microphone is recorded into a buffer; when they stop, the recording is transcribed and
++ * the server is stopped again. Deleting the plugin (a cancelled dictation, the program closing) stops it too.
+  */
+ class VibeSpeechToTextPlugin : public TextSpeechToText::SpeechToTextPlugin
+ {
+@@ -32,4 +35,5 @@ public:
+ private:
+     QBuffer *const mAudio;
+     VibeSpeechToTextSettings mSettings;
++    QPointer<VibeSpeechToTextJob> mJob;
+ };
+diff --git a/textspeechtotext/speechtotext/plugins/whisper/CMakeLists.txt b/textspeechtotext/speechtotext/plugins/whisper/CMakeLists.txt
+index cb35283..0061571 100644
+--- a/textspeechtotext/speechtotext/plugins/whisper/CMakeLists.txt
++++ b/textspeechtotext/speechtotext/plugins/whisper/CMakeLists.txt
+@@ -28,3 +28,5 @@ target_link_libraries(
+ )
+ 
+ install(TARGETS speechtotext_whisper DESTINATION ${KDE_INSTALL_PLUGINDIR}/kf6/speechtotext/)
++# in the build tree it sits where the library's tests look for it
++set_target_properties(speechtotext_whisper PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/kf6/speechtotext")
+diff --git a/textspeechtotext/speechtotext/plugins/whisper/whisper.json b/textspeechtotext/speechtotext/plugins/whisper/whisper.json
+new file mode 100644
+index 0000000..add0dc0
+--- /dev/null
++++ b/textspeechtotext/speechtotext/plugins/whisper/whisper.json
+@@ -0,0 +1,3 @@
++{
++    "X-KTextAddons-NotAvailable": true
++}
+diff --git a/textspeechtotext/speechtotext/plugins/whisper/whisper.json.license b/textspeechtotext/speechtotext/plugins/whisper/whisper.json.license
+new file mode 100644
+index 0000000..292c714
+--- /dev/null
++++ b/textspeechtotext/speechtotext/plugins/whisper/whisper.json.license
+@@ -0,0 +1,2 @@
++SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++SPDX-License-Identifier: CC0-1.0
+diff --git a/textspeechtotext/speechtotext/plugins/whisper/whisperspeechtotextclient.h b/textspeechtotext/speechtotext/plugins/whisper/whisperspeechtotextclient.h
+index 5a1dfd8..30a3ef0 100644
+--- a/textspeechtotext/speechtotext/plugins/whisper/whisperspeechtotextclient.h
++++ b/textspeechtotext/speechtotext/plugins/whisper/whisperspeechtotextclient.h
+@@ -11,7 +11,7 @@
+ class WhisperSpeechToTextClient : public TextSpeechToText::SpeechToTextClient
+ {
+     Q_OBJECT
+-    Q_PLUGIN_METADATA(IID "org.kde.texttospeech.whisper")
++    Q_PLUGIN_METADATA(IID "org.kde.texttospeech.whisper" FILE "whisper.json")
+     Q_INTERFACES(TextSpeechToText::SpeechToTextClient)
+ public:
+     explicit WhisperSpeechToTextClient(QObject *parent = nullptr);
+diff --git a/textspeechtotext/speechtotext/speechtotextengineloader.cpp b/textspeechtotext/speechtotext/speechtotextengineloader.cpp
+index e0dcf72..eab1654 100644
+--- a/textspeechtotext/speechtotext/speechtotextengineloader.cpp
++++ b/textspeechtotext/speechtotext/speechtotextengineloader.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include "speechtotextclient.h"
+ #include "textspeechtotext_debug.h"
++#include <KLocalizedString>
+ #include <QCoreApplication>
+ #include <QDir>
+ #include <QJsonObject>
+@@ -20,6 +21,14 @@ class TextSpeechToText::SpeechToTextEngineLoaderPrivate
+ public:
+     QSet<QString> loadedPlugins;
+     QHash<QString, SpeechToTextClient *> speechToTextClients;
++    // Sparky Stereo OS: engines not offered here because their program is missing (engine, its name, the program),
++    // and engines this version lists without an implementation
++    struct MissingProgram {
++        QString displayName;
++        QString program;
++    };
++    QHash<QString, MissingProgram> missingProgramEngines;
++    QSet<QString> notAvailableEngines;
+ };
+ 
+ SpeechToTextEngineLoader *SpeechToTextEngineLoader::self()
+@@ -61,9 +70,14 @@ void SpeechToTextEngineLoader::loadPlugin(const QString &pluginPath)
+ {
+     QPluginLoader plugin(pluginPath);
+     // Sparky Stereo OS: an engine that runs a program of its own (Vibe's vibe-server) is not offered without it
+-    const QString requiredExecutable = plugin.metaData().value("MetaData"_L1).toObject().value("X-KTextAddons-RequiredExecutable"_L1).toString();
++    const QJsonObject metaData = plugin.metaData().value("MetaData"_L1).toObject();
++    const QString requiredExecutable = metaData.value("X-KTextAddons-RequiredExecutable"_L1).toString();
+     if (!requiredExecutable.isEmpty() && QStandardPaths::findExecutable(requiredExecutable).isEmpty()) {
+         qCDebug(TEXTSPEECHTOTEXT_LOG) << "Skipping" << pluginPath << "because its program is not installed:" << requiredExecutable;
++        // remembered, so that a dictation asked of this engine says which program is missing
++        if (const QString engine = metaData.value("X-KTextAddons-Engine"_L1).toString(); !engine.isEmpty()) {
++            d->missingProgramEngines.insert(engine, {metaData.value("X-KTextAddons-EngineName"_L1).toString(engine), requiredExecutable});
++        }
+         return;
+     }
+     const QString pluginIID = plugin.metaData().value("IID"_L1).toString();
+@@ -87,6 +101,11 @@ void SpeechToTextEngineLoader::loadPlugin(const QString &pluginPath)
+         return;
+     }
+     d->speechToTextClients.insert(client->name(), client);
++    d->missingProgramEngines.remove(client->name());
++    // Sparky Stereo OS: an engine this version only lists says so when chosen and when a dictation is asked of it
++    if (metaData.value("X-KTextAddons-NotAvailable"_L1).toBool()) {
++        d->notAvailableEngines.insert(client->name());
++    }
+ }
+ 
+ SpeechToTextClient *SpeechToTextEngineLoader::createSpeechToTextClient(const QString &clientName)
+@@ -145,4 +164,21 @@ bool SpeechToTextEngineLoader::hasEngine() const
+     return !d->speechToTextClients.isEmpty();
+ }
+ 
++QString SpeechToTextEngineLoader::engineNotReadyReason(const QString &engineName) const
++{
++    if (const auto client = d->speechToTextClients.constFind(engineName); client != d->speechToTextClients.constEnd()) {
++        if (d->notAvailableEngines.contains(engineName)) {
++            return i18n("The %1 speech-to-text engine is not available in this version: choose another engine in the speech-to-text settings.",
++                        (*client)->translatedName());
++        }
++        return {};
++    }
++    if (const auto missing = d->missingProgramEngines.constFind(engineName); missing != d->missingProgramEngines.constEnd()) {
++        return i18n("The %1 speech-to-text engine needs %2, which is not installed: install it, or choose another engine in the speech-to-text settings.",
++                    missing->displayName,
++                    missing->program);
++    }
++    return i18n("The speech-to-text engine %1 is not installed: install it, or choose another engine in the speech-to-text settings.", engineName);
++}
++
+ #include "moc_speechtotextengineloader.cpp"
+diff --git a/textspeechtotext/speechtotext/speechtotextengineloader.h b/textspeechtotext/speechtotext/speechtotextengineloader.h
+index b4feacd..987218e 100644
+--- a/textspeechtotext/speechtotext/speechtotextengineloader.h
++++ b/textspeechtotext/speechtotext/speechtotextengineloader.h
+@@ -59,6 +59,15 @@ public:
+      */
+     [[nodiscard]] bool hasEngine() const;
+ 
++    /*!
++     * \brief One sentence for the person saying why the engine \a engineName cannot take a dictation, or an empty
++     * string when it can.
++     *
++     * Sparky Stereo OS: an engine that is not installed, an engine whose program is missing (Vibe's vibe-server) and an
++     * engine this version only lists ("not available in this version") are each said, never replaced by another engine.
++     */
++    [[nodiscard]] QString engineNotReadyReason(const QString &engineName) const;
++
+ Q_SIGNALS:
+     /*!
+      */
+diff --git a/textspeechtotext/speechtotext/speechtotextmanager.cpp b/textspeechtotext/speechtotext/speechtotextmanager.cpp
+index 3de41e3..485fc3e 100644
+--- a/textspeechtotext/speechtotext/speechtotextmanager.cpp
++++ b/textspeechtotext/speechtotext/speechtotextmanager.cpp
+@@ -15,6 +15,7 @@
+ #include <KSharedConfig>
+ #include <QAudioDevice>
+ #include <QAudioSource>
++#include <QCoreApplication>
+ #include <QMediaDevices>
+ #include <QPointer>
+ 
+@@ -51,6 +52,13 @@ public:
+     bool mStarting = false;
+     bool mStartRefused = false;
+     QPointer<QObject> mRequester;
++    // Sparky Stereo OS: a dictation stopped and waiting for its text; why the chosen engine cannot take one; the
++    // requester watched for its destruction (only compared, never used); the application quitting
++    bool mPending = false;
++    bool mQuitting = false;
++    QString mNotReadyReason;
++    const QObject *mRequesterKey = nullptr;
++    QMetaObject::Connection mRequesterWatch;
+ };
+ 
+ SpeechToTextManager::SpeechToTextManager(QObject *parent)
+@@ -64,6 +72,7 @@ SpeechToTextManager::~SpeechToTextManager() = default;
+ void SpeechToTextManager::deletePlugin()
+ {
+     stop();
++    d->mPending = false;
+     if (d->mSpeechToTextPlugin) {
+         disconnect(d->mSpeechToTextPlugin);
+         delete d->mSpeechToTextPlugin;
+@@ -80,26 +89,44 @@ void SpeechToTextManager::loadEngine()
+ void SpeechToTextManager::switchEngine(const QString &engineName)
+ {
+     deletePlugin();
++    d->mNotReadyReason.clear();
++    d->mSpeechToTextClient = nullptr;
+     // Sparky Stereo OS: System Settings, Partners, can say that no partner takes speech; then no engine is used
+     if (engineName == TextSpeechToTextUtil::engineTurnedOffName()) {
+-        d->mSpeechToTextClient = nullptr;
+         d->mEngineName = engineName;
+         d->mStatus = EngineStatus::EngineTurnedOff;
+         return;
+     }
+     auto *const loader = TextSpeechToText::SpeechToTextEngineLoader::self();
+-    // An empty name simply means "nothing was configured yet": don't report it as an unknown engine.
+-    d->mSpeechToTextClient = engineName.isEmpty() ? nullptr : loader->createSpeechToTextClient(engineName);
+-    d->mEngineName = d->mSpeechToTextClient ? engineName : QString();
+-    if (!d->mSpeechToTextClient) {
+-        if (const QString fallBackEngineName = loader->fallbackFirstEngine(); !fallBackEngineName.isEmpty()) {
+-            d->mSpeechToTextClient = loader->createSpeechToTextClient(fallBackEngineName);
+-            // Remember what we actually use, otherwise a later reload would retry the missing engine.
+-            d->mEngineName = d->mSpeechToTextClient ? fallBackEngineName : QString();
++    QString engine = engineName;
++    if (engine.isEmpty()) {
++        // Nothing was chosen anywhere: the first engine that can take a dictation, in name order
++        const QMap<QString, QString> engines = loader->speechToTextEngineInfos();
++        for (auto it = engines.cbegin(); it != engines.cend(); ++it) {
++            if (loader->engineNotReadyReason(it.key()).isEmpty()) {
++                engine = it.key();
++                break;
++            }
++        }
++        if (engine.isEmpty()) {
++            d->mEngineName.clear();
++            d->mStatus = EngineStatus::NoEngineAvailable;
++            warnAboutMissingPlugin();
++            return;
+         }
++    } else if (const QString reason = loader->engineNotReadyReason(engine); !reason.isEmpty()) {
++        // Sparky Stereo OS: the engine chosen is missing or not available in this version: that is said at the
++        // dictation, and no other engine is taken in its place
++        d->mEngineName = engine;
++        d->mNotReadyReason = reason;
++        d->mStatus = EngineStatus::EngineNotReady;
++        warnAboutMissingPlugin();
++        return;
+     }
++    d->mSpeechToTextClient = loader->createSpeechToTextClient(engine);
++    d->mEngineName = d->mSpeechToTextClient ? engine : QString();
+     if (!d->mSpeechToTextClient) {
+-        d->mStatus = loader->hasEngine() ? EngineStatus::EngineNotFound : EngineStatus::NoEngineAvailable;
++        d->mStatus = EngineStatus::NoEngineAvailable;
+         warnAboutMissingPlugin();
+         return;
+     }
+@@ -124,14 +151,20 @@ void SpeechToTextManager::switchEngine(const QString &engineName)
+         return;
+     }
+     connect(d->mSpeechToTextPlugin, &SpeechToTextPlugin::speechToTextDone, this, [this](const QString &result) {
++        d->mPending = false;
+         Q_EMIT textToSpeechDone(result);
+         Q_EMIT speechToTextDoneFor(d->mRequester, result);
+     });
+     connect(d->mSpeechToTextPlugin, &SpeechToTextPlugin::speechToTextFailed, this, [this](const QString &message) {
+         if (d->mStarting) {
++            // refused before the capture started
+             d->mStartRefused = true;
++            reportFailure(d->mRequester, message);
++            return;
+         }
++        // Sparky Stereo OS: a failure while the person still speaks (Vibe's server did not start) ends the capture at once
+         stop();
++        d->mPending = false;
+         reportFailure(d->mRequester, message);
+     });
+     d->mStatus = EngineStatus::Ready;
+@@ -146,8 +179,8 @@ void SpeechToTextManager::warnAboutMissingPlugin() const
+     case EngineStatus::NoEngineAvailable:
+         qCWarning(TEXTSPEECHTOTEXT_LOG) << "No speech to text engine available: no plugin was found in kf6/speechtotext.";
+         break;
+-    case EngineStatus::EngineNotFound:
+-        qCWarning(TEXTSPEECHTOTEXT_LOG) << "The configured speech to text engine is not installed, and no other engine could be used instead.";
++    case EngineStatus::EngineNotReady:
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "The configured speech to text engine" << d->mEngineName << "cannot be used:" << d->mNotReadyReason;
+         break;
+     case EngineStatus::EngineTurnedOff:
+         qCWarning(TEXTSPEECHTOTEXT_LOG) << "No partner takes speech in System Settings, Partners.";
+@@ -192,31 +225,106 @@ void SpeechToTextManager::speechToText(QObject *requester)
+     if (!d->mSpeechToTextPlugin) {
+         warnAboutMissingPlugin();
+         // Sparky Stereo OS: a dictation that cannot start says so, never only in the log
+-        reportFailure(requester,
+-                      d->mStatus == EngineStatus::EngineTurnedOff
+-                          ? i18n("Dictation is off: no partner takes speech in System Settings, Partners.")
+-                          : i18n("No speech-to-text engine is ready for dictation: choose one in the speech-to-text settings."));
++        reportFailure(requester, failureSentence());
+         return;
+     }
+     if (d->mRecording) {
+         return;
+     }
++    if (auto *const application = QCoreApplication::instance()) {
++        connect(application, &QCoreApplication::aboutToQuit, this, &SpeechToTextManager::slotAboutToQuit, Qt::UniqueConnection);
++    }
++    const QPointer<QObject> previousRequester = d->mRequester;
+     d->mRequester = requester;
+     d->mStartRefused = false;
+     d->mStarting = true;
+     d->mSpeechToTextPlugin->speechToText();
+     d->mStarting = false;
+     if (d->mStartRefused) {
++        // an earlier dictation still waiting for its text keeps its requester
++        d->mRequester = previousRequester;
+         return;
+     }
+     if (!initializeInput()) {
++        // Sparky Stereo OS: the engine may already have started its work for this dictation (Vibe's server): it ends here
++        resetPlugin();
+         reportFailure(requester, i18n("The microphone could not be opened for dictation."));
+         return;
+     }
++    d->mPending = false;
++    watchRequester(requester);
+     d->mRecording = true;
+     Q_EMIT recordingChanged(true);
+ }
+ 
++QString SpeechToTextManager::failureSentence() const
++{
++    switch (d->mStatus) {
++    case EngineStatus::EngineTurnedOff:
++        return i18n("Dictation is off: no partner takes speech in System Settings, Partners.");
++    case EngineStatus::EngineNotReady:
++        return d->mNotReadyReason;
++    default:
++        return i18n("No speech-to-text engine is ready for dictation: choose one in the speech-to-text settings.");
++    }
++}
++
++void SpeechToTextManager::watchRequester(QObject *requester)
++{
++    disconnect(d->mRequesterWatch);
++    d->mRequesterKey = requester;
++    if (requester) {
++        // the window that asked for the dictation was closed: nobody waits for the text any more
++        d->mRequesterWatch = connect(requester, &QObject::destroyed, this, [this](QObject *gone) {
++            if (gone == d->mRequesterKey) {
++                d->mRequesterKey = nullptr;
++                cancel();
++            }
++        });
++    }
++}
++
++void SpeechToTextManager::cancel()
++{
++    if (!d->mRecording && !d->mPending) {
++        return;
++    }
++    const bool wasRecording = d->mRecording;
++    d->mRecording = false;
++    d->mPending = false;
++    if (d->mAudioSource) {
++        d->mAudioSource->stop();
++        delete d->mAudioSource;
++        d->mAudioSource = nullptr;
++    }
++    resetPlugin();
++    if (wasRecording) {
++        Q_EMIT recordingChanged(false);
++    }
++}
++
++void SpeechToTextManager::resetPlugin()
++{
++    if (!d->mSpeechToTextPlugin) {
++        return;
++    }
++    // deleting the engine's plugin ends whatever it started for the dictation, and nothing it held is given
++    disconnect(d->mSpeechToTextPlugin, nullptr, this, nullptr);
++    delete d->mSpeechToTextPlugin;
++    d->mSpeechToTextPlugin = nullptr;
++    d->mStatus = EngineStatus::NotLoadedYet;
++    if (!d->mQuitting) {
++        // a fresh one for the next dictation; nothing starts before it
++        switchEngine(d->mEngineName);
++    }
++}
++
++void SpeechToTextManager::slotAboutToQuit()
++{
++    d->mQuitting = true;
++    cancel();
++}
++
+ void SpeechToTextManager::reportFailure(QObject *requester, const QString &message)
+ {
+     qCWarning(TEXTSPEECHTOTEXT_LOG) << "Speech to text:" << message;
+@@ -242,6 +350,7 @@ void SpeechToTextManager::stop()
+     }
+     // Only now that no more audio can arrive, let the engine emit what it has left.
+     if (d->mSpeechToTextPlugin) {
++        d->mPending = true;
+         d->mSpeechToTextPlugin->stop();
+     }
+     Q_EMIT recordingChanged(false);
+diff --git a/textspeechtotext/speechtotext/speechtotextmanager.h b/textspeechtotext/speechtotext/speechtotextmanager.h
+index cb3d72f..a7c8117 100644
+--- a/textspeechtotext/speechtotext/speechtotextmanager.h
++++ b/textspeechtotext/speechtotext/speechtotextmanager.h
+@@ -31,9 +31,9 @@ public:
+     /*!
+      * \brief Loads the engine stored in the configuration.
+      *
+-     * Falls back to the first available engine when no engine was configured yet
+-     * or when the configured one is gone. Call it again after the settings
+-     * changed so the new engine is picked up.
++     * When no engine was configured yet, the first engine that can take a dictation is used, in name order.
++     * Sparky Stereo OS: an engine that was chosen and is gone is said at the next dictation, and no other engine is
++     * taken in its place. Call it again after the settings changed so the new engine is picked up.
+      */
+     void loadEngine();
+ 
+@@ -65,6 +65,14 @@ public:
+      */
+     void stop();
+ 
++    /*!
++     * \brief Drops the running dictation: the capture stops and no text is given.
++     *
++     * Sparky Stereo OS: whatever the engine started for this dictation (Vibe's server) ends with it. Also called when
++     * the requester of the dictation is destroyed and when the application quits.
++     */
++    void cancel();
++
+     /*!
+      * \brief Returns true while the microphone is being captured.
+      */
+@@ -113,7 +121,7 @@ private:
+         NotLoadedYet,
+         Ready,
+         NoEngineAvailable,
+-        EngineNotFound,
++        EngineNotReady,
+         EngineNotUsable,
+         EngineTurnedOff,
+     };
+@@ -121,6 +129,10 @@ private:
+     TEXTSPEECHTOTEXT_NO_EXPORT void slotEngineConfigureChanged();
+     TEXTSPEECHTOTEXT_NO_EXPORT void deletePlugin();
+     TEXTSPEECHTOTEXT_NO_EXPORT void reportFailure(QObject *requester, const QString &message);
++    TEXTSPEECHTOTEXT_NO_EXPORT void resetPlugin();
++    TEXTSPEECHTOTEXT_NO_EXPORT void watchRequester(QObject *requester);
++    TEXTSPEECHTOTEXT_NO_EXPORT void slotAboutToQuit();
++    [[nodiscard]] TEXTSPEECHTOTEXT_NO_EXPORT QString failureSentence() const;
+     [[nodiscard]] TEXTSPEECHTOTEXT_NO_EXPORT bool initializeInput();
+     class SpeechToTextPluginPrivate;
+     std::unique_ptr<SpeechToTextPluginPrivate> const d;
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.cpp b/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.cpp
+index 0d3ab9a..7495fa7 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.cpp
++++ b/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.cpp
+@@ -9,7 +9,10 @@
+ 
+ #include "speechtotextcomboboxwidget.h"
+ #include "speechtotextselectdevicewidget.h"
++#include "speechtotext/speechtotextengineloader.h"
++#include "speechtotext/textspeechtotextutil.h"
+ #include <KLocalizedString>
++#include <KMessageWidget>
+ #include <KSharedConfig>
+ #include <QVBoxLayout>
+ 
+@@ -20,6 +23,7 @@ SpeechToTextConfigureWidget::SpeechToTextConfigureWidget(QWidget *parent)
+     : QWidget{parent}
+     , mSpeechToTextComboBox(new SpeechToTextComboBoxWidget(this))
+     , mSpeechToTextDevice(new SpeechToTextSelectDeviceWidget(this))
++    , mEngineMessage(new KMessageWidget(this))
+ {
+     auto mainLayout = new QVBoxLayout(this);
+     mainLayout->setObjectName(u"mainLayout"_s);
+@@ -31,14 +35,40 @@ SpeechToTextConfigureWidget::SpeechToTextConfigureWidget(QWidget *parent)
+     mSpeechToTextComboBox->setObjectName(u"mSpeechToTextComboBox"_s);
+     mainLayout->addWidget(mSpeechToTextComboBox);
+     mSpeechToTextComboBox->fillEngine();
++
++    // Sparky Stereo OS: an engine that cannot take a dictation says why as soon as it is chosen
++    mEngineMessage->setObjectName(u"mEngineMessage"_s);
++    mEngineMessage->setMessageType(KMessageWidget::Warning);
++    mEngineMessage->setCloseButtonVisible(false);
++    mEngineMessage->setWordWrap(true);
++    mEngineMessage->setVisible(false);
++    mainLayout->addWidget(mEngineMessage);
++    connect(mSpeechToTextComboBox, &SpeechToTextComboBoxWidget::engineChanged, this, &SpeechToTextConfigureWidget::updateEngineMessage);
++    updateEngineMessage(mSpeechToTextComboBox->engineName());
++}
++
++void SpeechToTextConfigureWidget::updateEngineMessage(const QString &engineName)
++{
++    QString reason;
++    if (engineName == TextSpeechToTextUtil::engineTurnedOffName()) {
++        reason = i18n("Dictation is off: no partner takes speech in System Settings, Partners.");
++    } else if (!engineName.isEmpty()) {
++        reason = SpeechToTextEngineLoader::self()->engineNotReadyReason(engineName);
++    }
++    mEngineMessage->setText(reason);
++    mEngineMessage->setVisible(!reason.isEmpty());
+ }
+ 
+ SpeechToTextConfigureWidget::~SpeechToTextConfigureWidget() = default;
+ 
+ void SpeechToTextConfigureWidget::loadSettings()
+ {
+-    mSpeechToTextComboBox->load();
++    // the engine kept for this program, or the one System Settings, Partners, names; asked once
++    const QString engine = TextSpeechToTextUtil::loadEngineName();
++    mSpeechToTextComboBox->setEngineName(engine);
+     mSpeechToTextDevice->loadSettings();
++    // an engine that is chosen and not in the list (not installed) is said too; with none chosen, the one shown
++    updateEngineMessage(engine.isEmpty() ? mSpeechToTextComboBox->engineName() : engine);
+ }
+ 
+ void SpeechToTextConfigureWidget::saveSettings()
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.h b/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.h
+index d077794..2d76394 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.h
++++ b/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.h
+@@ -7,6 +7,7 @@
+ #pragma once
+ #include "speechtotext_private_export.h"
+ #include <QWidget>
++class KMessageWidget;
+ namespace TextSpeechToText
+ {
+ class SpeechToTextComboBoxWidget;
+@@ -25,7 +26,9 @@ public:
+     void saveSettings();
+ 
+ private:
++    TEXTSPEECHTOTEXT_NO_EXPORT void updateEngineMessage(const QString &engineName);
+     SpeechToTextComboBoxWidget *const mSpeechToTextComboBox;
++    KMessageWidget *const mEngineMessage;
+     SpeechToTextSelectDeviceWidget *const mSpeechToTextDevice;
+ };
+ }
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.cpp b/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.cpp
+index e5f7d22..e8e79ac 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.cpp
++++ b/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.cpp
+@@ -11,6 +11,7 @@
+ #include <QApplication>
+ #include <QMetaMethod>
+ #include <QHBoxLayout>
++#include <QShortcut>
+ #include <QToolButton>
+ 
+ using namespace Qt::Literals::StringLiterals;
+@@ -28,8 +29,14 @@ SpeechToTextToolButtonWidget::SpeechToTextToolButtonWidget(QWidget *parent)
+     mToolButton->setAutoRaise(true);
+     mainLayout->addWidget(mToolButton);
+     connect(mToolButton, &QToolButton::clicked, this, &SpeechToTextToolButtonWidget::slotButtonClicked);
+-    connect(SpeechToTextManager::self(), &SpeechToTextManager::recordingChanged, this, [this](bool recording) {
++    // Sparky Stereo OS: Escape drops the dictation while it records, in this button's window only
++    auto cancelShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
++    cancelShortcut->setObjectName(u"cancelShortcut"_s);
++    cancelShortcut->setEnabled(false);
++    connect(cancelShortcut, &QShortcut::activated, SpeechToTextManager::self(), &SpeechToTextManager::cancel);
++    connect(SpeechToTextManager::self(), &SpeechToTextManager::recordingChanged, this, [this, cancelShortcut](bool recording) {
+         mToolButton->setChecked(recording);
++        cancelShortcut->setEnabled(recording);
+         updateIcon();
+     });
+ 

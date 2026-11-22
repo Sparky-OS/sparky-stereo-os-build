@@ -1,0 +1,823 @@
+Description: Backport the speech-to-text manager of ktextaddons 2.3.0
+ The 2.1.2 library loads no engine (nothing calls SpeechToTextManager::switchEngine),
+ never opens the microphone (initializeInput has no caller), and its action calls into
+ an engine that was never created. Laurent Montel finished the manager upstream in
+ September 2026: the engine stored in the program's settings is loaded at the first
+ dictation, the action starts and stops the microphone, the engine gives its result
+ when the capture stops, and the action hands the text to the program (textAvailable).
+ .
+ These files are taken at the v2.3.0 tag and adapted to 2.1.2: the 2.1.2 entry point
+ SpeechToTextManager::speechToText() stays beside speechToText(QObject *), so no symbol
+ of the library goes away; the Whisper Python installer of later versions is not taken;
+ the configure widget keeps its 2.1.2 form, saves through the backported helpers and
+ reloads the engine; the test program is upstream's speechtotextgui.
+Origin: backport, https://invent.kde.org/libraries/ktextaddons/-/tree/v2.3.0/textspeechtotext
+Author: Laurent Montel
+Applied-Upstream: v2.3.0; its commits 9b64b524 (implement manager), e954a928 (Allow to start/stop plugin), 69231039 (Now we can use plugins), 8752575f (Load/save engine support), 8abdd351 (Reload engine when we save settings), e47c7e2d (Update speechtotextaction as toolbutton), 725d5b80 (Add icon + update icon when we record it), all of 2026-09-15
+Last-Update: 2026-11-22
+---
+diff --git a/textspeechtotext/speechtotext/speechtotextmanager.cpp b/textspeechtotext/speechtotext/speechtotextmanager.cpp
+index 5306763..8b5a25d 100644
+--- a/textspeechtotext/speechtotext/speechtotextmanager.cpp
++++ b/textspeechtotext/speechtotext/speechtotextmanager.cpp
+@@ -9,11 +9,35 @@
+ #include "speechtotextengineloader.h"
+ #include "speechtotextplugin.h"
+ #include "textspeechtotext_debug.h"
++#include "textspeechtotextutil.h"
++#include <KConfigGroup>
++#include <KSharedConfig>
++#include <QAudioDevice>
+ #include <QAudioSource>
++#include <QMediaDevices>
++#include <QPointer>
+ 
+ using namespace Qt::Literals::StringLiterals;
+ using namespace TextSpeechToText;
+ 
++namespace
++{
++[[nodiscard]] QAudioDevice configuredAudioInput()
++{
++    const KConfigGroup group(KSharedConfig::openConfig(), TextSpeechToTextUtil::soundGroupName());
++    if (const QByteArray deviceIdentifier = group.readEntry("SoundDevice", QByteArray()); !deviceIdentifier.isEmpty()) {
++        const auto inputs = QMediaDevices::audioInputs();
++        for (const QAudioDevice &device : inputs) {
++            if (device.id() == deviceIdentifier) {
++                return device;
++            }
++        }
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "Configured audio input device not found:" << deviceIdentifier << ". Falling back to the default one.";
++    }
++    return QMediaDevices::defaultAudioInput();
++}
++}
++
+ class SpeechToTextManager::SpeechToTextPluginPrivate
+ {
+ public:
+@@ -21,6 +45,9 @@ public:
+     TextSpeechToText::SpeechToTextPlugin *mSpeechToTextPlugin = nullptr;
+     TextSpeechToText::SpeechToTextClient *mSpeechToTextClient = nullptr;
+     QAudioSource *mAudioSource = nullptr;
++    EngineStatus mStatus = EngineStatus::NotLoadedYet;
++    bool mRecording = false;
++    QPointer<QObject> mRequester;
+ };
+ 
+ SpeechToTextManager::SpeechToTextManager(QObject *parent)
+@@ -33,6 +60,7 @@ SpeechToTextManager::~SpeechToTextManager() = default;
+ 
+ void SpeechToTextManager::deletePlugin()
+ {
++    stop();
+     if (d->mSpeechToTextPlugin) {
+         disconnect(d->mSpeechToTextPlugin);
+         delete d->mSpeechToTextPlugin;
+@@ -41,30 +69,84 @@ void SpeechToTextManager::deletePlugin()
+     // TODO delete mSpeechToTextClient ?
+ }
+ 
++void SpeechToTextManager::loadEngine()
++{
++    switchEngine(TextSpeechToTextUtil::loadEngineName());
++}
++
+ void SpeechToTextManager::switchEngine(const QString &engineName)
+ {
+-    d->mEngineName = engineName;
+     deletePlugin();
+-    d->mSpeechToTextClient = TextSpeechToText::SpeechToTextEngineLoader::self()->createSpeechToTextClient(d->mEngineName);
++    auto *const loader = TextSpeechToText::SpeechToTextEngineLoader::self();
++    // An empty name simply means "nothing was configured yet": don't report it as an unknown engine.
++    d->mSpeechToTextClient = engineName.isEmpty() ? nullptr : loader->createSpeechToTextClient(engineName);
++    d->mEngineName = d->mSpeechToTextClient ? engineName : QString();
+     if (!d->mSpeechToTextClient) {
+-        const QString fallBackEngineName = TextSpeechToText::SpeechToTextEngineLoader::self()->fallbackFirstEngine();
+-        if (!fallBackEngineName.isEmpty()) {
+-            d->mSpeechToTextClient = TextSpeechToText::SpeechToTextEngineLoader::self()->createSpeechToTextClient(fallBackEngineName);
+-        } else {
+-            qCWarning(TEXTSPEECHTOTEXT_LOG) << "Fallback engine not found.";
++        if (const QString fallBackEngineName = loader->fallbackFirstEngine(); !fallBackEngineName.isEmpty()) {
++            d->mSpeechToTextClient = loader->createSpeechToTextClient(fallBackEngineName);
++            // Remember what we actually use, otherwise a later reload would retry the missing engine.
++            d->mEngineName = d->mSpeechToTextClient ? fallBackEngineName : QString();
+         }
+     }
+-    if (d->mSpeechToTextClient) {
+-        d->mSpeechToTextPlugin = d->mSpeechToTextClient->createTextToSpeech();
+-        if (d->mSpeechToTextPlugin->loadSettings()) {
+-            connect(d->mSpeechToTextPlugin, &TextSpeechToText::SpeechToTextPlugin::speechToTextDone, this, &SpeechToTextManager::textToSpeechDone);
+-        } else {
+-            qCWarning(TEXTSPEECHTOTEXT_LOG) << "Impossible to initialize text to speech plugin";
+-            deletePlugin();
+-        }
++    if (!d->mSpeechToTextClient) {
++        d->mStatus = loader->hasEngine() ? EngineStatus::EngineNotFound : EngineStatus::NoEngineAvailable;
++        warnAboutMissingPlugin();
++        return;
++    }
++
++    // The engine settings dialog can make a previously unusable engine usable
++    // (a language model was downloaded and marked as active), so rebuild the plugin.
++    connect(d->mSpeechToTextClient,
++            &TextSpeechToText::SpeechToTextClient::configureChanged,
++            this,
++            &SpeechToTextManager::slotEngineConfigureChanged,
++            Qt::UniqueConnection);
++    d->mSpeechToTextPlugin = d->mSpeechToTextClient->createTextToSpeech();
++    if (!d->mSpeechToTextPlugin) {
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "Engine" << d->mEngineName << "did not create a speech to text plugin.";
++        d->mStatus = EngineStatus::EngineNotUsable;
++        return;
++    }
++    if (!d->mSpeechToTextPlugin->loadSettings()) {
++        d->mStatus = EngineStatus::EngineNotUsable;
++        warnAboutMissingPlugin();
++        deletePlugin();
++        return;
++    }
++    connect(d->mSpeechToTextPlugin, &SpeechToTextPlugin::speechToTextDone, this, [this](const QString &result) {
++        Q_EMIT textToSpeechDone(result);
++        Q_EMIT speechToTextDoneFor(d->mRequester, result);
++    });
++    d->mStatus = EngineStatus::Ready;
++}
++
++void SpeechToTextManager::warnAboutMissingPlugin() const
++{
++    switch (d->mStatus) {
++    case EngineStatus::NotLoadedYet:
++    case EngineStatus::Ready:
++        break;
++    case EngineStatus::NoEngineAvailable:
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "No speech to text engine available: no plugin was found in kf6/speechtotext.";
++        break;
++    case EngineStatus::EngineNotFound:
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "The configured speech to text engine is not installed, and no other engine could be used instead.";
++        break;
++    case EngineStatus::EngineNotUsable:
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "Speech to text engine" << d->mEngineName
++                                        << "is installed but not usable yet: configure it (a language model is probably missing).";
++        break;
+     }
+ }
+ 
++void SpeechToTextManager::slotEngineConfigureChanged()
++{
++    if (!d->mSpeechToTextClient) {
++        return;
++    }
++    switchEngine(d->mEngineName);
++}
++
+ SpeechToTextManager *SpeechToTextManager::self()
+ {
+     static SpeechToTextManager s_self;
+@@ -76,28 +158,97 @@ bool SpeechToTextManager::hasEngine() const
+     return TextSpeechToText::SpeechToTextEngineLoader::self()->hasEngine();
+ }
+ 
+-void SpeechToTextManager::speechToText()
++bool SpeechToTextManager::isReady() const
+ {
+-    d->mSpeechToTextPlugin->speechToText();
++    return d->mSpeechToTextPlugin != nullptr;
+ }
+ 
+-void SpeechToTextManager::initializeInput()
++void SpeechToTextManager::speechToText(QObject *requester)
+ {
++    // Nothing asked for an engine yet: pick the configured one now rather than staying mute forever.
++    if (d->mStatus == EngineStatus::NotLoadedYet) {
++        loadEngine();
++    }
+     if (!d->mSpeechToTextPlugin) {
++        warnAboutMissingPlugin();
++        return;
++    }
++    if (d->mRecording) {
++        return;
++    }
++    d->mSpeechToTextPlugin->speechToText();
++    if (!initializeInput()) {
++        return;
++    }
++    d->mRequester = requester;
++    d->mRecording = true;
++    Q_EMIT recordingChanged(true);
++}
++
++void SpeechToTextManager::speechToText()
++{
++    speechToText(nullptr);
++}
++
++void SpeechToTextManager::stop()
++{
++    if (!d->mRecording) {
+         return;
+     }
++    d->mRecording = false;
++    if (d->mAudioSource) {
++        d->mAudioSource->stop();
++        delete d->mAudioSource;
++        d->mAudioSource = nullptr;
++    }
++    // Only now that no more audio can arrive, let the engine emit what it has left.
++    if (d->mSpeechToTextPlugin) {
++        d->mSpeechToTextPlugin->stop();
++    }
++    Q_EMIT recordingChanged(false);
++}
++
++bool SpeechToTextManager::isRecording() const
++{
++    return d->mRecording;
++}
+ 
++bool SpeechToTextManager::initializeInput()
++{
+     delete d->mAudioSource;
++    d->mAudioSource = nullptr;
++
++    QIODevice *const pluginDevice = d->mSpeechToTextPlugin->audioDevice();
++    if (!pluginDevice) {
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "Plugin" << d->mEngineName << "does not provide an audio device.";
++        return false;
++    }
+ 
+     QAudioFormat format;
+     format.setSampleRate(d->mSpeechToTextPlugin->sampleRate());
+     format.setChannelCount(1);
+     format.setSampleFormat(QAudioFormat::Int16);
+ 
+-    d->mAudioSource = new QAudioSource(format, this);
++    const QAudioDevice inputDevice = configuredAudioInput();
++    if (inputDevice.isNull()) {
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "No audio input device available.";
++        return false;
++    }
++    if (!inputDevice.isFormatSupported(format)) {
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "Audio format" << format << "not supported by" << inputDevice.description();
++        return false;
++    }
++
++    d->mAudioSource = new QAudioSource(inputDevice, format, this);
+     d->mAudioSource->setBufferSize(8000);
+-    d->mAudioSource->start(d->mSpeechToTextPlugin->audioDevice());
+-    // TODO verify mic status!
++    d->mAudioSource->start(pluginDevice);
++    if (d->mAudioSource->error() != QAudio::NoError) {
++        qCWarning(TEXTSPEECHTOTEXT_LOG) << "Unable to start audio input:" << d->mAudioSource->error();
++        delete d->mAudioSource;
++        d->mAudioSource = nullptr;
++        return false;
++    }
++    return true;
+ }
+ 
+ #include "moc_speechtotextmanager.cpp"
+diff --git a/textspeechtotext/speechtotext/speechtotextmanager.h b/textspeechtotext/speechtotext/speechtotextmanager.h
+index 9b34e88..c641e72 100644
+--- a/textspeechtotext/speechtotext/speechtotextmanager.h
++++ b/textspeechtotext/speechtotext/speechtotextmanager.h
+@@ -6,6 +6,7 @@
+ #pragma once
+ #include "textspeechtotext_export.h"
+ #include <QObject>
++#include <memory>
+ namespace TextSpeechToText
+ {
+ class SpeechToTextPlugin;
+@@ -27,6 +28,15 @@ public:
+      */
+     ~SpeechToTextManager() override;
+ 
++    /*!
++     * \brief Loads the engine stored in the configuration.
++     *
++     * Falls back to the first available engine when no engine was configured yet
++     * or when the configured one is gone. Call it again after the settings
++     * changed so the new engine is picked up.
++     */
++    void loadEngine();
++
+     /*!
+      */
+     void switchEngine(const QString &engineName);
+@@ -36,21 +46,68 @@ public:
+     static SpeechToTextManager *self();
+ 
+     /*!
++     * \brief Starts capturing the microphone and feeding it to the current engine.
++     *
++     * Does nothing when no engine is loaded or when a recognition is already running.
++     */
++    void speechToText(QObject *requester);
++
++    /*!
++     * \brief Starts capturing for no particular requester, as the 2.1 library's callers do.
+      */
+     void speechToText();
+ 
++    /*!
++     * \brief Stops the running recognition, if any.
++     *
++     * The engine flushes its pending result, so textToSpeechDone() may still be
++     * emitted after this call.
++     */
++    void stop();
++
++    /*!
++     * \brief Returns true while the microphone is being captured.
++     */
++    [[nodiscard]] bool isRecording() const;
++
+     /*!
+      */
+     [[nodiscard]] bool hasEngine() const;
+ 
++    /*!
++     * \brief Returns true when an engine is loaded and ready to transcribe.
++     */
++    [[nodiscard]] bool isReady() const;
++
+ Q_SIGNALS:
+     /*!
+      */
+     void textToSpeechDone(const QString &result);
+ 
++    /*!
++     * \brief Emitted when the capture starts or stops.
++     */
++    void recordingChanged(bool recording);
++
++    /*!
++     * \brief speechToTextDoneFor
++     * \param requester
++     * \param result
++     */
++    void speechToTextDoneFor(QObject *requester, const QString &result);
++
+ private:
++    enum class EngineStatus : uint8_t {
++        NotLoadedYet,
++        Ready,
++        NoEngineAvailable,
++        EngineNotFound,
++        EngineNotUsable,
++    };
++    TEXTSPEECHTOTEXT_NO_EXPORT void warnAboutMissingPlugin() const;
++    TEXTSPEECHTOTEXT_NO_EXPORT void slotEngineConfigureChanged();
+     TEXTSPEECHTOTEXT_NO_EXPORT void deletePlugin();
+-    TEXTSPEECHTOTEXT_NO_EXPORT void initializeInput();
++    [[nodiscard]] TEXTSPEECHTOTEXT_NO_EXPORT bool initializeInput();
+     class SpeechToTextPluginPrivate;
+     std::unique_ptr<SpeechToTextPluginPrivate> const d;
+ };
+diff --git a/textspeechtotext/speechtotext/speechtotextplugin.cpp b/textspeechtotext/speechtotext/speechtotextplugin.cpp
+index 169ce91..38a0cb2 100644
+--- a/textspeechtotext/speechtotext/speechtotextplugin.cpp
++++ b/textspeechtotext/speechtotext/speechtotextplugin.cpp
+@@ -39,4 +39,8 @@ void SpeechToTextPlugin::setDefaultLanguage(const QString &language)
+     d->mDefaultLanguage = language;
+ }
+ 
++void SpeechToTextPlugin::stop()
++{
++}
++
+ #include "moc_speechtotextplugin.cpp"
+diff --git a/textspeechtotext/speechtotext/speechtotextplugin.h b/textspeechtotext/speechtotext/speechtotextplugin.h
+index 696e920..ae86483 100644
+--- a/textspeechtotext/speechtotext/speechtotextplugin.h
++++ b/textspeechtotext/speechtotext/speechtotextplugin.h
+@@ -8,8 +8,10 @@
+ #include "textspeechtotext_export.h"
+ #include <QObject>
+ #include <memory>
++class QIODevice;
+ namespace TextSpeechToText
+ {
++class SpeechToTextPluginPrivate;
+ /*!
+  * \class TextSpeechToText::SpeechToTextPlugin
+  * \inheaderfile TextSpeechToText/SpeechToTextPlugin
+@@ -17,7 +19,6 @@ namespace TextSpeechToText
+  * \brief Interface for speech-to-text engine implementations.
+  * \author Laurent Montel <montel@kde.org>
+  */
+-class SpeechToTextPluginPrivate;
+ class TEXTSPEECHTOTEXT_EXPORT SpeechToTextPlugin : public QObject
+ {
+     Q_OBJECT
+@@ -70,6 +71,15 @@ public:
+      */
+     virtual void clear() = 0;
+ 
++    /*!
++     * \brief Stops the running recognition and flushes the pending result.
++     *
++     * Called by SpeechToTextManager once the audio capture has been stopped, so
++     * that the engine can emit what it recognized from the audio buffered so far.
++     * The default implementation does nothing.
++     */
++    virtual void stop();
++
+ Q_SIGNALS:
+     /*!
+      */
+diff --git a/textspeechtotext/speechtotext/textspeechtotextutil.cpp b/textspeechtotext/speechtotext/textspeechtotextutil.cpp
+index 31567f7..8dd44da 100644
+--- a/textspeechtotext/speechtotext/textspeechtotextutil.cpp
++++ b/textspeechtotext/speechtotext/textspeechtotextutil.cpp
+@@ -6,11 +6,14 @@
+ 
+ #include "textspeechtotextutil.h"
+ 
++#include <KConfigGroup>
++#include <KSharedConfig>
++
+ using namespace Qt::Literals::StringLiterals;
+ using namespace TextSpeechToText;
+ QString TextSpeechToTextUtil::groupTranslateName()
+ {
+-    return u"TextToSpeech"_s;
++    return u"SpeechToText"_s;
+ }
+ 
+ QString TextSpeechToTextUtil::engineTextToSpeechName()
+@@ -22,3 +25,25 @@ QString TextSpeechToTextUtil::defaultEngineName()
+ {
+     return {};
+ }
++
++QString TextSpeechToTextUtil::soundGroupName()
++{
++    return u"Speech To Text"_s;
++}
++
++QString TextSpeechToTextUtil::loadEngineName()
++{
++    const KConfigGroup group(KSharedConfig::openConfig(), TextSpeechToTextUtil::groupTranslateName());
++    return group.readEntry(TextSpeechToTextUtil::engineTextToSpeechName(), TextSpeechToTextUtil::defaultEngineName());
++}
++
++void TextSpeechToTextUtil::saveEngineName(const QString &engineName)
++{
++    KConfigGroup group(KSharedConfig::openConfig(), TextSpeechToTextUtil::groupTranslateName());
++    if (engineName.isEmpty()) {
++        group.deleteEntry(TextSpeechToTextUtil::engineTextToSpeechName());
++    } else {
++        group.writeEntry(TextSpeechToTextUtil::engineTextToSpeechName(), engineName);
++    }
++    group.sync();
++}
+diff --git a/textspeechtotext/speechtotext/textspeechtotextutil.h b/textspeechtotext/speechtotext/textspeechtotextutil.h
+index 5d369eb..fdcc707 100644
+--- a/textspeechtotext/speechtotext/textspeechtotextutil.h
++++ b/textspeechtotext/speechtotext/textspeechtotextutil.h
+@@ -14,5 +14,16 @@ namespace TextSpeechToTextUtil
+ [[nodiscard]] QString groupTranslateName();
+ [[nodiscard]] QString engineTextToSpeechName();
+ [[nodiscard]] QString defaultEngineName();
+-};
++[[nodiscard]] QString soundGroupName();
++
++/*!
++ * \brief Returns the engine name stored in the configuration, or defaultEngineName() when none was selected yet.
++ */
++[[nodiscard]] QString loadEngineName();
++
++/*!
++ * \brief Stores \a engineName as the engine to use.
++ */
++void saveEngineName(const QString &engineName);
++}
+ }
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotextaction.cpp b/textspeechtotext/speechtotext/widgets/speechtotextaction.cpp
+index c74b088..e7d7525 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotextaction.cpp
++++ b/textspeechtotext/speechtotext/widgets/speechtotextaction.cpp
+@@ -12,14 +12,38 @@ using namespace Qt::Literals::StringLiterals;
+ SpeechToTextAction::SpeechToTextAction(QObject *parent)
+     : QAction{parent}
+ {
++    setCheckable(true);
+     connect(this, &QAction::triggered, this, &SpeechToTextAction::slotClicked);
++
++    connect(SpeechToTextManager::self(), &SpeechToTextManager::recordingChanged, this, [this](bool recording) {
++        setChecked(recording);
++        updateIcon();
++    });
++
++    connect(SpeechToTextManager::self(), &SpeechToTextManager::speechToTextDoneFor, this, [this](QObject *requester, const QString &result) {
++        if (requester == this) {
++            Q_EMIT textAvailable(result);
++        }
++    });
++    updateIcon();
+ }
+ 
+ SpeechToTextAction::~SpeechToTextAction() = default;
+ 
++void SpeechToTextAction::updateIcon()
++{
++    setIcon(isChecked() ? QIcon::fromTheme(u"mic-on"_s) : QIcon::fromTheme(u"mic-off"_s));
++}
++
+ void SpeechToTextAction::slotClicked()
+ {
+-    SpeechToTextManager::self()->speechToText();
++    if (SpeechToTextManager::self()->isRecording()) {
++        SpeechToTextManager::self()->stop();
++    } else {
++        SpeechToTextManager::self()->speechToText(this);
++    }
++    // Starting can fail (no engine, no microphone): keep the action in sync with reality.
++    setChecked(SpeechToTextManager::self()->isRecording());
+ }
+ 
+ #include "moc_speechtotextaction.cpp"
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotextaction.h b/textspeechtotext/speechtotext/widgets/speechtotextaction.h
+index ad65181..75ee35a 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotextaction.h
++++ b/textspeechtotext/speechtotext/widgets/speechtotextaction.h
+@@ -27,7 +27,14 @@ public:
+      */
+     ~SpeechToTextAction() override;
+ 
++Q_SIGNALS:
++    /*!
++     * \brief textAvailable
++     */
++    void textAvailable(const QString &);
++
+ private:
+     TEXTSPEECHTOTEXT_NO_EXPORT void slotClicked();
++    TEXTSPEECHTOTEXT_NO_EXPORT void updateIcon();
+ };
+ }
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotextcomboboxwidget.cpp b/textspeechtotext/speechtotext/widgets/speechtotextcomboboxwidget.cpp
+index 6c407cb..ed3a231 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotextcomboboxwidget.cpp
++++ b/textspeechtotext/speechtotext/widgets/speechtotextcomboboxwidget.cpp
+@@ -88,19 +88,14 @@ void SpeechToTextComboBoxWidget::slotEngineChanged(int index)
+ 
+ void SpeechToTextComboBoxWidget::load()
+ {
+-    const KConfigGroup groupTranslate(KSharedConfig::openConfig(), TextSpeechToTextUtil::groupTranslateName());
+-    const QString engine = groupTranslate.readEntry(TextSpeechToTextUtil::engineTextToSpeechName(), TextSpeechToTextUtil::defaultEngineName());
+-    const int index = mEngine->findData(engine);
+-    if (index != -1) {
++    if (const int index = mEngine->findData(TextSpeechToTextUtil::loadEngineName()); index != -1) {
+         mEngine->setCurrentIndex(index);
+     }
+ }
+ 
+ void SpeechToTextComboBoxWidget::save()
+ {
+-    const QString engine = mEngine->currentData().toString();
+-    KConfigGroup groupTranslate(KSharedConfig::openConfig(), TextSpeechToTextUtil::groupTranslateName());
+-    groupTranslate.writeEntry(TextSpeechToTextUtil::engineTextToSpeechName(), engine);
++    TextSpeechToTextUtil::saveEngineName(mEngine->currentData().toString());
+ }
+ 
+ #include "moc_speechtotextcomboboxwidget.cpp"
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.cpp b/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.cpp
+index 002a95b..0d3ab9a 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.cpp
++++ b/textspeechtotext/speechtotext/widgets/speechtotextconfigurewidget.cpp
+@@ -5,6 +5,7 @@
+ */
+ 
+ #include "speechtotextconfigurewidget.h"
++#include "speechtotext/speechtotextmanager.h"
+ 
+ #include "speechtotextcomboboxwidget.h"
+ #include "speechtotextselectdevicewidget.h"
+@@ -44,6 +45,8 @@ void SpeechToTextConfigureWidget::saveSettings()
+ {
+     mSpeechToTextComboBox->save();
+     mSpeechToTextDevice->saveSettings();
++    // Apply right away: the user just selected the engine, they shouldn't have to restart.
++    SpeechToTextManager::self()->loadEngine();
+ }
+ 
+ #include "moc_speechtotextconfigurewidget.cpp"
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.cpp b/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.cpp
+index 9ce6a59..ab89217 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.cpp
++++ b/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.cpp
+@@ -21,15 +21,41 @@ SpeechToTextToolButtonWidget::SpeechToTextToolButtonWidget(QWidget *parent)
+     mainLayout->setContentsMargins({});
+ 
+     mToolButton->setObjectName(u"mToolButton"_s);
++    mToolButton->setCheckable(true);
++    mToolButton->setAutoRaise(true);
+     mainLayout->addWidget(mToolButton);
+     connect(mToolButton, &QToolButton::clicked, this, &SpeechToTextToolButtonWidget::slotButtonClicked);
++    connect(SpeechToTextManager::self(), &SpeechToTextManager::recordingChanged, this, [this](bool recording) {
++        mToolButton->setChecked(recording);
++        updateIcon();
++    });
++
++    connect(SpeechToTextManager::self(), &SpeechToTextManager::speechToTextDoneFor, this, [this](QObject *requester, const QString &result) {
++        if (requester == this) {
++            Q_EMIT textAvailable(result);
++        }
++    });
++
++    updateIcon();
+ }
+ 
+ SpeechToTextToolButtonWidget::~SpeechToTextToolButtonWidget() = default;
+ 
++void SpeechToTextToolButtonWidget::updateIcon()
++{
++    mToolButton->setIcon(mToolButton->isChecked() ? QIcon::fromTheme(u"mic-on"_s) : QIcon::fromTheme(u"mic-off"_s));
++}
++
+ void SpeechToTextToolButtonWidget::slotButtonClicked()
+ {
+-    SpeechToTextManager::self()->speechToText();
++    if (SpeechToTextManager::self()->isRecording()) {
++        SpeechToTextManager::self()->stop();
++    } else {
++        SpeechToTextManager::self()->speechToText(this);
++    }
++    // Starting can fail (no engine, no microphone): keep the button in sync with reality.
++    mToolButton->setChecked(SpeechToTextManager::self()->isRecording());
++    updateIcon();
+ }
+ 
+ #include "moc_speechtotexttoolbuttonwidget.cpp"
+diff --git a/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.h b/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.h
+index cc692bb..30ccb02 100644
+--- a/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.h
++++ b/textspeechtotext/speechtotext/widgets/speechtotexttoolbuttonwidget.h
+@@ -28,8 +28,15 @@ public:
+      */
+     ~SpeechToTextToolButtonWidget() override;
+ 
++Q_SIGNALS:
++    /*!
++     * \brief textAvailable
++     */
++    void textAvailable(const QString &);
++
+ private:
+     TEXTSPEECHTOTEXT_NO_EXPORT void slotButtonClicked();
++    TEXTSPEECHTOTEXT_NO_EXPORT void updateIcon();
+     QToolButton *const mToolButton;
+ };
+ }
+diff --git a/textspeechtotext/tests/CMakeLists.txt b/textspeechtotext/tests/CMakeLists.txt
+index 1a4430f..e5ea8da 100644
+--- a/textspeechtotext/tests/CMakeLists.txt
++++ b/textspeechtotext/tests/CMakeLists.txt
+@@ -1,8 +1,21 @@
+ # SPDX-License-Identifier: BSD-3-Clause
+ # SPDX-FileCopyrightText: 2024-2026 Laurent Montel <montel@kde.org>
+-add_executable(speechtotext_gui speechtotext_gui.cpp)
++add_executable(speechtotextconfigdialog_gui speechtotextconfigdialog_gui.cpp)
+ target_link_libraries(
+-    speechtotext_gui
++    speechtotextconfigdialog_gui
++    KF6::TextSpeechToText
++    KF6::I18n
++)
++
++####
++
++add_executable(
++    speechtotextgui
++    speechtotextgui.cpp
++    speechtotextgui.h
++)
++target_link_libraries(
++    speechtotextgui
+     KF6::TextSpeechToText
+     KF6::I18n
+ )
+diff --git a/textspeechtotext/tests/speechtotext_gui.cpp b/textspeechtotext/tests/speechtotextconfigdialog_gui.cpp
+similarity index 68%
+rename from textspeechtotext/tests/speechtotext_gui.cpp
+rename to textspeechtotext/tests/speechtotextconfigdialog_gui.cpp
+index 457f286..7cbbe37 100644
+--- a/textspeechtotext/tests/speechtotext_gui.cpp
++++ b/textspeechtotext/tests/speechtotextconfigdialog_gui.cpp
+@@ -4,22 +4,23 @@
+   SPDX-License-Identifier: GPL-2.0-or-later
+ */
+ 
++#include "speechtotext/widgets/speechtotextconfiguredialog.h"
+ #include <QApplication>
+ #include <QCommandLineParser>
+ #include <QStandardPaths>
+ 
+ int main(int argc, char **argv)
+ {
+-    QApplication app(argc, argv);
++    const QApplication app(argc, argv);
+     QStandardPaths::setTestModeEnabled(true);
+     QCommandLineParser parser;
+     parser.addVersionOption();
+     parser.addHelpOption();
+     parser.process(app);
+ 
+-    // auto w = new TextSpeechToText::SpeechToTextConfigureDialog();
+-    // w->show();
++    auto w = new TextSpeechToText::SpeechToTextConfigureDialog();
++    w->show();
+     app.exec();
+-    // delete w;
++    delete w;
+     return 0;
+ }
+diff --git a/textspeechtotext/tests/speechtotextgui.cpp b/textspeechtotext/tests/speechtotextgui.cpp
+new file mode 100644
+index 0000000..37e2305
+--- /dev/null
++++ b/textspeechtotext/tests/speechtotextgui.cpp
+@@ -0,0 +1,58 @@
++/*
++  SPDX-FileCopyrightText: 2026 Laurent Montel
++
++  SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++#include "speechtotextgui.h"
++#include "speechtotext/widgets/speechtotextconfiguredialog.h"
++#include <QApplication>
++#include <QCommandLineParser>
++#include <QPushButton>
++#include <QStandardPaths>
++#include <QTextEdit>
++#include <QVBoxLayout>
++#include <TextSpeechToText/SpeechToTextManager>
++#include <TextSpeechToText/SpeechToTextToolButtonWidget>
++using namespace Qt::Literals::StringLiterals;
++SpeechToTextGui::SpeechToTextGui(QWidget *parent)
++    : QWidget(parent)
++{
++    auto layout = new QVBoxLayout(this);
++    auto textEdit = new QTextEdit(this);
++
++    auto configureButton = new QPushButton(u"Configure"_s, this);
++    connect(configureButton, &QPushButton::clicked, this, [this]() {
++        auto w = new TextSpeechToText::SpeechToTextConfigureDialog(this);
++        w->exec();
++        delete w;
++    });
++
++    layout->addWidget(configureButton, 0, Qt::AlignLeft);
++    auto speechToTextButton = new TextSpeechToText::SpeechToTextToolButtonWidget(this);
++    layout->addWidget(speechToTextButton, 0, Qt::AlignLeft);
++    layout->addWidget(textEdit);
++    connect(TextSpeechToText::SpeechToTextManager::self(), &TextSpeechToText::SpeechToTextManager::textToSpeechDone, this, [textEdit](const QString &result) {
++        textEdit->append(result);
++    });
++}
++
++SpeechToTextGui::~SpeechToTextGui() = default;
++
++int main(int argc, char **argv)
++{
++    const QApplication app(argc, argv);
++    QStandardPaths::setTestModeEnabled(true);
++    QCommandLineParser parser;
++    parser.addVersionOption();
++    parser.addHelpOption();
++    parser.process(app);
++
++    auto w = new SpeechToTextGui();
++    w->show();
++    app.exec();
++    delete w;
++    return 0;
++}
++
++#include "moc_speechtotextgui.cpp"
+diff --git a/textspeechtotext/tests/speechtotextgui.h b/textspeechtotext/tests/speechtotextgui.h
+new file mode 100644
+index 0000000..205dd02
+--- /dev/null
++++ b/textspeechtotext/tests/speechtotextgui.h
+@@ -0,0 +1,15 @@
++/*
++  SPDX-FileCopyrightText: 2026 Laurent Montel
++
++  SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++#include <QWidget>
++
++class SpeechToTextGui : public QWidget
++{
++    Q_OBJECT
++public:
++    explicit SpeechToTextGui(QWidget *parent = nullptr);
++    ~SpeechToTextGui() override;
++};
