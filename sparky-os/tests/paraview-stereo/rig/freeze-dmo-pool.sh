@@ -4,7 +4,8 @@
 # copy $S/frozen/dmo first, deb-multimedia's server second), so apt reads the frozen index alone and fetches a pool file from
 # the server only when the frozen copy lacks it, checking it against the frozen index's hash as always. The sequence is
 # make-rig.sh's (dist-upgrade, the rig's packages), then, download only, Debian's ten vtk9 and paraview packages of
-# apt-upgrade-sim.sh and the stage with KScreen's page (make-green.sh's sets). Every deb-multimedia file apt kept in its cache is
+# apt-upgrade-sim.sh and the stage with KScreen's page (make-green.sh's sets), and the stage again without the edition's pin
+# (the Lean Code gate's solve). Every deb-multimedia file apt kept in its cache is
 # copied into the frozen pool when its SHA-256 matches the frozen index. List: $S/frozen/dmo-pool.txt.
 set -euo pipefail
 S=/var/lib/sparky-lanes/science-paraview-50f
@@ -25,6 +26,9 @@ $S/scripts/drun.sh dmo-freeze sci50f-base:testing-20261104 --cpus 1 -v $S/rig:/r
   apt-get install -y -q --download-only --no-install-recommends $DEB > /tmp/deb.log 2>&1 || { tail -20 /tmp/deb.log; exit 1; }
   echo 'deb [trusted=yes] file:/flat ./' > /etc/apt/sources.list.d/stage.list; apt-get update -qq 2>/dev/null
   apt-get install -y -q --download-only $STG > /tmp/stg.log 2>&1 || { tail -20 /tmp/stg.log; exit 1; }
+  # the Lean Code link gate solves without the edition pin, so the highest version wins (deb-multimedia's FFmpeg): its closure too
+  rm /etc/apt/preferences.d/00-sparky; apt-get update -qq 2>/dev/null
+  apt-get install -y -q --download-only --no-install-recommends $STG > /tmp/nopin.log 2>&1 || { tail -20 /tmp/nopin.log; exit 1; }
   cp /var/cache/apt/archives/*.deb /cache/; chown -R 1000:1000 /cache; ls /cache | wc -l"
 python3 -I - "$S" <<'PY'
 import hashlib, sys
