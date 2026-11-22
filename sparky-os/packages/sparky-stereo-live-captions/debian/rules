@@ -11,7 +11,7 @@ override_dh_auto_install:
 	sparky-stereo-problems catalog sparky-stereo-live-captions lang debian/sparky-stereo-live-captions/usr/lib/systemd/catalog --subject title
 
 override_dh_installsystemduser:
-	dh_installsystemduser --no-enable --no-start
+	dh_installsystemduser --no-enable
 
 override_dh_auto_test:
 	python3 tests/test_adapter.py
