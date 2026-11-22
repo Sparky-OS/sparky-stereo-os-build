@@ -514,9 +514,10 @@ KCM.SimpleKCM {
                 }
                 Repeater {
                     model: (programRow.modelData.note === "own-services" || programRow.modelData.note === "own-engines") ? [] : programRow.modelData.choices
-                    delegate: RowLayout {
+                    delegate: Flow {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
+                        spacing: Kirigami.Units.smallSpacing
                         id: choiceRow
                         required property var modelData
                         readonly property string pkey: "program/" + programRow.modelData.id + "/" + modelData.kind
@@ -535,6 +536,7 @@ KCM.SimpleKCM {
                         }
                         FittedComboBox {
                             id: ownCombo
+                            width: Math.min(implicitWidth, parent.width)
                             enabled: ownChoice.checked
                             model: root.interfaceOptions(choiceRow.modelData.kind).filter(o => o.value !== "none")
                             currentIndex: Math.max(0, model.findIndex(o => o.value === choiceRow.modelData.interface))
