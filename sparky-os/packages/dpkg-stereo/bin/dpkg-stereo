@@ -2320,8 +2320,12 @@ def verify(P, names, deep=False):
     for path, (want, owner) in sorted(ucf_kept(P).items()):
         if names and (owner is None or (owner not in names and owner.split(':')[0] not in names)):
             continue
-        if files.get(path) is not None or left.get(path) is not None or any(
-                path in own and on_disk(P, path, n, divs) == P.real(path) for n, own in conf.items()):
+        # a record or left row of PATH names the package whose copy it judges; under a diversion that copy is at the
+        # diverted name (nano's /etc/nanorc.debian), and the file at the name is the diverting package's, kept through
+        # ucf (sparky-stereo-console's /etc/nanorc)
+        at_path = [r['package'] for r in (files.get(path), left.get(path)) if r is not None]
+        at_path += [n for n, own in conf.items() if path in own]
+        if any(on_disk(P, path, n, divs) == P.real(path) for n in at_path):
             continue
         who = f'kept by {owner} through ucf' if owner else 'kept through ucf'
         try:
