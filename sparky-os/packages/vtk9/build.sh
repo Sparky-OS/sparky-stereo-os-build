@@ -1,7 +1,8 @@
 #!/bin/bash
-# Sparky Stereo OS, ORDER 50 step 5: vtk9 9.6.2+ds-3+stereo3d1+lc1, Debian testing's own source plus patches/ (VTK's Qt
-# windows set the draw buffer of their blit through vtkOpenGLState, so a quad-buffered window's right eye no longer leaves
-# the state cache stale). The source and the architecture-dependent packages are built (--build=source,any): vtk9-doc and
+# Sparky Stereo OS, ORDER 50 step 5: vtk9 9.6.2+ds-3+stereo3d2+lc1, Debian testing's own source plus patches/ (0001: VTK's
+# Qt windows set the draw buffer of their blit through vtkOpenGLState, so a quad-buffered window's right eye no longer leaves
+# the state cache stale; 0002: the colour sizes of a missing colour attachment are not queried, so a flat Qt view on
+# Wayland no longer warns). The source and the architecture-dependent packages are built (--build=source,any): vtk9-doc and
 # vtk9-examples are Debian's, unchanged.
 #   build.sh DEBIAN.dsc WORK   (disposable container with vtk9's build dependencies, bubblewrap, clang, nodejs, node-acorn,
 #                               python3-yaml, devscripts; TREE mounted; SPARKY_LC_* as the build record route needs them)
@@ -22,14 +23,17 @@ for p in "$HERE"/patches/*.patch; do
 	name=$(basename "$p"); cp "$p" "debian/patches/$name"
 	grep -qx "$name" debian/patches/series || echo "$name" >> debian/patches/series
 done
-VERSION=9.6.2+ds-3+stereo3d1
 DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" -R)
-n=0
-while IFS= read -r item; do
-	[ -n "$item" ] || continue
-	if [ $n = 0 ]; then dch --date "$DATE" -v "$VERSION" -D unstable --force-distribution "$item"; else dch --date "$DATE" -a "$item"; fi
-	n=$((n + 1))
-done < "$HERE/changelog/vtk9.items"
+# one changelog entry per edition version: +stereo3d1 (vtk9.items), +stereo3d2 (vtk9-stereo3d2.items)
+for entry in 1:vtk9.items 2:vtk9-stereo3d2.items; do
+	VERSION=9.6.2+ds-3+stereo3d${entry%%:*}
+	n=0
+	while IFS= read -r item; do
+		[ -n "$item" ] || continue
+		if [ $n = 0 ]; then dch --date "$DATE" -v "$VERSION" -D unstable --force-distribution "$item"; else dch --date "$DATE" -a "$item"; fi
+		n=$((n + 1))
+	done < "$HERE/changelog/${entry#*:}"
+done
 export PYTHONPATH="$TREE${PYTHONPATH:+:$PYTHONPATH}"
 python3 -m lean.debian_prepare "$PWD" "$VERSION+lc1" --toolkit "$TREE"
 python3 "$TREE/repo/reproducible.py" normalize-tree "$SOURCE_DATE_EPOCH" "$PWD"

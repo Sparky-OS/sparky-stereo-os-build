@@ -1,0 +1,45 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] vtkOpenGLRenderWindow: Do not query the sizes of a missing color attachment
+
+GetColorBufferSizes queries the red, green, blue and alpha sizes of the draw
+buffer of the bound draw framebuffer. While a QVTKOpenGLNativeWidget
+initializes, the context is current on Qt's offscreen surface; on Wayland
+that surface has no color buffer, so the attachment (GL_BACK_LEFT of the
+default framebuffer) has the object type GL_NONE. Mesa then raises
+GL_INVALID_OPERATION for each size, and VTK warns four times ("Failed to get
+red color buffer size (1282)" and the same for green, blue and alpha), which
+ParaView shows in its Output Messages window whenever a view is flat. On X11
+the offscreen surface has a color buffer and nothing is reported.
+
+Read the attachment's object type first, as GetDepthBufferSize does for
+the depth attachment since "Do not query a missing depth attachment": with no
+attachment the sizes are 0, which is what the failed queries left before, so
+the alpha bit planes stay as they were (0 on Wayland, 8 on X11). An error from
+the object type query itself falls through to the existing queries and their
+warnings.
+
+Bug: Output Messages window on Wayland when a ParaView view is flat (ParaView 6.1.1, VTK 9.6.2)
+Forwarded: no
+Last-Update: 2026-11-21
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+--- a/Rendering/OpenGL2/vtkOpenGLRenderWindow.cxx
++++ b/Rendering/OpenGL2/vtkOpenGLRenderWindow.cxx
+@@ -1118,6 +1118,17 @@
+     {
+     }
+ 
++    // A default framebuffer can have no color buffer at all: Qt's offscreen surface on Wayland, current
++    // while a QOpenGLWidget initializes, has none. Querying the size of a missing attachment is a GL error,
++    // so without one the sizes are 0.
++    GLint attachmentType = GL_NONE;
++    glGetFramebufferAttachmentParameteriv(
++      GL_DRAW_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &attachmentType);
++    if (glGetError() == GL_NO_ERROR && attachmentType == GL_NONE)
++    {
++      return 0;
++    }
++
+     glGetFramebufferAttachmentParameteriv(
+       GL_DRAW_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_RED_SIZE, &size);
+     if (auto error = glGetError())
