@@ -1,0 +1,131 @@
+Description: With Enable 3D off the monitors show the left eye whole
+ With the layer's Enable 3D off a monitor declared nothing and showed its
+ frames as they are: in a 3D project the frame of two eyes, drawn in the
+ monitor's area of one eye's shape, each eye squeezed to half its width, and in
+ the clip monitor a 3D clip's packed frame. A program never shows an eye
+ squeezed (the stereo contract: "A program never stretches or squeezes an eye;
+ KWin scales once, at the output"), and a flat picture of a pair is its left
+ eye, as a 2D screen shows it under Stereo KWin. So with Enable 3D off a
+ monitor that shows a 3D picture shows its left eye, whole and at its own
+ shape, and declares nothing: the picture of Left Eye Only, with the switch
+ off. Renders and thumbnails do not change.
+ .
+ Left Eye Only drew the left half of a frame of two whole views in half of the
+ area fitted to the frame. In a 3D project that area already has one eye's
+ shape (the project's), so the eye came out squeezed to half its width: the
+ monitor is now told that its frames are a 3D project's two eyes and the eye
+ fills the area. The settings' labels say what 0 shows now.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-22
+diff --git a/src/kdenlivesettings.kcfg b/src/kdenlivesettings.kcfg
+index 500b24d..a2e25ca 100644
+--- a/src/kdenlivesettings.kcfg
++++ b/src/kdenlivesettings.kcfg
+@@ -600,12 +600,12 @@
+     </entry>
+ 
+     <entry name="stereo3d_preview" type="Int">
+-      <label>How the monitors show a stereoscopic 3D video: 0 the packed frame as it is, 1 the left eye's view only, 2 in 3D, the monitor itself the 3D area, where the compositor takes stereo content. The clip monitor has its own, stereo3d_clip_preview.</label>
++      <label>How the monitors show a stereoscopic 3D video: 0 Enable 3D off, the left eye's view, flat, nothing declared, 1 the left eye's view only, 2 in 3D, the monitor itself the 3D area, where the compositor takes stereo content. The clip monitor has its own, stereo3d_clip_preview.</label>
+       <default>2</default>
+     </entry>
+ 
+     <entry name="stereo3d_clip_preview" type="Int">
+-      <label>How the clip monitor shows a stereoscopic 3D video: 0 the packed frame as it is, 1 the left eye's view only, 2 in 3D, the monitor itself the 3D area, where the compositor takes stereo content.</label>
++      <label>How the clip monitor shows a stereoscopic 3D video: 0 Enable 3D off, the left eye's view, flat, nothing declared, 1 the left eye's view only, 2 in 3D, the monitor itself the 3D area, where the compositor takes stereo content.</label>
+       <default>2</default>
+     </entry>
+ 
+diff --git a/src/monitor/monitor.cpp b/src/monitor/monitor.cpp
+index e8ef6c5..738c290 100644
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -2739,6 +2739,10 @@ void Monitor::updateStereoPreview()
+ #endif
+     const bool unpackedByFilter = format.packing == Stereo3D::Packing::Lines || format.packing == Stereo3D::Packing::Columns
+         || format.packing == Stereo3D::Packing::Checkerboard || format.packing == Stereo3D::Packing::FrameSequence;
++    // Enable 3D off shows one eye, the left one, whole and at its own shape, and declares nothing: a program never shows an eye
++    // squeezed (the stereo contract), and a flat picture of a pair is its left eye, as a 2D screen shows it under Stereo KWin. So off
++    // and Left Eye Only show the same picture; only the switch differs.
++    const bool leftEye = (mode == 1 || (mode == 0 && format.isStereo()));
+     QString unpack;
+     if (pairProject && m_id == Kdenlive::ProjectMonitor) {
+         // the timeline made the two eyes already
+@@ -2746,12 +2750,14 @@ void Monitor::updateStereoPreview()
+         unpack = QStringLiteral("side_by_side");
+     } else if (layer) {
+         unpack = QStringLiteral("side_by_side");
+-    } else if (mode == 1 && unpackedByFilter) {
++    } else if (leftEye && unpackedByFilter) {
+         unpack = QStringLiteral("left");
+     }
+     m_glMonitor->setStereoFilterMode(filterPacking, filterInvert, fromOwnPicture);
+-    // the left eye of a frame of two eyes is its left half
+-    m_glMonitor->setStereoPreview(format, mode == 1 && (!unpackedByFilter || fromOwnPicture || pairProject), unpack);
++    // the left eye of a frame of two eyes is its left half; in a 3D project that frame is two eyes of the project's shape, which the
++    // monitor's area already has, so the eye fills it
++    const bool pairFrame = (pairProject && m_id == Kdenlive::ProjectMonitor) || fromOwnPicture;
++    m_glMonitor->setStereoPreview(format, leftEye && (!unpackedByFilter || fromOwnPicture || pairProject), unpack, pairFrame);
+ #ifdef HAVE_STEREO_PREVIEW
+     if (layer && !m_stereoLayer) {
+         m_stereoLayer = new StereoLayer(m_glMonitor, this);
+diff --git a/src/monitor/openglvideowidget.cpp b/src/monitor/openglvideowidget.cpp
+index e229e0a..7c68560 100644
+--- a/src/monitor/openglvideowidget.cpp
++++ b/src/monitor/openglvideowidget.cpp
+@@ -318,8 +318,8 @@ void OpenGLVideoWidget::renderVideo()
+     QVector<QVector2D> vertices;
+     width = m_rect.width() * devicePixelRatioF();
+     height = m_rect.height() * devicePixelRatioF();
+-    if (stereoMode != 0 && Stereo3D::fullSizeViews(m_frameSize, m_stereoFormat.packing)) {
+-        // One view of full size views is half of the frame
++    if (stereoMode != 0 && !m_stereoPairFrame && Stereo3D::fullSizeViews(m_frameSize, m_stereoFormat.packing)) {
++        // One view of full size views is half of the frame (a 3D project's frame of two eyes is drawn in an area of one eye's shape)
+         if (stereoMode == 1) {
+             width /= 2.0f;
+         } else if (stereoMode == 2) {
+diff --git a/src/monitor/videowidget.cpp b/src/monitor/videowidget.cpp
+index 61a4bd9..7da558d 100644
+--- a/src/monitor/videowidget.cpp
++++ b/src/monitor/videowidget.cpp
+@@ -734,11 +734,12 @@ void VideoWidget::setStereoLayerActive(bool active)
+     window()->update();
+ }
+ 
+-void VideoWidget::setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack)
++void VideoWidget::setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack, bool pairFrame)
+ {
+-    if (m_stereoFormat == format && m_stereoLeftEyeOnly == leftEyeOnly && m_stereoUnpack == unpack) {
++    if (m_stereoFormat == format && m_stereoLeftEyeOnly == leftEyeOnly && m_stereoUnpack == unpack && m_stereoPairFrame == pairFrame) {
+         return;
+     }
++    m_stereoPairFrame = pairFrame;
+     const bool filterChanged = m_stereoUnpack != unpack || (!unpack.isEmpty() && m_stereoFormat != format);
+     m_stereoFormat = format;
+     m_stereoLeftEyeOnly = leftEyeOnly;
+diff --git a/src/monitor/videowidget.h b/src/monitor/videowidget.h
+index e05711b..871d6de 100644
+--- a/src/monitor/videowidget.h
++++ b/src/monitor/videowidget.h
+@@ -82,8 +82,10 @@ public:
+     QRect displayRect() const;
+     /** @brief How the monitor shows a stereoscopic 3D video: its frames as they are (the packed frame), or the left eye's view only.
+      *  @param format How the frames of what the monitor plays pack the two views
+-     *  @param leftEyeOnly Show the left eye's view only */
+-    void setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack = QString());
++     *  @param leftEyeOnly Show the left eye's view only
++     *  @param pairFrame The frames are a 3D project's two eyes side by side, each of the project's shape, which the monitor's area
++     *  already has: the left eye fills that area */
++    void setStereoPreview(const Stereo3D::Format &format, bool leftEyeOnly, const QString &unpack = QString(), bool pairFrame = false);
+     /** @brief The file the frames of a frame sequence come from, and the position in the monitor of its first frame (the project's
+      *  frames are made of many clips, so the filter cannot tell it from the frames). */
+     void setStereoSource(const QString &resource, int offset);
+@@ -229,6 +231,7 @@ protected:
+     /** @brief The view of a stereoscopic 3D video the monitor shows alone, or none */
+     Stereo3D::Format m_stereoFormat;
+     bool m_stereoLeftEyeOnly{false};
++    bool m_stereoPairFrame{false};
+     /** @brief What the stereo3d_unpack filter on the consumer gives (left, right or side_by_side), empty for none */
+     QString m_stereoUnpack;
+     QString m_stereoFilterPacking;

@@ -1,0 +1,245 @@
+Description: core: stereo3d_unpack crops each eye, and pairs a frame sequence in the stream's frames
+ Crop. MLT's crop filter in a chain (Kdenlive's Crop effect) only leaves on
+ the frame what it takes away (crop.left, right, top, bottom, in the samples
+ of the size it was told, crop.original_width and _height, and the cropped
+ size in meta.media); the producer's own crop then cuts the producer's
+ picture and its resize fits what is left to the profile. As the first filter
+ of a producer, stereo3d_unpack asks for the producer's picture of two views,
+ so that crop cut the views as one picture, and the rescaler asked for the
+ cropped size and stretched it back. Now stereo3d_unpack gives the producer's
+ crop nothing to cut and asks for the producer's own size, cuts each view by
+ what the crop takes (scaled from the size the crop was told to the view's own
+ samples) and fits each cut view, keeping its new shape, to its half as
+ filter_resize fits a picture to the profile (rint of the shapes), so a 3D
+ project's eye is what a 2D project of that eye alone shows. A clip in the
+ pair shape is not handed on as it is while it is cropped.
+ .
+ Frame sequence. The other frame of a pair was fetched at the next or the
+ previous position in the profile's rate, so a sequence at twice the
+ project's frame rate (a 50 fps sequence in a 25 fps project) paired frame 2p
+ with frame 2p+2, the same view, and showed one eye in both. The partner
+ producer now counts in the stream's own frames (a profile of its own at the
+ video stream's rate, opened again at that rate because a producer counts its
+ length in the rate it was opened with), and the frame's place in the stream
+ is found as the avformat producer finds the frame it gives for a position.
+ Which eye a frame is: the SEI's frame 0 or 1 (FFmpeg's view) or the frame's
+ place in turn, exchanged by invert (H.264 D.2.26, content_interpretation_type
+ 2: frame 0 is the right view); before, a marked frame's eye ignored invert.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-22
+diff --git a/src/modules/core/filter_stereo3d_unpack.c b/src/modules/core/filter_stereo3d_unpack.c
+index b1be18e..61290b9 100644
+--- a/src/modules/core/filter_stereo3d_unpack.c
++++ b/src/modules/core/filter_stereo3d_unpack.c
+@@ -30,7 +30,9 @@
+ #include <stereo-policy.h>
+ #endif
+ 
++#include <math.h>
+ #include <pthread.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+@@ -87,8 +89,11 @@ typedef struct
+     // A frame sequence has one view in each frame: the views of the pair the frame is in, with the places they are from
+     view_t latest[2];
+     mlt_position latest_position[2];
+-    // A producer of our own for the other frame of a pair: the one the frame came from is driven by whoever plays it
++    // A producer of our own for the other frame of a pair: the one the frame came from is driven by whoever plays it. It counts
++    // in the stream's own frames (a profile of its own, at the stream's frame rate): the two views of a pair are two frames of
++    // the stream, which a profile at the pairs' rate (a 25 fps project for a 50 fps sequence) never asks for one by one
+     mlt_producer partner;
++    mlt_profile partner_profile;
+     char *partner_resource;
+ } private_data;
+ 
+@@ -413,7 +418,22 @@ static int unpack_image(mlt_filter filter,
+     const int asked_width = *width, asked_height = *height;
+     const int made_width = mlt_properties_get_int(own, "stereo3d_unpack.out_width");
+     const int made_height = mlt_properties_get_int(own, "stereo3d_unpack.out_height");
+-    const int as_it_is = mlt_properties_get_int(own, "stereo3d_unpack.in_producer") && made_width > 0
++    // A crop after this filter (MLT's crop, Kdenlive's Crop effect) left on the frame what it takes from the picture, in the samples
++    // of one eye of the frame made here (crop.original_width and _height, the size it was told), for the producer's own crop to
++    // cut. That one would cut the producer's picture of two views as one picture, before the views are taken out. So it is given
++    // nothing to cut, and each view is cut here and then fitted, keeping its new shape, to its half: as in a 2D project, where the
++    // producer's crop cuts the picture and its resize then fits what is left to the profile.
++    static const char *const crop_names[4] = {"crop.left", "crop.right", "crop.top", "crop.bottom"};
++    int crop[4];
++    for (int i = 0; i < 4; i++)
++        crop[i] = mlt_properties_get_int(own, crop_names[i]);
++    const int crop_width = mlt_properties_get_int(own, "crop.original_width");
++    const int crop_height = mlt_properties_get_int(own, "crop.original_height");
++    const int cropping = mlt_properties_get_int(own, "stereo3d_unpack.in_producer") && made_width > 0 && crop_width > 0
++                         && crop_height > 0 && (crop[0] > 0 || crop[1] > 0 || crop[2] > 0 || crop[3] > 0)
++                         && crop[0] >= 0 && crop[1] >= 0 && crop[2] >= 0 && crop[3] >= 0
++                         && crop[0] + crop[1] < crop_width && crop[2] + crop[3] < crop_height;
++    const int as_it_is = !cropping && mlt_properties_get_int(own, "stereo3d_unpack.in_producer") && made_width > 0
+                          && packing_from_name(mlt_properties_get(properties, "packing")) == packing_side_by_side
+                          && !mlt_properties_get_int(properties, "invert")
+                          && mlt_properties_get_int(own, "stereo3d_unpack.width") == made_width
+@@ -464,12 +484,29 @@ static int unpack_image(mlt_filter filter,
+     }
+     if (as_it_is && !rescale_halves)
+         *format = asked;
++    // With a crop: the producer's own crop cuts nothing, and the producer's rescaling asks for the producer's own size, not the
++    // cropped size the crop left in meta.media
++    int media_width = 0, media_height = 0;
++    if (cropping) {
++        for (int i = 0; i < 4; i++)
++            mlt_properties_set_int(frame_props, crop_names[i], 0);
++        media_width = mlt_properties_get_int(frame_props, "meta.media.width");
++        media_height = mlt_properties_get_int(frame_props, "meta.media.height");
++        mlt_properties_set_int(frame_props, "meta.media.width", mlt_properties_get_int(frame_props, "stereo3d_unpack.width"));
++        mlt_properties_set_int(frame_props, "meta.media.height", mlt_properties_get_int(frame_props, "stereo3d_unpack.height"));
++    }
+     int error = mlt_frame_get_image(frame, image, format, width, height, 0);
+     if (in_producer) {
+         mlt_properties_set_int(frame_props, "distort", distort);
+         mlt_properties_set_int(frame_props, "rescale_width", rescale_width);
+         mlt_properties_set_int(frame_props, "rescale_height", rescale_height);
+     }
++    if (cropping) {
++        for (int i = 0; i < 4; i++)
++            mlt_properties_set_int(frame_props, crop_names[i], crop[i]);
++        mlt_properties_set_int(frame_props, "meta.media.width", media_width);
++        mlt_properties_set_int(frame_props, "meta.media.height", media_height);
++    }
+     if (as_it_is) {
+         if (!error && rescale_halves && *image)
+             scale_halves(filter, frame, image, *format, width, height, asked_width, asked_height);
+@@ -511,26 +548,54 @@ static int unpack_image(mlt_filter filter,
+         const char *source = mlt_properties_get(properties, "resource");
+         const int offset = source && *source ? mlt_properties_get_int(properties, "offset") : 0;
+         const mlt_position position = mlt_frame_original_position(frame) - offset;
+-        int is_right;
+-        if (view)
+-            is_right = !strcmp(view, "right");
+-        else
+-            is_right = (position & 1) != invert;
+-        const mlt_position other_position = is_right ? position - 1 : position + 1;
++        mlt_producer original = mlt_frame_get_original_producer(frame);
++        const char *resource = source && *source ? source
++            : original ? mlt_properties_get(MLT_PRODUCER_PROPERTIES(original), "resource") : NULL;
+         pthread_mutex_lock(&pdata->mutex);
++        if (resource && (!pdata->partner || !pdata->partner_resource || strcmp(pdata->partner_resource, resource))) {
++            mlt_producer_close(pdata->partner);
++            pdata->partner = NULL;
++            mlt_profile_close(pdata->partner_profile);
++            free(pdata->partner_resource);
++            mlt_profile own_profile = mlt_service_profile(MLT_FILTER_SERVICE(filter));
++            pdata->partner_profile = own_profile ? mlt_profile_clone(own_profile) : NULL;
++            if (pdata->partner_profile)
++                pdata->partner = mlt_factory_producer(pdata->partner_profile, "avformat", resource);
++            if (pdata->partner) {
++                mlt_properties partner_props = MLT_PRODUCER_PROPERTIES(pdata->partner);
++                // the video stream's rate, which the producer knows from opening the file (its decoder starts later)
++                char key[64];
++                snprintf(key, sizeof(key), "meta.media.%d.stream.frame_rate", mlt_properties_get_int(partner_props, "video_index"));
++                const double stream_fps = mlt_properties_get_double(partner_props, key);
++                if (stream_fps > 0 && fabs(stream_fps - mlt_profile_fps(pdata->partner_profile)) > 1e-6) {
++                    // opened again at the stream's rate: a producer counts its length in the rate it was opened with
++                    mlt_producer_close(pdata->partner);
++                    pdata->partner_profile->frame_rate_num = (int) lrint(stream_fps * 1001);
++                    pdata->partner_profile->frame_rate_den = 1001;
++                    pdata->partner = mlt_factory_producer(pdata->partner_profile, "avformat", resource);
++                }
++            }
++            pdata->partner_resource = strdup(resource);
++            // the views kept were another file's
++            pdata->latest_position[0] = pdata->latest_position[1] = -1;
++        }
++        // The frame's place in the stream, found as the avformat producer finds the frame it gives for a position (its position at
++        // the profile's rate, at the stream's rate): with a 50 fps sequence in a 25 fps project, position p is the stream's frame 2p
++        mlt_position index = position;
++        mlt_profile own_profile = mlt_service_profile(MLT_FILTER_SERVICE(filter));
++        if (pdata->partner && own_profile && mlt_profile_fps(own_profile) > 0 && mlt_profile_fps(pdata->partner_profile) > 0)
++            index = (mlt_position) (position / mlt_profile_fps(own_profile) * mlt_profile_fps(pdata->partner_profile) + 0.5);
++        // Which frame of its pair it is: the SEI's frame 0 or frame 1 (FFmpeg's view, current_frame_is_frame0_flag), or the frame's
++        // place in turn. Which eye that frame is, the order says: with content_interpretation_type 2 (H.264 D.2.26) frame 0 is the
++        // right view, so the eye is the place in the pair exchanged by invert.
++        const int first = view ? strcmp(view, "right") != 0 : !(index & 1);
++        const int is_right = !first != invert;
++        // The other frame of the pair is the next one after a frame 0 and the previous one before a frame 1
++        const mlt_position other_position = first ? index + 1 : index - 1;
+         set_view(&pdata->latest[is_right], *image, sw, sh);
+-        pdata->latest_position[is_right] = position;
++        pdata->latest_position[is_right] = index;
+         if (!pdata->latest[!is_right].data || pdata->latest_position[!is_right] != other_position) {
+-            mlt_producer original = mlt_frame_get_original_producer(frame);
+-            const char *resource = source && *source ? source
+-                : original ? mlt_properties_get(MLT_PRODUCER_PROPERTIES(original), "resource") : NULL;
+             if (resource && other_position >= 0) {
+-                if (!pdata->partner || !pdata->partner_resource || strcmp(pdata->partner_resource, resource)) {
+-                    mlt_producer_close(pdata->partner);
+-                    free(pdata->partner_resource);
+-                    pdata->partner = mlt_factory_producer(mlt_service_profile(MLT_FILTER_SERVICE(filter)), "avformat", resource);
+-                    pdata->partner_resource = strdup(resource);
+-                }
+                 if (pdata->partner) {
+                     mlt_frame other = NULL;
+                     mlt_producer_seek(pdata->partner, other_position);
+@@ -606,8 +671,42 @@ static int unpack_image(mlt_filter filter,
+         // as filter_process told the other filters
+         const int fw = mlt_properties_get_int(frame_props, "stereo3d_unpack.out_width");
+         const int fh = mlt_properties_get_int(frame_props, "stereo3d_unpack.out_height");
+-        const int pw = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_width");
+-        const int ph = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_height");
++        int pw = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_width");
++        int ph = mlt_properties_get_int(frame_props, "stereo3d_unpack.picture_height");
++        if (cropping) {
++            // each view cut by what the crop takes, in that view's own samples, then fitted by its new shape
++            const int cut[4] = {(int) ((double) crop[0] * eye_width / crop_width + 0.5),
++                                (int) ((double) crop[1] * eye_width / crop_width + 0.5),
++                                (int) ((double) crop[2] * eye_height / crop_height + 0.5),
++                                (int) ((double) crop[3] * eye_height / crop_height + 0.5)};
++            const int cw = eye_width - cut[0] - cut[1];
++            const int ch = eye_height - cut[2] - cut[3];
++            const double view_shape = mlt_properties_get_double(frame_props, "stereo3d_unpack.view_shape");
++            const double half_shape = mlt_properties_get_double(frame_props, "stereo3d_unpack.half_shape");
++            if (cw > 0 && ch > 0 && view_shape > 0 && half_shape > 0) {
++                for (int e = 0; e < 2; e++) {
++                    uint8_t *cut_eye = mlt_pool_alloc((size_t) cw * ch * bpp);
++                    for (int y = 0; y < ch; y++)
++                        memcpy(cut_eye + (size_t) y * cw * bpp,
++                               eyes[e] + ((size_t) (y + cut[2]) * eye_width + cut[0]) * bpp,
++                               (size_t) cw * bpp);
++                    mlt_pool_release(eyes[e]);
++                    eyes[e] = cut_eye;
++                }
++                const double shape = view_shape * cw / eye_width * eye_height / ch;
++                // as filter_resize fits a picture of that shape to the frame (rint), in the half of an eye
++                pw = fw / 2;
++                ph = fh;
++                if (shape >= half_shape)
++                    ph = (int) rint(fh * half_shape / shape);
++                else
++                    pw = (int) rint((fw / 2) * shape / half_shape);
++                pw = pw < 1 ? 1 : pw;
++                ph = ph < 1 ? 1 : ph;
++                eye_width = cw;
++                eye_height = ch;
++            }
++        }
+         uint8_t *frame_out = mlt_pool_alloc((size_t) fw * fh * bpp);
+         // black and opaque around the views of a 3D clip; around a 2D picture, transparent, as MLT pads any picture smaller than
+         // the frame, so the tracks below show there (a title over a 3D clip)
+@@ -741,6 +840,9 @@ static void announce(mlt_filter filter, mlt_frame frame)
+     mlt_properties_set_int(frame_props, "stereo3d_unpack.out_height", fh);
+     mlt_properties_set_int(frame_props, "stereo3d_unpack.picture_width", pw);
+     mlt_properties_set_int(frame_props, "stereo3d_unpack.picture_height", ph);
++    // for a crop after this filter, which fits each cut view again by its new shape
++    mlt_properties_set_double(frame_props, "stereo3d_unpack.view_shape", view_shape);
++    mlt_properties_set_double(frame_props, "stereo3d_unpack.half_shape", half_shape);
+     mlt_properties_set_int(frame_props, "width", fw);
+     mlt_properties_set_int(frame_props, "height", fh);
+     mlt_properties_set_int(frame_props, "meta.media.width", fw);
+@@ -792,6 +894,7 @@ static void filter_close(mlt_filter filter)
+         mlt_pool_release(pdata->latest[0].data);
+         mlt_pool_release(pdata->latest[1].data);
+         mlt_producer_close(pdata->partner);
++        mlt_profile_close(pdata->partner_profile);
+         free(pdata->partner_resource);
+         pthread_mutex_destroy(&pdata->mutex);
+         free(pdata);
