@@ -122,6 +122,19 @@ KCM.SimpleKCM {
     ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
 
+        Loader {
+            Layout.fillWidth: true
+            active: !!root.st.liveCaptions && Object.keys(root.st.liveCaptions).length > 0
+            source: active && !root.st.liveCaptions.error ? "file:///usr/share/sparky-stereo/live-captions/LiveCaptions.qml" : ""
+            onLoaded: item.page = kcm
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: !!(root.st.liveCaptions || {}).error
+            type: Kirigami.MessageType.Warning
+            text: (root.st.liveCaptions || {}).error || ""
+        }
+
         QQC2.Label {
             Layout.fillWidth: true
             wrapMode: Text.Wrap

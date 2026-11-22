@@ -9,7 +9,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 TOOLKIT=$(cd "$HERE/../.." && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
 PACKAGE=sparky-stereo-partners
-VERSION=0.1.2
+VERSION=0.1.3
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the date of the recipe: build-provenance.sh}
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME="Daniel Ramos (Capitain Jack)"
 mkdir -p "$OUT"
