@@ -54,6 +54,15 @@ say_moved() {
 # postrm rely only on Essential packages, and ucf may already be gone.
 ucf_sum() { [ -f /var/lib/ucf/hashfile ] && awk -v p="$1" '$2 == p {print $1; exit}' /var/lib/ucf/hashfile || :; }
 
+# A folder of ours left empty: dpkg could not remove it at the removal while a file ucf keeps was still in it, and a
+# folder of /var/backups we made for the person's files. It goes when no other package lists it, as dpkg removes a
+# package's empty folders; one another package lists stays that package's (dpkg-query -S, Essential).
+drop_empty() {
+    [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(ls -A "$1")" ] || return 0
+    others=$(dpkg-query -S "$1" 2>/dev/null | sed 's/: [^:]*$//' | tr ',' '\n' | tr -d ' ' | grep -v -x -e '' -e "$package") || :
+    [ -n "$others" ] || rmdir "$1"
+}
+
 if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
     sparky-stereo-problems clear --all "$package"
 fi
@@ -99,6 +108,7 @@ remove|purge|abort-install)
             mv "$f.debian.dpkg-new" "$f.dpkg-new"
         fi
     done
+    for f in @MANAGED@; do drop_empty "${f%/*}"; done
     if [ -e /etc/motd ]; then
         # An existing MOTD belongs to the administrator; never replace it.
         if command -v sparky-stereo-problems >/dev/null 2>&1; then
@@ -132,6 +142,10 @@ if [ "$1" = purge ]; then
     for f in @CONFF@; do
         case "$f" in /etc/skel/*) rm -f "/var/backups/$package$f.dpkg-dist" ;; esac
     done
+    # and the folders made for them, when nothing of the person's is left in them
+    if [ -d "/var/backups/$package" ]; then
+        find "/var/backups/$package" -depth -type d | while read -r d; do drop_empty "$d"; done
+    fi
     rm -rf "/var/lib/$package"
 fi
 exit 0
