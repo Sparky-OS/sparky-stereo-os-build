@@ -10,5 +10,10 @@ Each later step adds patches here, one step on from its predecessor pinned by ha
 - `patches/s2-0002-stereo-icons-each-eye-its-view.patch`: while the edition's Qt draws a window once per eye (`_q_stereo_eye` on the window), `KIconEngine` loads each eye's view of an icon the theme has in stereo; an item that draws itself once per eye names its eye on the application (`_q_stereo_icon_eye`). Everything else is the plain icon, so a 2D output is unchanged.
 - Autotest: `autotests/kiconengine_stereotest.cpp` (fails on +stereo3d1, passes here).
 
-Build: `IMAGE=BUILDER bash build.sh WORK PREDECESSOR_DIR PUBLISHED_TREE ARCHIVE_DIR` (the arguments are described at the top of `build.sh`).
+## +stereo3d3 (queue row 77 milestone 2)
+
+- `patches/s3-0001-stereo-icons-a-drawing-is-counted.patch`: while `KIconEngine` draws, the loader also says whether the icon it gives has a stereo picture (in either eye, or as the plain icon outside an eye pass), and the engine adds one to the application's `_q_stereo_icons_drawn`; the KDE platform theme and Kirigami's Icon learn from it which windows show such icons (`packages/plasma-integration`). The check is remembered under the plain icon's cache key and skipped, with no lookup, when no theme in the tree has stereo folders.
+- Autotest: `kiconengine_stereotest` gains `drawingAStereoIconIsCounted` and `aThemeWithoutStereoFoldersCountsNothing` (fail on +stereo3d2, pass here).
+
+Build: `STEP=3 IMAGE=BUILDER bash build.sh WORK PREDECESSOR_DIR PUBLISHED_TREE ARCHIVE_DIR` (STEP 2 builds +stereo3d2 from the round's +stereo3d1) (the arguments are described at the top of `build.sh`).
 The job checks the predecessor's `.dsc` by its SHA-256 and every file it names, applies the two patches, writes the changelog and provenance, prepares Lean Code and builds amd64.

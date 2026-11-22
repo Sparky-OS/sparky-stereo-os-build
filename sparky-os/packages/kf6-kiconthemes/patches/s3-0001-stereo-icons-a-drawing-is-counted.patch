@@ -1,0 +1,306 @@
+Description: Count each drawing of an icon the theme has in stereo
+ While KIconEngine draws, the loader also says whether the icon it gives has a stereo picture
+ (in either eye of a window drawn once per eye, or as the plain icon outside an eye pass); the
+ engine then adds one to the application's _q_stereo_icons_drawn. Whatever draws windows once per
+ eye (the KDE platform theme, an item in Qt Quick) learns from it which windows show such icons.
+ The check is remembered under the plain icon's cache key, and is skipped with no lookup when no
+ theme in the tree has stereo folders, so a theme without them behaves as before.
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-22
+---
+diff --git a/autotests/kiconengine_stereotest.cpp b/autotests/kiconengine_stereotest.cpp
+index 46f7124..cc10f9d 100644
+--- a/autotests/kiconengine_stereotest.cpp
++++ b/autotests/kiconengine_stereotest.cpp
+@@ -17,6 +17,7 @@
+ #include <QPixmap>
+ #include <QRegularExpression>
+ #include <QStandardPaths>
++#include <QScopeGuard>
+ #include <QTest>
+ #include <QWidget>
+ #include <QWindow>
+@@ -74,6 +75,11 @@ private Q_SLOTS:
+         writePicture(QStringLiteral("fakepair/32x32/places/test-plain.png"), QSize(32, 32), Qt::yellow);
+         writePicture(QStringLiteral("fakepair/stereo/32x32/places/test-pair.png"), QSize(64, 32), Qt::red, Qt::green);
+ 
++        // The same plain icon in a theme without stereo folders
++        writeFile(QStringLiteral("fakeplain/index.theme"),
++                  "[Icon Theme]\nName=Fake plain\nDirectories=32x32/places\n\n[32x32/places]\nSize=32\nContext=Places\nType=Fixed\n");
++        writePicture(QStringLiteral("fakeplain/32x32/places/test-pair.png"), QSize(32, 32), Qt::blue);
++
+         // Stereo folders the loader refuses, and one it reads
+         writeFile(QStringLiteral("fakerefused/index.theme"),
+                   "[Icon Theme]\nName=Fake refused\nDirectories=32x32/places\n"
+@@ -180,6 +186,46 @@ private Q_SLOTS:
+         QCOMPARE(middle(icon.pixmap(QSize(32, 32))), QColor(Qt::blue));
+     }
+ 
++    void drawingAStereoIconIsCounted()
++    {
++        // Each drawing of an icon the theme has in stereo adds one to the application's _q_stereo_icons_drawn, in an
++        // eye pass and outside one; a plain icon, and a load that is no drawing by the engine, adds nothing
++        const auto drawn = [] {
++            return qApp->property("_q_stereo_icons_drawn").toULongLong();
++        };
++        const QIcon pair(new KIconEngine(QStringLiteral("test-pair"), KIconLoader::global()));
++        const QIcon plain(new KIconEngine(QStringLiteral("test-plain"), KIconLoader::global()));
++        const auto before = drawn();
++        QCOMPARE(middle(pair.pixmap(QSize(32, 32))), QColor(Qt::blue));
++        QCOMPARE(drawn(), before + 1);
++        QCOMPARE(middle(pair.pixmap(QSize(32, 32))), QColor(Qt::blue));
++        QCOMPARE(drawn(), before + 2);
++        QCOMPARE(middle(plain.pixmap(QSize(32, 32))), QColor(Qt::yellow));
++        QCOMPARE(drawn(), before + 2);
++        qApp->setProperty("_q_stereo_icon_eye", 2);
++        QCOMPARE(middle(pair.pixmap(QSize(32, 32))), QColor(Qt::green));
++        QCOMPARE(drawn(), before + 3);
++        QCOMPARE(middle(plain.pixmap(QSize(32, 32))), QColor(Qt::yellow));
++        QCOMPARE(drawn(), before + 3);
++        qApp->setProperty("_q_stereo_icon_eye", QVariant());
++        KIconLoader::global()->loadIcon(QStringLiteral("test-pair"), KIconLoader::Desktop, 32);
++        QCOMPARE(drawn(), before + 3);
++    }
++
++    void aThemeWithoutStereoFoldersCountsNothing()
++    {
++        KIconTheme::forceThemeForTests(QStringLiteral("fakeplain"));
++        KIconLoader::global()->reconfigure(QString());
++        const auto guard = qScopeGuard([] {
++            KIconTheme::forceThemeForTests(QStringLiteral("fakepair"));
++            KIconLoader::global()->reconfigure(QString());
++        });
++        const auto before = qApp->property("_q_stereo_icons_drawn").toULongLong();
++        const QIcon icon(new KIconEngine(QStringLiteral("test-pair"), KIconLoader::global()));
++        QCOMPARE(middle(icon.pixmap(QSize(32, 32))), QColor(Qt::blue));
++        QCOMPARE(qApp->property("_q_stereo_icons_drawn").toULongLong(), before);
++    }
++
+     void otherWindowsDoNotChooseAnEye()
+     {
+         // Only a widget window says which eye it paints while it paints; a Qt Quick window's item names its eye itself
+diff --git a/src/kiconengine.cpp b/src/kiconengine.cpp
+index e0e508d..6321d45 100644
+--- a/src/kiconengine.cpp
++++ b/src/kiconengine.cpp
+@@ -28,12 +28,18 @@ static int windowEye(const QWindow *window)
+ 
+ // The eye an icon is drawn for. Qt draws a window once per eye while it shows depth inside it, and says which eye
+ // it draws; then an icon the theme has in stereo gives that eye's view. Everywhere else it is 0: the plain icon.
+-static int paintedEye()
++static bool onGuiThread()
+ {
+     const auto *application = qobject_cast<QGuiApplication *>(QCoreApplication::instance());
+-    if (!application || QThread::currentThread() != application->thread()) {
++    return application && QThread::currentThread() == application->thread();
++}
++
++static int paintedEye()
++{
++    if (!onGuiThread()) {
+         return 0;
+     }
++    const auto *application = qGuiApp;
+     // An item that draws itself once per eye (an icon in Qt Quick) names the eye it asks for while it asks
+     const int asked = application->property("_q_stereo_icon_eye").toInt();
+     if (asked == 1 || asked == 2) {
+@@ -52,24 +58,40 @@ static int paintedEye()
+     return 0;
+ }
+ 
+-// The eye the loads of one drawing are made for
++// The eye the loads of one drawing are made for. On the gui thread the drawing also says whether
++// the icon has a stereo picture: each such drawing, in either eye or plain outside an eye pass,
++// adds one to the application's _q_stereo_icons_drawn, so that what draws windows once per eye
++// (the KDE platform theme, an item in Qt Quick) learns which windows show such icons.
+ class StereoEyeScope
+ {
+ public:
+     explicit StereoEyeScope(int eye)
+         : m_previous(KIconLoaderPrivate::stereoEye())
++        , m_previousProbe(KIconLoaderPrivate::stereoProbe())
++        , m_probe(onGuiThread())
+     {
+         KIconLoaderPrivate::setStereoEye(eye);
++        KIconLoaderPrivate::setStereoProbe(m_probe);
++        KIconLoaderPrivate::setStereoDrawn(false);
+     }
+     ~StereoEyeScope()
+     {
++        const bool drawn = m_probe && KIconLoaderPrivate::stereoDrawn();
+         KIconLoaderPrivate::setStereoEye(m_previous);
++        KIconLoaderPrivate::setStereoProbe(m_previousProbe);
++        KIconLoaderPrivate::setStereoDrawn(false);
++        if (drawn) {
++            QCoreApplication *application = QCoreApplication::instance();
++            application->setProperty("_q_stereo_icons_drawn", application->property("_q_stereo_icons_drawn").toULongLong() + 1);
++        }
+     }
+     StereoEyeScope(const StereoEyeScope &) = delete;
+     StereoEyeScope &operator=(const StereoEyeScope &) = delete;
+ 
+ private:
+     const int m_previous;
++    const bool m_previousProbe;
++    const bool m_probe;
+ };
+ 
+ class KIconEnginePrivate
+diff --git a/src/kiconloader.cpp b/src/kiconloader.cpp
+index d916ebc..ed64b5b 100644
+--- a/src/kiconloader.cpp
++++ b/src/kiconloader.cpp
+@@ -438,6 +438,7 @@ void KIconLoaderPrivate::initIconThemes()
+     }
+     // qCDebug(KICONTHEMES);
+     mIconThemeInited = true;
++    mHasStereoFolders = false;
+ 
+     // Add the default theme and its base themes to the theme tree
+     KIconTheme *def = new KIconTheme(KIconTheme::current(), m_appname);
+@@ -456,6 +457,9 @@ void KIconLoaderPrivate::initIconThemes()
+     mThemesInTree.append(def->internalName());
+     links.append(mpThemeRoot);
+     addBaseThemes(mpThemeRoot, m_appname);
++    for (const KIconThemeNode *themeNode : std::as_const(links)) {
++        mHasStereoFolders = mHasStereoFolders || kiconThemeHasStereoFolders(*themeNode->theme);
++    }
+ 
+     // Insert application specific themes at the top.
+     searchPaths.append(m_appname + QStringLiteral("/pics"));
+@@ -974,6 +978,44 @@ static bool readStereoViews(const QString &path, const QSize &pixels, QImage *le
+ }
+ 
+ static thread_local int t_stereoEye = 0;
++static thread_local bool t_stereoProbe = false;
++static thread_local bool t_stereoDrawn = false;
++
++bool KIconLoaderPrivate::stereoProbe()
++{
++    return t_stereoProbe;
++}
++
++void KIconLoaderPrivate::setStereoProbe(bool probe)
++{
++    t_stereoProbe = probe;
++}
++
++bool KIconLoaderPrivate::stereoDrawn()
++{
++    return t_stereoDrawn;
++}
++
++void KIconLoaderPrivate::setStereoDrawn(bool drawn)
++{
++    t_stereoDrawn = drawn;
++}
++
++bool KIconLoaderPrivate::hasStereoPicture(const QString &name, const QSize &size, qreal scale, const QString &key)
++{
++    if (!mHasStereoFolders) {
++        return false;
++    }
++    const QString probeKey = key + QLatin1String("_stereo-probe");
++    QPixmap none;
++    QString path;
++    if (!findCachedPixmapWithPath(probeKey, none, path)) {
++        // An empty path records an icon without a stereo picture
++        path = findStereoIconPath(name, std::min(size.width(), size.height()), scale);
++        insertCachedPixmapWithPath(probeKey, QPixmap(), path);
++    }
++    return !path.isEmpty();
++}
+ 
+ int KIconLoaderPrivate::stereoEye()
+ {
+@@ -1242,15 +1284,23 @@ QPixmap KIconLoader::loadScaledIcon(const QString &_name,
+ 
+     // While KIconEngine draws an icon for one eye of a window drawn once per eye, an icon the theme has in stereo
+     // gives that eye's view; any other load, and an icon without a stereo picture, is the plain icon
+-    if (const int eye = KIconLoaderPrivate::stereoEye(); eye && group != KIconLoader::User && !absolutePath && !size.isEmpty() && scale > 0) {
++    const bool stereoCandidate = group != KIconLoader::User && !absolutePath && !size.isEmpty() && scale > 0;
++    if (const int eye = KIconLoaderPrivate::stereoEye(); eye && stereoCandidate) {
+         d->initIconThemes();
+         if (d->loadStereoView(name, group, scale, size, state, overlays, eye, key, &pix, &path)) {
++            KIconLoaderPrivate::setStereoDrawn(true);
+             if (path_store) {
+                 *path_store = path;
+             }
+             return pix;
+         }
+         path.clear();
++    } else if (KIconLoaderPrivate::stereoProbe() && stereoCandidate) {
++        // KIconEngine draws the plain icon here, and tells the window it draws for whether the icon has a stereo picture
++        d->initIconThemes();
++        if (d->hasStereoPicture(name, size, scale, key)) {
++            KIconLoaderPrivate::setStereoDrawn(true);
++        }
+     }
+ 
+     if (d->findCachedPixmapWithPath(key, pix, path)) {
+diff --git a/src/kiconloader_p.h b/src/kiconloader_p.h
+index 1996101..50e01a3 100644
+--- a/src/kiconloader_p.h
++++ b/src/kiconloader_p.h
+@@ -77,6 +77,22 @@ public:
+     static int stereoEye();
+     static void setStereoEye(int eye);
+ 
++    /*
++     * While KIconEngine draws an icon (stereoProbe()), whether the load gave an icon the theme
++     * has in stereo (stereoDrawn()), in either eye or as the plain icon outside an eye pass, so
++     * that the engine can tell whoever draws windows once per eye.
++     */
++    static bool stereoProbe();
++    static void setStereoProbe(bool probe);
++    static bool stereoDrawn();
++    static void setStereoDrawn(bool drawn);
++
++    /*
++     * Whether the icon has a stereo picture at this size, remembered under the plain icon's
++     * cache key; always false, with no lookup, when no theme in the tree has stereo folders.
++     */
++    bool hasStereoPicture(const QString &name, const QSize &size, qreal scale, const QString &key);
++
+     /*
+      * One eye's view of the stereo picture of an icon, with the effects and overlays of the plain
+      * icon; false when the icon has no stereo picture, and the plain icon is drawn in both eyes.
+@@ -209,6 +225,7 @@ public:
+     // lazy loading: initIconThemes() is only needed when the "links" list is needed
+     // mIconThemeInited is used inside initIconThemes() to init only once
+     bool mIconThemeInited : 1;
++    bool mHasStereoFolders = false;
+     QString m_appname;
+ 
+     void drawOverlays(const KIconLoader *loader, KIconLoader::Group group, int state, QPixmap &pix, const QStringList &overlays);
+diff --git a/src/kicontheme.cpp b/src/kicontheme.cpp
+index 1ee99c7..7ad67ad 100644
+--- a/src/kicontheme.cpp
++++ b/src/kicontheme.cpp
+@@ -692,6 +692,12 @@ QString KIconTheme::iconPathByName(const QString &iconName, int size, KIconLoade
+     return QString();
+ }
+ 
++// Whether the theme has a stereo folder the loader reads (KIconLoaderPrivate)
++bool kiconThemeHasStereoFolders(const KIconTheme &theme)
++{
++    return !theme.d->mStereoDirs.isEmpty();
++}
++
+ QString KIconTheme::stereoIconPathByName(const QString &iconName, int size, KIconLoader::MatchType match, qreal scale) const
+ {
+     for (const QString &current : std::as_const(d->mExtensions)) {
+diff --git a/src/kicontheme.h b/src/kicontheme.h
+index 6987ab0..be37a1a 100644
+--- a/src/kicontheme.h
++++ b/src/kicontheme.h
+@@ -350,6 +350,7 @@ public:
+     static void initTheme();
+ 
+ private:
++    friend bool kiconThemeHasStereoFolders(const KIconTheme &theme);
+     std::unique_ptr<class KIconThemePrivate> const d;
+ };
+ 

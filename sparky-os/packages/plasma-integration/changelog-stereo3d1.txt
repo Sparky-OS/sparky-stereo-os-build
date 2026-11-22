@@ -1,0 +1,11 @@
+plasma-integration (6.7.4-1+stereo3d1) unstable; urgency=medium
+
+  * The edition's build of Debian's 6.7.4-1 (queue row 77 milestone 2).
+  * A window that shows an icon the icon theme has in stereo is drawn once per eye while it is on an
+    output that shows two eyes (a 3D mode, a stereo pair of outputs, anaglyph), so that each eye gets
+    its view of the icon; on a 2D output, and for a window that never drew such an icon, nothing
+    changes (s1-0001, with the stereo layer's Stereo::ScreenMode and KIconThemes 6.32.0-1+stereo3d3).
+  * Build-Depends on libstereo-layer-dev (>= 1.22.0); Depends on libkf6iconthemes6
+    (>= 6.32.0-1+stereo3d3~).
+  * plasma-integration by Kevin Ottens, Aleix Pol Gonzalez, Lukáš Tinkl, Harald Sitter and KDE;
+    packaged in Debian by the Debian Qt/KDE Maintainers.
