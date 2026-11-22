@@ -1,0 +1,23 @@
+Description: "3D display settings..." starts KScreen's page on the desktop session's platform
+ kcmshell6 was started with Jmol's environment; with QT_QPA_PLATFORM=xcb in it inside a Wayland session, KScreen's
+ page asked for the X11 backend, whose service aborted, and the page said that no KScreen backend was found. It is now
+ started without QT_QPA_PLATFORM, so the page follows the session.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-22
+---
+--- a/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
++++ b/src/org/openscience/jmol/app/jmolpanel/Stereo3D.java
+@@ -318,7 +318,11 @@
+   /** Open the desktop's display settings (KScreen), where a screen's 3D mode and the depth limits are set. */
+   public static void openDisplaySettings(Component parent) {
+     try {
+-      new ProcessBuilder("kcmshell6", "kcm_kscreen").start();
++      // KScreen's page follows the desktop session: started with QT_QPA_PLATFORM=xcb inside a Wayland session it asks
++      // for the X11 backend, which aborts, and the page has no display to show.
++      ProcessBuilder settings = new ProcessBuilder("kcmshell6", "kcm_kscreen");
++      settings.environment().remove("QT_QPA_PLATFORM");
++      settings.start();
+     } catch (Exception e) {
+       tell(parent, "settings", tr("settingsFailed"), e.getMessage());
+     }

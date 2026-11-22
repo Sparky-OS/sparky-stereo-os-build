@@ -1,0 +1,28 @@
+Description: "3D display settings..." starts KScreen's page on the desktop session's platform
+ The View menu's "3D display settings..." started kcmshell6 with ParaView's own environment. When ParaView runs on
+ xcb inside a Wayland session (QT_QPA_PLATFORM=xcb, the GLX route), KScreen's page ran on xcb too, asked for the X11
+ backend, whose service aborted ("Process org.kde.KScreen received signal 6"), and the page said that no KScreen
+ backend was found. kcmshell6 is now started without QT_QPA_PLATFORM, so the page follows the session.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-22
+---
+--- a/Clients/ParaView/ParaViewMainWindow.cxx
++++ b/Clients/ParaView/ParaViewMainWindow.cxx
+@@ -359,7 +359,15 @@
+   QObject::connect(displaySettings, &QAction::triggered, this,
+     [this]()
+     {
+-      if (!QProcess::startDetached(QStringLiteral("kcmshell6"), { QStringLiteral("kcm_kscreen") }))
++      // KScreen's page follows the desktop session, not ParaView: started with ParaView's QT_QPA_PLATFORM=xcb inside a
++      // Wayland session it asks for the X11 backend, which aborts, and the page has no display to show.
++      QProcess settings;
++      settings.setProgram(QStringLiteral("kcmshell6"));
++      settings.setArguments({ QStringLiteral("kcm_kscreen") });
++      QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
++      environment.remove(QStringLiteral("QT_QPA_PLATFORM"));
++      settings.setProcessEnvironment(environment);
++      if (!settings.startDetached())
+       {
+         QMessageBox::warning(this, QStringLiteral("ParaView"),
+           QString::fromUtf8(vtkPVStereoEdition::Text("The display settings could not be opened.")));
