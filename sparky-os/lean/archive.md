@@ -268,3 +268,39 @@ Symptom: a published Perl binding requires an ABI name that neither the current 
 Cause: the old binding was already uninstallable when published; its relation owner having a successor does not make the absent external ABI an edition package.
 Fix: establish the absence in both complete views, retain every solver attempt and qualify the candidate with no usable baseline.
 Found by: the first solver attempts named the old ABI, the last named conflicting driver policies, and the signed Packages records identified the current runtime's newer Provides.
+
+## No baseline available from the predecessor's archives
+
+With `--allow-unavailable-baseline`, a current-view predecessor solver refusal may identify an archive whose publication-time signed index cannot be recovered.
+The existing archive-policy search evidence must establish that absence, and the complete solver attempts must attribute the failure to that archive.
+The gate first tries the unchanged predecessor in the candidate view; a successful solve always remains the baseline.
+It never substitutes a later implicated archive or relaxes its authentication to manufacture a historical baseline.
+Instead it records `no-baseline-available`, the implicated archives, publication instant, every attempt and the authenticated views and search evidence.
+The candidate receives no inherited-failure allowance: it must independently install, link and start in the candidate's frozen view.
+This is distinct from proof that a predecessor was already uninstallable at publication, which requires both views to exist.
+Without the option, the earlier refusal is unchanged.
+The controls include a candidate with a real unresolved library, which still fails in this mode.
+
+## Bound reuse after a gate rule changes
+
+Use `--reuse-manifest`, `--reuse-seed` and `--suite-record` only with a complete prior inventory and retained signed views.
+The manifest binds every prior passing result to its candidate and predecessor SHA-256, all original sibling inputs, the old gate's complete Python modules and smoke table, and both authenticated archive views.
+The gate restores the retained indexes by copy, authenticates each InRelease with its configured archive key and checks each Packages file against its InRelease before solving anything.
+It refuses changed keys, source configuration, metadata bytes, result records or original packages.
+The suite record binds the passing whole-toolkit log to the current gate code.
+Changed packages and the conservative transitive reverse dependency set, including alternative relations, recommendations, conflicts and virtual providers, always run fresh.
+An input without a passing prior record also runs fresh.
+
+A deterministic sample of 24 otherwise reusable inputs runs first under the new code, with at least four mixed baselines and every publication-time-uninstallable baseline.
+The seed, selected names, old and new code hashes and dependency closure are retained.
+Every sampled verdict must match its previous findings, notes and predecessor class.
+Only then may unchanged comparisons reuse their bound passing records.
+Every row of `bound-verdict.json` says fresh or reused and carries its input, view and code binding; reused rows additionally name the whole-suite and sample certification.
+All fresh failures are collected, and a failed sample refuses reuse rather than hiding its disagreement.
+Exit zero requires one successful verdict for every input and unchanged package and code hashes at completion.
+The signed integration fixture checks fresh and reused rows together; other controls reject changed bindings, incomplete sample coverage and a failed suite.
+
+Symptom: a proof rerun meets archive movement rather than a candidate regression, while hundreds of already completed comparisons remain identical.
+Cause: some publication-time third-party indexes were never retained, and a changed gate rule invalidates unconditional reuse of old results.
+Fix: record the unavailable baseline explicitly, require every candidate check, then certify bound reuse with the full toolkit suite and a reproducible fresh sample.
+Found by: reading every predecessor solver attempt, attributing its packages to signed archives and comparing complete comparison inputs.

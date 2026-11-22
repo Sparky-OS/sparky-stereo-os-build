@@ -286,3 +286,48 @@ def test_provider_presence_keeps_legacy_archive_aliases():
            'Provides': 'openoffice-en-US, standard-name (= 1), compact-alias(= 2)'}
     found = historical.providers([(obj, 'archive')])
     assert set(found) == {'office', 'openoffice-en-US', 'standard-name', 'compact-alias'}
+
+
+def test_unavailable_archive_is_explicit_and_has_no_baseline(tmp_path, capsys):
+    args = mixed_fixture(tmp_path, implicated=True)
+    release.check_link(**args, allow_unavailable_baseline=True, collect_predecessor_stops=True)
+    assert 'predecessor view=no-baseline-available' in capsys.readouterr().out
+    rows = json.loads((tmp_path/'scratch/unavailable-predecessors.json').read_text())
+    assert len(rows) == 1
+    assert rows[0]['unavailable_archives'][0]['source'] == '2'
+    assert rows[0]['archive_evidence']['search_evidence']['2']['searches']
+    assert rows[0]['failure_in_candidate_view']
+
+
+@pytest.mark.parametrize('current_solves', [False, True])
+def test_available_baseline_never_uses_unavailable_class(tmp_path, capsys, current_solves):
+    args = mixed_fixture(tmp_path)
+    if current_solves:
+        args['previous_siblings'][1] = args['siblings'][0]
+    release.check_link(**args, allow_unavailable_baseline=True)
+    output = capsys.readouterr().out
+    assert ('predecessor view=candidate' if current_solves else 'predecessor view=mixed') in output
+    assert 'predecessor view=no-baseline-available' not in output
+
+
+def test_unavailable_baseline_never_excuses_real_library_regression(tmp_path):
+    from lean.tests.test_linkcheck import _runpath_case
+    _, built = _runpath_case(tmp_path)
+    before, after = built('1', 'lib/x86_64-linux-gnu'), built('1+lc1', 'share/own/x86_64-linux-gnu')
+    args = mixed_fixture(tmp_path/'views', implicated=True)
+    for path in (before, after):
+        root=tmp_path/('unpack-'+path.name)
+        subprocess.run(['dpkg-deb','-R',str(path),str(root)],check=True,stdout=subprocess.DEVNULL)
+        c=root/'DEBIAN/control';c.write_text(c.read_text().replace('Depends: libc6','Depends: libc6, external-framework'))
+        subprocess.run(['dpkg-deb','-b',str(root),str(path)],check=True,stdout=subprocess.DEVNULL)
+    args['debs']=[after];args['previous_siblings'][0]=before
+    with pytest.raises(package.Invalid, match='not found libdemoown.so'):
+        release.check_link(**args, allow_unavailable_baseline=True)
+
+
+def test_unavailable_baseline_does_not_classify_candidate_solver_failure(tmp_path):
+    args=mixed_fixture(tmp_path,implicated=True)
+    args['siblings']=[]
+    with pytest.raises(package.Invalid):
+        release.check_link(**args,allow_unavailable_baseline=True,collect_predecessor_stops=True)
+    assert json.loads((tmp_path/'scratch/unavailable-predecessors.json').read_text()) == []

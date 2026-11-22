@@ -214,14 +214,15 @@ def solver_evidence(failure):
 
 
 class PreviousView:
-    def __init__(self, current, config, published_at, candidates, policy=None):
+    def __init__(self, current, config, published_at, candidates, policy=None, allow_unavailable=False, frozen_view=None):
+        self.allow_unavailable = allow_unavailable
         self.cutoff = instant(published_at)
         self.candidates = {archive.identity(current.input(p)['control']) for p in candidates}
         self.names = {obj[0] for obj in self.candidates}
         self.candidate_controls = [current.input(p)['control'] for p in candidates]
         self.candidate_providers = providers((obj, 'candidate-set') for obj in self.candidate_controls)
         self.dated = archive.Archive(config, current.scratch / 'dated-predecessor', current.arch,
-                                     current.minimum >> 30, current.root_minimum >> 30)
+                                     current.minimum >> 30, current.root_minimum >> 30, frozen_view)
         now_sources, now_rows = authenticated_view(current)
         exceptions = search_evidence(policy, current, self.cutoff)
         old_sources, old_rows = authenticated_view(self.dated, self.cutoff, exceptions)
@@ -334,6 +335,23 @@ class PreviousView:
                                    'providers': {'candidate-set': [], 'previous-set': [], 'candidate-archives': [], 'dated-archives': []}})
         return absent
 
+    def unavailable(self, current, deb, prior, failure, affected):
+        """No permitted historical universe can be assembled; never inherit its findings."""
+        blocked = [dict(row, reason='named by failed solve; no dated signed index exists')
+                   for row in self.archives if row['source'] in affected & self.exempt]
+        if not self.allow_unavailable or not blocked:
+            raise package.Invalid('solver failure names an archive with only a later index: ' +
+                                  ', '.join(row['archive'] for row in blocked))
+        record = {'view': 'no-baseline-available', 'predecessor': str(deb),
+                  'publication': self.cutoff.isoformat(), 'archives': [dict(row, view='unavailable' if row['source'] in affected & self.exempt else 'not-used', reason='no predecessor comparison; candidate must pass independently') for row in self.archives],
+                  'unavailable_archives': blocked, 'archive_evidence': self.evidence,
+                  'failure_in_candidate_view': solver_evidence(failure),
+                  'previous_inputs': [{'identity': archive.identity(p['control']), 'sha256': p['sha256']} for p in prior],
+                  'reason': 'current view failed; a required publication archive has no dated signed index; mixed solve forbidden'}
+        current.predecessor_result = record
+        (Path(failure.directory) / 'no-baseline-available.json').write_text(json.dumps(record, indent=2) + '\n')
+        return None
+
     def _qualify(self, current, deb, siblings):
         prior = [current.input(p) for p in dict.fromkeys([deb] + list(siblings))]
         overlap = [archive.identity(p['control']) for p in prior if archive.identity(p['control']) in self.candidates]
@@ -360,7 +378,7 @@ class PreviousView:
                     named = failure_names(Path(attempt['solver']).read_text())
                     affected = set().union(*(self.owners.get(n, set()) for n in named))
                     if affected & self.exempt:
-                        raise package.Invalid('solver failure names an archive with only a later index: ' + attempt['solver'])
+                        return self.unavailable(current, deb, prior, exc, affected)
                 current.predecessor_result['attempted'] = self.mode
                 try:
                     qualified = self.dated.qualify(deb, siblings)
@@ -411,8 +429,7 @@ class PreviousView:
                 affected = set().union(*(set(v) for v in attribution.values()))
                 if affected & self.exempt:
                     blocked = [r['archive'] for r in self.archives if r['source'] in affected & self.exempt]
-                    raise package.Invalid('solver failure names an archive with only a later index: ' +
-                                          ', '.join(blocked) + '; see ' + attempt['solver']) from exc
+                    return self.unavailable(current, deb, prior, exc, affected)
                 changed_causes.update(set().union(*(self.owners.get(n, set()) for n in owners)) & self.changed)
                 if external_missing:
                     changed_causes.update(set().union(*(self.dated_owners.get(n, set()) for n in external_relations)) & self.changed)

@@ -646,11 +646,13 @@ def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=(), archive_c
                                   siblings=siblings, previous_siblings=previous_siblings, previous_smoke=smoke_table)
         if smoke_table:
             findings += smoke(new_deb, smoke_table, qualified=qualified, notes=notes)
-        (qualified.directory / 'link-check.json').write_text(json.dumps({
+        record = {
             'package': str(new_deb), 'findings': findings, 'notes': notes,
             **({'predecessor': archive_context.predecessor_result}
                if getattr(archive_context, 'previous_view', None) is not None else {}),
-        }, indent=2) + '\n')
+        }
+        archive_context.link_result = record
+        (qualified.directory / 'link-check.json').write_text(json.dumps(record, indent=2) + '\n')
         for note in notes:
             print(f'lc1 link note: {Path(new_deb).name}: {note}')
         if findings:

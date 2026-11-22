@@ -54,7 +54,17 @@ edition() {
             >>/etc/apt/sources.list.d/sparky-stereo.sources
     fi
 }
-update_all() { apt_get update -q >"$1" 2>&1 || fail "archive update failed: $1"; }
+update_all() {
+    if [ -n "${E_FROZEN_PUBLIC_LISTS:-}" ]; then
+        # The caller has authenticated and copied these public indexes. Updating
+        # only the local edition must not change the solver's frozen public view.
+        sha256sum --quiet -c "$E_FROZEN_PUBLIC_LISTS" || fail "frozen public indexes changed before upgrade"
+        update_edition "$1" || fail "edition archive update failed: $1"
+        sha256sum --quiet -c "$E_FROZEN_PUBLIC_LISTS" || fail "frozen public indexes changed during upgrade"
+    else
+        apt_get update -q >"$1" 2>&1 || fail "archive update failed: $1"
+    fi
+}
 # refresh only the edition source: Debian, deb-multimedia and SparkyLinux keep the lists the install used
 update_edition() {
 	apt_get update -q -o Dir::Etc::SourceList=/etc/apt/sources.list.d/sparky-stereo.sources -o Dir::Etc::SourceParts=- \

@@ -229,8 +229,13 @@ def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
 
 def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=(),
                previous_siblings=(), min_free_gib=None, root_min_free_gib=1,
-               previous_archive_config=None, previous_published_at=None, previous_archive_policy=None, archive_evidence=None, collect_predecessor_stops=False):
+               previous_archive_config=None, previous_published_at=None, previous_archive_policy=None, archive_evidence=None, collect_predecessor_stops=False, allow_unavailable_baseline=False,
+               reuse_manifest=None, reuse_seed=None, suite_record=None):
     """Qualify edition snapshots, optionally using a checked dated view for an unsolvable predecessor."""
+    if reuse_manifest:
+        options = locals().copy()
+        from . import reuse
+        return reuse.check(**options)
     archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
     scratch = scratch or os.environ.get('SPARKY_LC_SCRATCH')
     if not archive_config or not scratch:
@@ -255,7 +260,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
     _LINK.update(contexts=contexts, smoke=smoke_table, plan=[], private={})
     stop = None
     dated_count = mixed_count = 0
-    eligibility_stops, unusable = [], []
+    eligibility_stops, unusable, unavailable = [], [], []
     try:
         for deb in debs:
             arch = controls[deb]['Architecture']
@@ -272,7 +277,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
                     from .historical import PreviousView
                     selected = [p for p in debs if controls[p]['Architecture'] in (arch, 'all')]
                     contexts[arch].previous_view = PreviousView(contexts[arch], previous_archive_config,
-                                                              previous_published_at, selected, previous_archive_policy)
+                                                              previous_published_at, selected, previous_archive_policy, allow_unavailable_baseline)
             same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
             old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
             contexts[arch].freeze(same_arch + old_arch)
@@ -308,6 +313,9 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
                     dated_count += 1
                 if view == 'mixed':
                     mixed_count += 1
+            if predecessor.get('view') == 'no-baseline-available':
+                unavailable.append({'input': str(_LINK['plan'][index][0]), **predecessor})
+                print('lc1: no baseline available: ' + json.dumps(unavailable[-1], sort_keys=True))
             if predecessor.get('view') == 'uninstallable-at-publication':
                 unusable.append({'input': str(_LINK['plan'][index][0]), **predecessor})
                 for row in predecessor['missing_relations']:
@@ -327,11 +335,13 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
             Path(scratch).mkdir(parents=True, exist_ok=True)
             (Path(scratch) / 'predecessor-stops.json').write_text(json.dumps(eligibility_stops, indent=2) + '\n')
             (Path(scratch) / 'uninstallable-predecessors.json').write_text(json.dumps(unusable, indent=2) + '\n')
+            (Path(scratch) / 'unavailable-predecessors.json').write_text(json.dumps(unavailable, indent=2) + '\n')
         _LINK.clear()
     if stop is not None:
         raise stop
     if previous_archive_config:
         print(f'lc1: dated predecessor baselines: {dated_count} of {len(debs)}; mixed dated/current: {mixed_count}')
+    print(f'lc1: no baseline available: {len(unavailable)} inputs')
     print(f'lc1: published predecessor not installable at its publication: {len(unusable)} inputs')
     for entry in unusable:
         print('lc1: repaired published input: ' + Path(entry['input']).name)
@@ -381,6 +391,10 @@ def main():
     link.add_argument('--smoke', default=str(Path(__file__).with_name('smoke.tsv')), help='programs to start with LD_BIND_NOW=1')
     link.add_argument('--archive-config', help='JSON signed public archive sources (SPARKY_LC_ARCHIVE_CONFIG)')
     link.add_argument('--collect-predecessor-stops', action='store_true', help='finish all inputs after recorded predecessor eligibility refusals; any uncovered refusal still exits 1')
+    link.add_argument('--allow-unavailable-baseline', action='store_true', help='checked missing publication archive: candidate must pass without any baseline allowance')
+    link.add_argument('--reuse-manifest', help='bound prior verdict records; requires seeded fresh certification on a code change')
+    link.add_argument('--reuse-seed', help='deterministic fresh sample seed')
+    link.add_argument('--suite-record', help='whole-toolkit exit/code/log binding for reuse certification')
     link.add_argument('--previous-archive-config', help='same signed archives in a dated predecessor view')
     link.add_argument('--previous-archive-policy', help='hashed per-archive search evidence for unchanged unrelated indexes')
     link.add_argument('--archive-evidence', help='retain authenticated archive views here for the round supply-chain record')
@@ -420,7 +434,8 @@ def main():
                        Path(args.siblings_file).read_text().splitlines() if args.siblings_file else (),
                        Path(args.previous_siblings_file).read_text().splitlines() if args.previous_siblings_file else (),
                        args.min_free_gib, args.root_min_free_gib,
-                       args.previous_archive_config, args.previous_published_at, args.previous_archive_policy, args.archive_evidence, args.collect_predecessor_stops)
+                       args.previous_archive_config, args.previous_published_at, args.previous_archive_policy, args.archive_evidence, args.collect_predecessor_stops, args.allow_unavailable_baseline,
+                       args.reuse_manifest, args.reuse_seed, args.suite_record)
         elif args.command == 'check-selection':
             paths = [line.split('\t')[0] for line in Path(args.tsv).read_text().splitlines()
                      if line.split('\t')[-1] != 'source']
