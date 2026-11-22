@@ -16,7 +16,8 @@ Where it looks, newest version wins and the debs of that exact version found in 
   1. the stage folders given on the command line,
   2. the cohort list (default /K3D/partners/round-next/cohort.list), one .deb path per line,
   3. the live repository (default: readlink -f /var/tmp/sparky-repo-current), its pool/*/*/<source>/ folders.
-A catalogue is read with msgunfmt from usr/share/locale/<lang>/LC_MESSAGES/<domain>.mo in the amd64 and all debs.
+A catalogue is read with msgunfmt from <locale root>/<lang>/LC_MESSAGES/<domain>.mo in the amd64 and all debs.
+The default locale root is usr/share/locale.
 The msgctxt, the msgid and the msgstr must all be those the patch adds.
 
   translations-shipped.py --gettext PATCH...
@@ -38,13 +39,14 @@ from pathlib import Path
 
 TRANSLATIONS = Path(__file__).resolve().parent.parent / 'translations'
 
-# patch -> (source package, gettext domain for patches that name flat po/<lang>.po files[, folder of the catalogues
-# when it is not usr/share/locale: VLC Stereo keeps its own under usr/share/vlc-stereo/locale])
+# patch -> (source package, gettext domain for flat <lang>.po or <domain>_<lang>.po files
+# [, installed locale root when it differs from usr/share/locale])
 SOURCES = {
     'command-not-found-messages.po.patch': ('command-not-found', 'command-not-found'),
     'digikam-stereo3d.po.patch': ('digikam', None),
     'discover-backend-split.po.patch': ('plasma-discover', None),
     'dragon-3d-video.po.patch': ('dragon', None),
+    'grass-3d-view-stereo.po.patch': ('grass', 'grasswxpy', 'usr/lib/grass85/locale'),
     'kalgebra-stereo3d.po.patch': ('kalgebra', None),
     'kdenlive-order61e.po.patch': ('kdenlive', None),
     'kdenlive-order61f.po.patch': ('kdenlive', None),
@@ -52,9 +54,11 @@ SOURCES = {
     'kalzium-stereo3d.po.patch': ('kalzium', None),
     'kf6-kfilemetadata-stereo3d.po.patch': ('kf6-kfilemetadata', None),
     'kf6-kio-gpu-launch.po.patch': ('kf6-kio', None),
+    'kicad-3d-viewer-stereo.po.patch': ('kicad', 'kicad'),
     'kinfocenter-stereo3d.po.patch': ('kinfocenter', None),
     'kinfocenter-displaycal.po.patch': ('kinfocenter', None),
     'kscreen-arrangement-view.po.patch': ('kscreen', None),
+    'kscreen-2d-replica-eye-selector.po.patch': ('kscreen', None),
     'kscreen-dp-frame-sequential.po.patch': ('kscreen', None),
     'kscreen-spanish-display-settings.po.patch': ('kscreen', None),
     'kscreen-wdisplays-menus.po.patch': ('kscreen', None),
@@ -63,15 +67,20 @@ SOURCES = {
     'kubrick-stereo3d.po.patch': ('kubrick', None),
     'kwin-wallpaper-cost.po.patch': ('kwin', None),
     'kwin-keyboard-tablet-mode-only.po.patch': ('kwin', None),
+    'paraview-stereo.po.patch': ('paraview', 'paraview-stereo'),
+    'plasma-desktop-tablet-mode-panels.po.patch': ('plasma-desktop', None),
     'plasma-desktop-wallpaper-cost.po.patch': ('plasma-desktop', None),
     'plasma-nm-connectivity-check.po.patch': ('plasma-nm', None),
     'plasma-pa-virtual-streams.po.patch': ('plasma-pa', None),
     'plasma-pa-audio-routes.po.patch': ('plasma-pa', None),
+    'plasma-pa-sound-formats.po.patch': ('plasma-pa', None),
+    'plasma-pa-speaker-setup.po.patch': ('plasma-pa', None),
     'plasma-workspace-recovery.po.patch': ('plasma-workspace', None),
     'plasma-workspace-wallpaper-cost.po.patch': ('plasma-workspace', None),
     'powerdevil-graphics-link.po.patch': ('powerdevil', None),
     'vlc-spatial-video.po.patch': ('vlc', 'vlc', 'usr/share/vlc-stereo/locale'),
     # ORDER 46b and 46c (catalogue-rebuilds/order46b.md and order46c-receivers.tsv: the source each patch is for)
+    'command-not-found-order46b.po.patch': ('command-not-found', 'command-not-found'),
     'digikam-order46c-catalogues.patch': ('digikam', None),
     'dolphin-order46c-catalogues.patch': ('dolphin', None),
     'dragon-order46c-catalogues.patch': ('dragon', None),
@@ -80,10 +89,14 @@ SOURCES = {
     'kalgebra-order46c-catalogues.patch': ('kalgebra', None),
     'kalzium-order46c-catalogues.patch': ('kalzium', None),
     'karton-order46c-catalogues.patch': ('karton', None),
+    'kdeconnect-order46b.po.patch': ('kdeconnect', None),
     'kdenlive-order46c-catalogues.patch': ('kdenlive', None),
+    'kf6-kfilemetadata-order46b.po.patch': ('kf6-kfilemetadata', None),
+    'kf6-kio-order46b.po.patch': ('kf6-kio', None),
     'koko-order46c-catalogues.patch': ('koko', None),
     'kolourpaint-order46c-catalogues.patch': ('kolourpaint', None),
     'kphotoalbum-order46c-catalogues.patch': ('kphotoalbum', None),
+    'krdc-order46b.po.patch': ('krdc', None),
     'krdc-throw-catch-names.patch': ('krdc', None),
     'krdp-order46b.packaging.patch': ('krdp', None),
     'krdp-order46b.patch': ('krdp', None),
@@ -97,7 +110,12 @@ SOURCES = {
     'marble-order46c-catalogues.patch': ('marble', None),
     'partitionmanager-order46c-catalogues.patch': ('partitionmanager', None),
     'plank-player-order46c-catalogues.patch': ('plank-player', None),
+    'plasma-desktop-order46b.po.patch': ('plasma-desktop', None),
+    'plasma-discover-order46b.po.patch': ('plasma-discover', None),
+    'plasma-nm-order46b.po.patch': ('plasma-nm', None),
     'plasma-stereo-wallpaper-order46b.patch': ('plasma-stereo-wallpaper', None),
+    'plasma-workspace-order46b.po.patch': ('plasma-workspace', None),
+    'powerdevil-order46b.po.patch': ('powerdevil', None),
     'stereo-create-order46c-catalogues.patch': ('stereo-create', None),
     'variety-order46c-catalogues.patch': ('variety', 'variety'),
     'vlc-order46c-catalogues.patch': ('vlc', 'vlc', 'usr/share/vlc-stereo/locale'),
@@ -106,9 +124,14 @@ SOURCES = {
 }
 
 
+_PO_TARGET = re.compile(r'^\+\+\+ b/(\S+\.po)\s*$')
+_LANGUAGE = r'[a-z]{2,3}(?:_[A-Z]{2})?'
+
+
 def gettext_files(patch):
     """The .po files a patch changes (the paths of its +++ lines)."""
-    return [m.group(1) for m in re.finditer(r'^\+\+\+ b/(\S+\.po)\s*$', patch.read_text(encoding='utf-8'), re.M)]
+    return [m.group(1) for line in patch.read_text(encoding='utf-8').splitlines()
+            if (m := _PO_TARGET.fullmatch(line))]
 
 
 def catalogue_patches():
@@ -195,18 +218,11 @@ def added_entries(patch):
     cur = None
     in_hunk = False
     for line in patch.read_text(encoding='utf-8').split('\n'):
-        m = re.match(r'^\+\+\+ b/po/([^/]+)/([^/]+)\.po$', line) or re.match(r'^\+\+\+ b/(?!poqm/)(?:\S+/)?([a-z]{2,3}(?:_[A-Z]{2})?)/([^/]+)\.po$', line)
-        if m:
-            cur = (m.group(1), m.group(2))
-            lines.setdefault(cur, [])
-            in_hunk = False
-            continue
-        m = re.match(r'^\+\+\+ b/po/([^/]+)\.po$', line)
-        if m:
-            if flat_domain is None:
-                raise SystemExit(f'{patch.name}: flat file {line}, and SOURCES names no domain for it')
-            cur = (m.group(1), flat_domain)
-            lines.setdefault(cur, [])
+        target = _PO_TARGET.fullmatch(line)
+        if target:
+            cur = catalogue_identity(patch.name, target[1], flat_domain)
+            if cur is not None:
+                lines.setdefault(cur, [])
             in_hunk = False
             continue
         if line.startswith('diff '):
@@ -232,6 +248,27 @@ def added_entries(patch):
         entries = parse_po_flagged(ls)
         added[key] = {k: v[0] for k, v in entries.items() if v[1] and v[0].replace('\0', '') != ''}
     return added
+
+
+def catalogue_identity(patch, filename, flat_domain):
+    """Match the recipe's PO file to the installed language and gettext domain."""
+    if filename.startswith('poqm/'):
+        return None
+    path = Path(filename)
+    # A top-level po/<lang>.po is flat even though "po" looks like a language code.
+    if path.parent == Path('po'):
+        if flat_domain:
+            return path.stem, flat_domain
+        raise SystemExit(f'{patch}: cannot map flat PO {filename} to a locale and domain in SOURCES')
+    if path.parent.parent == Path('po'):
+        return path.parent.name, path.stem
+    if flat_domain:
+        lang = path.stem.removeprefix(flat_domain + '_')
+        if re.fullmatch(_LANGUAGE, lang):
+            return lang, flat_domain
+    if path.parent.name != 'po' and re.fullmatch(_LANGUAGE, path.parent.name):
+        return path.parent.name, path.stem
+    raise SystemExit(f'{patch}: cannot map PO {filename} to a locale and domain')
 
 
 def _split_version(v):
