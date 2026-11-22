@@ -27,7 +27,7 @@ NAME=${CONTAINER_NAME:-$PACKAGE-stereo3d1-build}
 [[ $DEBIAN_SNAPSHOT =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || { echo "DEBIAN_SNAPSHOT must be an instant such as 20261121T150000Z" >&2; exit 2; }
 mkdir -p "$WORK"
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 2; }
-pool=(); [ -n "${POOL:-}" ] && pool=(--mount "type=bind,src=$POOL,dst=/pool,readonly")
+pool=(-e POOL_GIVEN=0); [ -n "${POOL:-}" ] && pool=(-e POOL_GIVEN=1 --mount "type=bind,src=$POOL,dst=/pool,readonly")
 # shellcheck source=../../repo/build-provenance.sh
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "$IMAGE" "$HERE"
@@ -48,7 +48,7 @@ rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
 printf "Types: deb\nURIs: https://snapshot.debian.org/archive/debian/%s\nSuites: testing\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\nCheck-Valid-Until: no\n" "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list.d/debian.sources
 printf "Types: deb\nURIs: file:/repo\nSuites: mashtabba\nComponents: main\nSigned-By: /repo/sparky-stereo-repo.asc\n" > /etc/apt/sources.list.d/edition.sources
 printf "Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n" > /etc/apt/preferences.d/edition
-if [ -d /pool ]; then
+if [ "$POOL_GIVEN" = 1 ]; then
 	printf "Types: deb\nURIs: file:/pool\nSuites: ./\nTrusted: yes\n" > /etc/apt/sources.list.d/pool.sources
 	printf "\nPackage: *\nPin: origin \"\"\nPin-Priority: 1002\n" >> /etc/apt/preferences.d/edition
 fi
