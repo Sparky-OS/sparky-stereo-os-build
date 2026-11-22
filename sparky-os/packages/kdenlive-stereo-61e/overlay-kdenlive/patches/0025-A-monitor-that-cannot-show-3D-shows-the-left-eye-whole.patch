@@ -1,0 +1,67 @@
+Description: A monitor that cannot show 3D shows the left eye whole
+ Where a monitor cannot show a 3D video in 3D (Kdenlive runs on X11 under a
+ compositor that takes stereo content on Wayland only, or the compositor
+ refused the stereo declaration), it said so once and showed its frames as
+ they are: in a 3D project the frame of two eyes in the monitor's area of one
+ eye's shape, each eye squeezed to half its width, and in the clip monitor a
+ 3D clip's packed frame. A program never shows an eye squeezed (the stereo
+ contract: "A program never stretches or squeezes an eye; KWin scales once, at
+ the output"), so such a monitor now shows what Enable 3D off shows: the left
+ eye of the 3D picture, whole and at its own shape, with nothing declared. The
+ two sentences that tell the person say so ("It shows the left eye's view,
+ flat."). Renders and thumbnails do not change.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-22
+diff --git a/src/monitor/monitor.cpp b/src/monitor/monitor.cpp
+index 738c290..8b05a17 100644
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -2734,15 +2734,16 @@ void Monitor::updateStereoPreview()
+     if (mode == 2 && format.isStereo() && !m_stereoWaylandSaid && StereoLayer::needsWayland()) {
+         // The desktop takes stereo content, but the 3D area is a Wayland surface and Kdenlive runs on X11
+         m_stereoWaylandSaid = true;
+-        warningMessage(i18n("This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."), -1);
++        warningMessage(i18n("This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the left eye's view, flat."), -1);
+     }
+ #endif
+     const bool unpackedByFilter = format.packing == Stereo3D::Packing::Lines || format.packing == Stereo3D::Packing::Columns
+         || format.packing == Stereo3D::Packing::Checkerboard || format.packing == Stereo3D::Packing::FrameSequence;
+     // Enable 3D off shows one eye, the left one, whole and at its own shape, and declares nothing: a program never shows an eye
+     // squeezed (the stereo contract), and a flat picture of a pair is its left eye, as a 2D screen shows it under Stereo KWin. So off
+-    // and Left Eye Only show the same picture; only the switch differs.
+-    const bool leftEye = (mode == 1 || (mode == 0 && format.isStereo()));
++    // and Left Eye Only show the same picture; only the switch differs. A monitor that cannot show 3D (Kdenlive on X11, a refused
++    // declaration) shows that picture too.
++    const bool leftEye = mode == 1 || (format.isStereo() && !layer);
+     QString unpack;
+     if (pairProject && m_id == Kdenlive::ProjectMonitor) {
+         // the timeline made the two eyes already
+@@ -2763,12 +2764,12 @@ void Monitor::updateStereoPreview()
+         m_stereoLayer = new StereoLayer(m_glMonitor, this);
+         m_stereoLayerTimer.setInterval(100);
+         connect(&m_stereoLayerTimer, &QTimer::timeout, m_stereoLayer, &StereoLayer::update);
+-        // Where the 3D area cannot show the views, the person is told once and the monitor shows the packed frame
++        // Where the 3D area cannot show the views, the person is told once and the monitor shows the left eye
+         connect(
+             m_stereoLayer, &StereoLayer::failed, this,
+             [this](const QString &reason) {
+                 m_stereoLayerFailed = true;
+-                warningMessage(i18n("This monitor cannot show the video in 3D: %1 It shows the packed frame as it is.", reason), -1);
++                warningMessage(i18n("This monitor cannot show the video in 3D: %1 It shows the left eye's view, flat.", reason), -1);
+                 updateStereoPreview();
+                 m_glMonitor->requestRefresh();
+             },
+diff --git a/src/monitor/monitor.h b/src/monitor/monitor.h
+index 6fd8b40..418748a 100644
+--- a/src/monitor/monitor.h
++++ b/src/monitor/monitor.h
+@@ -265,7 +265,7 @@ private:
+     /** @brief The 3D area under the monitor, where the compositor takes stereo content */
+     StereoLayer *m_stereoLayer{nullptr};
+     QTimer m_stereoLayerTimer;
+-    /** @brief The 3D area could not show the views: the monitor shows the packed frame until the person chooses a preview again */
++    /** @brief The 3D area could not show the views: the monitor shows the left eye's view until the person chooses a preview again */
+     bool m_stereoLayerFailed{false};
+     /** @brief Whether the person was told that the monitor shows 3D only on Wayland, once in a run */
+     bool m_stereoWaylandSaid{false};

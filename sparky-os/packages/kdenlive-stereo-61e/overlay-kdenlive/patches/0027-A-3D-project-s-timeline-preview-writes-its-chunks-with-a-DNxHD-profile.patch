@@ -1,0 +1,28 @@
+Description: A 3D project's timeline preview writes its chunks with a DNxHD profile
+ A 3D project's preview chunks hold both eyes, so the chunk consumer asks for
+ twice the profile's width (patch 0023). DNxHD, the codec of Kdenlive's DNxHD
+ preview profiles, takes a fixed list of frame sizes, none of them two eyes
+ wide: FFmpeg's encoder refused the frame ("video parameters incompatible with
+ DNxHD"), MLT's consumer then ended (melt: a segmentation fault), and no chunk
+ was written, with nothing said. A DNxHD preview of a 3D project now names
+ DNxHR HQ, the same codec's profile for any frame size (8 bits, 4:2:2, as the
+ DNxHD profiles). Other preview profiles and 2D projects do not change.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-22
+diff --git a/src/timeline2/view/previewmanager.cpp b/src/timeline2/view/previewmanager.cpp
+index 710c06f..eb63438 100644
+--- a/src/timeline2/view/previewmanager.cpp
++++ b/src/timeline2/view/previewmanager.cpp
+@@ -713,6 +713,11 @@ void PreviewManager::doPreviewRender(const QString &scene)
+         if (!sized) {
+             consumerParams << QStringLiteral("width=%1").arg(m_stereoPair.width()) << QStringLiteral("height=%1").arg(m_stereoPair.height());
+         }
++        // DNxHD (the DNxHD preview profiles) takes a fixed list of frame sizes, none of them two eyes wide: the encoder refuses the
++        // frame and no chunk is written. DNxHR, the same codec's profiles for any frame size, writes it
++        if (consumerParams.contains(QStringLiteral("vcodec=dnxhd")) && !consumerParams.join(QLatin1Char(' ')).contains(QLatin1String("vprofile="))) {
++            consumerParams << QStringLiteral("vprofile=dnxhr_hq");
++        }
+     }
+     QStringList args{QStringLiteral("preview-chunks"),
+                      scene,

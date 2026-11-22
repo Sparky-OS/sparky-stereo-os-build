@@ -1,0 +1,121 @@
+Description: A crop on each eye takes its amounts in the clip's own samples; two more services are told
+ A service set up on one eye of a frame of two eyes (its process) was told one
+ eye's size as half the frame of two eyes. Crop sizes itself then: with "Use
+ Project Resolution" off its amounts are the clip's own samples, so on a clip
+ whose views are not of the project's shape (4:3 views in a 16:9 project, half
+ views) each eye was cut by amounts read as samples of the project's eye, not
+ as a 2D project of that eye cuts it. stereo3d_unpack now says each view's own
+ size on the frame and the framework tells the service that size, and back to
+ the frame of two eyes when it leaves. Views of the project's shape do not
+ change (their size is half the frame).
+ .
+ frei0r.vertigo and frei0r.timeout were marked as services for which the frame
+ of two eyes as a whole gives what each eye apart gives. Measured, it does
+ not: vertigo keeps earlier pictures and draws them again turned and zoomed,
+ across the middle; timeout draws its timer once, in one eye. They are now of
+ the kind that acts on the two eyes as one picture, which Kdenlive's effect
+ panel tells the person.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-22
+diff --git a/src/framework/mlt_stereo_eyes.c b/src/framework/mlt_stereo_eyes.c
+index 85240f9..b3b5c8b 100644
+--- a/src/framework/mlt_stereo_eyes.c
++++ b/src/framework/mlt_stereo_eyes.c
+@@ -80,10 +80,8 @@ static const struct
+     {"frei0r.delaygrab", 1},
+     {"frei0r.baltan", 1},
+     {"frei0r.nervous", 1},
+-    {"frei0r.vertigo", 1},
+     {"frei0r.lightgraffiti", 1},
+     {"frei0r.bgsubtract0r", 1},
+-    {"frei0r.timeout", 1},
+     // keep earlier frames and move the picture or a region with what they follow, or reach over neighbouring samples: given
+     // each eye in turn their memory would mix the eyes, so they act on the two eyes as one picture, and the person is told
+     {"vidstab", 2},
+@@ -94,6 +92,10 @@ static const struct
+     {"frei0r.denoise_hqdn3d", 2},
+     {"frei0r.facebl0r", 2},
+     {"frei0r.bigsh0t_stabilize_360", 2},
++    // keep earlier pictures and draw them again turned and zoomed (vertigo), or draw once what belongs to the frame (timeout's
++    // timer): measured, the frame as a whole does not give what each eye apart gives
++    {"frei0r.vertigo", 2},
++    {"frei0r.timeout", 2},
+     {NULL, 0},
+ };
+ 
+@@ -162,23 +164,47 @@ int mlt_stereo_eyes_wanted(mlt_service service, mlt_frame frame, mlt_frame b_fra
+ 
+ int mlt_stereo_eyes_enter(mlt_frame frame)
+ {
+-    // While a service acting on each eye is set up (its process), the frame says one eye's media width: a service that sizes
+-    // itself then (crop) works in that eye's samples
+-    if (!frame || !mlt_properties_get_int(MLT_FRAME_PROPERTIES(frame), PAIR))
++    // While a service acting on each eye is set up (its process), the frame says one eye's media size: a service that sizes
++    // itself then (crop) works in that eye's samples. The eye's own samples are the view's as the clip holds it, which
++    // stereo3d_unpack says (a clip of 4:3 views or of half views in a project of another shape), else half the frame
++    mlt_properties props = MLT_FRAME_PROPERTIES(frame);
++    if (!frame || !mlt_properties_get_int(props, PAIR))
++        return 0;
++    const int width = mlt_properties_get_int(props, "meta.media.width");
++    if (width <= 1)
+         return 0;
+-    const int width = mlt_properties_get_int(MLT_FRAME_PROPERTIES(frame), "meta.media.width");
+-    if (width > 1)
+-        mlt_properties_set_int(MLT_FRAME_PROPERTIES(frame), "meta.media.width", width / 2);
+-    return width > 1 ? width : 0;
++    const int view_width = mlt_properties_get_int(props, "stereo3d_unpack.view_width");
++    const int view_height = mlt_properties_get_int(props, "stereo3d_unpack.view_height");
++    const int height = mlt_properties_get_int(props, "meta.media.height");
++    if (view_width > 1 && view_height > 1 && height > 1) {
++        mlt_properties_set_int(props, "_stereo3d.enter_height", height);
++        mlt_properties_set_int(props, "meta.media.width", view_width);
++        mlt_properties_set_int(props, "meta.media.height", view_height);
++    } else {
++        mlt_properties_set_int(props, "_stereo3d.enter_height", 0);
++        mlt_properties_set_int(props, "meta.media.width", width / 2);
++    }
++    return width;
+ }
+ 
+ void mlt_stereo_eyes_leave(mlt_frame frame, int width)
+ {
+-    // the frame's width again, or twice what the service left as one eye's (crop's cropped width)
++    // the frame's size again, or what the service left as one eye's (crop's cropped size) as two eyes of the frame
+     if (!frame || width <= 1)
+         return;
+-    const int eye = mlt_properties_get_int(MLT_FRAME_PROPERTIES(frame), "meta.media.width");
+-    mlt_properties_set_int(MLT_FRAME_PROPERTIES(frame), "meta.media.width", eye == width / 2 ? width : 2 * eye);
++    mlt_properties props = MLT_FRAME_PROPERTIES(frame);
++    const int height = mlt_properties_get_int(props, "_stereo3d.enter_height");
++    const int eye = mlt_properties_get_int(props, "meta.media.width");
++    if (height > 1) {
++        const int view_width = mlt_properties_get_int(props, "stereo3d_unpack.view_width");
++        const int view_height = mlt_properties_get_int(props, "stereo3d_unpack.view_height");
++        const int eye_height = mlt_properties_get_int(props, "meta.media.height");
++        mlt_properties_set_int(props, "meta.media.width", eye == view_width ? width : (int) ((double) width * eye / view_width + 0.5));
++        mlt_properties_set_int(props, "meta.media.height",
++                               eye_height == view_height ? height : (int) ((double) height * eye_height / view_height + 0.5));
++        return;
++    }
++    mlt_properties_set_int(props, "meta.media.width", eye == width / 2 ? width : 2 * eye);
+ }
+ 
+ static void op_close(void *data)
+diff --git a/src/modules/core/filter_stereo3d_unpack.c b/src/modules/core/filter_stereo3d_unpack.c
+index 61290b9..26e4cb7 100644
+--- a/src/modules/core/filter_stereo3d_unpack.c
++++ b/src/modules/core/filter_stereo3d_unpack.c
+@@ -840,8 +840,11 @@ static void announce(mlt_filter filter, mlt_frame frame)
+     mlt_properties_set_int(frame_props, "stereo3d_unpack.out_height", fh);
+     mlt_properties_set_int(frame_props, "stereo3d_unpack.picture_width", pw);
+     mlt_properties_set_int(frame_props, "stereo3d_unpack.picture_height", ph);
+-    // for a crop after this filter, which fits each cut view again by its new shape
++    // for a crop after this filter, which fits each cut view again by its new shape, and which takes its amounts in the view's
++    // own samples when they are not the project's (mlt_stereo_eyes_enter)
+     mlt_properties_set_double(frame_props, "stereo3d_unpack.view_shape", view_shape);
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.view_width", vw);
++    mlt_properties_set_int(frame_props, "stereo3d_unpack.view_height", vh);
+     mlt_properties_set_double(frame_props, "stereo3d_unpack.half_shape", half_shape);
+     mlt_properties_set_int(frame_props, "width", fw);
+     mlt_properties_set_int(frame_props, "height", fh);
