@@ -273,12 +273,14 @@ Last-Update: 2026-11-22
      DeviceManager::self()->save();
      Settings::self()->save();
      delete m_kamoso;
-@@ -238,9 +256,16 @@
+@@ -238,9 +256,18 @@
  
  void WebcamControl::stop()
  {
-+    if (m_busWatch) {
-+        g_source_remove(m_busWatch);
++    if (m_busWatch && m_pipeline) {
++        auto *bus = gst_pipeline_get_bus(m_pipeline.data());
++        gst_bus_remove_watch(bus);
++        gst_object_unref(bus);
 +        m_busWatch = 0;
 +    }
      if(m_pipeline) {
@@ -290,7 +292,7 @@ Last-Update: 2026-11-22
      }
  }
  
-@@ -264,6 +289,45 @@
+@@ -264,6 +291,45 @@
  
      WebcamControl* wc = static_cast<WebcamControl*>(user_data);
      wc->setReadyForCapture(is_ready);
@@ -336,7 +338,7 @@ Last-Update: 2026-11-22
  }
  
  bool WebcamControl::playDevice(Device *device)
-@@ -280,8 +344,26 @@
+@@ -280,8 +346,26 @@
      if (m_pipeline)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -363,7 +365,7 @@ Last-Update: 2026-11-22
          g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
          g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
                           G_CALLBACK(captureReadyChanged), this);
-@@ -296,6 +378,13 @@
+@@ -296,6 +380,13 @@
      }
      if (!m_viewfinder) {
          Q_ASSERT(m_surface);
@@ -377,7 +379,7 @@ Last-Update: 2026-11-22
          m_viewfinder.reset(gst_bin_new("viewfinder"));
          auto glupload = gst_element_factory_make_full("glupload", nullptr);
          auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
-@@ -309,6 +398,8 @@
+@@ -309,6 +400,8 @@
          GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
          gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
          gst_object_unref(sink_pad);
@@ -386,7 +388,7 @@ Last-Update: 2026-11-22
      }
  
      GstElement* source;
-@@ -320,7 +411,9 @@
+@@ -320,7 +413,9 @@
  
      if (!m_pipeline) {
          m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
@@ -397,7 +399,7 @@ Last-Update: 2026-11-22
          g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
          g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
      }
-@@ -453,11 +546,14 @@
+@@ -453,11 +548,14 @@
      if (prevstate != GST_STATE_NULL)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  

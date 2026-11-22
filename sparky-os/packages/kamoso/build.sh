@@ -33,7 +33,7 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 # Only the binary Depends field; never rewrite Build-Depends.
-s = p.read_text().replace('Build-Depends:', 'Build-Depends: libstereo-layer-dev (>= 1.23.2), libstereo-policy-dev (>= 1.23.2), qt6-multimedia-dev,').replace('\nDepends:', '\nDepends: libstereo-layer1 (>= 1.23.2), libstereo-policy1 (>= 1.23.2),', 1)
+s = p.read_text().replace('Build-Depends:', 'Build-Depends: libstereo-layer-dev (>= 1.23.2), libstereo-policy-dev (>= 1.23.2), qt6-multimedia-dev,').replace('\nDepends:', '\nDepends: gstreamer1.0-gl, libstereo-layer1 (>= 1.23.2), libstereo-policy1 (>= 1.23.2),', 1)
 p.write_text(s)
 CONTROL
 TOOLKIT="$TOOLKIT" python3 - "$OUT/source/debian/changelog" <<'PY'
