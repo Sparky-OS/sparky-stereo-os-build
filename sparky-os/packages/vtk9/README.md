@@ -45,6 +45,8 @@ The debug information is kept, compressed in the objects and the linked files (`
 
 `sparky-os/tests/paraview-stereo/`: ParaView in Crystal Eyes in a virtual Stereo KWin on both routes (native Wayland, the GLX child on Xwayland) and both cards; the count of `Error in cache state for GL_DRAW_BUFFER` is 16 to 25 per start on Debian's vtk9 and 0 on this one, with the pair unchanged.
 
+The colour sizes (+stereo3d2): `sparky-os/tests/paraview-stereo/vtk-native-colour-size` (a mono QVTKOpenGLNativeWidget, 60 frames) prints 4 warnings and exits 1 on Wayland on Debian's vtk9 and on +stereo3d1, on both cards, and 0 on +stereo3d2 on both routes and both cards; a flat ParaView on Wayland opens no Output Messages window on +stereo3d2 (`tests/paraview-stereo/rig/review_rows.py`, rows `pv-off-*` and `ref-off-*`).
+
 ## Retirement
 
 When VTK takes the fix and Debian ships a vtk9 that contains it.

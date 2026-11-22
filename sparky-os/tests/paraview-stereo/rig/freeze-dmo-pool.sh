@@ -26,6 +26,8 @@ $S/scripts/drun.sh dmo-freeze sci50f-base:testing-20261104 --cpus 1 -v $S/rig:/r
   apt-get install -y -q --download-only --no-install-recommends $DEB > /tmp/deb.log 2>&1 || { tail -20 /tmp/deb.log; exit 1; }
   echo 'deb [trusted=yes] file:/flat ./' > /etc/apt/sources.list.d/stage.list; apt-get update -qq 2>/dev/null
   apt-get install -y -q --download-only $STG > /tmp/stg.log 2>&1 || { tail -20 /tmp/stg.log; exit 1; }
+  # the programs that load vtk9 (rig/vtk-progs-s2.sh: FreeCAD brings deb-multimedia's GStreamer plugins)
+  apt-get install -y -q --download-only f3d sparky-stereo-plasma-theme-studio freecad > /tmp/progs.log 2>&1 || { tail -20 /tmp/progs.log; exit 1; }
   # the Lean Code link gate solves without the edition pin, so the highest version wins (deb-multimedia's FFmpeg): its closure too
   rm /etc/apt/preferences.d/00-sparky; apt-get update -qq 2>/dev/null
   apt-get install -y -q --download-only --no-install-recommends $STG > /tmp/nopin.log 2>&1 || { tail -20 /tmp/nopin.log; exit 1; }
