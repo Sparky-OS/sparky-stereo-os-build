@@ -1,4 +1,25 @@
 -------------------------------------------------------------------------------
+  Version 0.1.45 (2026-11-22)
+-------------------------------------------------------------------------------
+  * A lean conffile without a record is judged where dpkg keeps it, and not only once (rows 629 and 802). 0.1.44's
+    one-time judgement skipped a copy under another package's diversion: bash's /etc/skel/.bashrc, whose record
+    0.1.41 lost while sparky-stereo-console diverted it, stayed lean without a record once the console gave the path
+    back, so bash's next change of the file would have made dpkg ask about a file nobody touched. Now the judgement
+    reads the copy at the diverted name too, and runs once after this version's install, again in the person's
+    --repair, whenever a dpkg run changed dpkg's diversions, and for the packages a dpkg run unpacked, from their
+    projection. A copy that is exactly the projection of its package's file gets its record back; anything else is the
+    person's, left as it is and named by --verify where it is
+  * After a reinstall of a package whose lean conffile had no record, --verify no longer says "EDITED ... (changed by
+    the person)" about a file nobody edited: apt unpacks and configures in two dpkg runs, and the second one's
+    projection took the lean file for the person's; it hands it to the judgement now
+  * An owner's copy at a diverted name that no projection ever judged (zsh-common's /etc/zsh/zshrc.debian, installed
+    beside the console's diversion) is projected and recorded when it is its package's file, and named by --verify
+    when it is not; an lc1 package's conffile at a diverted name that differs from its payload (base-files'
+    /etc/issue.debian) is named by --verify too, with or without --deep. dpkg --verify gives no line for either. An
+    EDITED line about a diverted copy says where it is: "EDITED PATH (at NAME: OWNER's copy, diverted by OTHER)
+    (changed by the person: left as they made it)"
+
+-------------------------------------------------------------------------------
   Version 0.1.44 (2026-11-21)
 -------------------------------------------------------------------------------
   * A conffile that another package's diversion kept from being installed is installed (rows 629 and 802). When a
