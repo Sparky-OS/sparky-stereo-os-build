@@ -97,7 +97,9 @@ def main():
         after=installed();(out/'packages-during.json').write_text(json.dumps(after,indent=2))
         for package,version in [('libwhisper1','1.9.5+dfsg-1'),('libggml0','0.29.0-1')]:
             if after.get(package,after.get(package+':amd64'))!=version:raise RuntimeError('Wrong backend version: '+package)
-        devices=subprocess.check_output(['captiond','--list-devices'],text=True);(out/'devices.txt').write_text(devices)
+        bench_env=dict(os.environ,HOME=str(work/'home'),XDG_CONFIG_HOME=str(work/'config'),XDG_DATA_HOME=str(work/'data'),XDG_CACHE_HOME=str(work/'cache'))
+        for name in ['home','config','data','cache']:(work/name).mkdir()
+        devices=subprocess.check_output(['captiond','--list-devices'],text=True,env=bench_env);(out/'devices.txt').write_text(devices)
         cards=[]
         for line in devices.splitlines():
             match=re.match(r'^(\d+)\s+(\S+)\s+GPU\s+(.+)$',line)
@@ -118,7 +120,7 @@ def main():
                     h.update(chunk);f.write(chunk)
             if size!=m['bytes'] or h.hexdigest()!=m['sha256']:raise RuntimeError('Model checksum/size mismatch: '+m['name'])
         (out/'model-downloads.json').write_text(json.dumps(MODELS,indent=2))
-        runenv=dict(os.environ,LC73_A10_RECOGNITION='I_choose_model_runs_on_A10')
+        runenv=dict(bench_env,LC73_A10_RECOGNITION='I_choose_model_runs_on_A10')
         rows=[]
         for m in MODELS:
             for device,description in [('cpu','CPU')]+cards:
