@@ -6,6 +6,8 @@ export DOCKER_HOST=unix:///K3D/partners/queue/science-paraview-edition-build-and
 until grep -q 'c2-build done' work/c2-build.log 2>/dev/null; do sleep 30; done
 V=stage/vtk9-9.6.2+ds-3+stereo3d1; P=stage/paraview-6.1.1+dfsg1-3+stereo3d2
 J=stage/jmol-16.3.55+dfsg-1+stereo3d3; M=stage/stereo-matplotlib-0.1.2
+docker image inspect sci50f-rig:green-pv2 >/dev/null 2>&1 && docker rmi sci50f-rig:green-pv2 >/dev/null
+docker image inspect sci50f-rig:green-i6b >/dev/null 2>&1 && docker rmi sci50f-rig:green-i6b >/dev/null
 RIG_CPUS=4 FROM=sci50f-rig:green-vtk STAGE="$V $P" PKGS="libvtk9.6 libvtk9.6-qt python3-vtk9 paraview python3-paraview" \
   TAG=green-pv2 rig/make-green.sh > work/make-green-pv2.log 2>&1 || echo "green-pv2 failed"
 RIG_CPUS=4 STAGE="$J $M" PKGS="jmol libjmol-java python3-stereo-matplotlib" TAG=green-i6b rig/make-green.sh \
@@ -14,12 +16,12 @@ run() { rig/run-case.sh "$@" > /dev/null; }
 EN=LANG=en_US.UTF-8; PT=LANG=pt_BR.UTF-8; PV=sci50f-rig:green-pv2; I6=sci50f-rig:green-i6b
 OFF='{ "settings": { "GeneralSettings": { "AutoApply": 1 }, "RenderViewSettings": { "Enable3D": 0 } } }'
 OLD='{ "settings": { "GeneralSettings": { "AutoApply": 1 } }, "views": { "RenderView": { "StereoRender": 1, "StereoType": 7 } } }'
-DOWN10="Down Down Down Down Down Down Down Down Down Down Return"
+DOWN10="Down Down Down Down Down Down Down Down Down Down Return"   # from the first item; a menu reached with Right has none selected: one Down more
 # 1. "3D display settings..." opens KScreen's page, from each program, in English and pt_BR
 run c2-display-pv-en $PV pv-case.sh MENU=1 "MENU_KEYS=Up Return" QT_QPA_PLATFORM=xcb $EN
 run c2-display-pv-pt $PV pv-case.sh MENU=1 "MENU_KEYS=Up Return" QT_QPA_PLATFORM=xcb $PT
 run c2-display-jmol-en $I6 jmol-menu-case.sh MENU_X=150 MENU_Y=11 MENU_KEY=alt+d MENU_WAIT=4 "ACT_KEYS=$DOWN10" $EN
-run c2-display-jmol-pt $I6 jmol-menu-case.sh MENU_X=150 MENU_Y=11 MENU_KEY=alt+m MENU_WAIT=4 "ACT_KEYS=$DOWN10" $PT LC_ALL=pt_BR.UTF-8
+run c2-display-jmol-pt $I6 jmol-menu-case.sh MENU_X=150 MENU_Y=11 MENU_KEY=alt+a "MENU_KEY2=Right Right" MENU_WAIT=4 "ACT_KEYS=Down $DOWN10" $PT LC_ALL=pt_BR.UTF-8
 run c2-display-mpl-en $I6 mpl-case.sh MPLBACKEND=TkAgg ACT=display $EN
 run c2-display-mpl-pt $I6 mpl-case.sh MPLBACKEND=TkAgg ACT=display $PT LC_ALL=pt_BR.UTF-8
 # 2. Enable 3D switched off in the View menu, ParaView quit, started again
