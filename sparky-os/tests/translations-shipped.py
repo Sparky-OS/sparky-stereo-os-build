@@ -3,8 +3,8 @@
 # Copyright 2026 under the GNU GPL3 License
 """translations-shipped.py [--repo DIR] [--cohort LIST] [--only PATCH,...] [STAGE_DIR ...]
 
-For every catalogue patch in sparky-os/translations (a *.po.patch, and any other *.patch there that changes a gettext .po file:
-the ORDER 46b and 46c catalogue patches), finds the newest built package of its source and fails on any msgid the patch adds
+For every catalogue patch in sparky-os/translations (a *.po.patch, and any other *.patch there that changes a gettext .po file)
+and each recipe patch listed in RECIPE_CATALOGUES, finds the newest built package of its source and fails on any msgid the patch adds
 that the package's catalogues lack, naming the patch, the language and the string. A patch that changes no gettext catalogue
 (Qt .ts, sView .lng, a desktop or JSON file) and a Qt catalogue kept as .po under poqm/ (installed as .qm) are named as not
 read by this test, never passed over in silence.
@@ -39,9 +39,17 @@ from pathlib import Path
 
 TRANSLATIONS = Path(__file__).resolve().parent.parent / 'translations'
 
+# Catalogue patches applied directly by the matching source package's recipe.
+RECIPE_CATALOGUES = {
+    'vibe-speech-to-text-pt-br.patch': 'ktextaddons',
+    'speech-engines-said-server-at-press-pt-br.patch': 'ktextaddons',
+    'speech-to-text-eight-languages.patch': 'ktextaddons',
+}
+
 # patch -> (source package, gettext domain for flat <lang>.po or <domain>_<lang>.po files
 # [, installed locale root when it differs from usr/share/locale])
 SOURCES = {
+    **{name: (source, None) for name, source in RECIPE_CATALOGUES.items()},
     'command-not-found-messages.po.patch': ('command-not-found', 'command-not-found'),
     'digikam-stereo3d.po.patch': ('digikam', None),
     'discover-backend-split.po.patch': ('plasma-discover', None),
@@ -136,8 +144,8 @@ def gettext_files(patch):
 
 
 def catalogue_patches():
-    """(patches to read, [(patch, why it is not read)]): every *.po.patch, and every other *.patch that changes a gettext .po file;
-    a patch whose catalogues are Qt's (poqm/, installed as .qm) or that changes no .po file is named with the reason."""
+    """(patches to read, [(patch, why it is not read)]): registered recipe catalogues and patches in TRANSLATIONS.
+    A patch whose catalogues are Qt's (poqm/, installed as .qm) or that changes no .po file is named with the reason."""
     read, skipped = [], []
     for patch in sorted(TRANSLATIONS.glob('*.patch')):
         files = gettext_files(patch)
@@ -149,6 +157,8 @@ def catalogue_patches():
             skipped.append((patch, 'its catalogues are Qt translations (poqm/, installed as .qm), which this test does not read'))
         else:
             read.append(patch)
+    read.extend(TRANSLATIONS.parent / 'packages' / source / name
+                for name, source in RECIPE_CATALOGUES.items())
     return read, skipped
 
 LOCALES = {'pl': 'pl_PL', 'pt_BR': 'pt_BR', 'fr': 'fr_FR', 'de': 'de_DE', 'es': 'es_ES', 'ja': 'ja_JP', 'ko': 'ko_KR',

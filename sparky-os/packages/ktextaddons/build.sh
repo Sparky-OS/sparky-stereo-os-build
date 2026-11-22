@@ -2,9 +2,9 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/21
 # Copyright 2026 under the GNU GPL3 License
 # KDE's text add-ons follow the Partners page (ORDER 70): Debian's ktextaddons 2.1.2-8 with partners-follow.patch.
-# Dictation with Vibe (ORDER 72): upstream's speech-to-text manager of v2.3.0, the vibe engine, its pt_BR sentences;
+# Dictation with Vibe (ORDER 72): upstream's speech-to-text manager of v2.3.0, the vibe engine;
 # upstream's settings dialog of v2.3.0 exported; every engine said when it cannot take a dictation, the Vibe server started
-# at the press of the dictation button (its pt_BR sentences after it).
+# at the press of the dictation button. The dictation catalogue patches follow their code.
 # Run inside a clean distribution build container with the source dependencies installed.
 # SOURCE_DSC names the unmodified Debian 2.1.2-8 source and its adjacent archives.
 set -euo pipefail
@@ -32,7 +32,8 @@ dpkg-source -x "$SOURCE_DSC" "$BUILD_ROOT/authored"
 cd "$BUILD_ROOT/authored"
 mkdir -p debian/patches
 for patch in partners-follow.patch speech-to-text-manager-v2.3.0.patch vibe-speech-to-text.patch vibe-speech-to-text-pt-br.patch \
-	speech-to-text-dialog-export-v2.3.0.patch speech-engines-said-server-at-press.patch speech-engines-said-server-at-press-pt-br.patch; do
+	speech-to-text-dialog-export-v2.3.0.patch speech-engines-said-server-at-press.patch speech-engines-said-server-at-press-pt-br.patch \
+	speech-to-text-eight-languages.patch; do
 	cp "$HERE/$patch" debian/patches/
 	printf '%s\n' "$patch" >> debian/patches/series
 done
