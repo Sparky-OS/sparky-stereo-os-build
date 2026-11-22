@@ -1,0 +1,16 @@
+--- a/debian/control
++++ b/debian/control
+@@ -6 +6 @@
+-Build-Depends: debhelper-compat (= 14),
++Build-Depends: libstereo-layer-dev (>= 1.18.0), debhelper-compat (= 14),
+@@ -46 +46 @@
+-Homepage: https://invent.kde.org/network/kio-extras
++Homepage: https://sparkylinux.org
+@@ -52 +52 @@
+-Depends: kio-extras-data (= ${source:Version}),
++Depends: python3:any, libstereo-layer1 (>= 1.18.0), kio-extras-data (= ${source:Version}),
+--- a/debian/rules
++++ b/debian/rules
+@@ -10 +10 @@
+-	dh_auto_configure -Skf6 -- -DBUILD_TESTING=OFF
++	dh_auto_configure -Skf6 -- -DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_REQUIRE_FIND_PACKAGE_StereoLayer=ON

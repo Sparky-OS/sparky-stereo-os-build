@@ -109,14 +109,14 @@ for before in published.rglob('*'):
     shutil.copyfile(before, after)
 newlog = (source / 'debian/changelog').read_text()
 oldlog = (published / 'debian/changelog').read_text()
-base = re.search(r'^' + re.escape(manifest['source']) + r' \(6\.30\.0-1\) ', newlog, re.M)
+base = re.search(r'^' + re.escape(manifest['source']) + r' \(' + re.escape(manifest.get('published_base_version', '6.30.0-1')) + r'\) ', newlog, re.M)
 assert base, 'Debian changelog lost the published upstream base'
 recipe_toolkit = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(recipe_toolkit / 'repo'))
 import reproducible
 stamp = reproducible.rfc2822(int(os.environ['SOURCE_DATE_EPOCH']))
 entry = (f"{manifest['source']} ({manifest['version']}) unstable; urgency=medium\n\n"
-         "  * Follow Debian Frameworks 6.32 while retaining every edition patch,\n"
+         f"  * Follow Debian {manifest.get('upstream_label', 'Frameworks 6.32')} while retaining every edition patch,\n"
          "    source fixture, translation and changelog entry. Rebase overlapping\n"
          "    context without changing stereo behavior or upstream fixes.\n\n"
          f" -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {stamp}\n\n")

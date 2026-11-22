@@ -8,6 +8,13 @@
 #   next-source.sh PUBLISHED.dsc OUT
 # Run it where dpkg-source is (the Lean Code migration container; round.sh does).
 set -euo pipefail
+# A new Debian upstream release retains this producer and its complete patch set.
+if [[ ${1:-} == --debian-successor ]]; then
+    shift
+    [[ $# == 3 ]] || { echo "Usage: $0 --debian-successor DEBIAN-INPUTS PUBLISHED-INPUTS WORK" >&2; exit 2; }
+    here=$(cd "$(dirname "$0")" && pwd)
+    exec python3 "$here/../../release/prepare-frameworks-successor.py" "$here/successor-26.08/successor.json" "$@"
+fi
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../repo" && pwd)
 DSC=$(readlink -f "$1") OUT=$2
