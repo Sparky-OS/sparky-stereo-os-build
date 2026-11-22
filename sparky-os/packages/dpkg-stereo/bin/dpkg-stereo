@@ -950,6 +950,9 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     t0 = time.time()
     done = skipped = same = 0
     pys = []
+    unrecorded = {}        # lean conffiles found without a record, their original at hand: the judgement's to decide
+    maybe = {}             # path -> (row, dpkg's hash, handler): lean conffiles found without a record
+    pointer = project.core.POINTER_URL.encode()
     # a handful of files (a package or two after an upgrade) is quicker in this process than in a pool
     pool = None
     if len(tasks) > 200 and jobs > 1:
@@ -982,6 +985,13 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
                 left[path] = {'path': path, 'package': name, 'handler': r.handler,
                               'reason': 'changed since its package installed it (not the package\'s bytes)'}
                 continue
+            if path in conf and md5(data) != conf[path] and pointer in data:
+                # a lean conffile without a record of this version: the one judgement decides whether it is the
+                # projection of its package's file (its record comes back) or the person's (0.1.45, rows 629/802: a
+                # reinstall's projection called such a file "changed by the person", and nobody had touched it), when
+                # that file's original is in the pristine store (below)
+                maybe[path] = ({'path': path, 'package': name, 'handler': '', 'reason': ''}, conf[path], r.handler)
+                continue
             if path in conf and md5(data) != conf[path]:
                 left[path] = {'path': path, 'package': name, 'handler': r.handler,
                               'reason': PERSON_CHANGED}
@@ -1011,9 +1021,29 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
             left.pop(path, None)
             done += 1
             same += r.check == 'the same bytes as a checked projection'
+    if maybe:
+        # the engine keeps the original of every conffile it projected: with that original (dpkg's hash of the version
+        # installed now) at hand the judgement says whether the file is its projection; without it, the file is not the
+        # projection of anything this engine projected at that version, which dpkg too keeps as a local change (an
+        # upgrade whose conffile changed, the old lean file kept by the person's answer or --force-confold): the
+        # person's, as before, and nothing is fetched to say so
+        at_hand = pristine_by_md5(P, {want for _, want, _ in maybe.values()})
+        for path, (row, want, handler) in maybe.items():
+            if want in at_hand:
+                unrecorded[path] = row
+            else:
+                left[path] = dict(row, handler=handler, reason=PERSON_CHANGED)
     # the records first: a file written lean is recorded before anything else can fail
     files.save()
     left.save()
+    if unrecorded:
+        if os.environ.get('DPKG_MAINTSCRIPT_NAME'):
+            # inside a maintainer script dpkg's run is half done: the post-invoke hook at its end judges every package
+            # (without its marker the judgement is due)
+            if os.path.exists(P.state(UNRECORDED_MIGRATION)):
+                os.unlink(P.state(UNRECORDED_MIGRATION))
+        else:
+            migrate_orphans(P, jobs, kind='unrecorded', rows=unrecorded, db=db)
     if embedded:
         # their originals back (the engine that projected them did not know their reader), then left with the reason
         restore(P, set(embedded), pkgs={k for k, _ in embedded.values()}, log=log)
@@ -2109,10 +2139,15 @@ def verify(P, names, deep=False):
             bad += 1
             continue
         built_count += 1
+        own_conf = conf.get(name, {})
         for row in obj['files']:
-            if not deep and row['status'] != 'projected':
-                continue
             path = row['path']
+            note = diverted_note(path, name, divs)
+            # a conffile of this package at another package's diverted name: dpkg --verify does not look there (dpkg
+            # 1.23.11 gives no line for an edited /etc/zsh/zshrc.debian), so it is checked without --deep too (0.1.45)
+            diverted_conf = bool(note) and path in own_conf
+            if not deep and row['status'] != 'projected' and not diverted_conf:
+                continue
             # a file another package diverts is judged where dpkg keeps this package's copy (0.1.43, rows 629/802)
             real = on_disk(P, path, name, divs)
             try:
@@ -2124,14 +2159,19 @@ def verify(P, names, deep=False):
                 good = False
             if good:
                 continue
+            if row['status'] != 'projected' and diverted_conf and os.path.lexists(real):
+                # a conffile no maintainer script may change (Debian Policy 10.7.4) and that dpkg --verify cannot see
+                # where it is: the person's, said as any conffile the person changed is said, and not counted
+                print(f'EDITED    {path} ({note[2:]}) (changed by the person: left as they made it)')
+                continue
             if row['status'] != 'projected' and os.path.lexists(real):
                 # --deep checks the rows dpkg-stereo did not project too, for the payload's own bytes: a maintainer
                 # script, a trigger or the person may rewrite one after the install (depmod's modules.dep, the
                 # os-release and issue files), and dpkg-stereo leaves it; it is said, not counted
-                print(f'AFTERINST {path} ({text("LOCAL78")}{diverted_note(path, name, divs)})')
+                print(f'AFTERINST {path} ({text("LOCAL78")}{note})')
                 unprojected += 1
                 continue
-            print(f'LCCHANGED {path} (differs from its build-time payload{diverted_note(path, name, divs)}; '
+            print(f'LCCHANGED {path} (differs from its build-time payload{note}; '
                   'user edits remain untouched)')
             bad += 1
     sums_cache = {}
@@ -2216,7 +2256,10 @@ def verify(P, names, deep=False):
         if names and rec['package'].split(':')[0] not in names and rec['package'] not in names:
             continue
         if 'changed by the person' in rec['reason']:
-            print(f'EDITED    {path} (changed by the person: left as they made it)')
+            # a copy at a diverted name says where it is (as a CHANGED line does since 0.1.43), in its own parentheses
+            # before the line's fixed end, which the round's upgrade proof matches (0.1.45, rows 629/802)
+            note = diverted_note(path, rec['package'], divs)
+            print(f'EDITED    {path} ' + (f'({note[2:]}) ' if note else '') + '(changed by the person: left as they made it)')
     # the C and C++ files whose original was at hand nowhere when the migration tried: checked above like any
     # other projection, in an older form (#line or every line kept: the authored line numbers), named here
     waiting = {}
@@ -2662,7 +2705,15 @@ def repair_consumers(P, jobs=4, pkgs=None, force=False, fetch=False):
     if not os.environ.get('DPKG_MAINTSCRIPT_NAME'):
         # as for the conffile owners: the post-invoke hook at the end of the run that installs it does this
         rc = migrate_orphans(P, jobs, pkgs=pkgs, force=force, fetch=fetch) or rc
-        rc = migrate_orphans(P, jobs, pkgs=pkgs, force=force, fetch=fetch, kind='unrecorded') or rc
+        # the lean conffiles without a record are judged over every package once after this version's install, when
+        # the person asks (FORCE), and when dpkg's diversions changed since the last check: a diversion added or
+        # removed moves a package's copy, and with it what has no record (0.1.45, rows 629/802); otherwise only what
+        # still waits for an original is tried again (a single existence check when nothing does)
+        marker = P.state(UNRECORDED_MIGRATION)
+        if force or diversions_changed(P) or not (os.path.exists(marker) or os.path.exists(marker + '.pending')):
+            rc = judge_unrecorded(P, jobs, fetch=fetch, force=force) or rc
+        else:
+            rc = migrate_orphans(P, jobs, pkgs=pkgs, force=force, fetch=fetch, kind='unrecorded') or rc
         rc = schedule_diverted(P) or rc
     return migrate_c_form(P, jobs, pkgs=pkgs, force=force) or rc
 
@@ -2871,40 +2922,110 @@ ORPHAN_PENDING_COLS = ('path', 'package', 'version')    # .pending: lean files w
 # projected conffile that stayed the same across two versions of its package, and the scan then took the lean bytes
 # for "already projected": no record, no left row. The next version that changes such a file makes dpkg ask "Modified
 # locally since installation" about a file nobody touched (on the A10: 18 such conffiles of dbus, snmpd, systemd).
-UNRECORDED_MIGRATION = 'unrecorded-conffiles-v1'
+# 0.1.45 (rows 629/802): the same judgement, no longer once only. v1 (0.1.44) skipped a diverted path and a file with a
+# left row, so bash's /etc/skel/.bashrc, whose record 0.1.41 lost while sparky-stereo-console diverted it, stayed lean
+# without a record after the console gave the path back; and a reinstall's projection called such a file "changed by the
+# person". v2 runs once after this version's install over every package, then whenever dpkg's diversions change and in
+# the person's --repair; a package a dpkg run unpacked hands its own such files to it from its projection.
+UNRECORDED_MIGRATION = 'unrecorded-conffiles-v2'
+UNRECORDED_BEFORE = ('unrecorded-conffiles-v1',)      # 0.1.44's marker and its .pending and .waiting: v2 replaces them
 # kind: (marker, what it gave back, the marker's line)
 LEAN_MIGRATIONS = {
     'orphans': (ORPHAN_MIGRATION, 'LOCAL52',
                 'Lean files whose record dpkg-stereo 0.1.28 or older lost judged against their packages\' own files'),
     'unrecorded': (UNRECORDED_MIGRATION, 'LOCAL93',
-                   'Conffiles whose record dpkg-stereo 0.1.41 or 0.1.42 lost judged against their packages\' own files'),
+                   'Conffiles whose record dpkg-stereo 0.1.41 or 0.1.42 lost judged against their packages\' own files, '
+                   'where dpkg keeps them'),
 }
 
 
+def lc1_names(P, names):
+    """Of NAMES, the packages whose lc1 manifest dpkg-stereo accepts: their files are judged by that manifest (verify),
+    never recorded here (project_packages leaves them, "processed at build")."""
+    if not names:
+        return set()
+    return {k for k, v in lc_package.installed(P, set(names)).items() if isinstance(v, dict)}
+
+
 def unrecorded_rows(P, pkgs, names=None, db=None):
-    """{path: row} (LEFT_COLS, handler and reason empty) of the conffiles of installed packages (PKGS; NAMES limits
-    them) that dpkg records with a real hash, that have no record and no left row, and whose file carries the Lean
-    Code pointer and differs from that hash: lean, with nothing to vouch for it. A diverted path is left to its own
-    judgement (on_disk), as orphan_plan leaves it."""
+    """{path: row} (LEFT_COLS, handler and reason empty) of the lean conffiles without a record: a conffile of an
+    installed package (PKGS; NAMES limits them) that dpkg records with a real hash and that has no record, whose copy
+    where dpkg keeps it (on_disk: under another package's diversion, at the diverted name) carries the Lean Code pointer
+    and differs from that hash, with no left row, or with one that calls it the person's while the original of dpkg's
+    hash is in the pristine store (a projection wrote that row for such a file until 0.1.45, at a reinstall of its
+    package; without that original the row is dpkg's own view too, and nothing is fetched to question it). Lean, with
+    nothing to vouch for it. The diverting package's own copy, a locally diverted copy and an lc1 package's conffiles
+    are not these."""
     db = db or dpkg_db(P)
-    div = diversions(P)
-    have = set(Records(P, 'records')) | set(Records(P, 'left'))
+    divs = diversion_table(P)
+    have = set(Records(P, 'records'))
+    left = Records(P, 'left')
     pointer = project.core.POINTER_URL.encode()
-    rows = {}
+    rows, theirs = {}, {}
     for name, paths in conffiles(P, db).items():
         if name not in pkgs or (names is not None and name not in names):
             continue
         for path, want in paths.items():
-            if len(want) != 32 or path in have or path in div:
+            if len(want) != 32 or path in have or diverted_away(path, name, divs):
+                continue
+            row = left.get(path)
+            if row and (row['package'] != name or row['reason'] != PERSON_CHANGED):
                 continue
             try:
-                with open(P.real(path), 'rb') as f:
+                with open(on_disk(P, path, name, divs), 'rb') as f:
                     data = f.read(TEXT_SIZE_MAX + 1)
             except OSError:
                 continue
             if pointer in data and md5(data) != want:
                 rows[path] = {'path': path, 'package': name, 'handler': '', 'reason': ''}
-    return rows
+                if row:
+                    theirs[path] = want
+    if theirs:
+        at_hand = pristine_by_md5(P, set(theirs.values()))
+        rows = {p: r for p, r in rows.items() if p not in theirs or theirs[p] in at_hand}
+    built = lc1_names(P, {r['package'] for r in rows.values()})
+    return {p: r for p, r in rows.items() if r['package'] not in built}
+
+
+def unprojected_diverted(P, pkgs, db=None):
+    """{package: {path}}: the conffiles of installed packages whose copy is at another package's diverted name and that
+    no projection ever judged (no record, no left row). An engine before 0.1.43 skipped every diverted path, so a
+    package installed beside the diversion kept its copy as it came: zsh-common's /etc/zsh/zshrc.debian beside
+    sparky-stereo-console (rows 629/802). A copy that is still its package's file is projected and recorded; one that is
+    not is the person's, and --verify names it at the diverted name. lc1 packages and held ones are not these."""
+    divs = {p: v for p, v in diversion_table(P).items() if v[1] is not None}
+    if not divs:
+        return {}
+    have = set(Records(P, 'records')) | set(Records(P, 'left'))
+    held = set(read_hold(P))
+    out = {}
+    for name, paths in conffiles(P, db).items():
+        if name not in pkgs or name in held or name.split(':')[0] in held:
+            continue
+        for path, want in paths.items():
+            row = divs.get(path)
+            if (row and row[1] != name.split(':')[0] and len(want) == 32 and path not in have and path not in held
+                    and os.path.lexists(P.real(row[0]))):
+                out.setdefault(name, set()).add(path)
+    built = lc1_names(P, set(out))
+    return {k: v for k, v in out.items() if k not in built}
+
+
+def judge_unrecorded(P, jobs=4, fetch=False, force=False):
+    """The one judgement of the lean conffiles without a record, over every installed package (0.1.45, rows 629/802):
+    an owner's copy at a diverted name that no projection judged goes through the projection (unprojected_diverted),
+    then every lean conffile without a record through orphan_plan (migrate_orphans, kind 'unrecorded'): exactly the
+    projection of its package's file gets its record back, anything else is the person's, left as it is and named by
+    --verify. It runs once after this version's install, in the person's --repair (FETCH) and --repair-consumers, and
+    when a dpkg run changed dpkg's diversions (repair_consumers); a package a dpkg run unpacked hands its own such files
+    to it from its projection (project_packages). Never inside a maintainer script: dpkg's run is half done there."""
+    db = dpkg_db(P)
+    pkgs = dpkg_packages(P, db)
+    plain = unprojected_diverted(P, pkgs, db)
+    if plain:
+        project_packages(P, sorted(plain), jobs, log=lambda m: None, only={p for v in plain.values() for p in v},
+                         repair=False, record=False, db=db)
+    return migrate_orphans(P, jobs, pkgs=pkgs, force=force, fetch=fetch, kind='unrecorded', again=True)
 
 
 def orphan_reason(reason):
@@ -2989,7 +3110,7 @@ def orphan_plan(P, rows, db, pkgs, fetch=False, given=None, note=None):
     given = given or {}
     confs = conffiles(P, db)
     held = set(read_hold(P))
-    div = diversions(P)
+    divs = diversion_table(P)
     owners = {r['package'] for r in rows.values()}
     recorded = Records(P, 'records', owners | {t for k in owners for t in twins(k, pkgs)})
     out, data_of, need = {}, {}, {}
@@ -2997,14 +3118,17 @@ def orphan_plan(P, rows, db, pkgs, fetch=False, given=None, note=None):
     for path, row in sorted(rows.items()):
         name = row['package']
         ver, info = pkgs[name]
-        if name in held or name.split(':')[0] in held or path in held or path in div:
+        # under another package's diversion the file is judged where dpkg keeps it (0.1.45, rows 629/802: 0.1.44 left
+        # such a copy out, and bash's skel .bashrc stayed lean without a record); the diverting package's own copy and a
+        # copy a local diversion set aside are not projected (diverted_away)
+        if name in held or name.split(':')[0] in held or path in held or diverted_away(path, name, divs):
             continue
         if info not in lists:
             lists[info] = set(package_files(P, info))
         if path not in lists[info]:
             continue                 # another package's file now: its own projection judges it
         try:
-            with open(P.real(path), 'rb') as f:
+            with open(on_disk(P, path, name, divs), 'rb') as f:
                 data = f.read()
         except OSError:
             out[path] = {'kind': 'missing'}
@@ -3156,22 +3280,35 @@ def lost_diverted(P, db=None):
     return sorted(out)
 
 
-def schedule_diverted(P):
-    """The hook's part, a stat when nothing changed: when dpkg's diversions file differs from the last check, look for
-    such conffiles; if there are any, mark them pending and start the unit without waiting for it (it waits for this
-    dpkg run to end). Without systemd (an image being built) the timer runs it at the next start."""
+def diversions_stamp(P):
+    """dpkg's diversions file as the stamp keeps it (time and size: dpkg writes it again for every change), and the
+    stamp of the last check ('' when there is none)."""
     try:
         st = os.stat(P.real('/var/lib/dpkg/diversions'))
         now = f'{st.st_mtime_ns} {st.st_size}\n'
     except FileNotFoundError:
         now = 'none\n'
-    stamp = P.state(DIVERTED_STAMP)
     try:
-        with open(stamp, encoding='utf-8') as f:
-            if f.read() == now and not os.path.exists(P.state(DIVERTED_PENDING)):
-                return 0
+        with open(P.state(DIVERTED_STAMP), encoding='utf-8') as f:
+            return now, f.read()
     except FileNotFoundError:
-        pass
+        return now, ''
+
+
+def diversions_changed(P):
+    """Whether dpkg's diversions file differs from the last check (a stat and one small read)."""
+    now, was = diversions_stamp(P)
+    return now != was
+
+
+def schedule_diverted(P):
+    """The hook's part, a stat when nothing changed: when dpkg's diversions file differs from the last check, look for
+    such conffiles; if there are any, mark them pending and start the unit without waiting for it (it waits for this
+    dpkg run to end). Without systemd (an image being built) the timer runs it at the next start."""
+    now, was = diversions_stamp(P)
+    stamp = P.state(DIVERTED_STAMP)
+    if was == now and not os.path.exists(P.state(DIVERTED_PENDING)):
+        return 0
     lost = lost_diverted(P)
     os.makedirs(P.state(), exist_ok=True)
     if lost:
@@ -3288,7 +3425,7 @@ def orphan_remedy(why, package, fetch, file=None, kind='orphans'):
     return ['LOCAL57', name]
 
 
-def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphans'):
+def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphans', again=False, rows=None, db=None):
     """Gives back the records dpkg-stereo 0.1.28 and older lost (ORDER 373). Each lean file a projection left without
     its record (a left row "changed since its package installed it", or PERSON_CHANGED for a conffile) of a package
     installed now is judged against its package's own file at the installed version (orphan_plan): exactly that file's
@@ -3300,15 +3437,23 @@ def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphan
     .waiting with APT's lists and cache as they were; the step is kept as a problem (each version, why, and what gives
     the files their record) until a later run gives them their record: a dpkg run tries a version again only when its
     installed version, APT's lists or APT's cache changed (or FORCE says so), and only the person's --repair and
-    --repair-consumers (FETCH) ask snapshot.debian.org. A marker makes later hooks a single existence check."""
+    --repair-consumers (FETCH) ask snapshot.debian.org. A marker makes later hooks a single existence check.
+
+    Kind 'unrecorded' (0.1.44, rows 629/802) judges the lean conffiles without a record (unrecorded_rows), and is not
+    a one-time migration only (0.1.45): AGAIN judges every installed package whatever the marker says (judge_unrecorded:
+    the person's --repair, a change of dpkg's diversions); ROWS, {path: row}, judges just those files (a projection
+    hands over the lean conffiles it found without a record). A file judged the person's gets a left row
+    (PERSON_CHANGED), so --verify names it where it is."""
     marker = P.state(LEAN_MIGRATIONS[kind][0])
-    if os.path.exists(marker):
-        return 0
     pending_file, waiting_file = marker + '.pending', marker + '.waiting'
+    if os.path.exists(marker) and not again and rows is None and not os.path.exists(pending_file):
+        return 0
     lists, cache = apt_state(P)
     waiting = read_table(waiting_file, WAITING_COLS) if os.path.exists(pending_file) else {}
     names = None
-    if waiting:
+    if rows is not None:
+        names = {r['package'] for r in rows.values()}
+    elif waiting and not again:
         if pkgs is None:
             pkgs = dpkg_packages(P)
         held = {i['package'] for i in kept_items(P, kind) if isinstance(i, dict) and i.get('why') == 'metered'}
@@ -3318,9 +3463,18 @@ def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphan
         if not names:
             return 1       # nothing that could bring an original back has changed: one small table read
     t0 = time.time()
-    db = dpkg_db(P)
+    db = db or dpkg_db(P)
     pkgs = dpkg_packages(P, db)
-    rows = orphan_rows(P, pkgs, names) if kind == 'orphans' else unrecorded_rows(P, pkgs, names, db)
+    if kind == 'unrecorded' and not os.path.exists(marker):
+        # 0.1.44's state goes with its marker: this judgement covers what it covered
+        for old in UNRECORDED_BEFORE:
+            for f in (old, old + '.pending', old + '.waiting'):
+                if os.path.exists(P.state(f)):
+                    os.unlink(P.state(f))
+    judged = set(rows) if rows is not None else None
+    if rows is None:
+        rows = orphan_rows(P, pkgs, names) if kind == 'orphans' else unrecorded_rows(P, pkgs, names, db)
+    rows = {p: r for p, r in rows.items() if r['package'] in pkgs}
     quiet = lambda m: None
     plan = orphan_plan(P, rows, db, pkgs, fetch=fetch, note=print if fetch else quiet)
     kinds = collections.Counter(x['kind'] for x in plan.values())
@@ -3334,10 +3488,11 @@ def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphan
         files[path] = x['rec']
     files.save()
     pys = []
+    divs = diversion_table(P)
     for path, x in sorted(plan.items()):
         if x['kind'] != 'refused':
             continue
-        real = P.real(path)
+        real = on_disk(P, path, rows[path]['package'], divs)
         with open(real, 'rb') as f:
             data = f.read()
         write_lean(real, data, x['orig'], os.lstat(real))
@@ -3349,6 +3504,10 @@ def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphan
             left.pop(path, None)
         elif x['kind'] == 'refused':
             left[path] = dict(rows[path], handler=x['handler'], reason=x['reason'])
+        elif x['kind'] == 'person' and kind == 'unrecorded' and left.get(path, {}).get('reason') != PERSON_CHANGED:
+            # neither its package's file nor that file's projection: the person's, as a projection says it of a
+            # conffile it finds changed, so --verify names it where it is (0.1.44 left it with no row at all)
+            left[path] = dict(rows[path], reason=PERSON_CHANGED)
     left.save()
     failed = recompile_pyc(pys)
     if failed:
@@ -3370,7 +3529,9 @@ def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphan
     # the files still waiting: those of versions not tried now (a version dpkg replaced or removed is post-invoke's),
     # and those whose original was again nowhere
     old = read_table(pending_file, ORPHAN_PENDING_COLS) if os.path.exists(pending_file) else {}
-    keep = {p: r for p, r in old.items() if names is not None and r['package'] not in names
+    # judged now: every file of the packages in NAMES (all of them when NAMES is None), or only the files handed over
+    keep = {p: r for p, r in old.items()
+            if (p not in judged if judged is not None else names is not None and r['package'] not in names)
             and pkgs.get(r['package'], (None,))[0] == r['version']}
     keep.update({p: {'path': p, 'package': rows[p]['package'], 'version': pkgs[rows[p]['package']][0]} for p in wait})
     os.makedirs(P.state(), exist_ok=True)
@@ -3385,7 +3546,8 @@ def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphan
             if any(p not in wait for p in keep) else {}
         for (package, version), paths in sorted(by.items()):
             w = waiting.get(package)
-            tried = names is None or package in names or w is None or w['version'] != version
+            tried = (any(p in wait for p in paths) if judged is not None else names is None or package in names) \
+                or w is None or w['version'] != version
             table[package] = {'package': package, 'version': version, 'files': len(paths),
                               'lists': lists if tried else w['lists'], 'cache': cache if tried else w['cache']}
             x = next((wait[p] for p in paths if p in wait), None) or before.get((package, version)) or \
@@ -3406,9 +3568,11 @@ def migrate_orphans(P, jobs=4, pkgs=None, force=False, fetch=False, kind='orphan
                      repair=REPAIR, quiet=keep == old)
         FAILED_STEPS.add(kind)
         return 1
-    with open(marker + '.new', 'w', encoding='utf-8') as stream:
-        stream.write(f'{LEAN_MIGRATIONS[kind][2]} ({time.time() - t0:.0f} s).\n')
-    os.replace(marker + '.new', marker)
+    if judged is None:
+        # a judgement of only the files a projection handed over is no judgement of the whole system
+        with open(marker + '.new', 'w', encoding='utf-8') as stream:
+            stream.write(f'{LEAN_MIGRATIONS[kind][2]} ({time.time() - t0:.0f} s).\n')
+        os.replace(marker + '.new', marker)
     for f in (pending_file, waiting_file):
         if os.path.exists(f):
             os.unlink(f)
@@ -3864,7 +4028,15 @@ def show_problems(P):
 
 def repair(P, jobs):
     """Runs again what each kept problem names. A step that succeeds is cleared, one that fails again is kept with
-    its new evidence. Exit 0 when nothing is left."""
+    its new evidence. Exit 0 when nothing is left.
+    The lean conffiles without a record are judged every time, whether a problem names them or not (0.1.45, rows
+    629/802): a file that lost its record waits for no problem to be noticed."""
+    if P.root != '' or os.geteuid() == 0:
+        FAILED_STEPS.clear()
+        try:
+            judge_unrecorded(P, jobs, fetch=True, force=True)
+        except Exception as e:
+            keep_problem(P, 'project', error_line(e), detail=error_detail(), quiet=True)
     kept = {e.get('step'): e for e in kept_problems(P)}
     if not kept:
         print(text('LOCAL17'))
@@ -3876,7 +4048,9 @@ def repair(P, jobs):
     for step, entry in sorted(kept.items(), key=lambda kv: kv[1].get('time', '')):
         FAILED_STEPS.clear()
         try:
-            if step == 'conffiles':
+            if step == 'unrecorded':
+                ok = False             # judged just now, with downloads: what is kept is what still waits
+            elif step == 'conffiles':
                 ok = conffile_events.report(P, sys.modules[__name__], refresh=True)
             elif step == 'bytecode':
                 failed = recompile_pyc(sorted({i['source'] for i in entry.get('items', []) if i.get('source')}))
@@ -3888,7 +4062,7 @@ def repair(P, jobs):
                 ok = restore(P, sorted({i['package'] for i in entry.get('items', [])}), fetch=True) == 0
             elif step == 'diverted':
                 ok = not lost_diverted(P)           # main ran repair_diverted before taking the lock
-            elif step in ('orphans', 'unrecorded'):
+            elif step == 'orphans':
                 ok = migrate_orphans(P, jobs, force=True, fetch=True, kind=step) == 0
             elif step in STEPS:
                 # a hook, the projection or a migration: what dpkg changed since the last record, projected now
