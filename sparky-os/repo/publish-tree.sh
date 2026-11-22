@@ -361,9 +361,20 @@ with open(output, 'w') as stream:
 PYOLD
 if [ -s "$W/link-debs.txt" ]; then
 	mapfile -t LINK_DEBS <"$W/link-debs.txt"
+	# A round whose pool was qualified against dated archive views (row 794: Debian testing moved past the published
+	# edition while the round was prepared) gives this gate the same views and predecessor rules that qualified the pool:
+	# SPARKY_LC_LINK_ARGS_FILE names a file with one check-link argument per line (--previous-archive-config, its
+	# --previous-published-at and --previous-archive-policy, --collect-predecessor-stops, --allow-unavailable-baseline,
+	# --archive-evidence). Unset, the gate runs as before. The arguments are printed, so the log says how it ran.
+	LINK_EXTRA=()
+	if [ -n "${SPARKY_LC_LINK_ARGS_FILE:-}" ]; then
+		[ -f "$SPARKY_LC_LINK_ARGS_FILE" ] || { echo "lc1 link: SPARKY_LC_LINK_ARGS_FILE is not a file: $SPARKY_LC_LINK_ARGS_FILE" >&2; exit 1; }
+		mapfile -t LINK_EXTRA <"$SPARKY_LC_LINK_ARGS_FILE"
+		echo "lc1 link: ${#LINK_EXTRA[@]} extra arguments from $SPARKY_LC_LINK_ARGS_FILE: ${LINK_EXTRA[*]}"
+	fi
 	PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-link "${LINK_DEBS[@]}" --siblings-file "$W/link-siblings.txt" \
 		--previous-siblings-file "$W/link-previous.txt" \
-		${SPARKY_LC_PREVIOUS_DIR:+--previous-dir "$SPARKY_LC_PREVIOUS_DIR"}
+		${SPARKY_LC_PREVIOUS_DIR:+--previous-dir "$SPARKY_LC_PREVIOUS_DIR"} "${LINK_EXTRA[@]}"
 fi
 
 # Reject all conflicting destinations before changing any pool file. A package or
