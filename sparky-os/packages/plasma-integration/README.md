@@ -9,3 +9,9 @@ Both start from Debian's `.dsc`, pinned by its SHA-256 in `build.sh`; `packages/
 
 Build: `IMAGE=BUILDER POOL=FOLDER_WITH_KICONTHEMES_3 bash build.sh WORK DEBIAN_SOURCE_DIR DEBIAN_BINARY_DIR PUBLISHED_TREE ARCHIVE_DIR` (the arguments are described at the top of `build.sh`).
 The proof is the lane's rig, not a unit test inside the package build (Debian builds with `nocheck`).
+
+## plasma-integration +stereo3d2 (queue row 77 milestone 3)
+
+One step on from the staged `+stereo3d1`, pinned by its `.dsc` SHA-256 in `build-job-stereo3d2.sh`, built by `build-stereo3d2.sh`.
+- `patches/s2-0001-say-when-a-screen-mode-cannot-be-read.patch`: `Stereo::ScreenMode` keeps a screen whose mode KScreen cannot give as unknown, so a window there is drawn once with the plain icon; the platform theme now makes one KScreen read of its own when the first marked window meets a screen, and when that read fails says once per screen in the log which screen and why (Build-Depends on `libkscreen-dev`).
+- The proof is the lane's rig row: a program whose KScreen backend cannot be loaded (`KSCREEN_BACKEND` naming no installed backend) logs the line once, naming the screen; with KScreen working nothing is logged.
