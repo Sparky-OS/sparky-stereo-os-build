@@ -1,0 +1,60 @@
+Description: Stereo icon themes: tell the theme author about a stereo folder the loader refuses
+ .
+ A folder listed under X-StereoDirectories whose section has no X-StereoSize, a size
+ that is not a number of pixels, no X-StereoLayout or a layout other than sbs-left-first
+ was dropped with a debug line nobody sees, so a theme's pairs were never drawn. The
+ loader now says it in the kf.iconthemes category as a warning, with the index file,
+ the folder's section and the key to add or correct (row 752).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-22
+Assisted-by: Claude Opus 5.5
+---
+diff --git a/src/kicontheme.cpp b/src/kicontheme.cpp
+index 7b9b425..1ee99c7 100644
+--- a/src/kicontheme.cpp
++++ b/src/kicontheme.cpp
+@@ -181,6 +181,29 @@ public:
+ Q_GLOBAL_STATIC(QString, _theme)
+ Q_GLOBAL_STATIC(QStringList, _theme_list)
+ 
++// Why the loader cannot read a stereo folder, from the folder's section of the theme's index file; empty when it can
++static QString stereoDirRefusal(const KConfigGroup &cg)
++{
++    if (cg.readEntry("X-StereoSize", 0) <= 0) {
++        if (cg.hasKey("X-StereoSize")) {
++            return QStringLiteral("has X-StereoSize=%1, which is not a size in pixels; give the size of one view, for example X-StereoSize=32")
++                .arg(cg.readEntry("X-StereoSize", QString()));
++        }
++        return QStringLiteral("has no X-StereoSize key; give the size of one view in pixels, for example X-StereoSize=32");
++    }
++    const QString layout = cg.readEntry("X-StereoLayout", QString());
++    if (layout != QLatin1String("sbs-left-first")) {
++        if (cg.hasKey("X-StereoLayout")) {
++            return QStringLiteral(
++                       "has X-StereoLayout=%1, which is not a layout the loader reads; the one layout is X-StereoLayout=sbs-left-first (both views side by "
++                       "side, the left view first)")
++                .arg(layout);
++        }
++        return QStringLiteral("has no X-StereoLayout key; add X-StereoLayout=sbs-left-first (both views side by side, the left view first)");
++    }
++    return QString();
++}
++
+ /*
+  * A subdirectory in an icon theme.
+  */
+@@ -479,6 +502,13 @@ KIconTheme::KIconTheme(const QString &name, const QString &appName, const QStrin
+             const QString currentDir(themeDir + dirName + QLatin1Char('/'));
+             if (!addedDirs.contains(currentDir) && QFileInfo::exists(currentDir)) {
+                 addedDirs.insert(currentDir);
++                // A stereo folder the loader cannot read is told to the theme's author, never dropped in silence
++                const QString refusal = stereoDirRefusal(cg);
++                if (!refusal.isEmpty()) {
++                    qCWarning(KICONTHEMES).noquote() << QStringLiteral("The icon theme file %1 lists the stereo folder %2 in X-StereoDirectories, but the loader does not use it: its section [%2] %3.")
++                                                            .arg(fileName, dirName, refusal);
++                    continue;
++                }
+                 KIconThemeDir *dir = new KIconThemeDir(themeDir, dirName, cg, KIconThemeDir::Kind::Stereo);
+                 if (dir->isValid()) {
+                     d->mStereoDirs.append(dir);
