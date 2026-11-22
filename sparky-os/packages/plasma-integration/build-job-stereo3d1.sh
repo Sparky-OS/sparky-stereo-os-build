@@ -25,6 +25,8 @@ for line in p.read_text().split('Checksums-Sha256:\n',1)[1].splitlines():
     shutil.copy2(f,name)
 PY
 dpkg-source -x "$DSC" source
+# A Debian source may have no patches yet (plasma-integration 6.7.4-1 has none)
+mkdir -p source/debian/patches
 for p in /recipe/patches/*.patch; do
 	cp "$p" source/debian/patches/
 	basename "$p" >> source/debian/patches/series
