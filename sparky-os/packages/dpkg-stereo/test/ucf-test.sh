@@ -18,6 +18,8 @@ check() { d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
 mkdir -p "$W"
 END='(changed by the person: left as they made it)'
 v() { dpkg-stereo --verify "$@" >"$W/v.txt" 2>&1; echo $? >"$W/v.rc"; }
+# --deep before --verify: --verify takes the package names after it (dpkg-stereo --verify --deep NAME is refused)
+vd() { dpkg-stereo --deep --verify "$@" >"$W/v.txt" 2>&1; echo $? >"$W/v.rc"; }
 row() { grep -q -x -F "$1" "$W/v.txt"; }
 no_ucf_rows() { ! grep -q -E '^(EDITED|MISSING) .* through ucf\)' "$W/v.txt"; }
 rc() { [ "$(cat "$W/v.rc")" = "$1" ]; }
@@ -87,7 +89,7 @@ GONE_SUM=', 2 files kept through ucf are gone (ucf leaves a removed file removed
 dpkg -i "$W/uc-dropper_1.0.deb" >>"$W/uc.log" 2>&1
 check "U4 setup: uc-dropper 1.0 keeps /etc/profile.d/uc-dropper.sh through ucf" bash -c 'grep -q -F " /etc/profile.d/uc-dropper.sh" /var/lib/ucf/hashfile && grep -q "^uc-dropper .*/etc/profile.d/uc-dropper.sh" /var/lib/ucf/registry && [ -f /etc/profile.d/uc-dropper.sh ]'
 v; base=$(cat "$W/v.rc")
-v --deep samba-common uc-dropper; base_deep=$(cat "$W/v.rc")
+vd samba-common uc-dropper; base_deep=$(cat "$W/v.rc")
 mv /etc/samba/smb.conf "$W/smb.conf.u2"
 dpkg -i "$W/uc-dropper_1.1.deb" >>"$W/uc.log" 2>&1
 check "U4 setup: smb.conf removed by hand, uc-dropper 1.1's postinst removed its file; ucf's records name both" bash -c '[ ! -e /etc/samba/smb.conf ] && [ ! -e /etc/profile.d/uc-dropper.sh ] && grep -q -F " /etc/profile.d/uc-dropper.sh" /var/lib/ucf/hashfile && grep -q -F " /etc/samba/smb.conf" /var/lib/ucf/hashfile'
@@ -96,10 +98,10 @@ check "U4 gone: --verify prints no row for either" bash -c '! grep -q -E "^[A-Z]
 check "U4 gone: not counted, --verify exit 0 as before ($base)" bash -c '[ "$(cat '"$W/v.rc"')" = 0 ] && [ '"$base"' = 0 ]'
 check "U4 gone: the summary says 2 files kept through ucf are gone" summary_has "$GONE_SUM"
 check "U4 gone: the summary counts no problem" grep -q -E '^dpkg-stereo: [0-9]+ projected files checked, 0 problems' "$W/v.txt"
-v --deep samba-common uc-dropper
+vd samba-common uc-dropper
 check "U4 gone: --deep lists smb.conf as GONE" row "GONE      /etc/samba/smb.conf (kept by samba-common through ucf)"
 check "U4 gone: --deep lists uc-dropper's file as GONE" row "GONE      /etc/profile.d/uc-dropper.sh (kept by uc-dropper through ucf)"
-check "U4 gone: --deep's exit status as before ($base_deep)" rc "$base_deep"
+check "U4 gone: --deep's exit status as before ($base_deep), and --deep ran" bash -c '[ "$(cat '"$W/v.rc"')" = '"$base_deep"' ] && grep -q "^dpkg-stereo: " '"$W/v.txt"
 check "U4 gone: --deep has no MISSING row" bash -c '! grep -q "^MISSING" '"$W/v.txt"
 mv /etc/idmapd.conf "$W/idmapd.conf"; ln -s /nonexistent/idmapd.conf /etc/idmapd.conf
 v
