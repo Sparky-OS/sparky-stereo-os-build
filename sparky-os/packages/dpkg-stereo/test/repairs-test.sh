@@ -7,7 +7,14 @@
 #      the package's next change asks nothing;
 #   3. a conffile another package's diversion kept from being installed (the published edition: nano's /etc/nanorc,
 #      initramfs-tools' update-initramfs.conf) is installed by reinstalling its package after the dpkg run: held when
-#      metered, done from APT's cache, a person's edit of the diverting package's file untouched.
+#      metered, done from APT's cache, a person's edit of the diverting package's file untouched; a conffile of the
+#      reinstalled package that had lost its record gets it back, and --verify does not call it the person's (0.1.45);
+#   4. (0.1.45) the lean conffiles without a record are judged where dpkg keeps them: a copy under another package's
+#      diversion whose record 0.1.41 lost (bash's skel .bashrc on the published edition) gets it back, and keeps it when
+#      the diversion is removed in a later dpkg run, so the package's next change asks nothing; an owner's copy at a
+#      diverted name that 0.1.41 never projected (zsh-common's zshrc.debian) is projected and recorded, or, edited by
+#      the person, left byte for byte and named at its place; a record lost later comes back when dpkg's diversions
+#      change and in the person's --repair.
 # Usage (root, in a throwaway container of the published edition, which has dpkg-stereo 0.1.41, nano and
 # initramfs-tools with their conffiles lost): repairs-test.sh DPKG-STEREO.deb WORKDIR DEBS
 #   DEBS holds the installed nano and initramfs-tools .deb files (the cache case). MODE=archive instead downloads them
@@ -36,6 +43,22 @@ mk() {	# mk NAME VERSION VALUE: a conffile in /etc/default (shell) and one in /e
 	dpkg-deb --root-owner-group -b "$d" "$W/$1_$2_all.deb" >/dev/null
 }
 recorded() { cat "/var/lib/dpkg-stereo/records/$1.tsv" 2>/dev/null | grep -c "^$2$(printf '\t')"; }
+mkdiv() {	# mkdiv NAME VERSION PATH...: diverts other packages' files to PATH.debian with --rename, ships none of its own
+	n=$1 v=$2; shift 2
+	d=$W/$n-$v
+	mkdir -p "$d/DEBIAN"
+	{ printf '#!/bin/sh\nset -e\n'; for f; do printf 'dpkg-divert --quiet --package %s --add --rename --divert %s.debian %s\n' "$n" "$f" "$f"; done; } >"$d/DEBIAN/preinst"
+	{ printf '#!/bin/sh\nset -e\nif [ "$1" = remove ]; then\n'; for f; do printf '\tdpkg-divert --quiet --package %s --remove --rename --divert %s.debian %s\n' "$n" "$f" "$f"; done; printf 'fi\n'; } >"$d/DEBIAN/postrm"
+	chmod 755 "$d/DEBIAN/preinst" "$d/DEBIAN/postrm"
+	printf 'Package: %s\nVersion: %s\nArchitecture: all\nMaintainer: test <t@example.org>\nDescription: diverts other packages conffiles\n' "$n" "$v" >"$d/DEBIAN/control"
+	dpkg-deb --root-owner-group -b "$d" "$W/${n}_${v}_all.deb" >/dev/null
+}
+forget() {	# forget PACKAGE PATH: a lost record, as 0.1.41 and 0.1.42 lost them (the record and its row in the conffile index)
+	for t in "/var/lib/dpkg-stereo/records/$1.tsv" /var/lib/dpkg-stereo/conffiles.tsv; do
+		grep -v "^$2$(printf '\t')" "$t" >"$W/forget.tsv"; cat "$W/forget.tsv" >"$t"
+	done
+}
+POINTER='Lean Code: HR in '
 
 if [ "${MODE:-}" != archive ]; then
 	# 2. the lost records, made by the published 0.1.41 before the new version is installed
@@ -64,6 +87,17 @@ if [ "${MODE:-}" != archive ]; then
 	# after the update: Debian's container images empty APT's cache after every update and every apt dpkg run
 	# (/etc/apt/apt.conf.d/docker-clean); an installed system keeps it
 	cp "$W/uc-cache_2.0_all.deb" /var/cache/apt/archives/uc-cache_2.0_all.deb
+	# 4. (0.1.45) made by the published 0.1.41 too: bash's case (uc-div: projected, then diverted, then upgraded with
+	# the same conffile: the record goes and the diverted path is skipped) and zsh-common's case (uc-late, uc-edit:
+	# installed beside the diversion, never projected; the person edits uc-edit's copy at the diverted name)
+	mk uc-div 1.0 10; mk uc-div 2.0 10; mk uc-div 3.0 30; mk uc-late 1.0 10; mk uc-edit 1.0 10
+	mkdiv uc-diverter 1.0 /etc/default/uc-div /etc/default/uc-late /etc/default/uc-edit
+	for s in uc-div_1.0 uc-diverter_1.0 uc-div_2.0; do dpkg -i "$W/${s}_all.deb" </dev/null >"$W/$s.log" 2>&1; done
+	dpkg -i "$W/uc-late_1.0_all.deb" "$W/uc-edit_1.0_all.deb" </dev/null >"$W/uc-late.log" 2>&1
+	echo '# the person: an edit of the copy at the diverted name' >>/etc/default/uc-edit.debian
+	EDIT_WAS=$(sha256sum </etc/default/uc-edit.debian)
+	check '[ "$(recorded uc-div /etc/default/uc-div)" = 0 ] && grep -q "$POINTER" /etc/default/uc-div.debian && [ ! -e /etc/default/uc-div ] && [ "$(recorded uc-late /etc/default/uc-late)" = 0 ] && ! grep -q "$POINTER" /etc/default/uc-late.debian && [ "$(recorded uc-edit /etc/default/uc-edit)" = 0 ]' \
+		"red precondition: uc-div's lean copy at its diverted name has no record; uc-late's and uc-edit's copies there were never projected"
 	meter 1
 	dpkg -i "$DEB" </dev/null >"$W/install.log" 2>&1
 	echo "  installed $(dpkg-query -W -f='${Version}' dpkg-stereo)"
@@ -106,7 +140,7 @@ check '[ -s /var/lib/dpkg-stereo/diverted-conffiles.pending ]' "the hook found t
 EDITED=/etc/kernel/postrm.d/initramfs-tools UNREC=/etc/kernel/postinst.d/initramfs-tools
 REC=/var/lib/dpkg-stereo/records/initramfs-tools.tsv
 echo '# the person: an edit of the kernel hook' >>"$EDITED"
-grep -v "^$UNREC$(printf '\t')" "$REC" >"$W/rec.tsv" && cat "$W/rec.tsv" >"$REC"
+forget initramfs-tools "$UNREC"
 was=$(sha256sum "$EDITED" "$UNREC")
 check '[ "$(recorded initramfs-tools "$UNREC")" = 0 ] && [ "$(recorded initramfs-tools "$EDITED")" = 1 ] && grep -q "the person: an edit" "$EDITED"' \
 	"planted: initramfs-tools' $EDITED edited by the person, $UNREC without its record"
@@ -133,12 +167,49 @@ check 'grep -q "the person: an edit of the console nanorc" /etc/nanorc && [ -L /
 	"the diverting packages' files at the paths are untouched, the person's edit kept"
 check '[ "$was" = "$(sha256sum "$EDITED" "$UNREC")" ] && ! ls "$EDITED".dpkg-* "$UNREC".dpkg-* >/dev/null 2>&1' \
 	"initramfs-tools reinstalled: its edited conffile and its conffile without a record are byte for byte as they were, nothing beside them"
-echo "  record of $UNREC after the repair: $(recorded initramfs-tools "$UNREC")"
 check '[ ! -e /var/lib/dpkg-stereo/diverted-conffiles.pending ] && ! dpkg-stereo --problems 2>&1 | grep -q "never installed"' \
 	"nothing left pending, the problem cleared"
 dpkg-stereo --verify >"$W/verify.log" 2>&1
 sed 's/^/  verify: /' "$W/verify.log" | head -4
 check '[ "$(grep -E "^(CHANGED|MISSING|LCCHANGED)" "$W/verify.log" | awk "{print \$2}")" = "$EDITED" ] && dpkg --verify sparky-stereo-console 2>&1 | grep -q " /etc/nanorc$"' \
 	"--verify names only the person's edit of $EDITED; the edit of the console's own nanorc (no conffile, not projected) is dpkg's to name: dpkg --verify names it"
+# apt unpacks and configures in two dpkg runs, so the reinstall's second run projects the package whole: the lean
+# conffile without a record goes to the judgement, which gives its record back, and nothing calls it the person's
+check '[ "$(recorded initramfs-tools "$UNREC")" = 1 ] && ! grep -q "^EDITED  *$UNREC " "$W/verify.log"' \
+	"the reinstall gave $UNREC its record back, and --verify does not call it changed by the person ($(grep "^EDITED  *$UNREC " "$W/verify.log" | cut -c1-120))"
+
+if [ "${MODE:-}" != archive ]; then
+	# 4. (0.1.45) the lean conffiles without a record, judged where dpkg keeps them
+	dpkg-stereo --verify >"$W/verify4.log" 2>&1
+	check '[ "$(recorded uc-div /etc/default/uc-div)" = 1 ] && grep -q "$POINTER" /etc/default/uc-div.debian' \
+		"the lean copy under another package's diversion has its record back, read where dpkg keeps it"
+	check '[ "$(recorded uc-late /etc/default/uc-late)" = 1 ] && grep -q "$POINTER" /etc/default/uc-late.debian' \
+		"an owner's copy at a diverted name that 0.1.41 never projected, still its package's file: projected and recorded"
+	l="EDITED    /etc/default/uc-edit (at /etc/default/uc-edit.debian: uc-edit's copy, diverted by uc-diverter) (changed by the person: left as they made it)"
+	check 'grep -qxF "$l" "$W/verify4.log" && [ "$EDIT_WAS" = "$(sha256sum </etc/default/uc-edit.debian)" ] && [ "$(recorded uc-edit /etc/default/uc-edit)" = 0 ]' \
+		"the person's edit of an unprojected copy at a diverted name: left byte for byte and named at its place ($(grep uc-edit "$W/verify4.log" | cut -c1-160))"
+	dpkg -r uc-diverter </dev/null >"$W/undivert.log" 2>&1
+	dpkg-stereo --verify >"$W/verify5.log" 2>&1; rc=$?
+	check '[ ! -e /etc/default/uc-div.debian ] && [ "$(recorded uc-div /etc/default/uc-div)" = 1 ] && grep -q "$POINTER" /etc/default/uc-div && ! grep -q "^[A-Z]*  */etc/default/uc-div " "$W/verify5.log"' \
+		"the diversion removed in a later dpkg run: uc-div's copy back at its path, its record kept, --verify says nothing of it"
+	check 'grep -qxF "EDITED    /etc/default/uc-edit (changed by the person: left as they made it)" "$W/verify5.log" && [ "$EDIT_WAS" = "$(sha256sum </etc/default/uc-edit)" ]' \
+		"the person's edit is back at its path byte for byte and named there (--verify rc=$rc: part 3's planted edit is counted)"
+	dpkg -i "$W/uc-div_3.0_all.deb" </dev/null >"$W/div3.log" 2>&1; rc=$?
+	check '[ "$rc" = 0 ] && ! grep -q "Configuration file" "$W/div3.log" && [ ! -e /etc/default/uc-div.dpkg-new ] && grep -q SETTING=30 /etc/default/uc-div' \
+		"uc-div 3.0 changes the conffile: no question, installed (rc=$rc)"
+	# a record lost later, under a diversion: the dpkg run that removes the diversion judges it
+	dpkg -i "$W/uc-diverter_1.0_all.deb" </dev/null >"$W/divert2.log" 2>&1
+	forget uc-late /etc/default/uc-late
+	dpkg -r uc-diverter </dev/null >"$W/undivert2.log" 2>&1
+	check '[ "$(recorded uc-late /etc/default/uc-late)" = 1 ] && grep -q "$POINTER" /etc/default/uc-late' \
+		"a record lost under a diversion comes back in the dpkg run that changes dpkg's diversions"
+	# and in the person's --repair, with no problem kept and no diversion changed
+	forget uc-late /etc/default/uc-late
+	dpkg-stereo --repair >"$W/repair4.log" 2>&1; rc=$?
+	sed 's/^/  repair: /' "$W/repair4.log" | cut -c1-200 | head -3
+	check '[ "$(recorded uc-late /etc/default/uc-late)" = 1 ] && grep -q "1 settings files have theirs back" "$W/repair4.log"' \
+		"the person's --repair judges a lean conffile without a record though no problem names it, and says so (rc=$rc)"
+	dpkg -P uc-div uc-late uc-edit >/dev/null 2>&1
+fi
 echo "$pass PASS, $fail FAIL"
 [ "$fail" = 0 ] && echo "ALL PASS"
