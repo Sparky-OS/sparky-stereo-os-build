@@ -6,7 +6,8 @@
 # and packages that keep files through it: samba-common's smb.conf and grub-efi-amd64's /etc/default/grub registered
 # with ucfr, nfs-common's /etc/nfs.conf and /etc/idmapd.conf without, and its /etc/default/nfs-common both a conffile
 # of its list, which Lean Code projects, and a ucf-kept file). DEB is the one under test.
-# Red on 0.1.45, green on 0.1.46. Exit 1 on any FAIL.
+# Red on 0.1.45, and in U4 on continuation 12's first 0.1.46 build (a gone file was MISSING and counted); green on
+# 0.1.46. Exit 1 on any FAIL.
 set -u
 DEB=$(readlink -f "$1") W=$2
 export DEBIAN_FRONTEND=noninteractive
@@ -53,12 +54,62 @@ cp -p /etc/nfs.conf "$W/nfs.conf"; echo '# a person was here' >>/etc/nfs.conf
 v
 check "U3 edited /etc/nfs.conf named, kept through ucf with no package" row "EDITED    /etc/nfs.conf (kept through ucf) $END"
 
-# U4: a file ucf keeps that is gone: MISSING and counted, as a projected conffile removed by hand
-mv /etc/idmapd.conf "$W/idmapd.conf"
+# U4 (continuation 13): a file kept through ucf that is gone is no fault and not the person's either: ucf leaves a
+# removed file removed ("Not replacing deleted config file"), and who removed it cannot be told. --verify prints no row
+# and counts nothing, its summary says how many, --verify --deep lists each as GONE, and the exit status is the same as
+# with the files there. Two shapes: a registered file removed by hand (samba-common's smb.conf), and a record whose file
+# a package's own script removed with no ucf --purge (libdebuginfod-common 0.196-1's postinst when its debconf answer is
+# false: rm -f /etc/profile.d/debuginfod.sh). A link whose target is gone is no gone file: it stands at the name.
+d=$W/uc-dropper; mkdir -p "$d/DEBIAN" "$d/usr/share/uc-dropper"
+printf 'export UC_DROPPER=1\n' >"$d/usr/share/uc-dropper/uc-dropper.sh"
+cat >"$d/DEBIAN/postrm" <<'UC_DROPPER_POSTRM_END'
+#!/bin/sh
+set -e
+# unlike libdebuginfod-common's purge, which skips ucf's records when the file is already gone, this one leaves nothing
+if [ "$1" = purge ] && command -v ucf >/dev/null; then
+	ucf --purge /etc/profile.d/uc-dropper.sh
+	ucfr --purge uc-dropper /etc/profile.d/uc-dropper.sh
+	rm -f /etc/profile.d/uc-dropper.sh
+fi
+UC_DROPPER_POSTRM_END
+for ver in 1.0 1.1; do
+	printf 'Package: uc-dropper\nVersion: %s\nArchitecture: all\nMaintainer: test <t@example.org>\nDepends: ucf\nDescription: keeps a file through ucf, then removes it\n' "$ver" >"$d/DEBIAN/control"
+	if [ "$ver" = 1.0 ]; then
+		printf '#!/bin/sh\nset -e\nif [ "$1" = configure ]; then\n\tDEBIAN_FRONTEND=noninteractive ucf /usr/share/uc-dropper/uc-dropper.sh /etc/profile.d/uc-dropper.sh\n\tucfr uc-dropper /etc/profile.d/uc-dropper.sh\nfi\n' >"$d/DEBIAN/postinst"
+	else
+		printf '#!/bin/sh\nset -e\nif [ "$1" = configure ]; then\n\trm -f /etc/profile.d/uc-dropper.sh\nfi\n' >"$d/DEBIAN/postinst"
+	fi
+	chmod 755 "$d/DEBIAN/postinst" "$d/DEBIAN/postrm"
+	dpkg-deb --root-owner-group -b "$d" "$W/uc-dropper_$ver.deb" >/dev/null
+done
+summary_has() { grep '^dpkg-stereo: ' "$W/v.txt" | grep -q -F -- "$1"; }
+GONE_SUM=', 2 files kept through ucf are gone (ucf leaves a removed file removed)'
+dpkg -i "$W/uc-dropper_1.0.deb" >>"$W/uc.log" 2>&1
+check "U4 setup: uc-dropper 1.0 keeps /etc/profile.d/uc-dropper.sh through ucf" bash -c 'grep -q -F " /etc/profile.d/uc-dropper.sh" /var/lib/ucf/hashfile && grep -q "^uc-dropper .*/etc/profile.d/uc-dropper.sh" /var/lib/ucf/registry && [ -f /etc/profile.d/uc-dropper.sh ]'
+v; base=$(cat "$W/v.rc")
+v --deep samba-common uc-dropper; base_deep=$(cat "$W/v.rc")
+mv /etc/samba/smb.conf "$W/smb.conf.u2"
+dpkg -i "$W/uc-dropper_1.1.deb" >>"$W/uc.log" 2>&1
+check "U4 setup: smb.conf removed by hand, uc-dropper 1.1's postinst removed its file; ucf's records name both" bash -c '[ ! -e /etc/samba/smb.conf ] && [ ! -e /etc/profile.d/uc-dropper.sh ] && grep -q -F " /etc/profile.d/uc-dropper.sh" /var/lib/ucf/hashfile && grep -q -F " /etc/samba/smb.conf" /var/lib/ucf/hashfile'
 v
-check "U4 removed /etc/idmapd.conf: MISSING" row "MISSING   /etc/idmapd.conf (kept through ucf)"
-check "U4 removed: counted (exit 1)" rc 1
-mv "$W/idmapd.conf" /etc/idmapd.conf
+check "U4 gone: --verify prints no row for either" bash -c '! grep -q -E "^[A-Z]+ +(/etc/samba/smb.conf|/etc/profile.d/uc-dropper.sh) " '"$W/v.txt"
+check "U4 gone: not counted, --verify exit 0 as before ($base)" bash -c '[ "$(cat '"$W/v.rc"')" = 0 ] && [ '"$base"' = 0 ]'
+check "U4 gone: the summary says 2 files kept through ucf are gone" summary_has "$GONE_SUM"
+check "U4 gone: the summary counts no problem" grep -q -E '^dpkg-stereo: [0-9]+ projected files checked, 0 problems' "$W/v.txt"
+v --deep samba-common uc-dropper
+check "U4 gone: --deep lists smb.conf as GONE" row "GONE      /etc/samba/smb.conf (kept by samba-common through ucf)"
+check "U4 gone: --deep lists uc-dropper's file as GONE" row "GONE      /etc/profile.d/uc-dropper.sh (kept by uc-dropper through ucf)"
+check "U4 gone: --deep's exit status as before ($base_deep)" rc "$base_deep"
+check "U4 gone: --deep has no MISSING row" bash -c '! grep -q "^MISSING" '"$W/v.txt"
+mv /etc/idmapd.conf "$W/idmapd.conf"; ln -s /nonexistent/idmapd.conf /etc/idmapd.conf
+v
+check "U4 a link whose target is gone stands at the name: EDITED" row "EDITED    /etc/idmapd.conf (kept through ucf) $END"
+check "U4 the link is not counted among the gone (still 2)" summary_has "$GONE_SUM"
+rm -f /etc/idmapd.conf; mv "$W/idmapd.conf" /etc/idmapd.conf
+mv "$W/smb.conf.u2" /etc/samba/smb.conf
+dpkg -P uc-dropper >>"$W/uc.log" 2>&1
+v
+check "U4 back: no gone file left, nothing about uc-dropper" bash -c '! grep -q -E "are gone|uc-dropper" '"$W/v.txt"
 
 # U5: only the named packages: --verify samba-common leaves grub's and the unregistered nfs.conf out
 v samba-common

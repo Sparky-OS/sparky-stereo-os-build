@@ -2311,12 +2311,16 @@ def verify(P, names, deep=False):
     # A file that maintainer scripts keep through ucf is in no package's file list, so neither dpkg --verify nor the
     # records above judge it (row 813: sparky-stereo-console's files at the names it diverts, samba-common's smb.conf,
     # grub's /etc/default/grub). It is judged against what ucf last wrote, by the md5sum ucf recorded: other bytes
-    # are the person's, said as any conffile the person changed after an upgrade is said, and not counted; a file
-    # that is gone is MISSING and counted, as a projected conffile removed by hand is (above). A path of a package's
+    # are the person's, said as any conffile the person changed after an upgrade is said, and not counted. A file
+    # that is gone is no fault and not the person's either: ucf itself leaves a removed file removed ("Not replacing
+    # deleted config file"), and a package's own script may have removed it without telling ucf (libdebuginfod-common's
+    # postinst runs rm -f with no ucf --purge), so who removed it cannot be told. It is only counted in the summary,
+    # listed as GONE by --deep, and never changes the exit status (row 813, continuation 13: on two edition machines
+    # nobody touched that way, ucf's records named two and three such files). A path of a package's
     # own list, where that package's copy is (nfs-common lists /etc/default/nfs-common as a conffile and hands it to
     # ucf too, and Lean Code projects it), stays with its package's judgement above: ucf's md5sum is of the
     # original, never of the lean file. A file only root can read is counted, and said once, never a row each.
-    ucf_checked = ucf_unread = 0
+    ucf_checked = ucf_unread = ucf_gone = 0
     for path, (want, owner) in sorted(ucf_kept(P).items()):
         if names and (owner is None or (owner not in names and owner.split(':')[0] not in names)):
             continue
@@ -2332,9 +2336,13 @@ def verify(P, names, deep=False):
             with open(P.real(path), 'rb') as f:
                 have = md5(f.read())
         except FileNotFoundError:
-            print(f'MISSING   {path} ({who})')
-            bad += 1
-            continue
+            if not os.path.lexists(P.real(path)):
+                ucf_gone += 1
+                if deep:
+                    print(f'GONE      {path} ({who})')
+                continue
+            # a link whose target is gone stands at the name: something other than what ucf wrote, as below
+            have = None
         except PermissionError:
             ucf_unread += 1
             continue
@@ -2354,6 +2362,7 @@ def verify(P, names, deep=False):
           + (f', {lost} files NOT checked against their package (NODEB)' if lost else '')
           + (f', {unrecorded} lean files without their record (UNRECORDED)' if unrecorded else '')
           + (f', {ucf_checked} files kept through ucf checked' if ucf_checked else '')
+          + (f', {text("LOCAL102", [ucf_gone])}' if ucf_gone else '')
           + (f', {ucf_unread} files kept through ucf NOT read (only root can read them)' if ucf_unread else ''))
     if ucf_unread:
         import shlex
