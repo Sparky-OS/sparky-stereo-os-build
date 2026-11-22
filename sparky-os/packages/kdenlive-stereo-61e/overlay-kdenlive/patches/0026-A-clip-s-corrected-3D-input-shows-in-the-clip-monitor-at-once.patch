@@ -1,0 +1,66 @@
+Description: A clip's corrected 3D input shows in the clip monitor at once
+ When the person corrects the 3D input of a clip (its packing, Swap left and
+ right eyes) in its properties, the project monitor shows the correction at
+ once, but the clip monitor read a clip's 3D input only when it displayed a
+ frame, so a still kept the eyes it showed until the clip was opened again
+ (a still displays no other frame). The clip is now told to the clip monitor
+ when it shows that clip: the monitor reads the input again and draws the
+ frame again.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-22
+diff --git a/src/bin/projectclip.cpp b/src/bin/projectclip.cpp
+index 2b93365..ed4df47 100644
+--- a/src/bin/projectclip.cpp
++++ b/src/bin/projectclip.cpp
+@@ -25,6 +25,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ #include "lib/audio/audioStreamInfo.h"
+ #include "mainwindow.h"
+ #include "mltcontroller/clippropertiescontroller.h"
++#include "monitor/monitor.h"
+ #include "model/markerlistmodel.hpp"
+ #include "model/markersortmodel.h"
+ #include "project/projectmanager.h"
+@@ -2215,6 +2216,11 @@ void ProjectClip::setProperties(const QMap<QString, QString> &properties, bool r
+         if (pCore->bin()) {
+             pCore->bin()->reloadMonitorIfActive(clipId());
+         }
++        // the clip monitor reads a clip's 3D input when it displays a frame, and a still displays no other after the change
++        Monitor *clipMonitor = pCore->getMonitor(Kdenlive::ClipMonitor);
++        if (clipMonitor && clipMonitor->activeClipId() == clipId()) {
++            clipMonitor->stereoInputChanged();
++        }
+     }
+     // update timeline clips
+     if (!reload) {
+diff --git a/src/monitor/monitor.cpp b/src/monitor/monitor.cpp
+index 8b05a17..cc346e8 100644
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -1957,6 +1957,12 @@ void Monitor::slotRefreshMonitor(bool visible)
+     }
+ }
+ 
++void Monitor::stereoInputChanged()
++{
++    updateStereoPreview();
++    m_glMonitor->requestRefresh();
++}
++
+ void Monitor::forceMonitorRefresh()
+ {
+     if (!slotTemporaryActivateMonitor()) {
+diff --git a/src/monitor/monitor.h b/src/monitor/monitor.h
+index 418748a..c63d1cd 100644
+--- a/src/monitor/monitor.h
++++ b/src/monitor/monitor.h
+@@ -452,6 +452,9 @@ public Q_SLOTS:
+     void refreshMonitorIfActive(bool directUpdate = false) override;
+     void refreshMonitor(bool directUpdate = false, bool slowRefresh = false);
+     void forceMonitorRefresh();
++    /** @brief The person corrected the 3D input (packing, eye order) of the clip this monitor shows: read it again and draw the
++     *  frame again now, not at the next frame displayed (a still displays no other) */
++    void stereoInputChanged();
+     /** @brief Clear read ahead cache, to ensure up to date audio */
+     void purgeCache();
+     /** @brief Stop displaying a  mask as overlay to the clip */

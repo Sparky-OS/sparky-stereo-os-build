@@ -59,6 +59,7 @@ SOURCES = {
     'kdenlive-order61e.po.patch': ('kdenlive', None),
     'kdenlive-order61f.po.patch': ('kdenlive', None),
     'kdenlive-order61g.po.patch': ('kdenlive', None),
+    'kdenlive-order61i.po.patch': ('kdenlive', None),
     'kalzium-stereo3d.po.patch': ('kalzium', None),
     'kf6-kfilemetadata-stereo3d.po.patch': ('kf6-kfilemetadata', None),
     'kf6-kfilemetadata-order46b.po.patch': ('kf6-kfilemetadata', None),
