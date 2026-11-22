@@ -1,11 +1,16 @@
 #!/bin/sh
 # ORDER 707: the verifier's trust check meets a folder an early dpkg-stereo left group-writable.
-# Usage: modes-test.sh DPKG-STEREO.deb WORKDIR   (a throwaway ds707- container, root, no network, the published
+# Usage: modes-test.sh DPKG-STEREO.deb WORKDIR [DEBS]   (a throwaway ds707- container, root, no network, the published
 # edition installed: dpkg 1.23.11+stereo3d3+lc1 and a dpkg-stereo; DEB is the one under test)
 # Red on 0.1.41 (reinstalling it leaves the folders as they are, the refusal does not name the folder, repair cannot
 # settle), green on its successor. Every scenario ends with its packages purged.
+# DEBS (rows 629 and 802): the published edition lost nano's and initramfs-tools' conffiles under a diversion, and
+# from 0.1.44 every --repair installs them by reinstalling those packages. With no network that repair rightly keeps
+# its 'diverted' problem, and the rows below that expect no problem fail for that reason, not for the folders. DEBS
+# names a folder with those packages' .deb files at their installed versions: they go into APT's cache before the
+# package under test is installed, so the repair is done offline, and a row says so.
 set -u
-DEB=$1 W=$2
+DEB=$1 W=$2 DEBS=${3:-}
 export DEBIAN_FRONTEND=noninteractive
 . "$(dirname "$0")/modes-lib.sh"
 fail=0
@@ -38,9 +43,18 @@ echo "== the package under test ships its folders 0755, root-owned"
 bad_dirs=$(dpkg-deb -c "$DEB" | awk '$1 ~ /^d/ && ($1 != "drwxr-xr-x" || $2 != "root/root")' | wc -l)
 check "no folder of the package is other than drwxr-xr-x root/root ($bad_dirs)" [ "$bad_dirs" = 0 ]
 
+lost_conffiles() { # the conffiles of the packages in DEBS that dpkg still has as newconffile
+	for d in "$DEBS"/*.deb; do dpkg-query -W -f='${Conffiles}\n' "$(dpkg-deb -f "$d" Package)"; done | grep -c ' newconffile$'
+}
+if [ -n "$DEBS" ]; then
+	echo "== DEBS: $(lost_conffiles) conffile(s) of $(ls "$DEBS"/*.deb | wc -l) package(s) lost under a diversion; their .deb files go into APT's cache"
+	cp "$DEBS"/*.deb /var/cache/apt/archives/
+fi
+
 echo "== install the package under test (a reinstall for 0.1.41, an upgrade for its successor)"
 DPKG_STEREO_NO_PROJECT=1 dpkg -i "$DEB" </dev/null >"$W/successor.log" 2>&1 || bad "install of the package under test: $(tail -3 $W/successor.log)"
-dpkg-stereo --repair >/dev/null 2>&1
+dpkg-stereo --repair >"$W/first-repair.log" 2>&1
+[ -z "$DEBS" ] || check "the first repair installed the lost conffiles from APT's cache, with no network ($(lost_conffiles) left)" [ "$(lost_conffiles)" = 0 ]
 
 echo "== S0 control: folders at 0755, an upgrade that changes three projected conffiles completes"
 FX=fxa; install_fx $FX; upgrade_fx --force-confnew
