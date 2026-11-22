@@ -1,0 +1,192 @@
+Description: Vibe engine: the language Vibe names, or the model's own choice
+ The engine sent detect_language=true whenever Vibe's own settings named no language
+ (or "automatic"). Vibe 3.3.5's server passes that field to its whisper-rs engine, whose
+ full() detects the language and returns before any decoding when detect_language is
+ set (server/crates/whisper-rs/src/full.rs), so every such dictation was answered with
+ an empty text and said as "Vibe heard no speech in the recording.". Measured by the
+ main session on a test machine with the real model: the same recording gave the right
+ text with language=en and with neither field, and {"text":""} with detect_language=true.
+ .
+ The engine now sends a language only when Vibe's settings name one; with none, or
+ automatic, it sends no language field, so the model detects the language and then
+ transcribes (full.rs treats a missing, empty or "auto" language alike). An empty text
+ for a recording is still said as before.
+ .
+ The test stand-in follows the server for these fields (detect_language answered with
+ an empty text), the job test expects neither field when no language is set, and the
+ plugin test reads the language from Vibe's store through the plugin interface: none,
+ automatic, and Portuguese as the control.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-22
+---
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/data/vibe-server-standin.py b/textspeechtotext/speechtotext/plugins/vibe/autotests/data/vibe-server-standin.py
+index 9496376..4817646 100755
+--- a/textspeechtotext/speechtotext/plugins/vibe/autotests/data/vibe-server-standin.py
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/data/vibe-server-standin.py
+@@ -13,6 +13,10 @@ STANDIN_LOAD_SECONDS is how long its "model load" takes before the ready line (o
+ noload and noready); STANDIN_ANSWER_SECONDS how long it takes to answer a transcription. It writes the times
+ (seconds since the epoch) when it started, was ready, received the request and was terminated, in started, ready,
+ request and terminated.
++The language fields follow Vibe 3.3.5's server: "language" absent, empty or "auto" lets the model choose the language and
++transcribe (whisper-rs full.rs: a language of None, "" or "auto" is detected first); "detect_language" set to a true word
++(server/form.rs: 1, t, T, true, TRUE, True, yes, on) only detects the language and answers an empty text (full.rs returns
++before any decoding when detect_language is set).
+ """
+ import email.parser
+ import email.policy
+@@ -31,6 +35,7 @@ RECORD = os.environ.get('STANDIN_RECORD', '')
+ TEXT = os.environ.get('STANDIN_TEXT', 'Text from the stand-in server.')
+ LOAD_SECONDS = float(os.environ.get('STANDIN_LOAD_SECONDS', '0'))
+ ANSWER_SECONDS = float(os.environ.get('STANDIN_ANSWER_SECONDS', '0'))
++TRUE_WORDS = ('1', 't', 'T', 'true', 'TRUE', 'True', 'yes', 'on')
+ 
+ 
+ def record(name, data):
+@@ -114,6 +119,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             text = TEXT if score >= 0.6 else 'UNRECOGNISED AUDIO'
+         else:
+             text = TEXT
++        if fields.get('detect_language') in TRUE_WORDS:
++            # the real server detects the language and stops: {"text": ""}
++            text = ''
++            fields['standin_answer'] = 'detect_language: the language detected, nothing transcribed'
+         record('request.json', json.dumps(fields, indent=1).encode())
+         time.sleep(ANSWER_SECONDS)
+         if self.path != '/v1/audio/transcriptions':
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextjobtest.cpp b/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextjobtest.cpp
+index a96c504..cb92377 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextjobtest.cpp
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextjobtest.cpp
+@@ -133,7 +133,9 @@ private Q_SLOTS:
+         const QJsonObject request = QJsonDocument::fromJson(readFile(record.filePath(u"request.json"_s))).object();
+         QCOMPARE(request.value("path"_L1).toString(), u"/v1/audio/transcriptions"_s);
+         QCOMPARE(request.value("response_format"_L1).toString(), u"json"_s);
+-        QCOMPARE(request.value("detect_language"_L1).toString(), u"true"_s);
++        // no language set in Vibe: neither field, so the server's model chooses the language and transcribes
++        // (detect_language=true only detects it and answers an empty text)
++        QVERIFY(!request.contains("detect_language"_L1));
+         QVERIFY(!request.contains("language"_L1));
+         QCOMPARE(request.value("file"_L1).toObject().value("content_type"_L1).toString(), u"audio/wav"_s);
+         QCOMPARE(readFile(record.filePath(u"audio.wav"_s)), VibeSpeechToTextJob::wavFile(pcm, 16000));
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextplugintest.cpp b/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextplugintest.cpp
+index dbeb233..192ca6e 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextplugintest.cpp
++++ b/textspeechtotext/speechtotext/plugins/vibe/autotests/vibespeechtotextplugintest.cpp
+@@ -9,6 +9,9 @@
+ #include <QDir>
+ #include <QElapsedTimer>
+ #include <QFile>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QScopeGuard>
+ #include <QSignalSpy>
+ #include <QStandardPaths>
+ #include <QTemporaryDir>
+@@ -26,6 +29,29 @@ class VibeSpeechToTextPluginTest : public QObject
+     Q_OBJECT
+ private:
+     QTemporaryDir mBin;
++    QString mModelPath;
++
++    // Vibe's own store: the model selected there and, when LANGUAGE is not null, the language set there
++    // (built as JSON objects: moc counts braces inside raw string literals and then finds no class here)
++    QByteArray vibeStore(const QByteArray &language) const
++    {
++        QJsonObject store{{u"model.path"_s, mModelPath}, {u"analytics_enabled"_s, false}};
++        if (!language.isNull()) {
++            store.insert(u"transcription.modelOptions"_s, QJsonObject{{u"lang"_s, QString::fromUtf8(language)}});
++        }
++        return QJsonDocument(store).toJson(QJsonDocument::Compact);
++    }
++
++    static QString storeFile()
++    {
++        return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/github.com.thewh1teagle.vibe/app_config.json"_L1;
++    }
++
++    static bool writeFile(const QString &path, const QByteArray &data)
++    {
++        QFile file(path);
++        return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(data) == data.size();
++    }
+ 
+     static QByteArray tone()
+     {
+@@ -101,7 +127,8 @@ private Q_SLOTS:
+         QVERIFY(QDir().mkpath(store));
+         QFile config(store + "/app_config.json"_L1);
+         QVERIFY(config.open(QIODevice::WriteOnly));
+-        config.write(R"({"model.path": ")" + model.fileName().toUtf8() + R"(", "analytics_enabled": false})");
++        mModelPath = model.fileName();
++        config.write(vibeStore(QByteArray()));
+         config.close();
+         qputenv("PATH", (mBin.path() + ":/usr/bin:/bin"_L1).toLocal8Bit());
+         QCoreApplication::setLibraryPaths({QStringLiteral(PLUGIN_BUILD_ROOT)});
+@@ -201,6 +228,49 @@ private Q_SLOTS:
+         QVERIFY(done.wait(20000));
+         QCOMPARE(done.at(0).at(0).toString(), u"Text from the stand-in server."_s);
+     }
++
++    // the language Vibe's store names goes to the server; with none, or automatic, the server's model chooses it and
++    // transcribes. The stand-in answers detect_language=true with an empty text, as Vibe 3.3.5's server does.
++    void shouldTranscribeInTheLanguageOfVibesStore_data()
++    {
++        QTest::addColumn<QByteArray>("language");
++        QTest::addColumn<QString>("sent");
++        QTest::newRow("no language in Vibe") << QByteArray() << QString();
++        QTest::newRow("automatic in Vibe") << QByteArray("auto") << QString();
++        QTest::newRow("Portuguese in Vibe") << QByteArray("pt") << u"pt"_s;
++    }
++
++    void shouldTranscribeInTheLanguageOfVibesStore()
++    {
++        QFETCH(QByteArray, language);
++        QFETCH(QString, sent);
++        // the engine reads Vibe's store at every dictation: this case's store stays until the case ends
++        QVERIFY(writeFile(storeFile(), vibeStore(language)));
++        const auto restore = qScopeGuard([this]() {
++            writeFile(storeFile(), vibeStore(QByteArray()));
++        });
++        QTemporaryDir record;
++        standin(u"ok"_s, record.path());
++        std::unique_ptr<TextSpeechToText::SpeechToTextPlugin> plugin(vibe());
++        QVERIFY(plugin);
++        QSignalSpy done(plugin.get(), &TextSpeechToText::SpeechToTextPlugin::speechToTextDone);
++        QSignalSpy failed(plugin.get(), &TextSpeechToText::SpeechToTextPlugin::speechToTextFailed);
++        plugin->speechToText();
++        speak(plugin.get());
++        QTRY_VERIFY_WITH_TIMEOUT(serverRunning(record.path()), 10000);
++        plugin->stop();
++        QTRY_VERIFY_WITH_TIMEOUT(done.count() + failed.count() > 0, 20000);
++        QVERIFY2(failed.isEmpty(), failed.isEmpty() ? "" : qPrintable(failed.at(0).at(0).toString()));
++        QCOMPARE(done.at(0).at(0).toString(), u"Text from the stand-in server."_s);
++        const QByteArray request = readFile(record.filePath(u"request.json"_s));
++        QVERIFY2(!request.contains("\"detect_language\""), request.constData());
++        if (sent.isEmpty()) {
++            QVERIFY2(!request.contains("\"language\""), request.constData());
++        } else {
++            const QByteArray field = QByteArray("\"language\": \"") + sent.toUtf8() + QByteArray("\"");
++            QVERIFY2(request.contains(field), request.constData());
++        }
++    }
+ };
+ 
+ QTEST_GUILESS_MAIN(VibeSpeechToTextPluginTest)
+diff --git a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.cpp b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.cpp
+index cccd1fa..bcde228 100644
+--- a/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.cpp
++++ b/textspeechtotext/speechtotext/plugins/vibe/vibespeechtotextjob.cpp
+@@ -218,9 +218,9 @@ void VibeSpeechToTextJob::sendAudio(int port)
+     filePart.setBody(wavFile(mPcm, mSampleRate));
+     multiPart->append(filePart);
+     multiPart->append(formField(u"response_format"_s, "json"));
+-    if (mSettings.language.isEmpty()) {
+-        multiPart->append(formField(u"detect_language"_s, "true"));
+-    } else {
++    // the language set in Vibe; with none (or automatic) no language field, so the model chooses the language and
++    // transcribes (Vibe 3.3.5's whisper-rs full.rs); detect_language=true would only detect it and answer an empty text
++    if (!mSettings.language.isEmpty()) {
+         multiPart->append(formField(u"language"_s, mSettings.language.toUtf8()));
+     }
+     QNetworkRequest request(QUrl(u"http://127.0.0.1:%1/v1/audio/transcriptions"_s.arg(port)));
