@@ -1,0 +1,12 @@
+No speech model is included or downloaded by these packages.
+The release sources are unmodified. Translation catalogues are not yet shipped
+upstream. Captions remain opt-in; service and socket activation are not enabled
+by installation.
+
+The Debian snapshot has webrtc-audio-processing-1, not the upstream optional
+webrtc-audio-processing-2 dependency. The upstream default consequently builds
+without microphone echo cancellation. Separate streams remain supported, but
+a microphone can hear and caption the loudspeakers again.
+
+Model suites and daemon/transcribe suites that call the Whisper loader are
+excluded on the packaging station. Model-free suites are run in isolation.
