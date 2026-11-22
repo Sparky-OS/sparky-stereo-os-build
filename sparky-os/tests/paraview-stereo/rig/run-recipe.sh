@@ -30,10 +30,10 @@ docker run --name sci50f-build-$NAME --pull=never --ulimit core=1 --cpus ${CPUS:
   --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
   "${SPARKY_PROV_ARGS[@]}" \
   -v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro -v $S/keys:/run/keys:ro \
-  -v /var/lib/sparky-lanes/sparky-repo-r1118a:/repo:ro -v $BT:/tree:ro -v $S/src/debian:/dsc:ro -v $S/rig:/rig:ro -v $S/src/jmol:/jmolsrc:ro -v /mnt/build/one-separation-outputs-750e/stage/stereo-declare:/sd:ro \
+  -v /var/lib/sparky-lanes/sparky-repo-r1118a:/repo:ro -v $S/frozen/dmo:/dmo:ro -v $BT:/tree:ro -v $S/src/debian:/dsc:ro -v $S/rig:/rig:ro -v $S/src/jmol:/jmolsrc:ro -v /mnt/build/one-separation-outputs-750e/stage/stereo-declare:/sd:ro \
   -v /var/lib/sparky-lanes/sparky-repo-r1118a/pool/main/s:/pool-s:ro \
   ${EXTRA_MOUNTS:-} -v "$W":/work -v "$O":/out -v "$G":/gate \
-  -e HOME=/work/home -e TMPDIR=/work/tmp -e TREE=/tree/sparky-os -e SPARKY_LC_ARCHIVE_CONFIG=/rig/archive.json -e SPARKY_LC_SCRATCH=/work/gate \
+  -e HOME=/work/home -e TMPDIR=/work/tmp -e TREE=/tree/sparky-os -e SPARKY_LC_ARCHIVE_CONFIG=${ARCHIVE_CONFIG:-/rig/archive-snap.json} -e SPARKY_LC_SCRATCH=/work/gate \
   -e SPARKY_LC_SIBLINGS_FILE=/out/siblings.txt -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/out/siblings.txt \
   -e "DEB_BUILD_OPTIONS=${BUILD_OPTS:-parallel=4 nocheck}" \
   "$IMAGE" bash -c "trap 'chown -R 1000:1000 /work /out /gate 2>/dev/null' EXIT; set -o pipefail; mkdir -p /work/home /work/pkg /work/tmp /work/gate && git config --global --add safe.directory '*' && $pre && \
