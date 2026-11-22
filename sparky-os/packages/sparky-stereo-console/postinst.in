@@ -1,0 +1,118 @@
+#!/bin/sh
+# postinst script
+set -e
+package=@PACKAGE@
+held=/var/lib/$package/held
+state=/var/lib/$package/written
+defaults=/usr/share/$package/defaults
+
+say_default() {
+    locale=${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}
+    case "$locale" in C|C.*|POSIX) locale=en ;; *) locale=${LANGUAGE:-$locale} ;; esac
+    locale=${locale%%:*}
+    case "$locale" in
+        pl*) format='Twoje zmiany w %s zachowano; nowe ustawienie domyślne jest w %s.' ;;
+        pt*) format='Suas alterações em %s foram mantidas; o novo padrão está em %s.' ;;
+        de*) format='Ihre Änderungen an %s bleiben erhalten; die neue Vorgabe steht in %s.' ;;
+        es*) format='Sus cambios en %s se conservan; el nuevo valor predeterminado está en %s.' ;;
+        fr*) format='Vos modifications de %s sont conservées ; la nouvelle version par défaut est dans %s.' ;;
+        ja*) format='%s への変更は保持されました。新しい既定のファイルは %s にあります。' ;;
+        ko*) format='%s에 대한 변경 사항은 유지되었습니다. 새 기본 파일은 %s에 있습니다.' ;;
+        zh_CN*|zh_SG*) format='您对 %s 的修改已保留；新的默认文件位于 %s。' ;;
+        zh_TW*|zh_HK*|zh_MO*) format='您對 %s 的修改已保留；新的預設檔案位於 %s。' ;;
+        *) format='Your changes to %s are kept; the new default is in %s.' ;;
+    esac
+    message=$(printf "$format" "$1" "$2")
+    printf '%s: %s\n' "$package" "$message" >&2
+    logger -t "$package" -- "$message" 2>/dev/null || :
+}
+
+# Where a new default goes beside a file the person changed: dpkg's own name for it, except in /etc/skel, which
+# useradd copies whole into every new account.
+dist_of() {
+    case "$1" in
+    /etc/skel/*) echo "/var/backups/$package$1.dpkg-dist" ;;
+    *) echo "$1.dpkg-dist" ;;
+    esac
+}
+
+# What the postinst wrote at a name it keeps: PATH MD5 MODE TOLD (TOLD: the default last said to the person, or -)
+row() { [ -f "$state" ] && awk -v p="$1" '$1 == p {print $'"$2"'; exit}' "$state" || :; }
+set_row() {
+    mkdir -p "${state%/*}"
+    { [ -f "$state" ] && awk -v p="$1" '$1 != p' "$state"; printf '%s %s %s %s\n' "$1" "$2" "$3" "$4"; } >"$state.new"
+    mv "$state.new" "$state"
+}
+write_default() {
+    mode=$(stat -c %a "$defaults$1")
+    [ "${1#/etc/update-motd.d/}" = "$1" ] || mode=755
+    mkdir -p "${1%/*}"
+    cp "$defaults$1" "$1.$package-new"
+    chmod "$mode" "$1.$package-new"
+    mv -f "$1.$package-new" "$1"
+    rm -f "$(dist_of "$1")"
+    set_row "$1" "$(md5sum <"$1" | cut -d' ' -f1)" "$mode" -
+}
+
+if [ "$1" = "configure" ]; then
+    # 20261102 and older diverted @GIVEN_BACK@; dpkg has removed our copy at this unpack, so the owning package's own
+    # goes back to its name with whatever the person changed in it. In the postinst: a preinst removal would make
+    # dpkg delete that file as one our old version shipped (measured, rows 629/802).
+    for f in @GIVEN_BACK@; do
+        if [ "$(dpkg-divert --listpackage "$f")" = "$package" ]; then
+            dpkg-divert --quiet --package "$package" --remove --rename --divert "$f.debian" "$f"
+        fi
+    done
+    # Conffiles from @FIRST@ on: dpkg has installed each one where the preinst set the old file aside. A file the
+    # person had changed goes back to its name, as dpkg keeps a changed conffile, and the new one goes beside it.
+    for f in @CONFF@; do
+        [ -e "$held$f" ] || [ -L "$held$f" ] || continue
+        if [ -e "$held$f.edited" ]; then
+            dist=$(dist_of "$f")
+            if [ -e "$f" ]; then
+                mkdir -p "${dist%/*}"
+                mv -f "$f" "$dist"
+            fi
+            mv "$held$f" "$f"
+            rm -f "$held$f.edited"
+            say_default "$f" "$dist"
+        else
+            rm -f "$held$f"
+        fi
+    done
+    # Files at names this package diverts, made and kept here (Debian Policy 10.7.3: scripts that "create, update and
+    # maintain the file" and "must not overwrite the user's version"): an untouched one follows the package's new
+    # default; one the person changed, replaced or removed stays as they made it, and the new default is put beside
+    # it and said once.
+    for f in @MANAGED@; do
+        new=$(md5sum <"$defaults$f" | cut -d' ' -f1)
+        written=$(row "$f" 2)
+        if [ -e "$held$f.edited" ]; then
+            mv "$held$f" "$f"
+            rm -f "$held$f.edited"
+            set_row "$f" - - -
+        elif [ -e "$held$f" ] || [ -L "$held$f" ]; then
+            rm -f "$held$f"
+            write_default "$f"
+            continue
+        elif [ -z "$written" ] && [ ! -e "$f" ] && [ ! -L "$f" ]; then
+            write_default "$f"
+            continue
+        elif [ -z "$written" ]; then
+            set_row "$f" - - -
+        elif [ -f "$f" ] && [ ! -L "$f" ] && [ "$(md5sum <"$f" | cut -d' ' -f1)" = "$written" ] &&
+            [ "$(stat -c %a "$f")" = "$(row "$f" 3)" ]; then
+            [ "$written" = "$new" ] || write_default "$f"
+            continue
+        fi
+        if [ "$(row "$f" 4)" != "$new" ]; then
+            dist=$(dist_of "$f")
+            cp "$defaults$f" "$dist"
+            chmod 644 "$dist"
+            say_default "$f" "$dist"
+            set_row "$f" "$(row "$f" 2)" "$(row "$f" 3)" "$new"
+        fi
+    done
+    [ ! -d "$held" ] || find "$held" -depth -type d -empty -delete
+fi
+exit 0
