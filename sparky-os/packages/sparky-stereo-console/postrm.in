@@ -87,7 +87,7 @@ remove|purge|abort-install)
             fi
         fi
         rm -f "$f.ucf-dist" "$f.ucf-old" "$f.ucf-new"
-        if command -v ucf >/dev/null 2>&1; then ucf --purge "$f"; fi
+        if command -v ucf >/dev/null 2>&1; then ucf --package "$package" --purge "$f"; fi
         if command -v ucfr >/dev/null 2>&1; then ucfr --purge "$package" "$f"; fi
     done
     for f in @DIVERTED@; do

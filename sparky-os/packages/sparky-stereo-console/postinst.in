@@ -49,7 +49,9 @@ keep_through_ucf() {
     [ ! -f "$dist" ] || before=$(md5sum <"$dist" | cut -d' ' -f1)
     created=
     [ -e "$1" ] || [ -L "$1" ] || created=1
-    DEBIAN_FRONTEND=noninteractive ucf "$defaults$1" "$1"
+    # --package: ucf follows a dpkg diversion unless it is the diverting package's own (ucf(1) -P); without it, ucf
+    # judged and wrote the owning package's copy at the diverted name (measured, row 813)
+    DEBIAN_FRONTEND=noninteractive ucf --package "$package" "$defaults$1" "$1"
     ucfr "$package" "$1"
     # ucf copies a default it creates with the default's mode; a motd script runs only when executable, and the
     # default beside a kept one must not (run-parts --lsbsysinit would take NAME.ucf-dist for a script)
