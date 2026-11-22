@@ -6,8 +6,11 @@ Description: libobs: a side by side canvas drawn once per eye, displays with two
  A texrender is drawn once per eye pass, so a filter or a transition never hands the right eye the left eye's picture.
  A display can hold two views side by side (obs_display_set_views()): its swap chain is twice as wide and its draw
  callbacks run once per eye on that eye's half, each given one view's size; viewports set while the swap chain is the
- target are relative to the view. In an eye pass the main canvas texture is drawn as that eye. New functions only; a
- 2D canvas and a one-view display take the code paths they took before.
+ target are relative to the view. In an eye pass the main canvas texture is drawn as that eye. The layout changes in
+ the same step as the canvas size when it is set with OBS_STEREO3D_FLAG_AT_RESET (taken in obs_reset_video()), so the
+ scene space, which scene positions are relative to, never passes through a third size; a stereo canvas reset to
+ another size with no layout set for it becomes 2D there. New functions and a flag only; a 2D canvas and a one-view
+ display take the code paths they took before.
 Author: Daniel Campos Ramos
 Origin: other, Sparky Stereo OS (ORDER 61, milestone 3)
 Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
@@ -271,7 +274,7 @@ index c5ddaf5..d34e203 100644
  {
  	*width = 0;
 diff --git a/libobs/obs-internal.h b/libobs/obs-internal.h
-index 198bba6..199214f 100644
+index 198bba6..c3da2ba 100644
 --- a/libobs/obs-internal.h
 +++ b/libobs/obs-internal.h
 @@ -295,6 +295,8 @@ struct obs_display {
@@ -283,10 +286,16 @@ index 198bba6..199214f 100644
  	uint32_t background_color;
  	gs_swapchain_t *swap;
  	pthread_mutex_t draw_callbacks_mutex;
-@@ -431,6 +433,8 @@ struct obs_core_video {
+@@ -431,6 +433,14 @@ struct obs_core_video {
  	/* the main canvas's stereo layout, enum obs_stereo3d_type, and OBS_STEREO3D_FLAG_* */
  	volatile long stereo3d_type;
  	volatile long stereo3d_flags;
++	/* a layout set for the next reset (OBS_STEREO3D_FLAG_AT_RESET), taken with the canvas size it was set for */
++	volatile bool stereo3d_pending;
++	long stereo3d_pending_type;
++	long stereo3d_pending_flags;
++	/* the base size the current layout was taken with */
++	uint32_t stereo3d_cx, stereo3d_cy;
 +	/* the eye being drawn plus one (0: no eye pass, as the zeroed core starts); graphics thread only */
 +	int render_eye_pass;
  
@@ -371,10 +380,56 @@ index 77e4b8e..0f2390b 100644
  	video->texture_rendered = true;
  
 diff --git a/libobs/obs.c b/libobs/obs.c
-index 3219997..a0ed40d 100644
+index 3219997..3d6a76e 100644
 --- a/libobs/obs.c
 +++ b/libobs/obs.c
-@@ -1693,6 +1693,30 @@ enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags)
+@@ -704,6 +704,23 @@ static int obs_init_video(struct obs_video_info *ovi)
+ 	if (pthread_mutex_init(&video->mixes_mutex, NULL) < 0)
+ 		return OBS_VIDEO_FAIL;
+ 
++	/* The main canvas's stereo layout changes in the same step as its size: a layout set for this reset is taken now,
++	 * and a stereo canvas given another size with none set for it becomes 2D, since its picture no longer holds the
++	 * pair it was set for. Scene positions are kept relative to the scene space, so the space never passes through a
++	 * size that is neither the old canvas's nor the new one's. */
++	if (os_atomic_exchange_bool(&video->stereo3d_pending, false)) {
++		os_atomic_set_long(&video->stereo3d_flags, video->stereo3d_pending_flags);
++		os_atomic_set_long(&video->stereo3d_type, video->stereo3d_pending_type);
++	} else if (os_atomic_load_long(&video->stereo3d_type) != OBS_STEREO3D_2D &&
++		   (ovi->base_width != video->stereo3d_cx || ovi->base_height != video->stereo3d_cy)) {
++		blog(LOG_INFO, "the canvas is now %ux%u, not the %ux%u its stereo layout was set for: it is 2D",
++		     ovi->base_width, ovi->base_height, video->stereo3d_cx, video->stereo3d_cy);
++		os_atomic_set_long(&video->stereo3d_flags, 0);
++		os_atomic_set_long(&video->stereo3d_type, OBS_STEREO3D_2D);
++	}
++	video->stereo3d_cx = ovi->base_width;
++	video->stereo3d_cy = ovi->base_height;
++
+ 	/* Reset main canvas mix first so it remains first in the rendering order. */
+ 	if (!obs_canvas_reset_video_internal(obs->data.main_canvas, ovi))
+ 		return OBS_VIDEO_FAIL;
+@@ -1681,7 +1698,20 @@ void obs_set_video_stereo3d(enum obs_stereo3d_type type, uint32_t flags)
+ 		blog(LOG_WARNING, "obs_set_video_stereo3d: unknown layout %d, the canvas is taken as 2D", (int)type);
+ 		type = OBS_STEREO3D_2D;
+ 	}
+-	os_atomic_set_long(&video->stereo3d_flags, type == OBS_STEREO3D_2D ? 0 : (long)flags);
++	const bool at_reset = (flags & OBS_STEREO3D_FLAG_AT_RESET) != 0;
++	flags = type == OBS_STEREO3D_2D ? 0 : (flags & ~(uint32_t)OBS_STEREO3D_FLAG_AT_RESET);
++	struct obs_core_video_mix *mix = obs->data.main_canvas ? obs->data.main_canvas->mix : NULL;
++	if (at_reset || !mix) {
++		/* with the next reset, together with the size it is set for (before the first reset: with the first) */
++		video->stereo3d_pending_type = (long)type;
++		video->stereo3d_pending_flags = (long)flags;
++		os_atomic_set_bool(&video->stereo3d_pending, true);
++		return;
++	}
++	os_atomic_set_bool(&video->stereo3d_pending, false);
++	video->stereo3d_cx = mix->ovi.base_width;
++	video->stereo3d_cy = mix->ovi.base_height;
++	os_atomic_set_long(&video->stereo3d_flags, (long)flags);
+ 	os_atomic_set_long(&video->stereo3d_type, (long)type);
+ }
+ 
+@@ -1693,6 +1723,30 @@ enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags)
  	return (enum obs_stereo3d_type)os_atomic_load_long(&video->stereo3d_type);
  }
  
@@ -405,7 +460,7 @@ index 3219997..a0ed40d 100644
  enum obs_stereo3d_type obs_encoder_get_stereo3d(const obs_encoder_t *encoder, uint32_t *flags)
  {
  	if (flags)
-@@ -2243,8 +2267,26 @@ static void obs_render_canvas_texture_internal(obs_canvas_t *canvas, enum gs_ble
+@@ -2243,8 +2297,26 @@ static void obs_render_canvas_texture_internal(obs_canvas_t *canvas, enum gs_ble
  	gs_blend_state_push();
  	gs_blend_function_separate(src_c, dest_c, src_a, dest_a);
  
@@ -435,10 +490,21 @@ index 3219997..a0ed40d 100644
  	gs_blend_state_pop();
  
 diff --git a/libobs/obs.h b/libobs/obs.h
-index d0730b2..a4514e4 100644
+index d0730b2..cabd1bf 100644
 --- a/libobs/obs.h
 +++ b/libobs/obs.h
-@@ -508,6 +508,19 @@ EXPORT enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags);
+@@ -501,6 +501,10 @@ enum obs_stereo3d_type {
+ 
+ /** The right eye's view comes first (content_interpretation_type 2, H.264 Table D-10). */
+ #define OBS_STEREO3D_FLAG_INVERT (1 << 0)
++/** The layout takes effect with the next obs_reset_video(), in the same step as the canvas size it is set for, so the
++ *  scene space never passes through a size that is neither the old canvas's nor the new one's. Without it a layout takes
++ *  effect at once. A reset to another base size with no layout set for it makes a stereo canvas 2D. */
++#define OBS_STEREO3D_FLAG_AT_RESET (1 << 1)
+ 
+ EXPORT void obs_set_video_stereo3d(enum obs_stereo3d_type type, uint32_t flags);
+ EXPORT enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags);
+@@ -508,6 +512,19 @@ EXPORT enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags);
   *  OBS_STEREO3D_2D for any other. */
  EXPORT enum obs_stereo3d_type obs_encoder_get_stereo3d(const obs_encoder_t *encoder, uint32_t *flags);
  
@@ -458,7 +524,7 @@ index d0730b2..a4514e4 100644
  /** Gets the current audio settings, returns false if no audio */
  EXPORT bool obs_get_audio_info(struct obs_audio_info *oai);
  
-@@ -1085,6 +1098,12 @@ EXPORT void obs_display_set_background_color(obs_display_t *display, uint32_t co
+@@ -1085,6 +1102,12 @@ EXPORT void obs_display_set_background_color(obs_display_t *display, uint32_t co
  
  EXPORT void obs_display_size(obs_display_t *display, uint32_t *width, uint32_t *height);
  
