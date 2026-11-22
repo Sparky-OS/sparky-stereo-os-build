@@ -10,7 +10,8 @@
 #   PUBLISHED_TREE     the edition's published repository (dists/ and pool/)
 #   ARCHIVE_DIR        the link gate's archive: sources.json and the keyrings it names
 # IMAGE names the builder image (default sparky-lc-migration:20261020); DEBIAN_SNAPSHOT the Debian instant;
-# POOL a folder of packages the build may also take (a staged KIconThemes, the round's pool), served unsigned.
+# POOL a folder of packages the build may also take (the round's pool), served unsigned; SIBLINGS_DIR a folder of edition
+# packages built alongside that the link gate takes as siblings (plasma-integration needs KIconThemes +stereo3d3).
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -28,6 +29,8 @@ NAME=${CONTAINER_NAME:-$PACKAGE-stereo3d1-build}
 mkdir -p "$WORK"
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 2; }
 pool=(-e POOL_GIVEN=0); [ -n "${POOL:-}" ] && pool=(-e POOL_GIVEN=1 --mount "type=bind,src=$POOL,dst=/pool,readonly")
+# SIBLINGS_DIR: edition packages built alongside (a staged KIconThemes +stereo3d3), supplied to the link gate as siblings
+siblings=(); [ -n "${SIBLINGS_DIR:-}" ] && siblings=(--mount "type=bind,src=$SIBLINGS_DIR,dst=/siblings,readonly")
 # shellcheck source=../../repo/build-provenance.sh
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "$IMAGE" "$HERE"
@@ -43,7 +46,7 @@ docker run --name "$NAME" --ulimit core=1 --cpus 4 --platform linux/amd64 --pull
 	--mount "type=bind,src=$HERE/../..,dst=/toolkit,readonly" \
 	--mount "type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly" \
 	--mount "type=bind,src=$HERE/../../../tools/https-only-apt.sh,dst=/run/https-only-apt.sh,readonly" \
-	"${pool[@]}" "$IMAGE" bash -c 'set -e
+	"${pool[@]}" "${siblings[@]}" "$IMAGE" bash -c 'set -e
 rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
 printf "Types: deb\nURIs: https://snapshot.debian.org/archive/debian/%s\nSuites: testing\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\nCheck-Valid-Until: no\n" "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list.d/debian.sources
 printf "Types: deb\nURIs: file:/repo\nSuites: mashtabba\nComponents: main\nSigned-By: /repo/sparky-stereo-repo.asc\n" > /etc/apt/sources.list.d/edition.sources

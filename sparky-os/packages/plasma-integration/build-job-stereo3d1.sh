@@ -53,5 +53,11 @@ mkdir -p /work/link-scratch
 chown -R builder:builder /work
 python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/source
 cd /work/source
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH=/work/link-scratch dpkg-buildpackage -us -uc -j4 > /work/build.log 2>&1
+# Edition packages built alongside (/siblings) are the link gate's siblings
+siblings=/work/siblings.txt
+: > "$siblings"
+if [ -d /siblings ]; then
+	find /siblings -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*' ! -name '*-lc-hr_*' | sort > "$siblings"
+fi
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_SIBLINGS_FILE="$siblings" SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH=/work/link-scratch dpkg-buildpackage -us -uc -j4 > /work/build.log 2>&1
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
