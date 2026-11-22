@@ -1,0 +1,253 @@
+Description: Let thumbnail plugins take precedence over standard thumbnailers
+ The plugins are loaded before the standard thumbnailers so that they take
+ precedence, but the wildcards of a group (video/*) were looked up after every
+ exact MIME type, standard thumbnailers included (BUG 453480). So a standard
+ thumbnailer that names video/mp4, such as the one of ffmpegthumbnailer, made
+ the thumbnails of MP4 files even with ffmpegthumbs enabled, and kept what
+ ffmpegthumbs adds, such as both views of a stereo video, out of them. A MIME
+ type is now looked up among the plugins first, by its name, its parents and
+ its group, and only then among the standard thumbnailers.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-10-16
+---
+--- a/autotests/filepreviewjobtest.cpp
++++ b/autotests/filepreviewjobtest.cpp
+@@ -25,6 +25,7 @@
+ #include <QImage>
+ #include <QMimeDatabase>
+ #include <QPixmap>
++#include <QJsonArray>
+ #include <QJsonObject>
+ #include <QProcess>
+ #include <QScopeGuard>
+@@ -939,6 +940,74 @@
+ }
+ #endif
+ 
++
++// A thumbnail plugin takes precedence over a standard thumbnailer for the same MIME type, also where the plugin names
++// it only by its group (video/*) and the standard thumbnailer on its own (video/mp4)
++static KPluginMetaData makeThumbnailer(const QString &id, const QStringList &mimeTypes, bool standard)
++{
++    QJsonObject kplugin;
++    kplugin[QStringLiteral("Id")] = id;
++    kplugin[QStringLiteral("MimeTypes")] = QJsonArray::fromStringList(mimeTypes);
++    if (standard) {
++        kplugin[QStringLiteral("Category")] = QStringLiteral("standardthumbnailer");
++    }
++    QJsonObject root;
++    root[QStringLiteral("KPlugin")] = kplugin;
++    return KPluginMetaData(root, id);
++}
++
++void FilePreviewJobTest::testPluginBeforeStandardThumbnailer_data()
++{
++    QTest::addColumn<QStringList>("pluginMimeTypes");
++    QTest::addColumn<QStringList>("standardMimeTypes");
++    QTest::addColumn<QString>("expected");
++    QTest::addColumn<bool>("exactMatch");
++
++    QTest::newRow("plugin by group, standard thumbnailer by name") << QStringList{QStringLiteral("video/*")} << QStringList{QStringLiteral("video/mp4")}
++                                                                   << QStringLiteral("plugin") << false;
++    QTest::newRow("both by name") << QStringList{QStringLiteral("video/mp4")} << QStringList{QStringLiteral("video/mp4")} << QStringLiteral("plugin") << true;
++    QTest::newRow("no plugin for the type") << QStringList{QStringLiteral("image/*")} << QStringList{QStringLiteral("video/mp4")}
++                                            << QStringLiteral("standard") << true;
++    QTest::newRow("standard thumbnailer by group") << QStringList{QStringLiteral("image/png")} << QStringList{QStringLiteral("video/*")}
++                                                   << QStringLiteral("standard") << false;
++}
++
++void FilePreviewJobTest::testPluginBeforeStandardThumbnailer()
++{
++    QFETCH(QStringList, pluginMimeTypes);
++    QFETCH(QStringList, standardMimeTypes);
++    QFETCH(QString, expected);
++    QFETCH(bool, exactMatch);
++
++    QTemporaryDir thumbRoot;
++    QVERIFY(thumbRoot.isValid());
++    const KFileItem item(QUrl::fromLocalFile(thumbRoot.filePath(QStringLiteral("video.mp4"))));
++
++    PreviewOptions options;
++    options.size = QSize(128, 128);
++    PreviewSetupData setupData;
++    setupData.thumbRoot = thumbRoot.path();
++    const KPluginMetaData plugin = makeThumbnailer(QStringLiteral("plugin"), pluginMimeTypes, false);
++    for (const QString &mimeType : pluginMimeTypes) {
++        setupData.pluginByMimeTable.insert(mimeType, plugin);
++    }
++    const KPluginMetaData standard = makeThumbnailer(QStringLiteral("standard"), standardMimeTypes, true);
++    for (const QString &mimeType : standardMimeTypes) {
++        setupData.standardThumbnailerByMimeTable.insert(mimeType, standard);
++    }
++
++    // what the job makes the thumbnail with, and what a lookup in the thumbnail cache takes the thumbnail's version from
++    auto *job = new FilePreviewJob(item, FilePreviewJob::UnknownDeviceId, options, setupData);
++    QVERIFY(job->preparePluginForMimetype(QStringLiteral("video/mp4")));
++    QCOMPARE(job->m_plugin.pluginId(), expected);
++    QCOMPARE(job->m_standardThumbnailer, expected == QLatin1String("standard"));
++    delete job;
++    bool exact = !exactMatch;
++    const KPluginMetaData *found = FilePreviewJob::pluginForMimeType(setupData, QStringLiteral("video/mp4"), &exact);
++    QVERIFY(found);
++    QCOMPARE(found->pluginId(), expected);
++    QCOMPARE(exact, exactMatch);
++}
+ 
+ void FilePreviewJobTest::cleanupTestCase()
+ {
+--- a/autotests/filepreviewjobtest.h
++++ b/autotests/filepreviewjobtest.h
+@@ -18,6 +18,9 @@
+     QString m_thumbnailerPath;
+ 
+ private Q_SLOTS:
++    void testPluginBeforeStandardThumbnailer_data();
++    void testPluginBeforeStandardThumbnailer();
++
+     void initTestCase();
+     void cleanupTestCase();
+     void testPartialFileSidecar_data();
+--- a/src/gui/filepreviewjob.cpp
++++ b/src/gui/filepreviewjob.cpp
+@@ -206,6 +206,52 @@
+     connect(this, &KJob::finished, m_timeoutTimer, &QTimer::stop);
+ 
+     m_timeoutTimer->start(5s);
++}
++
++// The plugin a table has for a MIME type: its own, then one of its parents', then the one for its group
++static const KPluginMetaData *findPluginForMimeType(const QMap<QString, KPluginMetaData> &pluginByMimeTable, const QString &mimeType, bool *exactMatch)
++{
++    auto pluginIt = pluginByMimeTable.constFind(mimeType);
++    if (exactMatch) {
++        *exactMatch = pluginIt != pluginByMimeTable.constEnd();
++    }
++    if (pluginIt == pluginByMimeTable.constEnd()) {
++        // check MIME type inheritance, resolve aliases
++        QMimeDatabase db;
++        const QMimeType mimeInfo = db.mimeTypeForName(mimeType);
++        if (mimeInfo.isValid()) {
++            const QStringList parentMimeTypes = mimeInfo.allAncestors();
++            for (const QString &parentMimeType : parentMimeTypes) {
++                pluginIt = pluginByMimeTable.constFind(parentMimeType);
++                if (pluginIt != pluginByMimeTable.constEnd()) {
++                    break;
++                }
++            }
++        }
++
++        if (pluginIt == pluginByMimeTable.constEnd()) {
++            // Check the wildcards last, see BUG 453480
++            QString groupMimeType = mimeType;
++            const int slashIdx = groupMimeType.indexOf(QLatin1Char('/'));
++            if (slashIdx != -1) {
++                // Replace everything after '/' with '*'
++                groupMimeType.truncate(slashIdx + 1);
++                groupMimeType += QLatin1Char('*');
++            }
++            pluginIt = pluginByMimeTable.constFind(groupMimeType);
++        }
++    }
++    return pluginIt != pluginByMimeTable.constEnd() ? &pluginIt.value() : nullptr;
++}
++
++const KPluginMetaData *FilePreviewJob::pluginForMimeType(const PreviewSetupData &setupData, const QString &mimeType, bool *exactMatch)
++{
++    // Thumbnail plugins take precedence over standard thumbnailers, also where a plugin names the MIME type only by its
++    // group (video/*) and a standard thumbnailer names it on its own (video/mp4)
++    if (const KPluginMetaData *plugin = findPluginForMimeType(setupData.pluginByMimeTable, mimeType, exactMatch)) {
++        return plugin;
++    }
++    return findPluginForMimeType(setupData.standardThumbnailerByMimeTable, mimeType, exactMatch);
+ }
+ 
+ bool FilePreviewJob::preparePluginForMimetype(const QString &mimeType)
+@@ -236,35 +282,7 @@
+         m_cacheSize = cacheSize;
+     };
+ 
+-    auto pluginIt = m_setupData.pluginByMimeTable.constFind(mimeType);
+-    if (pluginIt == m_setupData.pluginByMimeTable.constEnd()) {
+-        // check MIME type inheritance, resolve aliases
+-        QMimeDatabase db;
+-        const QMimeType mimeInfo = db.mimeTypeForName(mimeType);
+-        if (mimeInfo.isValid()) {
+-            const QStringList parentMimeTypes = mimeInfo.allAncestors();
+-            for (const QString &parentMimeType : parentMimeTypes) {
+-                pluginIt = m_setupData.pluginByMimeTable.constFind(parentMimeType);
+-                if (pluginIt != m_setupData.pluginByMimeTable.constEnd()) {
+-                    break;
+-                }
+-            }
+-        }
+-
+-        if (pluginIt == m_setupData.pluginByMimeTable.constEnd()) {
+-            // Check the wildcards last, see BUG 453480
+-            QString groupMimeType = mimeType;
+-            const int slashIdx = groupMimeType.indexOf(QLatin1Char('/'));
+-            if (slashIdx != -1) {
+-                // Replace everything after '/' with '*'
+-                groupMimeType.truncate(slashIdx + 1);
+-                groupMimeType += QLatin1Char('*');
+-            }
+-            pluginIt = m_setupData.pluginByMimeTable.constFind(groupMimeType);
+-        }
+-    }
+-
+-    if (pluginIt != m_setupData.pluginByMimeTable.constEnd()) {
++    if (const KPluginMetaData *pluginIt = pluginForMimeType(m_setupData, mimeType)) {
+         const KPluginMetaData plugin = *pluginIt;
+ 
+         if (!plugin.isValid()) {
+--- a/src/gui/filepreviewjob.h
++++ b/src/gui/filepreviewjob.h
+@@ -48,6 +48,8 @@
+     int thumbRootDeviceId;
+ 
+     QMap<QString, KPluginMetaData> pluginByMimeTable;
++    // Standard thumbnailers come after the thumbnail plugins, however each of them names a MIME type
++    QMap<QString, KPluginMetaData> standardThumbnailerByMimeTable;
+     QStringList enabledPluginIds;
+ };
+ 
+@@ -116,6 +118,9 @@
+     static QString parentDirPath(const QString &path);
+     static QList<KPluginMetaData> loadAvailablePlugins();
+     static QList<KPluginMetaData> standardThumbnailers();
++    // The enabled thumbnailer of a MIME type, or null: the thumbnail plugins come before the standard thumbnailers, each
++    // by the type itself, then its parents, then its group (video/*). exactMatch says whether it is the type itself.
++    static const KPluginMetaData *pluginForMimeType(const PreviewSetupData &setupData, const QString &mimeType, bool *exactMatch = nullptr);
+ 
+ private Q_SLOTS:
+     void slotStatFile(KJob *job);
+--- a/src/gui/previewjob.cpp
++++ b/src/gui/previewjob.cpp
+@@ -226,10 +226,11 @@
+ 
+     for (const KPluginMetaData &plugin : plugins) {
+         bool pluginIsEnabled = setupData.enabledPluginIds.contains(plugin.pluginId());
++        auto &pluginByMimeTable = plugin.category() == QLatin1String("standardthumbnailer") ? setupData.standardThumbnailerByMimeTable : setupData.pluginByMimeTable;
+         const auto mimeTypes = plugin.mimeTypes();
+         for (const QString &mimeType : mimeTypes) {
+-            if (pluginIsEnabled && !setupData.pluginByMimeTable.contains(mimeType)) {
+-                setupData.pluginByMimeTable.insert(mimeType, plugin);
++            if (pluginIsEnabled && !pluginByMimeTable.contains(mimeType)) {
++                pluginByMimeTable.insert(mimeType, plugin);
+             }
+         }
+     }
+@@ -414,9 +415,10 @@
+             // Only what a thumbnailer of its own is enabled for, and only where that thumbnailer
+             // caches what it makes, has a thumbnail of this item in the shared cache. The lookup
+             // is by the type itself: an item whose thumbnailer is registered for an ancestor type
+-            // is left to the job, which walks the ancestry.
+-            const auto plugin = setupData.pluginByMimeTable.constFind(item.currentMimeType().name());
+-            if (plugin == setupData.pluginByMimeTable.constEnd() || !plugin->value(QStringLiteral("CacheThumbnail"), true)) {
++            // or for its group is left to the job, which walks the ancestry.
++            bool exactMatch = false;
++            const KPluginMetaData *plugin = FilePreviewJob::pluginForMimeType(setupData, item.currentMimeType().name(), &exactMatch);
++            if (!plugin || !exactMatch || !plugin->value(QStringLiteral("CacheThumbnail"), true)) {
+                 eligible = false;
+             } else if (!options.ignoreMaximumSize && static_cast<KIO::filesize_t>(item.size()) > maximumLocalSize
+                        && !plugin->value(QStringLiteral("IgnoreMaximumSize"), false)) {

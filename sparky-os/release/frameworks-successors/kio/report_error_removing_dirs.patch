@@ -1,0 +1,57 @@
+Description: Preserve the published directory-removal error after the flush phase
+Author: Debian/Kubuntu Qt/KDE Maintainers
+Origin: other, Debian report_error_removing_dirs
+Forwarded: not-needed
+ Rebased by Daniel Campos Ramos: 6.32 flushes the destination before deleting
+ moved sources and directories. Report the recorded rmdir error at the new
+ completion point in deleteNextDir, retaining the upstream flush ordering.
+
+--- a/src/core/copyjob.cpp
++++ b/src/core/copyjob.cpp
+@@ -245,6 +245,7 @@
+         , m_bOverwriteAllDirs(false)
+         , m_bOverwriteWhenOlder(false)
+         , m_conflictError(0)
++        , m_dirsFailedError(0)
+         , m_reportTimer(nullptr)
+     {
+     }
+@@ -335,6 +336,8 @@
+     };
+ 
+     int m_conflictError;
++    int m_dirsFailedError;
++    QString m_dirsFailedErrorText;
+ 
+     QTimer *m_reportTimer;
+     QElapsedTimer m_speedMeasurementTimer;
+@@ -2311,6 +2314,10 @@
+         dirsToRemove.erase(it);
+         q->addSubjob(job);
+     } else {
++        if (m_dirsFailedError) {
++            q->setError(m_dirsFailedError);
++            q->setErrorText(m_dirsFailedErrorText);
++        }
+         q->emitResult();
+     }
+ }
+@@ -2653,12 +2660,14 @@
+ void CopyJobPrivate::slotResultDeletingDirs(KJob *job)
+ {
+     Q_Q(CopyJob);
++    const QUrl url = static_cast<KIO::SimpleJob *>(job)->url();
+     if (job->error()) {
+-        // Couldn't remove directory. Well, perhaps it's not empty
+-        // because the user pressed Skip for a given file in it.
+-        // Let's not display "Could not remove dir ..." for each of those dir !
++        m_dirsFailedError = job->error();
++        m_dirsFailedErrorText = job->errorText();
++        // Remove the parents
++        skip(url, true);
+     } else {
+-        m_successSrcList.append(static_cast<KIO::SimpleJob *>(job)->url());
++        m_successSrcList.append(url);
+     }
+     q->removeSubjob(job);
+     Q_ASSERT(!q->hasSubjobs());

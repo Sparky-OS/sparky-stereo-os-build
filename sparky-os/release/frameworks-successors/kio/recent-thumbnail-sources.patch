@@ -1,0 +1,92 @@
+Description: Avoid stability waits for sources older than five seconds
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, partner/kio-thumbnails-safe
+ Commit 67e3dbf: FAT timestamp window and a deterministic older-file regression test.
+Forwarded: no
+Last-Update: 2026-10-07
+
+--- a/autotests/filepreviewjobtest.cpp
++++ b/autotests/filepreviewjobtest.cpp
+@@ -1102,6 +1102,42 @@
+     QCOMPARE(stable.previewImage().pixelColor(0, 0), QColor(Qt::red));
+ }
+ 
++void FilePreviewJobTest::testOlderFileDoesNotWait()
++{
++    QTemporaryDir dir;
++    QVERIFY(dir.isValid());
++    const QString path = dir.filePath(QStringLiteral("image.png"));
++    QVERIFY(writeImage(path, Qt::red));
++    QFile file(path);
++    QVERIFY(file.open(QIODevice::ReadWrite));
++    QVERIFY(file.setFileTime(QDateTime::currentDateTimeUtc().addSecs(-60), QFileDevice::FileModificationTime));
++    file.close();
++    const KFileItem item = previewItem(path);
++    const auto plugins = FilePreviewJob::standardThumbnailers();
++    const auto it = std::find_if(plugins.cbegin(), plugins.cend(), [](const KPluginMetaData &plugin) {
++        return plugin.pluginId() == QStringLiteral("kiotest");
++    });
++    QVERIFY(it != plugins.cend());
++    PreviewSetupData setup;
++    setup.thumbRoot = ThumbnailCache::rootPath();
++    struct stat sourceStat;
++    QVERIFY(::stat(QFile::encodeName(path).constData(), &sourceStat) == 0);
++    setup.thumbRootDeviceId = sourceStat.st_dev;
++    setup.pluginByMimeTable.insert(item.mimetype(), *it);
++    PreviewOptions options;
++    options.size = QSize(256, 256);
++    FilePreviewJob job(item, sourceStat.st_dev, options, setup);
++    job.setAutoDelete(false);
++    job.m_currentDeviceCachePolicy = FilePreviewJob::Allow;
++    job.m_partialFileStabilityInterval = 60000;
++    QSignalSpy result(&job, &KJob::result);
++    job.start();
++    QTRY_COMPARE(result.count(), 1);
++    QVERIFY(!job.m_partialFileStabilityTimer);
++    QVERIFY(!job.previewImage().isNull());
++    QCOMPARE(job.previewImage().pixelColor(0, 0), QColor(Qt::red));
++}
++
+ void FilePreviewJobTest::testChangingSource_data()
+ {
+     QTest::addColumn<QString>("change");
+--- a/autotests/filepreviewjobtest.h
++++ b/autotests/filepreviewjobtest.h
+@@ -24,6 +24,7 @@
+     void testPartialFileSidecar();
+     void testGenerationPaths_data();
+     void testGenerationPaths();
++    void testOlderFileDoesNotWait();
+     void testChangingSource_data();
+     void testChangingSource();
+     void testUnrelatedPreview();
+--- a/src/gui/filepreviewjob.cpp
++++ b/src/gui/filepreviewjob.cpp
+@@ -62,6 +62,9 @@
+ using namespace KIO;
+ using namespace Qt::Literals;
+ using namespace std::chrono_literals;
++
++// FAT modification times have two-second resolution, so allow a longer window.
++static constexpr auto recentFileModificationWindow = 5s;
+ 
+ // Removes the folders of local copies that belong to processes which no longer run, as a process
+ // that crashed or was killed left them. A folder is named after the id of its process.
+@@ -365,11 +368,17 @@
+         }
+     }
+ 
++    // Wait for application/x-partial-download sidecars or changing size/mtime.
++    // KDirWatch refreshItems asks for the preview again when the item changes.
+     const QString localPath = m_fileItem.localPath();
+     const QFileInfo localFileInfo(localPath);
+     if (!localPath.isEmpty() && localFileInfo.isFile()) {
+         if (isPartialFile(localFileInfo)) {
+             emitResult();
++            return;
++        }
++        if (localFileInfo.lastModified() < QDateTime::currentDateTimeUtc().addSecs(-recentFileModificationWindow.count())) {
++            finishStatFile();
+             return;
+         }
+         m_partialFileSize = localFileInfo.size();
