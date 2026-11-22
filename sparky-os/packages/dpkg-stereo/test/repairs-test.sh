@@ -99,6 +99,17 @@ check 'lost nano /etc/nanorc /etc/nanorc.debian && lost initramfs-tools /etc/ini
 echo '# the person: an edit of the console nanorc' >>/etc/nanorc
 [ "$(dpkg-query -W -f='${Version}' dpkg-stereo)" = "$(dpkg-deb -f "$DEB" Version)" ] || dpkg -i "$DEB" </dev/null >"$W/install.log" 2>&1
 check '[ -s /var/lib/dpkg-stereo/diverted-conffiles.pending ]' "the hook found them and left them pending for the unit"
+# the repair reinstalls initramfs-tools, and with it its two other conffiles (both projected, both with a record): the
+# person edited one, and the other lost its record as 0.1.41 and 0.1.42 lost them. A reinstall of the same version
+# changes no conffile of the package, so dpkg keeps both as they are (--force-confold and --force-confdef decide
+# nothing there); the row shows it.
+EDITED=/etc/kernel/postrm.d/initramfs-tools UNREC=/etc/kernel/postinst.d/initramfs-tools
+REC=/var/lib/dpkg-stereo/records/initramfs-tools.tsv
+echo '# the person: an edit of the kernel hook' >>"$EDITED"
+grep -v "^$UNREC$(printf '\t')" "$REC" >"$W/rec.tsv" && cat "$W/rec.tsv" >"$REC"
+was=$(sha256sum "$EDITED" "$UNREC")
+check '[ "$(recorded initramfs-tools "$UNREC")" = 0 ] && [ "$(recorded initramfs-tools "$EDITED")" = 1 ] && grep -q "the person: an edit" "$EDITED"' \
+	"planted: initramfs-tools' $EDITED edited by the person, $UNREC without its record"
 if [ "${MODE:-}" = archive ]; then
 	meter 2
 	dpkg-stereo --repair-diverted >"$W/archive.log" 2>&1; rc=$?
@@ -120,11 +131,14 @@ check '! lost nano /etc/nanorc /etc/nanorc.debian && [ -s /etc/nanorc.debian ] &
 	"both conffiles at their diverted names, dpkg's hash recorded (nano $(hash_of nano /etc/nanorc))"
 check 'grep -q "the person: an edit of the console nanorc" /etc/nanorc && [ -L /etc/initramfs-tools/update-initramfs.conf ]' \
 	"the diverting packages' files at the paths are untouched, the person's edit kept"
+check '[ "$was" = "$(sha256sum "$EDITED" "$UNREC")" ] && ! ls "$EDITED".dpkg-* "$UNREC".dpkg-* >/dev/null 2>&1' \
+	"initramfs-tools reinstalled: its edited conffile and its conffile without a record are byte for byte as they were, nothing beside them"
+echo "  record of $UNREC after the repair: $(recorded initramfs-tools "$UNREC")"
 check '[ ! -e /var/lib/dpkg-stereo/diverted-conffiles.pending ] && ! dpkg-stereo --problems 2>&1 | grep -q "never installed"' \
 	"nothing left pending, the problem cleared"
 dpkg-stereo --verify >"$W/verify.log" 2>&1
 sed 's/^/  verify: /' "$W/verify.log" | head -4
-check '[ "$(grep -c -E "^(CHANGED|MISSING|LCCHANGED)" "$W/verify.log")" = 0 ] && dpkg --verify sparky-stereo-console 2>&1 | grep -q " /etc/nanorc$"' \
-	"--verify clean; the edit of the console's own nanorc (no conffile, not projected) is dpkg's to name: dpkg --verify names it"
+check '[ "$(grep -E "^(CHANGED|MISSING|LCCHANGED)" "$W/verify.log" | awk "{print \$2}")" = "$EDITED" ] && dpkg --verify sparky-stereo-console 2>&1 | grep -q " /etc/nanorc$"' \
+	"--verify names only the person's edit of $EDITED; the edit of the console's own nanorc (no conffile, not projected) is dpkg's to name: dpkg --verify names it"
 echo "$pass PASS, $fail FAIL"
 [ "$fail" = 0 ] && echo "ALL PASS"
