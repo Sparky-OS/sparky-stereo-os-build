@@ -56,7 +56,11 @@ runuser -u builder -- dpkg-source -b "$NAME-0.1.0"
 mkdir authored
 cp ./*.dsc ./*.debian.tar.xz ./*.orig.tar.xz authored/
 runuser -u builder -- dpkg-source -x "${NAME}_0.1.0-1.dsc" lean-source
-runuser -u builder -- env PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lean-source 0.1.0-1+lc1 --toolkit /toolkit
+prepare_args=()
+if [ -f /work/lean-source/debian/source-consumers.json ]; then
+ prepare_args=(--preserve-plan /work/lean-source/debian/source-consumers.json)
+fi
+runuser -u builder -- env PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lean-source 0.1.0-1+lc1 --toolkit /toolkit "${prepare_args[@]}"
 python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lean-source
 cd /work/lean-source
 runuser -u builder -- dpkg-checkbuilddeps
