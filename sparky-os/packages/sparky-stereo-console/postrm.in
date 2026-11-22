@@ -4,7 +4,6 @@ set -e
 package=@PACKAGE@
 key=after-removal:sparky-stereo-console:motd
 held=/var/lib/$package/held
-state=/var/lib/$package/written
 
 say_unsaved() {
     locale=${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}
@@ -51,7 +50,9 @@ say_moved() {
     logger -t "$package" -- "$message" 2>/dev/null || :
 }
 
-row() { [ -f "$state" ] && awk -v p="$1" '$1 == p {print $'"$2"'; exit}' "$state" || :; }
+# The md5sum ucf recorded for a file it keeps (ucf(1): /var/lib/ucf/hashfile). Read as a file: Policy 6.5 lets a
+# postrm rely only on Essential packages, and ucf may already be gone.
+ucf_sum() { [ -f /var/lib/ucf/hashfile ] && awk -v p="$1" '$2 == p {print $1; exit}' /var/lib/ucf/hashfile || :; }
 
 if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
     sparky-stereo-problems clear --all "$package"
@@ -69,23 +70,26 @@ abort-install|abort-upgrade)
 esac
 case "$1" in
 remove|purge|abort-install)
-    # The files the postinst made at names this package diverts: an untouched one goes, one the person changed is
-    # kept in /var/backups and said, so the owning package's own file can come back to its name.
+    # The files ucf keeps for this package at names it diverts: an untouched one (what ucf last wrote) goes, one the
+    # person changed is kept in /var/backups and said, so the owning package's own file can come back to its name.
+    # ucf's records of them go too: the file leaves its name now, and a record without its file would keep ucf from
+    # writing the default again at a later install ("Not replacing deleted config file", ucf 3.0056).
     for f in @MANAGED@; do
-        [ -e "$f" ] || [ -L "$f" ] || continue
         [ "$(dpkg-divert --listpackage "$f")" = "$package" ] || continue
-        if [ -f "$f" ] && [ ! -L "$f" ] && [ "$(md5sum <"$f" | cut -d' ' -f1)" = "$(row "$f" 2)" ] &&
-            [ "$(stat -c %a "$f")" = "$(row "$f" 3)" ]; then
-            rm -f "$f"
-        else
-            kept=/var/backups/$package$f
-            mkdir -p "${kept%/*}"
-            mv -f "$f" "$kept"
-            say_moved "$f" "$kept"
+        if [ -e "$f" ] || [ -L "$f" ]; then
+            if [ -f "$f" ] && [ ! -L "$f" ] && [ "$(md5sum <"$f" | cut -d' ' -f1)" = "$(ucf_sum "$f")" ]; then
+                rm -f "$f"
+            else
+                kept=/var/backups/$package$f
+                mkdir -p "${kept%/*}"
+                mv -f "$f" "$kept"
+                say_moved "$f" "$kept"
+            fi
         fi
-        rm -f "$f.dpkg-dist"
+        rm -f "$f.ucf-dist" "$f.ucf-old" "$f.ucf-new"
+        if command -v ucf >/dev/null 2>&1; then ucf --purge "$f"; fi
+        if command -v ucfr >/dev/null 2>&1; then ucfr --purge "$package" "$f"; fi
     done
-    rm -f "$state"
     for f in @DIVERTED@; do
         [ "$(dpkg-divert --listpackage "$f")" = "$package" ] || continue
         dpkg-divert --quiet --package "$package" --remove --rename --divert "$f.debian" "$f"

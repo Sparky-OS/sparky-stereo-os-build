@@ -21,9 +21,10 @@
 # name, so our file at PATH never replaces it (Debian Policy, appendix 7: "dpkg does not handle it well").
 # Up to 20261102 the skel .bashrc was diverted too; the postinst gives bash's own back (rows 629/802).
 # A person's change to a file under /etc is kept across upgrades (Debian Policy 10.7.3; row 813): /etc/motd and the
-# two skel files are conffiles; the five at diverted names are made and kept by the postinst from the defaults in
+# two skel files are conffiles; the five at diverted names are kept through ucf by the postinst from the defaults in
 # /usr/share/sparky-stereo-console/defaults, because a conffile there takes the owning package's hash and cannot be
-# removed again (measured with dpkg 1.23.11, row 813). Up to 20261121.1 all eight were plain files.
+# removed again (measured with dpkg 1.23.11, row 813); ucf's records let dpkg-stereo --verify name a person's change
+# to them. Up to 20261121.1 all eight were plain files.
 # Last update 2026/11/22
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
@@ -148,8 +149,8 @@ ZSH
 chmod 644 "$D/etc/zsh/zshrc"
 DIVERTED="/etc/issue /etc/issue.net /etc/update-motd.d/10-uname /etc/nanorc /etc/zsh/zshrc"
 GIVEN_BACK=/etc/skel/.bashrc
-# Row 813: the conffiles from this version on, the files the maintainer scripts make and keep at the diverted names
-# (their defaults ship under $S/defaults), and the first version with either: the preinst sets the older plain files
+# Row 813: the conffiles from this version on, the files the maintainer scripts keep through ucf at the diverted
+# names (their defaults ship under $S/defaults), and the first version with either: the preinst sets the older plain files
 # aside before the unpack, so dpkg asks nothing and removes nothing of the person's.
 CONFF="/etc/motd /etc/skel/.bash_aliases /etc/skel/.selected_editor"
 MANAGED=$DIVERTED
@@ -235,7 +236,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: command-not-found, fastfetch, sparky-stereo-problems (>= 0.1.1)
+Depends: command-not-found, fastfetch, sparky-stereo-problems (>= 0.1.1), ucf (>= 3.0056)
 Conflicts: neofetch
 Section: System
 Priority: optional
