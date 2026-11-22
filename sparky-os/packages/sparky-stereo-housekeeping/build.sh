@@ -38,7 +38,7 @@ cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
 Upstream Author(s):
-    Paweł "pavroo" Pijanowski <pavroo@onet.eu>
+    Paweł "pavroo" Pijanowski
     Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 
 Files: *
