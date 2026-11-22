@@ -22,7 +22,7 @@ ENV=dict(os.environ,DOCKER_HOST='unix:///K3D/partners/queue/live-captions-73/doc
 rows=[]
 def row(name,expected,found,ok=True):
     rows.append(dict(row=name,expected=expected,found=found,passed=bool(ok)))
-    print(name+'\t'+expected+'\t'+str(found),flush=True)
+    print(name+'\t'+expected+'\t'+str(found).replace('\n',' / ').replace('\t',' '),flush=True)
     if not ok:raise RuntimeError(name+': '+str(found))
 def run(args,**kw):return subprocess.run([str(x) for x in args],check=True,env=ENV,**kw)
 def text(args):return subprocess.check_output([str(x) for x in args],text=True,env=ENV).strip()
