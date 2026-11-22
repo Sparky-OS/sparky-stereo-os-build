@@ -1,0 +1,445 @@
+Description: In a 3D project every effect and composition acts on each eye
+ MLT gives every filter and transition each eye of a frame of two eyes as a
+ picture of its own (MLT 0019), so an effect's or composition's rectangle,
+ crop, rotation or blur is in one eye's coordinates, as in a 2D project of the
+ project's size. The render keeps the document's profile of one eye: each
+ clip's stereo3d_unpack makes the frame of two profile-sized views
+ (pair_frame), and the consumer, given a profile of its own (scale), asks for
+ twice the width; before, the whole document's profile was doubled and every
+ geometry was measured against the frame of two eyes. The timeline preview's
+ chunks of a 3D project are prepared and rendered the same way (the chunk
+ consumer of kdenlive_render has a profile of its own) and played back marked
+ as frames of two eyes. A clip already in the project's pair shape keeps its
+ filter (MLT hands it on as it is), so its effects act on each eye too. An
+ effect that MLT can only run on the two eyes as one picture (it keeps earlier
+ pictures and moves what it shows or reaches over neighbouring samples) says so
+ in its panel in a 3D project.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-22
+diff --git a/renderer/kdenlive_render.cpp b/renderer/kdenlive_render.cpp
+index dcc8a38..baa7b31 100644
+--- a/renderer/kdenlive_render.cpp
++++ b/renderer/kdenlive_render.cpp
+@@ -162,8 +162,11 @@ int main(int argc, char **argv)
+                 continue;
+             }
+             QScopedPointer<Mlt::Producer> playlst(prod.cut(frame.toInt(), frame.toInt() + chunkSize));
++            // the consumer has a profile of its own (MLT's consumer writes its width and height into its profile): a 3D project's chunk
++            // asks for twice the profile's width while the services keep the profile of one eye
++            Mlt::Profile consumerProfile(mlt_profile_clone(profile.get_profile()));
+             QScopedPointer<Mlt::Consumer> cons(
+-                new Mlt::Consumer(profile, QStringLiteral("avformat:%1").arg(baseFolder.absoluteFilePath(fileName)).toUtf8().constData()));
++                new Mlt::Consumer(consumerProfile, QStringLiteral("avformat:%1").arg(baseFolder.absoluteFilePath(fileName)).toUtf8().constData()));
+             for (const QString &param : std::as_const(consumerParams)) {
+                 if (param.contains(QLatin1Char('='))) {
+                     cons->set(param.section(QLatin1Char('='), 0, 0).toUtf8().constData(), param.section(QLatin1Char('='), 1).toUtf8().constData());
+diff --git a/src/bin/projectclip.cpp b/src/bin/projectclip.cpp
+index e1dbfdb..2b93365 100644
+--- a/src/bin/projectclip.cpp
++++ b/src/bin/projectclip.cpp
+@@ -1112,14 +1112,8 @@ void ProjectClip::applyStereoUnpack(const std::shared_ptr<Mlt::Producer> &produc
+     const Stereo3D::Format format = stereo3DFormat();
+     QString packing;
+     if (Stereo3D::bothViewsInFrame(format.packing)) {
+-        if (format.packing == Stereo3D::Packing::SideBySide && !format.rightFirst) {
+-            // a clip whose frame is the pair frame itself (two whole views, square samples) is taken as it is, at its own depth
+-            const QSize clip(m_masterProducer->get_int("meta.media.width"), m_masterProducer->get_int("meta.media.height"));
+-            const double sar = m_masterProducer->get_double("aspect_ratio") > 0 ? m_masterProducer->get_double("aspect_ratio") : 1.0;
+-            if (clip == doc->stereo3DPairFrame() && qFuzzyCompare(sar, 1.0) && qFuzzyCompare(pCore->getCurrentSar(), 1.0)) {
+-                return;
+-            }
+-        }
++        // a clip whose frame is the pair frame itself (two whole views, square samples) keeps the filter too: the filter hands it on
++        // as it is, at its own depth, and marks its frames as frames of two eyes, so its effects act on each eye
+         packing = Stereo3D::mltName(format.packing);
+     } else if (format.isStereo()) {
+         return;
+diff --git a/src/effects/effectstack/view/collapsibleeffectview.cpp b/src/effects/effectstack/view/collapsibleeffectview.cpp
+index 2d95a39..3db51b1 100644
+--- a/src/effects/effectstack/view/collapsibleeffectview.cpp
++++ b/src/effects/effectstack/view/collapsibleeffectview.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include "assets/view/widgets/keyframecontainer.hpp"
+ #include "core.h"
++#include "doc/kdenlivedoc.h"
+ #include "effects/effectsrepository.hpp"
+ #include "effects/effectstack/model/effectitemmodel.hpp"
+ #include "filefilter.h"
+@@ -297,6 +298,23 @@ CollapsibleEffectView::CollapsibleEffectView(const QString &effectName, const st
+     lay->setContentsMargins(0, 0, 0, 0);
+     lay->setSpacing(0);
+     lay->addWidget(m_view);
++    // In a 3D project MLT gives an effect each eye as a picture of its own; an effect that keeps earlier pictures and moves what it
++    // shows or reaches over neighbouring samples (a stabilizer, a tracker, a temporal denoiser) acts on the two eyes as one picture,
++    // and the person is told so here
++    if (KdenliveDoc *doc = pCore->currentDoc()) {
++        const QSize pairFrame = doc->stereo3DPairFrame();
++        Mlt::Properties *asset = effectParamModel->getAsset();
++        if (pairFrame.isValid() && pairFrame != pCore->getCurrentFrameSize() && asset && asset->get_int("_stereo3d.whole_frame") == 2) {
++            m_stereoNotice = new KMessageWidget(i18nc("@info An effect in a stereoscopic 3D project",
++                                                      "In a 3D project this effect works on the two eyes as one picture, so it can carry "
++                                                      "part of one eye into the other."),
++                                                widgetFrame);
++            m_stereoNotice->setMessageType(KMessageWidget::Warning);
++            m_stereoNotice->setWordWrap(true);
++            m_stereoNotice->setCloseButtonVisible(false);
++            lay->insertWidget(0, m_stereoNotice);
++        }
++    }
+ 
+     if (!effectParamModel->hasMoreThanOneKeyframe()) {
+         // No keyframe or only one, allow hiding
+@@ -822,12 +840,17 @@ void CollapsibleEffectView::slotResetEffect()
+     m_view->resetValues();
+ }
+ 
++int CollapsibleEffectView::frameHeight() const
++{
++    return m_view->minimumHeight() + (m_stereoNotice ? m_stereoNotice->heightForWidth(qMax(widgetFrame->width(), 200)) : 0);
++}
++
+ void CollapsibleEffectView::updateHeight()
+ {
+-    if (m_view->minimumHeight() == widgetFrame->height()) {
++    if (frameHeight() == widgetFrame->height()) {
+         return;
+     }
+-    widgetFrame->setFixedHeight(m_collapse->isActive() ? 0 : m_view->minimumHeight());
++    widgetFrame->setFixedHeight(m_collapse->isActive() ? 0 : frameHeight());
+     setFixedHeight(widgetFrame->height() + border_frame->minimumHeight() + frame->minimumHeight() + zoneFrame->minimumHeight());
+     Q_EMIT switchHeight(m_model, height());
+ }
+@@ -841,7 +864,7 @@ void CollapsibleEffectView::switchCollapsed(int row)
+ 
+ void CollapsibleEffectView::slotSwitch(bool collapse)
+ {
+-    widgetFrame->setFixedHeight(collapse ? 0 : m_view->minimumHeight());
++    widgetFrame->setFixedHeight(collapse ? 0 : frameHeight());
+     zoneFrame->setFixedHeight(collapse || !m_inOutButton->isChecked() ? 0 : frame->height());
+     setFixedHeight(widgetFrame->height() + border_frame->minimumHeight() + frame->minimumHeight() + zoneFrame->height());
+     m_model->setCollapsed(collapse);
+diff --git a/src/effects/effectstack/view/collapsibleeffectview.hpp b/src/effects/effectstack/view/collapsibleeffectview.hpp
+index 5011afb..6677812 100644
+--- a/src/effects/effectstack/view/collapsibleeffectview.hpp
++++ b/src/effects/effectstack/view/collapsibleeffectview.hpp
+@@ -17,6 +17,7 @@ class KDualAction;
+ class KSqueezedTextLabel;
+ class EffectItemModel;
+ class AssetParameterView;
++class KMessageWidget;
+ class TimecodeDisplay;
+ 
+ /**)
+@@ -118,6 +119,10 @@ private Q_SLOTS:
+ 
+ private:
+     AssetParameterView *m_view;
++    /** @brief Said in a 3D project for an effect that acts on the two eyes as one picture */
++    KMessageWidget *m_stereoNotice{nullptr};
++    /** @brief The height of the parameters, with the 3D notice above them */
++    int frameHeight() const;
+     std::shared_ptr<EffectItemModel> m_model;
+     KDualAction *m_collapse;
+     QList<CollapsibleEffectView *> m_subParamWidgets;
+diff --git a/src/render/renderrequest.cpp b/src/render/renderrequest.cpp
+index 7a03914..002b057 100644
+--- a/src/render/renderrequest.cpp
++++ b/src/render/renderrequest.cpp
+@@ -447,6 +447,25 @@ void RenderRequest::setDocGeneralParams(QDomDocument doc, int in, int out)
+         consumer.setAttribute(it.key(), it.value());
+     }
+ 
++    // A 3D project's frame of two eyes, each at the project's resolution, is asked for by the consumer; the document keeps the
++    // profile of one eye (prepareStereoRender)
++    // MLT's consumer writes its width into its profile: with "scale" the consumer has a profile of its own (MLT's XML loader clones
++    // the document's), so the services keep the document's profile of one eye and act on each eye at that eye's resolution
++    const QSize pair = stereoRenderFrame(doc);
++    if (pair.isValid()) {
++        double scale = consumer.attribute(QStringLiteral("scale")).toDouble();
++        if (scale <= 0.) {
++            scale = 1.;
++            consumer.setAttribute(QStringLiteral("scale"), QStringLiteral("1"));
++        }
++        int eyeWidth = qRound(pair.width() / 2 * scale);
++        int height = qRound(pair.height() * scale);
++        eyeWidth -= eyeWidth % 2;
++        height -= height % 2;
++        consumer.setAttribute(QStringLiteral("width"), 2 * eyeWidth);
++        consumer.setAttribute(QStringLiteral("height"), height);
++    }
++
+     // The packing of a stereoscopic 3D project: the encoder writes it as the frame packing arrangement SEI and the Matroska muxer as StereoMode
+     const Stereo3D::Format stereo = pCore->currentDoc()->stereo3DFormat();
+     if (stereo.isStereo() && !consumer.hasAttribute(QStringLiteral("stereo3d"))) {
+@@ -465,7 +484,7 @@ void RenderRequest::setDocGeneralParams(QDomDocument doc, int in, int out)
+     }
+ }
+ 
+-bool RenderRequest::prepareStereoRender(QDomDocument &doc, bool profileOnly)
++QSize RenderRequest::stereoRenderFrame(const QDomDocument &doc)
+ {
+     // A 3D project's resolution is one eye's ("render resolution per eye"): a project of 1920x1080 writes 3840x1080, each eye a
+     // 1920x1080 picture, nothing squeezed, the frame the monitors work on (KdenliveDoc::stereo3DPairFrame()). A project whose own frame
+@@ -473,15 +492,15 @@ bool RenderRequest::prepareStereoRender(QDomDocument &doc, bool profileOnly)
+     // clips are not taken apart) too.
+     KdenliveDoc *project = pCore->currentDoc();
+     if (!project || !project->isStereo3DAutomatic()) {
+-        return false;
++        return {};
+     }
+     const Stereo3D::Format stereo = project->stereo3DFormat();
+     if (stereo.packing != Stereo3D::Packing::SideBySide || stereo.rightFirst) {
+-        return false;
++        return {};
+     }
+     QDomNodeList profiles = doc.elementsByTagName(QStringLiteral("profile"));
+     if (profiles.isEmpty()) {
+-        return false;
++        return {};
+     }
+     QDomElement profile = profiles.at(0).toElement();
+     const int width = profile.attribute(QStringLiteral("width")).toInt();
+@@ -489,19 +508,25 @@ bool RenderRequest::prepareStereoRender(QDomDocument &doc, bool profileOnly)
+     const int sarNum = qMax(1, profile.attribute(QStringLiteral("sample_aspect_num"), QStringLiteral("1")).toInt());
+     const int sarDen = qMax(1, profile.attribute(QStringLiteral("sample_aspect_den"), QStringLiteral("1")).toInt());
+     if (width < 2 || height < 2 || Stereo3D::fullSizeViews(QSize(qRound(double(width) * sarNum / sarDen), height), Stereo3D::Packing::SideBySide)) {
+-        return false;
++        return {};
+     }
+-    for (int i = 0; i < profiles.count(); ++i) {
+-        QDomElement p = profiles.at(i).toElement();
+-        p.setAttribute(QStringLiteral("width"), 2 * p.attribute(QStringLiteral("width")).toInt());
+-        p.setAttribute(QStringLiteral("display_aspect_num"), 2 * p.attribute(QStringLiteral("display_aspect_num")).toInt());
+-        p.setAttribute(QStringLiteral("description"), p.attribute(QStringLiteral("description")) + QStringLiteral(" (3D, two eyes)"));
++    return QSize(2 * width, height);
++}
++
++bool RenderRequest::prepareStereoRender(QDomDocument &doc, bool profileOnly)
++{
++    // The document keeps the profile of one eye, so every effect and composition acts on each eye in that eye's coordinates (MLT
++    // gives a service each eye of a frame of two eyes as a picture of its own); the frame of two eyes is made by each clip's
++    // stereo3d_unpack (pair_frame: two views of the profile's size) and asked for by the consumer (setDocGeneralParams)
++    if (!stereoRenderFrame(doc).isValid()) {
++        return false;
+     }
+     if (profileOnly) {
+         return true;
+     }
+-    // Every 3D clip's views fitted to whole pictures, each to its half of the doubled frame: the filters the project has, and a filter
+-    // for a clip the project left as it is (side by side with half views, the kind of the project's own frame)
++    // Every clip with a picture carries the filter, so its frames are frames of two eyes: a 3D clip's views fitted to whole
++    // pictures, each to its half (a clip already in that shape is handed on as it is, at its own depth, by the filter itself), a 2D
++    // clip, title, picture or colour the same picture in both eyes, as the timeline has it
+     int added = 0;
+     for (const QString &tag : {QStringLiteral("chain"), QStringLiteral("producer")}) {
+         QDomNodeList services = doc.elementsByTagName(tag);
+@@ -510,38 +535,17 @@ bool RenderRequest::prepareStereoRender(QDomDocument &doc, bool profileOnly)
+             const QString binId = Xml::getXmlProperty(service, QStringLiteral("kdenlive:id"));
+             const std::shared_ptr<ProjectClip> clip = binId.isEmpty() ? nullptr : pCore->projectItemModel()->getClipByBinID(binId);
+             const Stereo3D::Format format = clip ? clip->stereo3DFormat() : Stereo3D::Format();
+-            // a clip already side by side, left eye first, whose frame is the doubled frame itself (two whole views of the project's
+-            // size, square samples) is taken as it is, decoded at its own depth: the project's filter for it (made for half views)
+-            // goes. Any other clip, an anamorphic one included, is fitted by the filter: MLT's own scaling of a frame of another size
+-            // or shape is not one per eye.
+-            bool asItIs = false;
+-            if (clip && format.packing == Stereo3D::Packing::SideBySide && !format.rightFirst) {
+-                const double sar = clip->getProducerProperty(QStringLiteral("aspect_ratio")).toDouble() > 0
+-                                       ? clip->getProducerProperty(QStringLiteral("aspect_ratio")).toDouble()
+-                                       : 1.0;
+-                asItIs = clip->getProducerIntProperty(QStringLiteral("meta.media.width")) == 2 * width
+-                         && clip->getProducerIntProperty(QStringLiteral("meta.media.height")) == height && qFuzzyCompare(sar, 1.0)
+-                         && sarNum == sarDen;
+-            }
+             bool hasUnpack = false;
+-            QList<QDomElement> unneeded;
+             for (QDomElement filter = service.firstChildElement(QStringLiteral("filter")); !filter.isNull();
+                  filter = filter.nextSiblingElement(QStringLiteral("filter"))) {
+                 if (Xml::getXmlProperty(filter, QStringLiteral("kdenlive:stereo3d_unpack")) == QLatin1String("1")) {
+-                    if (asItIs) {
+-                        unneeded << filter;
+-                    } else {
+-                        Xml::setXmlProperty(filter, QStringLiteral("target_views"), QStringLiteral("full"));
+-                        hasUnpack = true;
+-                    }
++                    Xml::setXmlProperty(filter, QStringLiteral("target_views"), QStringLiteral("full"));
++                    Xml::setXmlProperty(filter, QStringLiteral("pair_frame"), QStringLiteral("1"));
++                    hasUnpack = true;
+                 }
+             }
+-            for (QDomElement &filter : unneeded) {
+-                service.removeChild(filter);
+-            }
+-            // a 2D clip, title, picture or colour: the same picture in both eyes, as the timeline has it
+             const bool mono = clip && !format.isStereo() && Stereo3D::carriesPicture(clip->clipType());
+-            if (hasUnpack || asItIs || !clip || (!Stereo3D::bothViewsInFrame(format.packing) && !mono)) {
++            if (hasUnpack || !clip || (!Stereo3D::bothViewsInFrame(format.packing) && !mono)) {
+                 continue;
+             }
+             QDomElement filter = doc.createElement(QStringLiteral("filter"));
+@@ -552,6 +556,7 @@ bool RenderRequest::prepareStereoRender(QDomDocument &doc, bool profileOnly)
+             Xml::setXmlProperty(filter, QStringLiteral("output"), QStringLiteral("side_by_side"));
+             Xml::setXmlProperty(filter, QStringLiteral("in_producer"), QStringLiteral("1"));
+             Xml::setXmlProperty(filter, QStringLiteral("target_views"), QStringLiteral("full"));
++            Xml::setXmlProperty(filter, QStringLiteral("pair_frame"), QStringLiteral("1"));
+             Xml::setXmlProperty(filter, QStringLiteral("kdenlive:stereo3d_unpack"), QStringLiteral("1"));
+             // first of the producer's filters
+             const QDomElement first = service.firstChildElement(QStringLiteral("filter"));
+diff --git a/src/render/renderrequest.h b/src/render/renderrequest.h
+index 2840ec8..bf1a3d7 100644
+--- a/src/render/renderrequest.h
++++ b/src/render/renderrequest.h
+@@ -58,6 +58,11 @@ public:
+     QVector<std::pair<int, int>> getSectionsInOut();
+     QStringList getSectionsNames();
+ 
++    /** @brief In a 3D project, prepare a render document: its profile stays one eye's, each clip makes frames of two eyes (also
++     * the timeline preview's chunks) */
++    static bool prepareStereoRender(QDomDocument &doc, bool profileOnly = false);
++    /** @brief The frame of two eyes a 3D project renders (twice its profile's width), or an invalid size for any other project */
++    static QSize stereoRenderFrame(const QDomDocument &doc);
+ protected:
+     int m_boundingIn;
+     int m_boundingOut;
+@@ -90,9 +95,6 @@ private:
+     void chooseStereoRenderDepth();
+ 
+     void setDocGeneralParams(QDomDocument doc, int in, int out);
+-    /** @brief In a 3D project, the project's resolution is that of one eye: a render writes two of them side by side. Returns whether
+-     *  the document was changed; with profileOnly only its profile (a wrapper of the project's document). */
+-    static bool prepareStereoRender(QDomDocument &doc, bool profileOnly = false);
+     void setDocTwoPassParams(int pass, QDomDocument &doc, const QString &outputFile);
+     std::vector<RenderSection> getGuideSections();
+ 
+diff --git a/src/timeline2/view/previewmanager.cpp b/src/timeline2/view/previewmanager.cpp
+index d61c054..710c06f 100644
+--- a/src/timeline2/view/previewmanager.cpp
++++ b/src/timeline2/view/previewmanager.cpp
+@@ -12,6 +12,7 @@
+ #include "doc/kdenlivedoc.h"
+ #include "kdenlivesettings.h"
+ #include "mainwindow.h"
++#include "render/renderrequest.h"
+ #include "timeline2/model/timelineitemmodel.hpp"
+ #include "xml/xml.hpp"
+ 
+@@ -170,6 +171,8 @@ void PreviewManager::loadChunks(QVariantList previewChunks, QVariantList dirtyCh
+             if (existingChuncks.contains(QStringLiteral("%1.%2").arg(position).arg(m_extension))) {
+                 clip.reset(playlist.get_clip(i));
+                 m_renderedChunks << position;
++                std::unique_ptr<Mlt::Producer> parent(clip->parent().is_valid() ? new Mlt::Producer(clip->parent()) : nullptr);
++                markStereoChunk(parent ? parent.get() : clip.get());
+                 m_previewTrack->insert_at(position, clip.get(), 1);
+             } else {
+                 dirtyChunks << position;
+@@ -622,11 +625,46 @@ void PreviewManager::startPreviewRender()
+         } else {
+             pCore->currentDoc()->getTimeline(m_uuid)->sceneList(m_cacheDir.absolutePath(), sceneList);
+         }
++        // In a 3D project the chunks are made as a render is: the frame of two eyes, each at the project's resolution, every effect
++        // and composition acting on each eye
++        m_stereoPair = QSize();
++        if (pCore->currentDoc()->isStereo3DPairProject()) {
++            QDomDocument doc;
++            QFile file(sceneList);
++            if (file.open(QIODevice::ReadOnly) && doc.setContent(&file)) {
++                file.close();
++                m_stereoPair = RenderRequest::stereoRenderFrame(doc);
++                if (RenderRequest::prepareStereoRender(doc) && !Xml::docContentToFile(doc, sceneList)) {
++                    return;
++                }
++            }
++        }
+         m_previewTimer.stop();
+         doPreviewRender(sceneList);
+     }
+ }
+ 
++void PreviewManager::markStereoChunk(Mlt::Producer *prod)
++{
++    // A chunk of a 3D project is a frame of two eyes: in the monitors it is fitted to their frame of two eyes and marked as one, as a
++    // 3D clip of the project's own kind is (ProjectClip::applyStereoUnpack)
++    if (!prod || !pCore->currentDoc() || !pCore->currentDoc()->isStereo3DPairProject()) {
++        return;
++    }
++    Mlt::Filter unpack(pCore->getMonitorProfile(), "stereo3d_unpack");
++    if (!unpack.is_valid()) {
++        return;
++    }
++    unpack.set("packing", "side_by_side");
++    unpack.set("invert", 0);
++    unpack.set("output", "side_by_side");
++    unpack.set("in_producer", 1);
++    unpack.set("target_views", "full");
++    unpack.set("kdenlive:stereo3d_unpack", 1);
++    prod->attach(unpack);
++    prod->move_filter(prod->filter_count() - 1, 0);
++}
++
+ void PreviewManager::receivedStderr()
+ {
+     QStringList resultList = QString::fromLocal8Bit(m_previewProcess.readAllStandardError()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+@@ -660,6 +698,22 @@ void PreviewManager::doPreviewRender(const QString &scene)
+     m_chunksToRender = m_dirtyChunks.count();
+     m_processedChunks = 0;
+     int chunkSize = KdenliveSettings::timelinechunks();
++    // a 3D project's chunk holds both eyes: the consumer asks for twice the profile's width
++    QStringList consumerParams = m_consumerParams;
++    if (m_stereoPair.isValid()) {
++        bool sized = false;
++        for (QString &param : consumerParams) {
++            if (param.startsWith(QLatin1String("s="))) {
++                const int w = param.section(QLatin1Char('='), 1).section(QLatin1Char('x'), 0, 0).toInt();
++                const QString h = param.section(QLatin1Char('x'), 1);
++                param = QStringLiteral("s=%1x%2").arg(2 * w).arg(h);
++                sized = true;
++            }
++        }
++        if (!sized) {
++            consumerParams << QStringLiteral("width=%1").arg(m_stereoPair.width()) << QStringLiteral("height=%1").arg(m_stereoPair.height());
++        }
++    }
+     QStringList args{QStringLiteral("preview-chunks"),
+                      scene,
+                      m_cacheDir.absolutePath(),
+@@ -667,7 +721,7 @@ void PreviewManager::doPreviewRender(const QString &scene)
+                      QString::number(chunkSize - 1),
+                      pCore->getCurrentProfilePath(),
+                      m_extension,
+-                     m_consumerParams.join(QLatin1Char(' '))};
++                     consumerParams.join(QLatin1Char(' '))};
+     pCore->currentDoc()->previewProgress(0);
+     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+     if (!KdenliveSettings::hwDecoding().isEmpty()) {
+@@ -854,6 +908,7 @@ void PreviewManager::gotPreviewRender(int frame, const QString &file, int progre
+             m_renderedChunks << frame;
+             Q_EMIT renderedChunksChanged();
+             prod.set("mlt_service", "avformat-novalidate");
++            markStereoChunk(&prod);
+             m_tractor->lock();
+             m_previewTrack->insert_at(frame, &prod, 1);
+             m_previewTrack->consolidate_blanks();
+diff --git a/src/timeline2/view/previewmanager.h b/src/timeline2/view/previewmanager.h
+index c3162cf..f8ab50f 100644
+--- a/src/timeline2/view/previewmanager.h
++++ b/src/timeline2/view/previewmanager.h
+@@ -12,6 +12,7 @@
+ #include <QFuture>
+ #include <QMutex>
+ #include <QProcess>
++#include <QSize>
+ #include <QTimer>
+ #include <QUuid>
+ 
+@@ -81,6 +82,10 @@ public:
+     bool isRunning() const;
+ 
+ private:
++    /** @brief A 3D project's frame of two eyes the chunks are rendered at, or invalid */
++    QSize m_stereoPair;
++    /** @brief In a 3D project, a chunk producer is marked and fitted as a frame of two eyes */
++    void markStereoChunk(Mlt::Producer *prod);
+     Mlt::Tractor *m_tractor;
+     QUuid m_uuid;
+     Mlt::Playlist *m_previewTrack;

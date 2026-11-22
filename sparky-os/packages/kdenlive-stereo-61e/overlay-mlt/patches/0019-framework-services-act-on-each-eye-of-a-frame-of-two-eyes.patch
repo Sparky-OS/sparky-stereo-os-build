@@ -1,0 +1,1071 @@
+Description: framework: services act on each eye of a frame of two eyes
+ A frame of two eyes (stereo3d_unpack's in a 3D project: both views side by
+ side, the left eye first, marked stereo3d.pair) is given to every filter and
+ transition one eye at a time, as a picture of its own, so what a service
+ places, moves, scales, crops, rotates or blurs stays in that eye and is
+ measured in that eye's samples; the services keep the profile of one eye. The
+ framework wraps the entries a service's process pushes on the frame
+ (mlt_filter_process, mlt_transition_process): services stacked directly on
+ one another act on each eye as one chain, so what one leaves on the frame for
+ the next (mask_start for mask_apply) belongs to the same eye; the picture
+ under them is taken once, for both eyes, at twice the eye's width; a
+ transition's second frame is taken once and each eye of the transition gets
+ that eye of it (or the whole of it when it holds one picture); each eye after
+ the first starts from the frame's properties as the services found them (a
+ qtblend leaves its scaling for the next qtblend) plus what taking the picture
+ under them set; while a service is set up (its process) the frame says one
+ eye's media width (crop sizes itself then). A producer's normalizers and
+ stereo3d_unpack itself act on the frame as a whole; so do services that keep
+ earlier pictures (freeze, temporal blends and denoisers, deinterlacers,
+ stabilizers, trackers), listed in mlt_stereo_eyes.c and marked on the service
+ by the factory as _stereo3d.whole_frame: 1 when that is the same as each eye
+ apart, 2 when it can carry part of one eye into the other (an application
+ tells the person). The tractor keeps the mark on its frame. A frame without
+ the mark, every 2D project's, takes the code paths it always took.
+ .
+ stereo3d_unpack: in_producer with pair_frame=1 makes a frame of two views each
+ of the profile's size (twice its width), so a render of a 3D project keeps
+ the profile of one eye, its consumer asking for the doubled width with a
+ profile of its own; every frame it makes side by side carries
+ stereo3d.pair; a clip whose own frame already is that frame (both views side
+ by side, left first, each filling its half) is handed on as the producer gives
+ it, in the format asked for and at its depth. Asked for a frame of another size
+ (a service acting on each eye asking for a smaller picture), it scales each
+ eye apart to its half of that size with MLT's rescaler, as a 2D producer's
+ normalizers would, so no scaler reaches across the middle.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-22
+diff --git a/src/framework/CMakeLists.txt b/src/framework/CMakeLists.txt
+index 6d16e09..ce85578 100644
+--- a/src/framework/CMakeLists.txt
++++ b/src/framework/CMakeLists.txt
+@@ -60,6 +60,7 @@ add_library(mlt SHARED
+   mlt_repository.c
+   mlt_service.c
+   mlt_slices.c
++  mlt_stereo_eyes.c
+   mlt_tokeniser.c
+   mlt_tractor.c
+   mlt_transition.c
+diff --git a/src/framework/mlt_deque.c b/src/framework/mlt_deque.c
+index a20dab4..bcc1a06 100644
+--- a/src/framework/mlt_deque.c
++++ b/src/framework/mlt_deque.c
+@@ -413,6 +413,53 @@ double mlt_deque_peek_front_double(mlt_deque self)
+     return self->count > 0 ? self->list[0].floating : 0;
+ }
+ 
++/** Move the last entries of a deque to the back of another, keeping their order and their bytes (an entry pushed as
++ * a pointer, an int or a double is moved as it is).
++ *
++ * \private \memberof mlt_deque_s
++ * \param self the deque the entries are taken from
++ * \param target the deque they are put on
++ * \param count how many entries
++ * \return true if there was an error
++ */
++
++int mlt_deque_move_back(mlt_deque self, mlt_deque target, int count)
++{
++    if (count < 0 || count > self->count)
++        return 1;
++    for (int i = self->count - count; i < self->count; i++) {
++        if (mlt_deque_allocate(target))
++            return 1;
++        target->list[target->count++] = self->list[i];
++    }
++    self->count -= count;
++    return 0;
++}
++
++/** Put a copy of every entry of a deque at the back of another, keeping their order and their bytes, an entry that
++ * is the pointer \p from put as \p to.
++ *
++ * \private \memberof mlt_deque_s
++ * \param self the deque the entries are put on
++ * \param source the deque they are copied from (unchanged)
++ * \param from a pointer to replace, or NULL
++ * \param to what replaces it
++ * \return true if there was an error
++ */
++
++int mlt_deque_append_copy(mlt_deque self, mlt_deque source, void *from, void *to)
++{
++    for (int i = 0; i < source->count; i++) {
++        if (mlt_deque_allocate(self))
++            return 1;
++        self->list[self->count] = source->list[i];
++        if (from && self->list[self->count].addr == from)
++            self->list[self->count].addr = to;
++        self->count++;
++    }
++    return 0;
++}
++
+ /** Destroy the queue.
+  *
+  * \public \memberof mlt_deque_s
+diff --git a/src/framework/mlt_factory.c b/src/framework/mlt_factory.c
+index 40d8dec..8d706ca 100644
+--- a/src/framework/mlt_factory.c
++++ b/src/framework/mlt_factory.c
+@@ -21,6 +21,7 @@
+ 
+ #include "mlt.h"
+ #include "mlt_repository.h"
++#include "mlt_stereo_eyes.h"
+ 
+ #include <libgen.h>
+ #include <stdio.h>
+@@ -383,6 +384,7 @@ mlt_filter mlt_factory_filter(mlt_profile profile, const char *service, const vo
+     if (obj != NULL) {
+         mlt_properties properties = MLT_FILTER_PROPERTIES(obj);
+         set_common_properties(properties, profile, "filter", service);
++        mlt_stereo_eyes_mark(MLT_FILTER_SERVICE(obj), service);
+     }
+     return obj;
+ }
+@@ -438,6 +440,7 @@ mlt_transition mlt_factory_transition(mlt_profile profile, const char *service,
+     if (obj != NULL) {
+         mlt_properties properties = MLT_TRANSITION_PROPERTIES(obj);
+         set_common_properties(properties, profile, "transition", service);
++        mlt_stereo_eyes_mark(MLT_TRANSITION_SERVICE(obj), service);
+     }
+     return obj;
+ }
+diff --git a/src/framework/mlt_filter.c b/src/framework/mlt_filter.c
+index 6d4a587..6932e56 100644
+--- a/src/framework/mlt_filter.c
++++ b/src/framework/mlt_filter.c
+@@ -21,6 +21,7 @@
+  */
+ 
+ #include "mlt_filter.h"
++#include "mlt_stereo_eyes.h"
+ #include "mlt_frame.h"
+ #include "mlt_producer.h"
+ 
+@@ -311,6 +312,16 @@ mlt_frame mlt_filter_process(mlt_filter self, mlt_frame frame)
+                                 (mlt_destructor) mlt_filter_close,
+                                 NULL);
+ 
++        // On a frame of two eyes the filter is given each eye as a picture of its own (mlt_stereo_eyes.c)
++        if (mlt_stereo_eyes_wanted(MLT_FILTER_SERVICE(self), frame, NULL)) {
++            const int depth = mlt_deque_count(MLT_FRAME_IMAGE_STACK(frame));
++            const int width = mlt_stereo_eyes_enter(frame);
++            mlt_frame result = self->process(self, frame);
++            mlt_stereo_eyes_leave(frame, width);
++            if (result == frame)
++                mlt_stereo_eyes_wrap(MLT_FILTER_SERVICE(self), frame, depth, NULL, 1, 0);
++            return result;
++        }
+         return self->process(self, frame);
+     }
+ }
+diff --git a/src/framework/mlt_stereo_eyes.c b/src/framework/mlt_stereo_eyes.c
+new file mode 100644
+index 0000000..85240f9
+--- /dev/null
++++ b/src/framework/mlt_stereo_eyes.c
+@@ -0,0 +1,603 @@
++/**
++ * \file mlt_stereo_eyes.c
++ * \brief services acting on each eye of a frame of two eyes
++ *
++ * A frame of two eyes holds the two views of a stereoscopic picture side by side, the left eye first, each at its own
++ * resolution (stereo3d_unpack makes it and marks it stereo3d.pair). In such a frame a filter or a transition is given
++ * one eye at a time, as a picture of its own: what it places, moves, scales or crops stays in that eye and is measured
++ * in that eye's pixels, so the services keep the profile of one eye. Services stacked directly on one another on a frame
++ * act on each eye as one chain, so what one leaves on the frame for the next (mask_start for mask_apply) belongs to the
++ * same eye. The picture under them is taken once, for both eyes. A transition's second frame is taken once too, and
++ * each eye of the transition is given that eye of it, or the whole of it when it holds one picture. A service that
++ * keeps pictures from one frame to the next is listed below and acts on the frame of two eyes as a whole.
++ *
++ * Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++ */
++
++#include "mlt_stereo_eyes.h"
++#include "mlt_deque.h"
++#include "mlt_frame.h"
++#include "mlt_image.h"
++#include "mlt_log.h"
++#include "mlt_pool.h"
++#include "mlt_properties.h"
++#include "mlt_service.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++// The frame's picture holds two eyes side by side, the left eye first
++#define PAIR "stereo3d.pair"
++// The picture at this point of the frame's stack is one eye of such a frame
++#define INSIDE "_stereo3d_eyes.inside"
++// On a service that acts on a frame of two eyes as a whole: 1 when that is right for it (it works sample by sample and keeps
++// earlier pictures), 2 when it cannot act on each eye (it keeps earlier pictures and moves what it shows, so what it moves
++// can cross between the eyes)
++#define WHOLE "_stereo3d.whole_frame"
++// The longest chain of services acting on each eye together
++#define CHAIN 32
++
++static const struct
++{
++    const char *name;
++    int kind;
++} whole_frame[] = {
++    // keep pictures of earlier frames, or blend or pick frames over time, sample by sample: the frame of two eyes as a whole is
++    // the same as each eye apart, and their memory stays one picture's
++    {"freeze", 1},
++    {"avfilter.tmix", 1},
++    {"avfilter.lagfun", 1},
++    {"avfilter.atadenoise", 1},
++    {"avfilter.photosensitivity", 1},
++    {"avfilter.random", 1},
++    {"avfilter.framestep", 1},
++    {"avfilter.dedot", 1},
++    {"avfilter.yadif", 1},
++    {"avfilter.bwdif", 1},
++    {"avfilter.w3fdif", 1},
++    {"avfilter.mcdeint", 1},
++    {"avfilter.kerneldeint", 1},
++    {"avfilter.weave", 1},
++    {"avfilter.doubleweave", 1},
++    {"avfilter.separatefields", 1},
++    {"avfilter.field", 1},
++    {"frei0r.delay0r", 1},
++    {"frei0r.delaygrab", 1},
++    {"frei0r.baltan", 1},
++    {"frei0r.nervous", 1},
++    {"frei0r.vertigo", 1},
++    {"frei0r.lightgraffiti", 1},
++    {"frei0r.bgsubtract0r", 1},
++    {"frei0r.timeout", 1},
++    // keep earlier frames and move the picture or a region with what they follow, or reach over neighbouring samples: given
++    // each eye in turn their memory would mix the eyes, so they act on the two eyes as one picture, and the person is told
++    {"vidstab", 2},
++    {"opencv.tracker", 2},
++    {"avfilter.hqdn3d", 2},
++    {"avfilter.zoompan", 2},
++    {"frei0r.hqdn3d", 2},
++    {"frei0r.denoise_hqdn3d", 2},
++    {"frei0r.facebl0r", 2},
++    {"frei0r.bigsh0t_stabilize_360", 2},
++    {NULL, 0},
++};
++
++typedef struct
++{
++    mlt_deque ops;     // the service's own entries on the image stack, the bottom first
++    mlt_frame b_frame; // a transition's second frame, or NULL
++    int b_pair;        // the second frame holds two eyes
++    int below_pair;    // the picture under the service holds two eyes
++    char name[48];     // the service's name, for the log
++} eyes_op;
++
++// A picture taken once for both eyes: the frame's own stack under the services, or a transition's second frame
++typedef struct
++{
++    mlt_frame frame;
++    mlt_deque stack; // the entries that make the frame's own picture, or NULL for a second frame (its own stack makes it)
++    int pair;        // it holds two eyes; else it is one picture for both eyes
++    int done, error;
++    uint8_t *image;
++    mlt_image_format format;
++    int width, height;
++    uint8_t *alpha;
++    int meta_width;      // meta.media.width of the frame of two eyes
++    mlt_properties left; // what taking the frame's own picture set on the frame (given again to the eyes after the first)
++} eyes_source;
++
++typedef struct
++{
++    eyes_source *source;
++    int eye; // 0 the left eye, 1 the right eye
++} eyes_view;
++
++static int eyes_get_image(
++    mlt_frame frame, uint8_t **image, mlt_image_format *format, int *width, int *height, int writable);
++
++void mlt_stereo_eyes_mark(mlt_service service, const char *name)
++{
++    if (!service || !name)
++        return;
++    for (int i = 0; whole_frame[i].name; i++) {
++        if (!strcmp(whole_frame[i].name, name)) {
++            mlt_properties_set_int(MLT_SERVICE_PROPERTIES(service), WHOLE, whole_frame[i].kind);
++            return;
++        }
++    }
++}
++
++int mlt_stereo_eyes_wanted(mlt_service service, mlt_frame frame, mlt_frame b_frame)
++{
++    if (!service || !frame)
++        return 0;
++    mlt_properties frame_props = MLT_FRAME_PROPERTIES(frame);
++    if (mlt_properties_get_int(frame_props, INSIDE))
++        return 0;
++    if (!mlt_properties_get_int(frame_props, PAIR)
++        && !(b_frame && mlt_properties_get_int(MLT_FRAME_PROPERTIES(b_frame), PAIR)))
++        return 0;
++    mlt_properties props = MLT_SERVICE_PROPERTIES(service);
++    // a producer's normalizers fit the frame of two eyes as a whole (stereo3d_unpack told them its size)
++    if (mlt_properties_get_int(props, "_loader") || mlt_properties_get_int(props, WHOLE))
++        return 0;
++    const char *name = mlt_properties_get(props, "mlt_service");
++    return !(name && !strcmp(name, "stereo3d_unpack"));
++}
++
++int mlt_stereo_eyes_enter(mlt_frame frame)
++{
++    // While a service acting on each eye is set up (its process), the frame says one eye's media width: a service that sizes
++    // itself then (crop) works in that eye's samples
++    if (!frame || !mlt_properties_get_int(MLT_FRAME_PROPERTIES(frame), PAIR))
++        return 0;
++    const int width = mlt_properties_get_int(MLT_FRAME_PROPERTIES(frame), "meta.media.width");
++    if (width > 1)
++        mlt_properties_set_int(MLT_FRAME_PROPERTIES(frame), "meta.media.width", width / 2);
++    return width > 1 ? width : 0;
++}
++
++void mlt_stereo_eyes_leave(mlt_frame frame, int width)
++{
++    // the frame's width again, or twice what the service left as one eye's (crop's cropped width)
++    if (!frame || width <= 1)
++        return;
++    const int eye = mlt_properties_get_int(MLT_FRAME_PROPERTIES(frame), "meta.media.width");
++    mlt_properties_set_int(MLT_FRAME_PROPERTIES(frame), "meta.media.width", eye == width / 2 ? width : 2 * eye);
++}
++
++static void op_close(void *data)
++{
++    eyes_op *op = data;
++    if (op) {
++        if (op->ops)
++            mlt_deque_close(op->ops);
++        free(op);
++    }
++}
++
++void mlt_stereo_eyes_wrap(
++    mlt_service service, mlt_frame frame, int depth, mlt_frame b_frame, int below_pair, int b_pair)
++{
++    mlt_deque stack = MLT_FRAME_IMAGE_STACK(frame);
++    const int count = mlt_deque_count(stack) - depth;
++    if (count <= 0)
++        return;
++    eyes_op *op = calloc(1, sizeof(*op));
++    if (!op)
++        return;
++    op->ops = mlt_deque_init();
++    if (!op->ops || mlt_deque_move_back(stack, op->ops, count)) {
++        op_close(op);
++        return;
++    }
++    op->b_frame = b_frame;
++    op->b_pair = b_pair;
++    snprintf(op->name, sizeof(op->name), "%s", mlt_properties_get(MLT_SERVICE_PROPERTIES(service), "mlt_service") ? mlt_properties_get(MLT_SERVICE_PROPERTIES(service), "mlt_service") : "?");
++    op->below_pair = below_pair;
++    mlt_properties frame_props = MLT_FRAME_PROPERTIES(frame);
++    const int n = mlt_properties_get_int(frame_props, "_stereo3d_eyes.count");
++    char key[64];
++    snprintf(key, sizeof(key), "_stereo3d_eyes.%d", n);
++    mlt_properties_set_int(frame_props, "_stereo3d_eyes.count", n + 1);
++    mlt_properties_set_data(frame_props, key, op, 0, op_close, NULL);
++    mlt_frame_push_service(frame, op);
++    mlt_frame_push_get_image(frame, eyes_get_image);
++    mlt_properties_set_int(frame_props, PAIR, 1);
++}
++
++// The planes of a picture and the rows of each; false for a format whose eyes cannot be told apart by columns
++static int planes_of(mlt_image_format format,
++                     int width,
++                     int height,
++                     uint8_t *data,
++                     uint8_t *planes[4],
++                     int strides[4],
++                     int rows[4])
++{
++    switch (format) {
++    case mlt_image_rgb:
++    case mlt_image_rgba:
++    case mlt_image_rgba64:
++    case mlt_image_yuv444p10:
++        break;
++    case mlt_image_yuv422:
++    case mlt_image_yuv420p:
++    case mlt_image_yuv420p10:
++    case mlt_image_yuv422p16:
++        // two samples share their colour: an eye starts on a pair of samples
++        if (width & 1)
++            return 0;
++        break;
++    default:
++        return 0;
++    }
++    if (width < 1 || height < 1)
++        return 0;
++    mlt_image_format_planes(format, width, height, data, planes, strides);
++    for (int i = 0; i < 4; i++)
++        rows[i] = strides[i] ? height : 0;
++    if (format == mlt_image_yuv420p || format == mlt_image_yuv420p10)
++        rows[1] = rows[2] = height >> 1;
++    return 1;
++}
++
++// One eye of a picture of two eyes (2 * width wide) copied to a picture of one eye, or back
++static int copy_eye(mlt_image_format format, int width, int height, uint8_t *pair, uint8_t *eye, int which, int to_pair)
++{
++    uint8_t *pair_planes[4], *eye_planes[4];
++    int pair_strides[4], eye_strides[4], pair_rows[4], eye_rows[4];
++    if (!planes_of(format, 2 * width, height, pair, pair_planes, pair_strides, pair_rows)
++        || !planes_of(format, width, height, eye, eye_planes, eye_strides, eye_rows))
++        return 1;
++    for (int i = 0; i < 4 && eye_strides[i]; i++) {
++        // the right eye starts one eye's row into each row of the pair
++        uint8_t *half = pair_planes[i] + which * eye_strides[i];
++        for (int y = 0; y < eye_rows[i]; y++) {
++            if (to_pair)
++                memcpy(half + y * pair_strides[i], eye_planes[i] + y * eye_strides[i], eye_strides[i]);
++            else
++                memcpy(eye_planes[i] + y * eye_strides[i], half + y * pair_strides[i], eye_strides[i]);
++        }
++    }
++    return 0;
++}
++
++// The picture of a source, taken once: the frame's own picture is taken outside the eyes, as the frame it is
++static void take(eyes_source *source, mlt_image_format format, int width, int height)
++{
++    source->done = 1;
++    source->error = 1;
++    mlt_frame frame = source->frame;
++    mlt_properties frame_props = MLT_FRAME_PROPERTIES(frame);
++    if (source->stack) {
++        mlt_properties_set_int(frame_props, INSIDE, 0);
++        mlt_properties_set_int(frame_props, PAIR, source->pair);
++        if (source->meta_width > 0)
++            mlt_properties_set_int(frame_props, "meta.media.width", source->meta_width);
++        mlt_frame_set_image(frame, NULL, 0, NULL);
++        mlt_frame_set_alpha(frame, NULL, 0, NULL);
++        mlt_deque_move_back(source->stack, MLT_FRAME_IMAGE_STACK(frame), mlt_deque_count(source->stack));
++    }
++    mlt_properties before = NULL;
++    if (source->stack) {
++        before = mlt_properties_new();
++        if (before)
++            mlt_properties_inherit(before, frame_props);
++    }
++    uint8_t *image = NULL;
++    mlt_image_format taken = format;
++    int w = source->pair ? 2 * width : width;
++    int h = height;
++    int error = mlt_frame_get_image(frame, &image, &taken, &w, &h, 0);
++    if (!error && image && w > 0 && h > 0) {
++        const int size = mlt_image_format_size(taken, w, h, NULL);
++        source->image = mlt_pool_alloc(size);
++        if (source->image) {
++            memcpy(source->image, image, size);
++            source->format = taken;
++            source->width = w;
++            source->height = h;
++            source->error = source->pair && (w & 1);
++            int alpha_size = 0;
++            uint8_t *alpha = mlt_frame_get_alpha_size(frame, &alpha_size);
++            if (alpha && alpha_size >= w * h) {
++                source->alpha = mlt_pool_alloc(w * h);
++                if (source->alpha)
++                    memcpy(source->alpha, alpha, w * h);
++            }
++        }
++    }
++    if (source->error)
++        mlt_log_error(NULL,
++                      "[stereo3d] the picture under a service acting on each eye could not be taken (%dx%d)\n",
++                      w,
++                      h);
++    if (before) {
++        // what the services under the eyes set (a producer's size, colour space, progressive), given to every eye
++        source->left = mlt_properties_new();
++        for (int i = 0; source->left && i < mlt_properties_count(frame_props); i++) {
++            const char *name = mlt_properties_get_name(frame_props, i);
++            const char *value = mlt_properties_get_value(frame_props, i);
++            const char *was = name ? mlt_properties_get(before, name) : NULL;
++            if (name && value && (!was || strcmp(was, value)))
++                mlt_properties_set_string(source->left, name, value);
++        }
++        mlt_properties_close(before);
++    }
++    if (source->stack) {
++        const int meta_width = mlt_properties_get_int(frame_props, "meta.media.width");
++        if (meta_width > 0)
++            source->meta_width = meta_width;
++        mlt_properties_set_int(frame_props, INSIDE, 1);
++        mlt_properties_set_int(frame_props, PAIR, 0);
++        if (source->meta_width > 0)
++            mlt_properties_set_int(frame_props,
++                                   "meta.media.width",
++                                   source->pair ? source->meta_width / 2 : source->meta_width);
++    }
++}
++
++// One eye of a source, as the picture of its frame (or of a second frame's stand-in)
++static int view_get_image(
++    mlt_frame frame, uint8_t **image, mlt_image_format *format, int *width, int *height, int writable)
++{
++    (void) writable;
++    eyes_view *view = mlt_frame_pop_service(frame);
++    eyes_source *source = view->source;
++    if (!source->done)
++        take(source, *format, *width, *height);
++    if (source->error)
++        return 1;
++    const int w = source->pair ? source->width / 2 : source->width;
++    const int h = source->height;
++    const int size = mlt_image_format_size(source->format, w, h, NULL);
++    uint8_t *eye = mlt_pool_alloc(size);
++    if (!eye)
++        return 1;
++    if (source->pair) {
++        if (copy_eye(source->format, w, h, source->image, eye, view->eye, 0)) {
++            mlt_log_error(NULL,
++                          "[stereo3d] a picture in %s cannot be divided into its two eyes\n",
++                          mlt_image_format_name(source->format));
++            mlt_pool_release(eye);
++            return 1;
++        }
++    } else {
++        memcpy(eye, source->image, size);
++    }
++    uint8_t *alpha = source->alpha ? mlt_pool_alloc(w * h) : NULL;
++    if (alpha) {
++        const int offset = source->pair ? view->eye * w : 0;
++        for (int y = 0; y < h; y++)
++            memcpy(alpha + y * w, source->alpha + y * source->width + offset, w);
++    }
++    // the eye as the picture under the services gave it: a producer's stereo3d_unpack scales each eye to the size asked for, as
++    // a 2D producer's normalizers do, and a service's own result (crop's) keeps its size, as in 2D
++    const mlt_image_format format_out = source->format;
++    mlt_frame_set_image(frame, eye, mlt_image_format_size(format_out, w, h, NULL), mlt_pool_release);
++    if (alpha)
++        mlt_frame_set_alpha(frame, alpha, w * h, mlt_pool_release);
++    else
++        mlt_frame_set_alpha(frame, NULL, 0, NULL);
++    *image = eye;
++    *format = format_out;
++    *width = w;
++    *height = h;
++    return 0;
++}
++
++// A transition's second frame for one eye: its properties, one eye's size, and that eye of its picture
++static mlt_frame stand_in(mlt_frame b_frame, eyes_view *view, int pair)
++{
++    mlt_frame frame = mlt_frame_init(NULL);
++    if (!frame)
++        return NULL;
++    mlt_properties props = MLT_FRAME_PROPERTIES(frame);
++    mlt_properties b_props = MLT_FRAME_PROPERTIES(b_frame);
++    mlt_properties_inherit(props, b_props);
++    mlt_properties_set_data(props, "_producer", mlt_frame_get_original_producer(b_frame), 0, NULL, NULL);
++    frame->convert_image = b_frame->convert_image;
++    frame->convert_audio = b_frame->convert_audio;
++    if (pair) {
++        const int meta_width = mlt_properties_get_int(b_props, "meta.media.width");
++        if (meta_width > 1)
++            mlt_properties_set_int(props, "meta.media.width", meta_width / 2);
++        const int width = mlt_properties_get_int(b_props, "width");
++        if (width > 1)
++            mlt_properties_set_int(props, "width", width / 2);
++    }
++    mlt_properties_set_int(props, PAIR, 0);
++    mlt_properties_set_int(props, INSIDE, 1);
++    mlt_frame_push_service(frame, view);
++    mlt_frame_push_get_image(frame, view_get_image);
++    return frame;
++}
++
++// Each eye starts from the frame as the services found it: what an earlier eye's services wrote on the frame is taken away (a
++// qtblend filter leaves its scaling for the next qtblend), what taking the picture under them set is kept
++static void eyes_restore(mlt_properties frame_props, mlt_properties start, mlt_properties taken)
++{
++    for (int i = 0; i < mlt_properties_count(frame_props); i++) {
++        const char *name = mlt_properties_get_name(frame_props, i);
++        if (name && mlt_properties_get_value(frame_props, i) && !mlt_properties_get(start, name)
++            && !(taken && mlt_properties_get(taken, name)))
++            mlt_properties_clear(frame_props, name);
++    }
++    mlt_properties_inherit(frame_props, start);
++    if (taken)
++        mlt_properties_inherit(frame_props, taken);
++}
++
++static int eyes_get_image(
++    mlt_frame frame, uint8_t **image, mlt_image_format *format, int *width, int *height, int writable)
++{
++    mlt_properties frame_props = MLT_FRAME_PROPERTIES(frame);
++    mlt_deque stack = MLT_FRAME_IMAGE_STACK(frame);
++    eyes_op *chain[CHAIN];
++    int n = 0;
++    chain[n++] = mlt_frame_pop_service(frame);
++
++    // Inside one eye already (a service's own process made this one): it acts on that eye as it is
++    if (mlt_properties_get_int(frame_props, INSIDE)) {
++        mlt_deque_append_copy(stack, chain[0]->ops, NULL, NULL);
++        return mlt_frame_get_image(frame, image, format, width, height, writable);
++    }
++
++    // The services acting on each eye stacked directly under this one join it
++    while (n < CHAIN && mlt_deque_peek_back(stack) == (void *) eyes_get_image) {
++        mlt_frame_pop_get_image(frame);
++        chain[n++] = mlt_frame_pop_service(frame);
++    }
++
++    const int w = *width / 2;
++    const int h = *height;
++    const int image_count = mlt_properties_get_int(frame_props, "image_count");
++    eyes_source source = {.frame = frame,
++                          .stack = mlt_deque_init(),
++                          .pair = chain[n - 1]->below_pair,
++                          .meta_width = mlt_properties_get_int(frame_props, "meta.media.width")};
++    eyes_source b_sources[CHAIN];
++    memset(b_sources, 0, sizeof(b_sources));
++    for (int i = 0; i < n; i++) {
++        b_sources[i].frame = chain[i]->b_frame;
++        b_sources[i].pair = chain[i]->b_pair;
++    }
++    int error = !source.stack || w < 1 || h < 1;
++    if (!error)
++        error = mlt_deque_move_back(stack, source.stack, mlt_deque_count(stack));
++
++    uint8_t *out = NULL, *out_alpha = NULL;
++    mlt_image_format out_format = mlt_image_none;
++    int out_width = 0, out_height = 0;
++    mlt_properties start = mlt_properties_new();
++    if (start)
++        mlt_properties_inherit(start, frame_props);
++    else
++        error = 1;
++    for (int eye = 0; eye < 2 && !error; eye++) {
++        if (eye > 0)
++            eyes_restore(frame_props, start, source.left);
++        eyes_view view = {&source, eye};
++        eyes_view b_views[CHAIN];
++        mlt_frame stand_ins[CHAIN];
++        memset(stand_ins, 0, sizeof(stand_ins));
++        // the eye of the picture under the services, then the services, the deepest first, each with its second frame's eye
++        mlt_frame_push_service(frame, &view);
++        mlt_frame_push_get_image(frame, view_get_image);
++        for (int i = n - 1; i >= 0 && !error; i--) {
++            void *to = NULL;
++            if (chain[i]->b_frame) {
++                b_views[i].source = &b_sources[i];
++                b_views[i].eye = eye;
++                stand_ins[i] = stand_in(chain[i]->b_frame, &b_views[i], chain[i]->b_pair);
++                to = stand_ins[i];
++                error = !to;
++            }
++            if (!error)
++                error = mlt_deque_append_copy(stack, chain[i]->ops, chain[i]->b_frame, to);
++        }
++        mlt_properties_set_int(frame_props, INSIDE, 1);
++        mlt_properties_set_int(frame_props, PAIR, 0);
++        if (source.pair && source.meta_width > 0)
++            mlt_properties_set_int(frame_props, "meta.media.width", source.meta_width / 2);
++        mlt_properties_set_int(frame_props, "image_count", image_count);
++        mlt_properties_set_int(frame_props, "width", w);
++        mlt_properties_set_int(frame_props, "height", h);
++        mlt_frame_set_image(frame, NULL, 0, NULL);
++        mlt_frame_set_alpha(frame, NULL, 0, NULL);
++        uint8_t *eye_image = NULL;
++        mlt_image_format eye_format = *format;
++        int eye_width = w, eye_height = h;
++        if (!error)
++            error = mlt_frame_get_image(frame, &eye_image, &eye_format, &eye_width, &eye_height, writable);
++        if (!error && !eye_image)
++            error = 1;
++        if (!error && eye == 0) {
++            out_format = eye_format;
++            out_width = eye_width;
++            out_height = eye_height;
++            out = mlt_pool_alloc(mlt_image_format_size(out_format, 2 * out_width, out_height, NULL));
++            error = !out;
++        } else if (!error && (eye_format != out_format || eye_width != out_width || eye_height != out_height)) {
++            mlt_log_error(NULL,
++                          "[stereo3d] %s: the eyes came out in different shapes: %dx%d %s and %dx%d %s\n",
++                          chain[0]->name,
++                          out_width,
++                          out_height,
++                          mlt_image_format_name(out_format),
++                          eye_width,
++                          eye_height,
++                          mlt_image_format_name(eye_format));
++            error = 1;
++        }
++        if (!error)
++            error = copy_eye(out_format, out_width, out_height, out, eye_image, eye, 1);
++        if (!error) {
++            int alpha_size = 0;
++            uint8_t *alpha = mlt_frame_get_alpha_size(frame, &alpha_size);
++            if (alpha && alpha_size >= out_width * out_height) {
++                if (!out_alpha) {
++                    out_alpha = mlt_pool_alloc(2 * out_width * out_height);
++                    if (out_alpha)
++                        memset(out_alpha, 255, 2 * out_width * out_height);
++                }
++                if (out_alpha)
++                    for (int y = 0; y < out_height; y++)
++                        memcpy(out_alpha + y * 2 * out_width + eye * out_width, alpha + y * out_width, out_width);
++            }
++        }
++        // what an eye left unused (a service that did not ask for the picture under it)
++        while (mlt_deque_count(stack) > 0)
++            mlt_deque_pop_back(stack);
++        for (int i = 0; i < n; i++)
++            mlt_frame_close(stand_ins[i]);
++    }
++
++    mlt_properties_set_int(frame_props, INSIDE, 0);
++    if (source.meta_width > 0)
++        mlt_properties_set_int(frame_props, "meta.media.width", source.meta_width);
++    mlt_properties_close(start);
++    mlt_properties_close(source.left);
++    mlt_pool_release(source.image);
++    mlt_pool_release(source.alpha);
++    for (int i = 0; i < n; i++) {
++        mlt_pool_release(b_sources[i].image);
++        mlt_pool_release(b_sources[i].alpha);
++    }
++    if (source.stack)
++        mlt_deque_close(source.stack);
++    if (error || !out) {
++        mlt_log_error(NULL, "[stereo3d] %s: a frame of two eyes could not be made eye by eye\n", chain[0]->name);
++        mlt_pool_release(out);
++        mlt_pool_release(out_alpha);
++        mlt_properties_set_int(frame_props, PAIR, 1);
++        return 1;
++    }
++    mlt_properties_set_int(frame_props, PAIR, 1);
++    mlt_frame_set_image(frame, out, mlt_image_format_size(out_format, 2 * out_width, out_height, NULL), mlt_pool_release);
++    if (out_alpha)
++        mlt_frame_set_alpha(frame, out_alpha, 2 * out_width * out_height, mlt_pool_release);
++    else
++        mlt_frame_set_alpha(frame, NULL, 0, NULL);
++    *image = out;
++    *format = out_format;
++    *width = 2 * out_width;
++    *height = out_height;
++    return 0;
++}
+diff --git a/src/framework/mlt_stereo_eyes.h b/src/framework/mlt_stereo_eyes.h
+new file mode 100644
+index 0000000..776b1ee
+--- /dev/null
++++ b/src/framework/mlt_stereo_eyes.h
+@@ -0,0 +1,38 @@
++/**
++ * \file mlt_stereo_eyes.h
++ * \brief services acting on each eye of a frame of two eyes (internal to the framework)
++ * \see mlt_stereo_eyes.c
++ *
++ * Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++ */
++
++#ifndef MLT_STEREO_EYES_H
++#define MLT_STEREO_EYES_H
++
++#include "mlt_types.h"
++
++int mlt_deque_move_back(mlt_deque self, mlt_deque target, int count);
++int mlt_deque_append_copy(mlt_deque self, mlt_deque source, void *from, void *to);
++
++void mlt_stereo_eyes_mark(mlt_service service, const char *name);
++int mlt_stereo_eyes_wanted(mlt_service service, mlt_frame frame, mlt_frame b_frame);
++int mlt_stereo_eyes_enter(mlt_frame frame);
++void mlt_stereo_eyes_leave(mlt_frame frame, int width);
++void mlt_stereo_eyes_wrap(
++    mlt_service service, mlt_frame frame, int depth, mlt_frame b_frame, int below_pair, int b_pair);
++
++#endif
+diff --git a/src/framework/mlt_tractor.c b/src/framework/mlt_tractor.c
+index fef6e38..4dc2e9c 100644
+--- a/src/framework/mlt_tractor.c
++++ b/src/framework/mlt_tractor.c
+@@ -608,6 +608,9 @@ static int producer_get_frame(mlt_producer parent, mlt_frame_ptr frame, int trac
+                 mlt_properties_pass_list(frame_properties,
+                                          video_properties,
+                                          "meta.media.width, meta.media.height");
++                // a frame of two eyes stays one (mlt_stereo_eyes.c): the picture shown is the last video frame's
++                if (mlt_properties_get_int(MLT_FRAME_PROPERTIES(video), "stereo3d.pair"))
++                    mlt_properties_set_int(frame_properties, "stereo3d.pair", 1);
+                 mlt_properties_set_int(frame_properties,
+                                        "progressive",
+                                        mlt_properties_get_int(video_properties, "progressive"));
+diff --git a/src/framework/mlt_transition.c b/src/framework/mlt_transition.c
+index b484be5..adc6f40 100644
+--- a/src/framework/mlt_transition.c
++++ b/src/framework/mlt_transition.c
+@@ -21,6 +21,7 @@
+  */
+ 
+ #include "mlt_transition.h"
++#include "mlt_stereo_eyes.h"
+ #include "mlt_frame.h"
+ #include "mlt_log.h"
+ #include "mlt_producer.h"
+@@ -321,8 +322,21 @@ mlt_frame mlt_transition_process(mlt_transition self, mlt_frame a_frame, mlt_fra
+ {
+     if (self->process == NULL)
+         return a_frame;
+-    else
+-        return self->process(self, a_frame, b_frame);
++    // On frames of two eyes the transition is given each eye as a picture of its own (mlt_stereo_eyes.c)
++    if (mlt_stereo_eyes_wanted(MLT_TRANSITION_SERVICE(self), a_frame, b_frame)) {
++        const int below_pair = mlt_properties_get_int(MLT_FRAME_PROPERTIES(a_frame), "stereo3d.pair");
++        const int b_pair = b_frame ? mlt_properties_get_int(MLT_FRAME_PROPERTIES(b_frame), "stereo3d.pair") : 0;
++        const int depth = mlt_deque_count(MLT_FRAME_IMAGE_STACK(a_frame));
++        const int a_width = mlt_stereo_eyes_enter(a_frame);
++        const int b_width = mlt_stereo_eyes_enter(b_frame);
++        mlt_frame result = self->process(self, a_frame, b_frame);
++        mlt_stereo_eyes_leave(a_frame, a_width);
++        mlt_stereo_eyes_leave(b_frame, b_width);
++        if (result == a_frame)
++            mlt_stereo_eyes_wrap(MLT_TRANSITION_SERVICE(self), a_frame, depth, b_frame, below_pair, b_pair);
++        return result;
++    }
++    return self->process(self, a_frame, b_frame);
+ }
+ 
+ static int get_image_a(mlt_frame a_frame,
+diff --git a/src/modules/core/filter_stereo3d_unpack.c b/src/modules/core/filter_stereo3d_unpack.c
+index 5302ea8..b1be18e 100644
+--- a/src/modules/core/filter_stereo3d_unpack.c
++++ b/src/modules/core/filter_stereo3d_unpack.c
+@@ -333,6 +333,69 @@ static void set_view(view_t *view, const uint8_t *data, int width, int height)
+     memcpy(view->data, data, (size_t) width * height * 4);
+ }
+ 
++// A frame of two eyes asked for at another size: each eye scaled apart to its half of that size, as a 2D producer's normalizers
++// scale its picture (MLT's rescaler, FFmpeg's scaler when there is one, on a frame of its own per eye), so no scaler reaches across
++// the middle. A service acting on each eye may ask for a smaller picture (qtblend, composite). Returns false when it scaled.
++static int scale_halves(mlt_filter filter, mlt_frame frame, uint8_t **image, mlt_image_format format, int *width, int *height, int want_width, int want_height)
++{
++    const int bpp = format == mlt_image_rgba64 ? 8 : format == mlt_image_rgba ? 4 : 0;
++    const int ew = *width / 2, eh = *height, ow = want_width / 2, oh = want_height;
++    if (!bpp || ew < 1 || eh < 1 || ow < 1 || oh < 1)
++        return 1;
++    mlt_profile profile = mlt_profile_clone(mlt_service_profile(MLT_FILTER_SERVICE(filter)));
++    mlt_filter scaler = profile ? mlt_factory_filter(profile, "swscale", NULL) : NULL;
++    if (!scaler && profile)
++        scaler = mlt_factory_filter(profile, "rescale", NULL);
++    uint8_t *out = mlt_pool_alloc((size_t) 2 * ow * oh * bpp);
++    int error = !out || !scaler;
++    for (int e = 0; e < 2 && !error; e++) {
++        mlt_frame eye = mlt_frame_init(MLT_FILTER_SERVICE(filter));
++        uint8_t *picture = mlt_pool_alloc((size_t) ew * eh * bpp);
++        if (!eye || !picture) {
++            mlt_frame_close(eye);
++            mlt_pool_release(picture);
++            error = 1;
++            break;
++        }
++        for (int y = 0; y < eh; y++)
++            memcpy(picture + (size_t) y * ew * bpp, *image + ((size_t) y * *width + e * ew) * bpp, (size_t) ew * bpp);
++        mlt_properties props = MLT_FRAME_PROPERTIES(eye);
++        mlt_properties_pass_list(props, MLT_FRAME_PROPERTIES(frame), "consumer.rescale, rescale.interp, aspect_ratio, progressive, colorspace, color_trc, full_range");
++        mlt_properties_set_int(props, "width", ew);
++        mlt_properties_set_int(props, "height", eh);
++        mlt_properties_set_int(props, "meta.media.width", ew);
++        mlt_properties_set_int(props, "meta.media.height", eh);
++        mlt_properties_set_int(props, "format", format);
++        mlt_frame_set_image(eye, picture, ew * eh * bpp, mlt_pool_release);
++        eye->convert_image = frame->convert_image;
++        mlt_filter_process(scaler, eye);
++        uint8_t *scaled = NULL;
++        mlt_image_format scaled_format = format;
++        int w = ow, h = oh;
++        error = mlt_frame_get_image(eye, &scaled, &scaled_format, &w, &h, 0) || !scaled || scaled_format != format || w != ow || h != oh;
++        if (!error)
++            for (int y = 0; y < oh; y++)
++                memcpy(out + ((size_t) y * 2 * ow + e * ow) * bpp, scaled + (size_t) y * ow * bpp, (size_t) ow * bpp);
++        mlt_frame_close(eye);
++    }
++    mlt_filter_close(scaler);
++    mlt_profile_close(profile);
++    if (error) {
++        mlt_pool_release(out);
++        mlt_log_error(MLT_FILTER_SERVICE(filter), "the eyes could not be scaled apart to %dx%d: the frame of two eyes is given at %dx%d\n",
++                      want_width, want_height, *width, *height);
++        return 1;
++    }
++    mlt_frame_set_image(frame, out, 2 * ow * oh * bpp, mlt_pool_release);
++    mlt_frame_set_alpha(frame, NULL, 0, NULL);
++    mlt_properties_set_int(MLT_FRAME_PROPERTIES(frame), "width", 2 * ow);
++    mlt_properties_set_int(MLT_FRAME_PROPERTIES(frame), "height", oh);
++    *image = out;
++    *width = 2 * ow;
++    *height = oh;
++    return 0;
++}
++
+ static int unpack_image(mlt_filter filter,
+                         mlt_frame frame,
+                         uint8_t **image,
+@@ -343,6 +406,24 @@ static int unpack_image(mlt_filter filter,
+     mlt_properties properties = MLT_FILTER_PROPERTIES(filter);
+     private_data *pdata = (private_data *) filter->child;
+ 
++    // A clip whose own frame already is the frame made here (both views side by side, the left one first, each filling its
++    // half at the same size and shape) is handed on as the producer gives it, in the format asked for and at its depth: it
++    // only carries the mark of a frame of two eyes
++    mlt_properties own = MLT_FRAME_PROPERTIES(frame);
++    const int asked_width = *width, asked_height = *height;
++    const int made_width = mlt_properties_get_int(own, "stereo3d_unpack.out_width");
++    const int made_height = mlt_properties_get_int(own, "stereo3d_unpack.out_height");
++    const int as_it_is = mlt_properties_get_int(own, "stereo3d_unpack.in_producer") && made_width > 0
++                         && packing_from_name(mlt_properties_get(properties, "packing")) == packing_side_by_side
++                         && !mlt_properties_get_int(properties, "invert")
++                         && mlt_properties_get_int(own, "stereo3d_unpack.width") == made_width
++                         && mlt_properties_get_int(own, "stereo3d_unpack.height") == made_height
++                         && 2 * mlt_properties_get_int(own, "stereo3d_unpack.picture_width") == made_width
++                         && mlt_properties_get_int(own, "stereo3d_unpack.picture_height") == made_height;
++    // asked for at another size (a service acting on each eye asking for a smaller picture): each eye is scaled apart
++    const int rescale_halves = made_width > 0 && asked_width > 1 && asked_height > 1 && !(asked_width & 1)
++                               && (asked_width != made_width || asked_height != made_height);
++
+     // The full colour picture: asking for it here makes the producer convert from what it decoded straight to RGBA,
+     // so that views that are interleaved at the pixel are not mixed by a conversion to a subsampled format. When what asks for
+     // the frame wants more than 8 bits a sample (a 10 bit encoder), it is RGBA64, 16 bits a sample, so a deeper source keeps its
+@@ -362,6 +443,8 @@ static int unpack_image(mlt_filter filter,
+     int rescale_width = 0;
+     int rescale_height = 0;
+     if (in_producer) {
++        // always the producer's own picture, never one scaled as a whole: a scaler reaching across the middle of a frame of two
++        // eyes would mix the eyes' edge columns (a service acting on each eye scales its eye itself)
+         *width = mlt_properties_get_int(frame_props, "stereo3d_unpack.width");
+         *height = mlt_properties_get_int(frame_props, "stereo3d_unpack.height");
+         // In a chain the producer's rescaling and padding are links, before every filter: they are asked for the producer's
+@@ -379,12 +462,19 @@ static int unpack_image(mlt_filter filter,
+         // sequence): each frame is asked for at one eye's size
+         *width /= 2;
+     }
++    if (as_it_is && !rescale_halves)
++        *format = asked;
+     int error = mlt_frame_get_image(frame, image, format, width, height, 0);
+     if (in_producer) {
+         mlt_properties_set_int(frame_props, "distort", distort);
+         mlt_properties_set_int(frame_props, "rescale_width", rescale_width);
+         mlt_properties_set_int(frame_props, "rescale_height", rescale_height);
+     }
++    if (as_it_is) {
++        if (!error && rescale_halves && *image)
++            scale_halves(filter, frame, image, *format, width, height, asked_width, asked_height);
++        return error;
++    }
+     packing_t packing = packing_from_name(mlt_properties_get(properties, "packing"));
+     if (in_producer && (*width != mlt_properties_get_int(frame_props, "stereo3d_unpack.width")
+                         || *height != mlt_properties_get_int(frame_props, "stereo3d_unpack.height"))) {
+@@ -542,6 +632,8 @@ static int unpack_image(mlt_filter filter,
+         mlt_frame_set_alpha(frame, NULL, 0, NULL);
+         mlt_properties_set_int(frame_props, "width", fw);
+         mlt_properties_set_int(frame_props, "height", fh);
++        if (rescale_halves)
++            scale_halves(filter, frame, image, *format, width, height, asked_width, asked_height);
+         return 0;
+     }
+ 
+@@ -587,6 +679,11 @@ static void announce(mlt_filter filter, mlt_frame frame)
+     const char *output = mlt_properties_get(properties, "output");
+     int width = mlt_properties_get_int(frame_props, "width");
+     int height = mlt_properties_get_int(frame_props, "height");
++    // The frame made: the profile's frame holding both views, or (pair_frame) two views each of the profile's size, so the
++    // services after this one keep the profile of one eye and act on each eye (a 3D project's render)
++    const int pair_frame = mlt_properties_get_int(properties, "pair_frame");
++    const int fw = profile ? profile->width * (pair_frame ? 2 : 1) : 0;
++    const int fh = profile ? profile->height : 0;
+     if (packing == packing_mono && profile && profile->width >= 4) {
+         // A 2D picture's own size: a file's (meta.media), or, for a picture the producer makes (a colour, a title), one eye of the
+         // frame, never the frame of two eyes (it would be drawn twice as wide and fitted to half its height)
+@@ -599,12 +696,12 @@ static void announce(mlt_filter filter, mlt_frame frame)
+             width = ow;
+             height = oh;
+         } else {
+-            width = profile->width / 2;
+-            height = profile->height;
++            width = fw / 2;
++            height = fh;
+         }
+     }
+     if (!profile || packing == packing_none || packing == packing_frame_sequence || !output || width < 2 || height < 2
+-        || profile->width < 4 || profile->height < 2)
++        || fw < 4 || fh < 2)
+         return;
+     int vw, vh;
+     view_size(frame, packing, width, height, &vw, &vh);
+@@ -626,8 +723,6 @@ static void announce(mlt_filter filter, mlt_frame frame)
+     // the shape of a view, and the shape of the half of the profile's frame it goes into
+     const double view_shape = vw * aspect / vh;
+     const char *target = mlt_properties_get(properties, "target_views");
+-    const int fw = profile->width;
+-    const int fh = profile->height;
+     const double half_shape = (fw / 2) * mlt_profile_sar(profile) * (target && !strcmp(target, "half") ? 2 : 1) / fh;
+     int pw = fw / 2;
+     int ph = fh;
+@@ -651,6 +746,8 @@ static void announce(mlt_filter filter, mlt_frame frame)
+     mlt_properties_set_int(frame_props, "meta.media.width", fw);
+     mlt_properties_set_int(frame_props, "meta.media.height", fh);
+     mlt_frame_set_aspect_ratio(frame, mlt_profile_sar(profile));
++    // a frame of two eyes: the filters and transitions after this one act on each eye (framework, mlt_stereo_eyes.c)
++    mlt_properties_set_int(frame_props, "stereo3d.pair", 1);
+ }
+ 
+ static int filter_get_image(mlt_frame frame,
+diff --git a/src/modules/core/filter_stereo3d_unpack.yml b/src/modules/core/filter_stereo3d_unpack.yml
+index 7b0c5e0..7e6ac86 100644
+--- a/src/modules/core/filter_stereo3d_unpack.yml
++++ b/src/modules/core/filter_stereo3d_unpack.yml
+@@ -84,3 +84,15 @@ parameters:
+       side profile), so each view is fitted to a half shown twice as wide; full, or nothing, for a profile whose views are
+       whole pictures (3840x1080 for two 1920x1080 views).
+     mutable: no
++  - identifier: pair_frame
++    title: Two views of the profile's size
++    type: integer
++    description: >
++      With in_producer and output side_by_side, 1 makes a frame of two views each of the profile's size (twice the profile's
++      width), so the services of a 3D project keep the profile of one eye; the filters and transitions after this one then act
++      on each eye (every frame this filter makes side by side carries stereo3d.pair). 0, the default, fits both views into
++      the profile's frame.
++    minimum: 0
++    maximum: 1
++    default: 0
++    mutable: no
