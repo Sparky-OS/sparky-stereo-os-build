@@ -109,7 +109,10 @@ class StereoFigure:
 
     def open_display_settings(self):
         try:
-            subprocess.Popen(['kcmshell6', 'kcm_kscreen'], stdin=subprocess.DEVNULL)
+            # KScreen's page follows the desktop session, not the figure's toolkit: with QT_QPA_PLATFORM=xcb inside a
+            # Wayland session it asks for the X11 backend, which aborts, and the page has no display to show.
+            environment = {k: v for k, v in os.environ.items() if k != 'QT_QPA_PLATFORM'}
+            subprocess.Popen(['kcmshell6', 'kcm_kscreen'], stdin=subprocess.DEVNULL, env=environment)
         except OSError as error:
             tell('settings-%s' % error.errno, _('The display settings could not be opened: %s') % error.strerror, self.toolbar)
 

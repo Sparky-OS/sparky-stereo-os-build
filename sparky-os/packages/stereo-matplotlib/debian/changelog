@@ -2,6 +2,8 @@ stereo-matplotlib (0.1.2) unstable; urgency=medium
 
   * The toolbar's "3D display settings..." runs kcmshell6 with KScreen's page (ORDER 50 step 5, continuation 2):
     libkf6kcmutils-bin (kcmshell6), kscreen (kcm_kscreen) and kde-cli-tools are Depends.
+  * The toolbar starts kcmshell6 without QT_QPA_PLATFORM, so KScreen's page follows the desktop session: with the
+    figure's Qt on xcb inside a Wayland session the page had asked for the X11 backend, which aborts.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 20:34:39 -0300
 
