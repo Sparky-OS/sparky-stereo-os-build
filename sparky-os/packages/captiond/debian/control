@@ -1,0 +1,47 @@
+Source: captiond
+Section: sound
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Build-Depends: debhelper-compat (= 14), cmake, ninja-build, pkgconf, extra-cmake-modules,
+ gettext, libpipewire-0.3-dev, libicu-dev, libsystemd-dev, nlohmann-json3-dev,
+ libwhisper-dev, libggml-dev, libkf6doctools-dev, pipewire-bin, dbus-daemon
+Homepage: https://invent.kde.org/parcha/captiond
+
+Package: captiond
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, pipewire
+Suggests: kaption | qaption, ffmpeg
+Description: local live speech captions from PipeWire audio
+ Captiond recognizes speech in the computer's audio and, separately, an
+ explicitly selected microphone using local Whisper models. It exposes
+ captions through a Unix socket and a D-Bus interface. No model is included.
+ .
+ This package contains the daemon and the captionctl command-line client.
+ Its user service and socket are installed without enabling them.
+
+Package: libcaptiond-client0
+Section: libs
+Architecture: amd64
+Multi-Arch: same
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: client library for the captiond live caption service
+ This library implements captiond's Unix socket protocol without a graphical
+ toolkit. It lets applications receive captions and control recognition.
+
+Package: libcaptiond-client-dev
+Section: libdevel
+Architecture: amd64
+Multi-Arch: same
+Depends: libcaptiond-client0 (= ${binary:Version}), nlohmann-json3-dev, ${misc:Depends}
+Description: development files for the captiond client library
+ Headers, the linker symlink and CMake targets for building captiond clients.
+
+Package: libcaptiond-client-tests-dev
+Section: libdevel
+Architecture: amd64
+Depends: libcaptiond-client-dev (= ${binary:Version}), captiond (= ${binary:Version}), ${misc:Depends}
+Description: captiond client testing helpers and speech fixtures
+ The upstream stand-in daemon, private PipeWire test helpers and speech
+ recordings support client tests without loading a recognition model.

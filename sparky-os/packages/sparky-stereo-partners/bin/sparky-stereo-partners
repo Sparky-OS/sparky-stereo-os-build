@@ -748,7 +748,18 @@ def status(settings):
                          any(os.access(e, os.X_OK) for e in settings.get(g, 'Executables', '').split(',') if e),
                          'note': settings.get(g, 'Note', ''),
                          'choices': [choice(settings, k, pid) for k in settings.get(g, 'Kinds', '').split(',') if k]})
-    return {'engine': engine, 'llamacpp': llamacpp, 'card': card, 'proposal': proposal(card),
+    live = {}
+    adapter = '/usr/bin/sparky-stereo-live-captions'
+    if os.access(adapter, os.X_OK):
+        try:
+            result = subprocess.run([adapter, 'status'], capture_output=True, text=True, timeout=150)
+            if result.returncode == 0:
+                live = json.loads(result.stdout)
+            else:
+                live = {'error': result.stderr.strip()}
+        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+            live = {'error': str(error)}
+    return {'engine': engine, 'llamacpp': llamacpp, 'card': card, 'proposal': proposal(card), 'liveCaptions': live,
             'defaults': [choice(settings, k) for k in settings.kinds()],
             'interfaces': interfaces(settings), 'programs': programs, 'problems': kept,
             'ollamaSize': apt_size('ollama'), 'computer': socket.gethostname(), 'ollamaKey': os.path.join(os.path.expanduser('~'), '.ollama', 'id_ed25519')}
@@ -761,6 +772,12 @@ def apt_size(package):
 
 
 def main(argv):
+    if argv and argv[0] == 'live-captions':
+        # Fixed optional extension; settings cannot name an executable.
+        adapter = '/usr/bin/sparky-stereo-live-captions'
+        if os.access(adapter, os.X_OK):
+            return subprocess.run([adapter, *argv[1:]]).returncode
+        return 3
     if not argv or argv[0] in ('-h', '--help'):
         # for people: in their language, through the page's catalogue
         print(tr('@info:shell the command\'s help', """sparky-stereo-partners: the Partners page's choices, for the page, for programs and for tests (ORDER 70).

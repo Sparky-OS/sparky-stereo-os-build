@@ -1,0 +1,21 @@
+Source: sparky-stereo-live-captions
+Section: sound
+Priority: optional
+Maintainer: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), python3, sparky-stereo-problems (>= 0.2.1)
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+
+Package: sparky-stereo-live-captions
+Architecture: all
+Depends: ${misc:Depends}, python3, procps, systemd, captiond (>= 0.1.0), kaption (>= 0.1.0),
+ sparky-stereo-partners (>= 0.1.3), sparky-stereo-vibe (>= 0.1.1),
+ sparky-stereo-problems (>= 0.2.1), qml6-module-qtquick-dialogs
+Enhances: vibe
+Description: live captions and a shared speech model through Partners
+ Starts Kaption and captiond together when chosen in System Settings,
+ shares a verified Whisper file with Vibe, and reports recognition device
+ changes and measured delays. Audio and captions stay on this computer.
+ Nothing starts or downloads a model at installation. Login startup and
+ microphone captions are separate choices. Existing personal data is kept.

@@ -1,0 +1,507 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Join the Partners choices to unmodified captiond, Kaption and Vibe."""
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+
+PACKAGE = 'sparky-stereo-live-captions'
+SHARE = Path('/usr/share/sparky-stereo/live-captions')
+PRESETS = Path('/usr/share/sparky-stereo/vibe/presets')
+UNIT = PACKAGE + '.service'
+GROUP = ['LiveCaptions']
+
+
+class Refused(Exception):
+    def __init__(self, key, *values):
+        self.key, self.values = key, values
+        super().__init__(key, *values)
+
+
+def labels():
+    locale = os.environ.get('LC_ALL') or os.environ.get('LC_MESSAGES') or os.environ.get('LANG', '')
+    language = 'pt_BR' if locale.startswith('pt_BR') else 'en'
+    return json.loads((SHARE / 'lang' / (language + '.json')).read_text())
+
+
+def say(key, *values):
+    return labels()[key].format(*values)
+
+
+def partners():
+    # Reuse the page's cascade, KConfig writer, metered policy and GPU inventory.
+    loader = importlib.machinery.SourceFileLoader('partners_api', '/usr/bin/sparky-stereo-partners')
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
+
+
+def data_home():
+    return Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share')
+
+
+def state_home():
+    return Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / PACKAGE
+
+
+def runtime():
+    base = Path(os.environ['XDG_RUNTIME_DIR'])
+    if base.stat().st_uid != os.getuid() or base.is_symlink():
+        raise Refused('changed', str(base))
+    return base / PACKAGE
+
+
+def private_dir(path):
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if path.is_symlink() or not path.is_dir() or path.stat().st_uid != os.getuid():
+        raise Refused('changed', str(path))
+
+
+def read_bytes(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise Refused('changed', str(path))
+        return stream.read()
+
+
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def fingerprint(path):
+    if not os.path.lexists(path):
+        return None
+    try:
+        return sha(read_bytes(path))
+    except OSError as error:
+        raise Refused('changed', str(path)) from error
+
+
+def publish(path, data, expected=None):
+    """Exclusive first write; checked replacement only of our recorded bytes."""
+    private_dir(path.parent)
+    if fingerprint(path) != expected:
+        raise Refused('changed', str(path))
+    if expected is not None and not path.stat().st_mode & stat.S_IWUSR:
+        raise Refused('changed', str(path))
+    fd, temporary = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if expected is None:
+            try:
+                os.link(temporary, path)
+            except FileExistsError as error:
+                raise Refused('changed', str(path)) from error
+        else:
+            if fingerprint(path) != expected:
+                raise Refused('changed', str(path))
+            os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def json_bytes(value):
+    return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
+
+
+def save_state(value):
+    path = state_home() / 'status.json'
+    publish(path, json_bytes(value), fingerprint(path))
+
+
+def notice(key, *values, problem=True):
+    text = say(key, *values)
+    save_state({'key': key, 'values': list(values), 'time': time.time()})
+    print(text, file=sys.stderr, flush=True)
+    api = partners()
+    if api.problems is not None:
+        if problem:
+            # Catalog uses the same symbolic sentence keys; no transcript is stored.
+            api.problems.keep(PACKAGE, 'session', key, list(values), scope=api.problems.PERSON,
+                              actions=[{'id': 'open', 'label': ['title'],
+                                        'command': ['systemsettings', 'kcm_sparkystereo_partners']}])
+        else:
+            api.problems.clear(PACKAGE, 'session', scope=api.problems.PERSON)
+
+
+def catalogue():
+    return json.loads((SHARE / 'models.json').read_text())
+
+
+def model_entry(name):
+    for entry in catalogue():
+        if name == entry['id']:
+            return entry
+    raise Refused('none')
+
+
+def model_path(entry):
+    return Path(entry['path']) if 'path' in entry else data_home() / 'captiond/models' / entry['file']
+
+
+def verify_model(entry):
+    path = model_path(entry)
+    if not path.exists():
+        raise Refused('missing')
+    # Verify the file, without loading it into a recognition engine.
+    if path.is_symlink() or path.stat().st_size != entry['bytes'] or fingerprint(path) != entry['sha256']:
+        raise Refused('changed', str(path))
+    return path
+
+
+class HTTPSRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, url):
+        if not url.startswith('https://'):
+            raise Refused('failed', 'HTTPS')
+        return super().redirect_request(req, fp, code, msg, headers, url)
+
+
+def download(entry, even=False):
+    print(say('offer', entry['id'], entry['bytes'], entry['url'], entry['sha256']), flush=True)
+    value = partners().Settings().get(['Default', 'speech'], 'Model', '')
+    if value and Path(value).is_absolute() and Path(value).name == entry['file']:
+        verify_model(dict(entry, path=value))
+        return
+    dest = model_path(entry)
+    if os.path.lexists(dest):
+        verify_model(entry)
+        return
+    if partners().held(even):
+        raise Refused('held')
+    private_dir(dest.parent)
+    fd, temporary = tempfile.mkstemp(prefix='.download-', dir=dest.parent)
+    try:
+        http = urllib.request.build_opener(HTTPSRedirect())
+        if not entry['url'].startswith('https://'):
+            raise Refused('failed', 'HTTPS')
+        with os.fdopen(fd, 'wb') as stream, http.open(entry['url'], timeout=120) as response:
+            count, checksum = 0, hashlib.sha256()
+            while chunk := response.read(1024 * 1024):
+                count += len(chunk)
+                if count > entry['bytes']:
+                    raise Refused('changed', str(dest))
+                stream.write(chunk)
+                checksum.update(chunk)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if count != entry['bytes'] or checksum.hexdigest() != entry['sha256']:
+            raise Refused('changed', str(dest))
+        try:
+            os.link(temporary, dest)
+        except FileExistsError as error:
+            raise Refused('changed', str(dest)) from error
+    finally:
+        os.unlink(temporary)
+
+
+def running(name):
+    return subprocess.run(['pgrep', '-u', str(os.getuid()), '-x', name],
+                          stdout=subprocess.DEVNULL, check=False).returncode == 0
+
+
+def unit(*args, check=True):
+    return subprocess.run(['systemctl', '--user', *args, UNIT], check=check,
+                          capture_output=True, text=True, timeout=150)
+
+
+def vibe_plan(path):
+    """Only an absent store, our unchanged store, or the exact edition seed."""
+    target = data_home() / 'github.com.thewh1teagle.vibe/app_config.json'
+    record = state_home() / 'vibe.json'
+    before = fingerprint(target)
+    if before is None:
+        values = json.loads((PRESETS / 'default.json').read_text())
+    elif record.exists():
+        saved = json.loads(read_bytes(record))
+        if saved.get('sha256') != before:
+            raise Refused('changed', str(target))
+        values = json.loads(read_bytes(target))
+    else:
+        values = json.loads(read_bytes(target))
+        known = False
+        for preset in ('default', 'light', 'basic'):
+            original = json.loads((PRESETS / (preset + '.json')).read_text())
+            device = values.get('model.gpuDevice')
+            if device is None or type(device) is int:
+                original['model.gpuDevice'] = device
+                known |= original == values
+        if not known:
+            raise Refused('changed', str(target))
+    values['model.path'] = str(path)
+    values['models_folder'] = str(path.parent)
+    return target, record, before, json_bytes(values)
+
+
+def select(name):
+    if running('vibe') or running('captiond') or running('kaption') or unit('is-active', check=False).returncode == 0:
+        raise Refused('running')
+    shared_choice_guard()
+    entry = model_entry(name) if not Path(name).is_absolute() else entry_for_path(Path(name))
+    path = verify_model(entry)
+    target, record, before, contents = vibe_plan(path)
+    # Save a receipt before changing the page; a failed KConfig write is reported.
+    publish(target, contents, before)
+    publish(record, json_bytes({'sha256': sha(contents)}), fingerprint(record))
+    api = partners()
+    api.write(['Default', 'speech'], 'Model', str(path))
+    api.write(['Default', 'speech'], 'Interface', 'vibe-local')
+
+
+def chosen():
+    api = partners()
+    shared_choice_guard()
+    value = api.Settings().get(['Default', 'speech'], 'Model', '')
+    return entry_for_path(Path(value))
+
+
+def shared_choice_guard():
+    settings = partners().Settings()
+    if settings.get(['Program', 'vibe', 'speech'], 'Model') or settings.get(['Program', 'vibe', 'speech'], 'Interface'):
+        raise Refused('own')
+
+
+def entry_for_path(path):
+    if not path.is_absolute():
+        raise Refused('none')
+    # Existing libraries remain in place. Known content, not a guessed basename.
+    for entry in catalogue():
+        if path.name == entry['file']:
+            return dict(entry, path=str(path))
+    raise Refused('changed', str(path))
+
+
+def gpu_route():
+    api = partners()
+    card = api.card_state()
+    if card['problem'] or not card['id']:
+        raise Refused('unavailable', card['problem'] or card['id'])
+    # The shared wrapper constrains the visible back ends to the chosen PCI card.
+    command = ['sparky-stereo-gpu-run', '--compute', '--category', 'partners', '/usr/bin/captiond', '--list-devices']
+    out = subprocess.run(command, capture_output=True, text=True, check=True, timeout=120, env=cleaned_env())
+    devices = []
+    for line in out.stdout.splitlines():
+        match = re.fullmatch(r'\s*(\d+)\s+(\S+)\s+(GPU|CPU)\s+(.+?)\s*', line)
+        if match and (match[3] == 'CPU') == (card['id'] == 'cpu'):
+            devices.append({'gpu': match[3] == 'GPU', 'device': int(match[1]), 'name': match[4], 'backend': match[2]})
+    # Different back ends can expose the same selected device more than once.
+    # Do not guess an ordinal or silently choose CPU when that happens.
+    if len(devices) != 1:
+        raise Refused('unavailable', card['name'] or card['id'])
+    return devices[0]
+
+
+def route_matches(expected, event):
+    if type(event.get('gpu')) is not bool or event['gpu'] != expected['gpu']:
+        return False
+    actual = event.get('accelerator', '').strip().casefold()
+    return actual == expected['name'].strip().casefold()
+
+
+def cleaned_env():
+    # The wrapper otherwise treats inherited visibility as an explicit override.
+    # This workflow was chosen on the page; that page remains its authority.
+    visibility = {'CUDA_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'GGML_VK_VISIBLE_DEVICES'}
+    return {k: v for k, v in os.environ.items() if not k.startswith('CAPTIOND_') and k not in visibility}
+
+
+def terminate(children):
+    for child in reversed(children):
+        if child.poll() is None:
+            child.terminate()
+    for child in reversed(children):
+        try:
+            child.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=15)
+
+
+def serve():
+    if running('captiond') or running('kaption'):
+        raise Refused('busy')
+    model = verify_model(chosen())
+    target, record, before, contents = vibe_plan(model)
+    if before != sha(contents) or not record.exists():
+        raise Refused('changed', str(target))
+    route = gpu_route()
+    settings = partners().Settings()
+    mic = settings.get(GROUP, 'Microphone', 'false') == 'true'
+    folder = runtime()
+    private_dir(folder)
+    # A private per-run directory: never unlink another daemon's socket.
+    session = Path(tempfile.mkdtemp(prefix='session-', dir=folder))
+    sock = session / 'captiond.sock'
+    cfg = session / 'captiond.conf'
+    cfg.write_text('gpu=' + str(route['gpu']).lower() + '\ngpu_device=' + str(route['device']) +
+                   '\ninput=' + ('auto-source' if mic else 'off') + '\ninput_mix=false\ninput_echo_cancel=true\ndbus_captions=false\n')
+    os.chmod(cfg, 0o600)
+    env = cleaned_env()
+    env['CAPTIOND_SOCKET'] = str(sock)
+    env['CAPTIOND_MODEL_PATH'] = str(model.parent)
+    command = ['sparky-stereo-gpu-run', '--compute', '--category', 'partners', '/usr/bin/captiond',
+               '--config', str(cfg), '--socket', str(sock), '--model', str(model)]
+    children = []
+    stream = None
+    stopped = False
+    def stop(signum, frame):
+        nonlocal stopped
+        stopped = True
+    old = {s: signal.signal(s, stop) for s in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        notice('waiting', problem=False)
+        children.append(subprocess.Popen(command, env=env))
+        deadline = time.monotonic() + 120
+        pending, hello, ready, slow = b'', False, False, False
+        next_status = 0
+        while not stopped:
+            if any(p.poll() is not None for p in children):
+                raise Refused('quit')
+            if time.monotonic() > deadline:
+                raise Refused('protocol')
+            if stream is None:
+                candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                candidate.settimeout(1)
+                try:
+                    candidate.connect(str(sock))
+                    stream = candidate
+                except (FileNotFoundError, ConnectionRefusedError):
+                    candidate.close()
+                    time.sleep(0.1)
+                    continue
+            if time.monotonic() >= next_status:
+                stream.sendall(b'{"type":"get-status"}\n')
+                next_status = time.monotonic() + 2
+            try:
+                chunk = stream.recv(65536)
+            except socket.timeout:
+                continue
+            if not chunk:
+                raise Refused('quit')
+            pending += chunk
+            if len(pending) > 1024 * 1024:
+                raise Refused('protocol')
+            while b'\n' in pending:
+                line, pending = pending.split(b'\n', 1)
+                event = json.loads(line)
+                if event.get('type') == 'error':
+                    raise Refused('failed', event.get('message', event.get('code', '?')))
+                if event.get('type') == 'hello':
+                    hello = event.get('proto') == 1 and event.get('daemon') == 'captiond'
+                    if not hello:
+                        raise Refused('protocol')
+                if event.get('type') != 'status' or not hello:
+                    continue
+                # Loading has no actual device yet. Do not accept an assumed route.
+                if event.get('state') == 'loading':
+                    continue
+                if event.get('state') == 'error':
+                    raise Refused('quit')
+                if not route_matches(route, event):
+                    raise Refused('route', route['name'], event.get('accelerator', '?'))
+                deadline = time.monotonic() + 120
+                if not ready:
+                    children.append(subprocess.Popen(['/usr/bin/kaption'], env=env))
+                    ready = True
+                    notice('actual', event['accelerator'], problem=False)
+                if event.get('behind', False) and not slow:
+                    notice('slow')
+                    slow = True
+                elif not event.get('behind', False) and slow:
+                    notice('actual', event['accelerator'], problem=False)
+                    slow = False
+    finally:
+        if stream:
+            stream.close()
+        terminate(children)
+        for s, handler in old.items():
+            signal.signal(s, handler)
+        # Only our private runtime artifacts; models and settings remain.
+        if sock.exists() and stat.S_ISSOCK(sock.lstat().st_mode):
+            sock.unlink()
+        cfg.unlink()
+        session.rmdir()
+    if stopped:
+        notice('stopped', problem=False)
+
+
+def status():
+    api = partners()
+    settings = api.Settings()
+    saved = state_home() / 'status.json'
+    last = json.loads(read_bytes(saved)) if saved.exists() else {'key': 'stopped', 'values': []}
+    on = unit('is-active', check=False).returncode == 0
+    models = []
+    for entry in catalogue():
+        item = dict(entry, path=str(model_path(entry)))
+        item['installed'] = model_path(entry).is_file()
+        item['offer'] = say('offer', entry['id'], entry['bytes'], entry['url'], entry['sha256'])
+        models.append(item)
+    return dict(on=on, login=unit('is-enabled', check=False).returncode == 0,
+                microphone=settings.get(GROUP, 'Microphone', 'false') == 'true',
+                model=settings.get(['Default', 'speech'], 'Model', ''), models=models, labels=labels(),
+                held=last['key'] == 'held', message=say(last['key'], *last.get('values', [])))
+
+
+def main(args):
+    if args == ['status']:
+        print(json.dumps(status(), ensure_ascii=False))
+        return 0
+    if args == ['serve']:
+        serve()
+        return 0
+    private_dir(state_home())
+    # Serialize consent actions; the user manager separately serializes the session.
+    fd = os.open(state_home() / 'choices.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        api = partners()
+        if args == ['on']:
+            verify_model(chosen())
+            unit('start')
+        elif args == ['off']:
+            unit('stop')
+            notice('stopped', problem=False)
+        elif len(args) == 2 and args[0] == 'login' and args[1] in ('on', 'off'):
+            unit('enable' if args[1] == 'on' else 'disable')
+        elif len(args) == 2 and args[0] == 'microphone' and args[1] in ('on', 'off'):
+            if unit('is-active', check=False).returncode == 0:
+                raise Refused('running')
+            api.write(GROUP, 'Microphone', 'true' if args[1] == 'on' else 'false')
+        elif len(args) == 2 and args[0] == 'select':
+            select(args[1])
+        elif len(args) in (2, 3) and args[0] == 'download' and (len(args) == 2 or args[2] == '--even-if-metered'):
+            download(model_entry(args[1]), len(args) == 3)
+        else:
+            raise Refused('failed', 'status | on | off | login on/off | microphone on/off | select tiny/base | download tiny/base [--even-if-metered]')
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (Refused, OSError, ValueError, subprocess.SubprocessError) as error:
+        key, values = (error.key, error.values) if isinstance(error, Refused) else ('failed', (str(error),))
+        try:
+            notice(key, *values)
+        except Exception:
+            print(say(key, *values), file=sys.stderr)
+        sys.exit(3)

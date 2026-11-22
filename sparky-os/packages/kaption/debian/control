@@ -1,0 +1,51 @@
+Source: kaption
+Section: kde
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Build-Depends: debhelper-compat (= 14), cmake, ninja-build, pkgconf, extra-cmake-modules,
+ gettext, qt6-svg-plugins, qt6-base-dev, qt6-declarative-dev, qt6-tools-dev, qt6-tools-dev-tools,
+ libkf6i18n-dev, libkf6globalaccel-dev, libkf6windowsystem-dev, libkf6config-dev,
+ libkf6statusnotifieritem-dev, libkf6doctools-dev, liblayershellqtinterface-dev,
+ libicu-dev, libcaptiond-client-tests-dev (>= 0.1.0), dbus-x11,
+ qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs,
+ qml6-module-qtquick-layouts, qml6-module-qtquick-templates, qml6-module-qtquick-window,
+ qml6-module-qtqml-workerscript
+Homepage: https://invent.kde.org/parcha/kaption
+
+Package: kaption
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, kaption-common (= ${source:Version}), captiond, qt6-svg-plugins,
+ qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs,
+ qml6-module-qtquick-layouts, qml6-module-qtquick-templates, qml6-module-qtquick-window,
+ qml6-module-qtqml-workerscript
+Description: live captions for the Plasma desktop
+ Kaption shows the computer's speech and optional microphone captions in a
+ configurable overlay, with CEA-708 caption layout, readability checks and
+ settled phrase announcements for screen readers. Recognition uses captiond
+ and local Whisper models. Installing a model is an explicit action.
+ .
+ This package contains the Plasma frontend. No model is included.
+
+Package: qaption
+Section: x11
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, kaption-common (= ${source:Version}), captiond, qt6-svg-plugins,
+ qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs,
+ qml6-module-qtquick-layouts, qml6-module-qtquick-templates, qml6-module-qtquick-window,
+ qml6-module-qtqml-workerscript
+Description: Qt frontend for local live captions
+ Qaption provides Kaption's captions and settings through a Qt frontend.
+ Both frontends can be installed together and share the captiond service.
+ This build retains the author's KI18n translation support and LayerShellQt
+ overlay integration. No model is included.
+
+Package: kaption-common
+Section: kde
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends}
+Description: shared data for the Kaption and Qaption caption frontends
+ Model catalogues, profanity word lists, logging metadata and the shared
+ handbook used by the two frontends. This package contains no speech model.

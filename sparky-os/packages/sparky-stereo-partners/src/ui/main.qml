@@ -114,6 +114,8 @@ KCM.SimpleKCM {
     }
     // a list that takes the width its longest entry needs, or the page's when that is less
     component FittedComboBox: QQC2.ComboBox {
+        Layout.minimumWidth: 0
+        Layout.fillWidth: true
         implicitContentWidthPolicy: QQC2.ComboBox.WidestText
         Layout.maximumWidth: root.width - Kirigami.Units.gridUnit * 14
         textRole: "text"; valueRole: "value"
@@ -121,6 +123,19 @@ KCM.SimpleKCM {
 
     ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
+
+        Loader {
+            Layout.fillWidth: true
+            active: !!root.st.liveCaptions && Object.keys(root.st.liveCaptions).length > 0
+            source: active && !root.st.liveCaptions.error ? "file:///usr/share/sparky-stereo/live-captions/LiveCaptions.qml" : ""
+            onLoaded: item.page = kcm
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: !!(root.st.liveCaptions || {}).error
+            type: Kirigami.MessageType.Warning
+            text: (root.st.liveCaptions || {}).error || ""
+        }
 
         QQC2.Label {
             Layout.fillWidth: true
@@ -166,6 +181,8 @@ KCM.SimpleKCM {
                 Item { visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"; width: 1; height: 1 }
                 QQC2.Label { visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"; text: i18nc("@label the card the partners compute on", "Card") }
                 RowLayout {
+                    Layout.minimumWidth: 0
+                    Layout.fillWidth: true
                     visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"
                     FittedComboBox {
                         model: root.cardOptions()
@@ -498,6 +515,8 @@ KCM.SimpleKCM {
                 Repeater {
                     model: (programRow.modelData.note === "own-services" || programRow.modelData.note === "own-engines") ? [] : programRow.modelData.choices
                     delegate: RowLayout {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         id: choiceRow
                         required property var modelData
                         readonly property string pkey: "program/" + programRow.modelData.id + "/" + modelData.kind

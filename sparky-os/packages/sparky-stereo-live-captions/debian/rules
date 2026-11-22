@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+%:
+	dh $@ --buildsystem=none
+
+override_dh_auto_install:
+	install -Dm755 bin/sparky-stereo-live-captions debian/sparky-stereo-live-captions/usr/bin/sparky-stereo-live-captions
+	mkdir -p debian/sparky-stereo-live-captions/usr/share/sparky-stereo/live-captions/lang
+	cp share/LiveCaptions.qml share/models.json debian/sparky-stereo-live-captions/usr/share/sparky-stereo/live-captions/
+	cp lang/*.json debian/sparky-stereo-live-captions/usr/share/sparky-stereo/live-captions/lang/
+	install -Dm644 share/sparky-stereo-live-captions.service debian/sparky-stereo-live-captions/usr/lib/systemd/user/sparky-stereo-live-captions.service
+	sparky-stereo-problems catalog sparky-stereo-live-captions lang debian/sparky-stereo-live-captions/usr/lib/systemd/catalog --subject title
+
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable
+
+override_dh_auto_test:
+	python3 tests/test_adapter.py
