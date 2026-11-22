@@ -25,11 +25,11 @@ def stop(*_):
 signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
 def status():
  mismatch=(out/'mismatch').exists()
- return dict(type='status',state='listening',engine='stub',model='ggml-tiny.bin',language='en',detected='en',source='sink:captiond-test-sink',live=True,input='source:captiond-test-source' if mic else '',input_live=mic,input_mix=False,input_echo=False,gpu=mismatch,accelerator='Fixture wrong GPU' if mismatch else 'CPU',vad='',behind=(out/'behind').exists(),sounds=[],vocabulary='')
+ return dict(type='status',state='listening',engine='stub',model=Path(args[args.index('--model')+1]).name,language='en',detected='en',source='sink:captiond-test-sink',live=True,input='source:captiond-test-source' if mic else '',input_live=mic,input_mix=False,input_echo=False,gpu=mismatch,accelerator='Fixture wrong GPU' if mismatch else 'CPU',vad='',behind=(out/'behind').exists(),sounds=[],vocabulary='')
 def send(client,data):
  try:client.sendall((json.dumps(data)+'\n').encode())
  except OSError:pass
-n=0;nextcaption=time.monotonic()
+n=0;nextcaption=time.monotonic();started=time.monotonic()
 try:
  while not stopped:
   for key,_ in sel.select(.1):
@@ -46,9 +46,9 @@ try:
      event=json.loads(line);record(event='command',command=event)
      if event['type']=='get-status':send(client,status())
      elif event['type']=='list-sources':send(client,dict(type='sources',items=[]))
-     elif event['type']=='list-models':send(client,dict(type='models',items=[dict(name='tiny',path='/home/builder/.local/share/captiond/models/ggml-tiny.bin',size=56,kind='speech')],directory='/home/builder/.local/share/captiond/models'))
+     elif event['type']=='list-models':send(client,dict(type='models',items=[dict(name=p.stem,path=str(p),size=p.stat().st_size,kind='speech') for p in Path('/home/builder/.local/share/captiond/models').glob('*.bin')],directory='/home/builder/.local/share/captiond/models'))
      elif event['type']=='ping':send(client,dict(type='pong'))
-  if time.monotonic()>=nextcaption:
+  if time.monotonic()>=nextcaption and (not (out/'kit-mode').exists() or ((out/'playback').exists() and float((out/'playback').read_text())>started)):
    n+=1;nextcaption=time.monotonic()+1
    phrase='The quick brown fox jumps over the lazy dog. '+str(n)
    event=dict(type='caption',id=n,committed=phrase,tentative='',lang='en',final=True,t0=n*1000,t1=n*1000+800,channel='output')

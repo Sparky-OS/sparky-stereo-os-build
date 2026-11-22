@@ -23,3 +23,11 @@ for tree in ['/home/builder/.local','/home/builder/.config']:
   for name in files:os.chown(Path(parent)/name,1000,1000)
 
 unit=Path("/etc/systemd/user/lc73-session.target");unit.write_text("[Unit]\nDescription=Disposable graphical login fixture\nRequires=graphical-session.target\nAfter=graphical-session.target\n")
+
+if os.environ.get('LC73_KIT_FIXTURE')=='1':
+ data=json.loads(cat.read_text())
+ for entry in data:
+  target=model.parent/entry['file'];target.write_bytes(model.read_bytes());os.chown(target,1000,1000)
+  entry['bytes']=target.stat().st_size;entry['sha256']=hashlib.sha256(target.read_bytes()).hexdigest()
+ cat.write_text(json.dumps(data)+'\n')
+ shutil.copyfile('/proof/kit-vibe-fixture.py','/usr/bin/vibe-server');os.chmod('/usr/bin/vibe-server',0o755)

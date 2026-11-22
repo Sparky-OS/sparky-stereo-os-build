@@ -15,7 +15,7 @@ docker create --name "$name" --pull=never --platform linux/amd64 --cpus 4 --ulim
  --mount type=bind,src="$proof",dst=/proof,readonly \
  --mount type=bind,src="$LC73_FIXTURES",dst=/fixtures,readonly \
  --mount type=bind,src="$out",dst=/out \
- -e QT_LOGGING_RULES='kwin_*.debug=true' "$LC73_RIG_IMAGE" /sbin/init > "$out/container-id.txt"
+ -e LC73_KIT_FIXTURE="${LC73_KIT_FIXTURE:-0}" -e QT_LOGGING_RULES='kwin_*.debug=true' "$LC73_RIG_IMAGE" /sbin/init > "$out/container-id.txt"
 cat "$out/container-id.txt" >> "$out/.container-ids"
 if [ -n "${LC73_CONTAINER_LEDGER:-}" ]; then cat "$out/container-id.txt" >> "$LC73_CONTAINER_LEDGER"; fi
 trap cleanup EXIT

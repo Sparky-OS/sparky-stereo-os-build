@@ -106,6 +106,14 @@ try:
  click('on');wait('changed-file refusal',lambda:json.loads((Path.home()/'.local/state/sparky-stereo-live-captions/status.json').read_text())['key']=='changed');wait('refused session gone',gone);refresh();expected=words['changed'].format(str(personal));row('changed file said and preserved','translated refusal and identical changed bytes',status()['message'],status()['message']==expected and personal.read_bytes()==changed and expected in tree('changed-message'));personal.write_bytes(saved)
  (out/'mismatch').touch();click('on');wait('route refusal',lambda:json.loads((Path.home()/'.local/state/sparky-stereo-live-captions/status.json').read_text())['key']=='route');wait('mismatch session gone',gone);refresh();expected=words['route'].format('CPU','Fixture wrong GPU');row('route mismatch said','translated mismatch; no pair',status()['message'],status()['message']==expected and expected in tree('route-message'));(out/'mismatch').unlink()
  row('final cleanup','disabled; no pair, socket or stream',dict(login=status()['login'],gone=gone(),streams=pw('final-streams')),not status()['login'] and gone() and not pw('final-streams'))
+ if os.environ.get('LC73_KIT_FIXTURE')=='1':
+  (out/'kit-mode').touch()
+  fakehw=out/'hwmon/hwmon0';fakehw.mkdir(parents=True);(fakehw/'name').write_text('k10temp\n')
+  config=dict(output=str(out/'kit-results'),fixture=True,trials=1,boot=False,hwmon=str(out/'hwmon'))
+  (out/'kit-config.json').write_text(json.dumps(config))
+  result=run(['python3','/proof/a10-live.py',str(out/'kit-config.json')],False)
+  (out/'kit.log').write_text(result.stdout+result.stderr)
+  row('A10 kit mechanics','same worker, two synthetic models, no inference; exit 0',result.returncode,result.returncode==0)
 except Exception as e:
  rowdata=dict(row='execution',expected='complete',found=str(e),passed=False);rows.append(rowdata);(out/'rows.json').write_text(json.dumps(rows,indent=2)+'\n');traceback.print_exc();sys.exitcode=1
 finally:
