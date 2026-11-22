@@ -33,16 +33,16 @@ int main(int argc, char **argv)
     auto player = pipewire.play_through_the_speakers(argv[2]);
     if (!player.started()) return 6;
     // Known text is fed through the real protocol. This is not speech recognition.
-    for (int i = 0; i < 40; ++i) {
+    for (int i = 0; i < 120; ++i) {
         captiond::Caption caption;
         caption.id = static_cast<unsigned>(i + 1);
         caption.committed = "The quick brown fox jumps over the lazy dog.";
         caption.lang = "en";
         caption.final = true;
-        caption.t0 = std::chrono::milliseconds(i * 3000);
-        caption.t1 = caption.t0 + 2000ms;
+        caption.t0 = std::chrono::milliseconds(i * 1000);
+        caption.t1 = caption.t0 + 800ms;
         daemon.send(captiond::caption_event(caption));
         std::cout << captiond::caption_event(caption).dump() << std::endl;
-        std::this_thread::sleep_for(3s);
+        std::this_thread::sleep_for(1s);
     }
 }
