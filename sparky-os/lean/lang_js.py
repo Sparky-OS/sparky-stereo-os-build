@@ -13,6 +13,10 @@ Kept comments: `//#`, `//@` (source maps, tooling directives), `/*!` and `@licen
 blocks, Qt's translator comments (`//:`, `//=`, `//~`, read by lupdate), notices.
 The check is an independent tokenizer, acorn (ECMA-262), run by Node: both texts give the same tokens
 with the same line-terminator-before flags.
+A QML file is read as QML: Qt's lexer reads `@` as a token of its own (qqmljslexer.cpp, `case u'@': return T_AT;`),
+which opens an annotation before an object or a member (qqmljs.g: `UiAnnotation: T_AT UiAnnotationObjectDefinition`,
+`UiAnnotatedObject`, `UiAnnotatedObjectMember`; Qt 5.15 and later), so for a .qml file acorn reads `@` as that token
+too. A JavaScript file keeps ECMA-262's lexical grammar, where `@` is no token.
 """
 
 from __future__ import annotations
@@ -224,20 +228,34 @@ def refuse(src: str) -> str | None:
 
 
 # acorn runs in one Node process per projecting process, kept open: a line with two file names in, a line
-# with both token lists out (starting Node for every file cost more than the projection itself)
+# with both token lists out (starting Node for every file cost more than the projection itself).
+# A file named .qml is read with QML's one more token, '@' (T_AT); every other file as ECMAScript.
 _ACORN = r'''
 const fs = require('fs');
 const readline = require('readline');
 let acorn;
 try { acorn = require('acorn'); } catch (e) { process.exit(4); }
+let qmlParser = null;
+function qml() {
+  if (qmlParser === null) {
+    const at = new acorn.TokenType('@');
+    qmlParser = acorn.Parser.extend((Base) => class extends Base {
+      getTokenFromCode(code) {
+        if (code === 64) { ++this.pos; return this.finishToken(at); }
+        return super.getTokenFromCode(code);
+      }
+    });
+  }
+  return qmlParser;
+}
 function toks(f) {
   const src = fs.readFileSync(f, 'utf8');
   const out = [];
   let prevEnd = 0;
+  const options = {ecmaVersion: 'latest', allowHashBang: true, locations: true, allowReturnOutsideFunction: true,
+                   allowImportExportEverywhere: true, allowAwaitOutsideFunction: true, sourceType: 'script'};
   try {
-    for (const t of acorn.tokenizer(src, {ecmaVersion: 'latest', allowHashBang: true, locations: true,
-                                          allowReturnOutsideFunction: true, allowImportExportEverywhere: true,
-                                          allowAwaitOutsideFunction: true, sourceType: 'script'})) {
+    for (const t of (f.endsWith('.qml') ? qml().tokenizer(src, options) : acorn.tokenizer(src, options))) {
       const nl = t.loc.start.line > prevEnd ? 1 : 0;
       out.push([t.type.label, t.value === undefined ? null : String(t.value), nl]);
       prevEnd = t.loc.end.line;
@@ -267,11 +285,12 @@ def _server():
     return _node
 
 
-def tokens(*texts) -> list | None:
+def tokens(*texts, qml=False) -> list | None:
     paths = []
     try:
         for t in texts:
-            with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8', errors='surrogateescape') as f:
+            with tempfile.NamedTemporaryFile('w', suffix='.qml' if qml else '.js', delete=False, encoding='utf-8',
+                                             errors='surrogateescape') as f:
                 f.write(t)
                 paths.append(f.name)
         for attempt in (1, 2):
@@ -294,8 +313,9 @@ def tokens(*texts) -> list | None:
             os.unlink(p)
 
 
-def verify(original: str, lean: str, interpreter: str = '') -> tuple:
-    res = tokens(original, lean)
+def verify(original: str, lean: str, dialect: str = 'js') -> tuple:
+    """dialect 'qml' for a .qml file (QML's T_AT token), anything else for JavaScript."""
+    res = tokens(original, lean, qml=(dialect == 'qml'))
     if res is None:
         return False, 'no independent tokenizer (node with acorn) available'
     a, b = res
