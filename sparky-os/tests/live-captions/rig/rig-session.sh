@@ -52,6 +52,10 @@ plasmashell --no-respawn > "$out/plasma.log" 2>&1 &
 pids+=("$!")
 python3 /proof/atspi-listen.py "$out/atspi.jsonl" > "$out/atspi.log" 2>&1 &
 pids+=("$!")
+if [ "$mode" = sharing ]; then
+    bash /proof/sharing-session.sh "$out"
+    exit $?
+fi
 if [ "$mode" = first-start ] || [ "$mode" = daemon-empty ]; then
     if [ "$mode" = daemon-empty ]; then
         mkdir -p "$out/empty-data" "$out/no-models"
