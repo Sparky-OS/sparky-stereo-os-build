@@ -62,7 +62,7 @@ def evidence(out):
                 stereo(p/(case+'.pns'))
             with (p/'analysis.log').open('w') as f:run([sys.executable,SCRIPTS/'analyze-eyes.py',p,str(int(scale)/100)],stdout=f)
             actual=json.loads((p/'eye-measurements.json').read_text())
-            row('saved '+name,'two aligned glyph pairs, recorded -2 px',str([(r['left_minus_right_px'],r['glyph_xor_pixels']) for r in actual]),all(r['left_minus_right_px']==-2 and r['glyph_xor_pixels']==0 for r in actual))
+            row('saved '+name,'same glyphs at the same position: 0 px',str([(r['left_minus_right_px'],r['glyph_xor_pixels']) for r in actual]),all(r['left_minus_right_px']==0 and r['glyph_xor_pixels']==0 for r in actual))
     witness=json.loads((LANE/'evidence/sharing/result.json').read_text())
     row('shared path witness','retained native listings, no recognition',witness)
 
@@ -148,7 +148,7 @@ def live(out):
                 with (p/'analysis.log').open('w') as f:run([sys.executable,SCRIPTS/'analyze-eyes.py',p,scale],stdout=f)
                 for r in json.loads((p/'eye-measurements.json').read_text()):
                     stereo(p/(r['case']+'.pns'))
-                    row(label+'/'+r['case'],'baseline -2 px; matching glyphs; KWin layer 9',str((r['left_minus_right_px'],r['glyph_xor_pixels'],r['window']['layer'])),r['left_minus_right_px']==-2 and r['glyph_xor_pixels']==0 and r['window']['layer']==9)
+                    row(label+'/'+r['case'],'screen plane: 0 px; matching glyphs; KWin layer 9',str((r['left_minus_right_px'],r['glyph_xor_pixels'],r['window']['layer'])),r['left_minus_right_px']==0 and r['glyph_xor_pixels']==0 and r['window']['layer']==9)
                 atspi=(p/'atspi.jsonl').read_text();row(label+'/AT-SPI','settled fox announcement','present' if 'object:announcement' in atspi and 'quick brown fox' in atspi else 'missing','object:announcement' in atspi and 'quick brown fox' in atspi)
     finally:rig.cleanup()
     row('temporary Docker objects','removed by exact name','removed')
