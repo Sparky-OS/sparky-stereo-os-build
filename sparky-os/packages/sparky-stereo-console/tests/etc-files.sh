@@ -24,13 +24,13 @@ sha() { sha256sum <"$1" 2>/dev/null | cut -c1-64; }
 asked() { grep -c -E 'Configuration file|end of file on <standard input>|Modified locally|Deleted locally' "$1"; }
 dpkg-deb -x "$NEW/${PKG}_"*_all.deb $T/ref
 ref() { case $1 in /etc/motd|/etc/skel/*) echo "$T/ref$1" ;; *) echo "$T/ref/usr/share/$PKG/defaults$1" ;; esac; }
-view() { # what a login and a new account show: the login texts, the message of the day's script, a new home
+view() { # view FILE HOME-FILE: what a login shows (the login texts, the message of the day, nano, zsh), and a new home
 	{ for f in /etc/issue /etc/issue.net /etc/motd; do echo "== $f"; cat "$f"; done
-	  echo '== 10-uname'; sh /etc/update-motd.d/10-uname | sed 's/ [0-9][^ ]*-[^ ]* / KERNEL /'
-	  u=u$RANDOM; useradd -m -s /bin/bash "$u" && { echo "== home"; ls -A "/home/$u"
-	  for f in .bash_aliases .selected_editor .bashrc; do echo "== $f"; cat "/home/$u/$f" 2>/dev/null; done; userdel -r "$u" 2>/dev/null; }
-	  echo '== nano'; grep -v '^#' /etc/nanorc | grep . | md5sum
-	  echo '== zsh'; cat /etc/zsh/zshrc; } >"$1" 2>&1; }
+	  echo '== 10-uname'; sh /etc/update-motd.d/10-uname
+	  echo '== nano'; cat /etc/nanorc
+	  echo '== zsh'; cat /etc/zsh/zshrc; } >"$1" 2>&1
+	u=u$RANDOM; useradd -m -s /bin/bash "$u" && { echo "== home"; ls -A "/home/$u"
+	  for f in .bash_aliases .selected_editor .bashrc; do echo "== $f"; cat "/home/$u/$f" 2>/dev/null; done; userdel -r "$u" 2>/dev/null; } >"$2" 2>&1; }
 named() { grep -E "^(CHANGED|LCCHANGED|EDITED|AFTERINST|MISSING) +$1( |$)" $T/verify.txt $T/deep.txt >/dev/null; }
 
 if [ "$CASE" = say ]; then
@@ -65,7 +65,7 @@ fi
 
 [ -n "$FROM" ] && { apt_y install "$FROM"/*.deb >$T/from.log 2>&1 || { echo "FAIL installing FROM"; tail -3 $T/from.log; exit 1; }; }
 echo "from: $(dpkg-query -W -f='${Version}' $PKG)"
-view $T/view-before.txt
+view $T/view-before.txt $T/home-before.txt
 if [ "$CASE" = up-edited ]; then
 	for f in $EIGHT; do mkdir -p "${f%/*}"; [ -e "$f" ] || : >"$f"; printf '# a person'"'"'s change to %s\n' "$f" >>"$f"; cp -p "$f" "$T/before/${f//\//_}"; done
 fi
@@ -74,15 +74,20 @@ echo "to: $(dpkg-query -W -f='${Version}' $PKG)"
 check '[ $rc = 0 ] && [ "$(asked $T/up.log)" = 0 ]' "upgrade: rc $rc, nothing asked"
 check '[ "$(dpkg-query -W -f="\${Status}" $PKG)" = "install ok installed" ] && [ -z "$(dpkg --audit 2>&1)" ]' "upgrade: installed, dpkg --audit empty"
 dpkg-stereo --verify >$T/verify.txt 2>&1; vrc=$?
-dpkg-stereo --verify --deep >$T/deep.txt 2>&1
+# --deep reads a package's own .deb from APT's cache; the package under test is put there for the run (no network)
+cp "$NEW"/*.deb /var/cache/apt/archives/
+dpkg-stereo --deep --verify $PKG base-files nano zsh-common >$T/deep.txt 2>&1
+rm -f /var/cache/apt/archives/"$PKG"*.deb
 if [ "$CASE" = up-none ]; then
 	for f in $EIGHT; do check '[ "$(sha "$f")" = "$(sha "$(ref "$f")")" ]' "untouched: $f is the new package's"; done
 	check '! grep -q "Your changes" $T/up.log' "untouched: nothing said"
 	check '[ -z "$(ls -d /etc/*.dpkg-* /etc/skel/*.dpkg-* /etc/zsh/*.dpkg-* /etc/update-motd.d/*.dpkg-* /var/lib/'$PKG'/held 2>/dev/null)" ]' "untouched: nothing left beside the files"
 	check '[ $vrc = 0 ] && ! grep -q -E "^(CHANGED|LCCHANGED|EDITED|MISSING)" $T/verify.txt' "untouched: dpkg-stereo --verify clean (rc $vrc)"
 	for f in $EIGHT; do check '! named "$f"' "untouched: --verify and --deep say nothing of $f"; done
-	view $T/view-after.txt
-	check 'cmp -s $T/view-before.txt $T/view-after.txt' "untouched: the login texts, the message of the day, a new account's home and the shell settings are the same"
+	view $T/view-after.txt $T/home-after.txt
+	check 'cmp -s $T/view-before.txt $T/view-after.txt' "untouched: the login texts, the message of the day, nanorc and zshrc are byte for byte the same"
+	# from 20261102 a new home differs by design (20261121: .bash_aliases in place of the diverted .bashrc, REPORT-3)
+	[ -z "$FROM" ] || check 'cmp -s $T/home-before.txt $T/home-after.txt' "untouched: a new account's home is byte for byte the same"
 else
 	for f in $EIGHT; do check '[ "$(sha "$f")" = "$(sha "$T/before/${f//\//_}")" ]' "edited: the person's $f kept byte for byte"; done
 	for f in $EIGHT; do
