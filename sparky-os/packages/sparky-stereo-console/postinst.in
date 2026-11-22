@@ -106,5 +106,7 @@ if [ "$1" = "configure" ]; then
         keep_through_ucf "$f"
     done
     [ ! -d "$held" ] || find "$held" -depth -type d -empty -delete
+    # the folder that held them goes with them when it is empty; nothing else of ours is kept there
+    [ ! -d "/var/lib/$package" ] || rmdir --ignore-fail-on-non-empty "/var/lib/$package"
 fi
 exit 0

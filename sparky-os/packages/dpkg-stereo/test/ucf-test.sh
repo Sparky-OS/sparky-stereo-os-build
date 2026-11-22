@@ -7,7 +7,8 @@
 # with ucfr, nfs-common's /etc/nfs.conf and /etc/idmapd.conf without, and its /etc/default/nfs-common both a conffile
 # of its list, which Lean Code projects, and a ucf-kept file). DEB is the one under test.
 # Red on 0.1.45, and in U4 on continuation 12's first 0.1.46 build (a gone file was MISSING and counted); green on
-# 0.1.46. Exit 1 on any FAIL.
+# 0.1.46. From 0.1.47 (continuation 14) a ucf-kept file with other bytes says what ucf's record shows, never "changed
+# by the person": U11 holds the three shapes measured on an installed machine (red on 0.1.46). Exit 1 on any FAIL.
 set -u
 DEB=$(readlink -f "$1") W=$2
 export DEBIAN_FRONTEND=noninteractive
@@ -17,6 +18,9 @@ bad() { echo "FAIL $*"; fail=1; [ ! -f "$W/v.txt" ] || tail -4 "$W/v.txt" | sed 
 check() { d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
 mkdir -p "$W"
 END='(changed by the person: left as they made it)'
+# the sentence for a file kept through ucf whose bytes are not ucf's record (0.1.47): ucf records the default a package
+# last offered, so the row says that, with no package for a file no package registered
+uend() { if [ -n "${1:-}" ]; then echo "(differs from the default $1 last offered: left as it is)"; else echo '(differs from the default last offered: left as it is)'; fi; }
 v() { dpkg-stereo --verify "$@" >"$W/v.txt" 2>&1; echo $? >"$W/v.rc"; }
 # --deep before --verify: --verify takes the package names after it (dpkg-stereo --verify --deep NAME is refused)
 vd() { dpkg-stereo --deep --verify "$@" >"$W/v.txt" 2>&1; echo $? >"$W/v.rc"; }
@@ -47,14 +51,14 @@ cp -p /etc/samba/smb.conf "$W/smb.conf"; cp -p /etc/default/grub "$W/grub"
 echo '# a person was here' >>/etc/samba/smb.conf
 sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=7/' /etc/default/grub
 v
-check "U2 edited smb.conf named with samba-common" row "EDITED    /etc/samba/smb.conf (kept by samba-common through ucf) $END"
-check "U2 edited /etc/default/grub named with grub-efi-amd64" row "EDITED    /etc/default/grub (kept by grub-efi-amd64 through ucf) $END"
+check "U2 edited smb.conf named with samba-common" row "EDITED    /etc/samba/smb.conf (kept by samba-common through ucf) $(uend samba-common)"
+check "U2 edited /etc/default/grub named with grub-efi-amd64" row "EDITED    /etc/default/grub (kept by grub-efi-amd64 through ucf) $(uend grub-efi-amd64)"
 check "U2 the person's changes are not counted (exit 0)" rc 0
 
 # U3: a file handed to ucf without ucfr: named, with no package
 cp -p /etc/nfs.conf "$W/nfs.conf"; echo '# a person was here' >>/etc/nfs.conf
 v
-check "U3 edited /etc/nfs.conf named, kept through ucf with no package" row "EDITED    /etc/nfs.conf (kept through ucf) $END"
+check "U3 edited /etc/nfs.conf named, kept through ucf with no package" row "EDITED    /etc/nfs.conf (kept through ucf) $(uend)"
 
 # U4 (continuation 13): a file kept through ucf that is gone is no fault and not the person's either: ucf leaves a
 # removed file removed ("Not replacing deleted config file"), and who removed it cannot be told. --verify prints no row
@@ -105,7 +109,7 @@ check "U4 gone: --deep's exit status as before ($base_deep), and --deep ran" bas
 check "U4 gone: --deep has no MISSING row" bash -c '! grep -q "^MISSING" '"$W/v.txt"
 mv /etc/idmapd.conf "$W/idmapd.conf"; ln -s /nonexistent/idmapd.conf /etc/idmapd.conf
 v
-check "U4 a link whose target is gone stands at the name: EDITED" row "EDITED    /etc/idmapd.conf (kept through ucf) $END"
+check "U4 a link whose target is gone stands at the name: EDITED" row "EDITED    /etc/idmapd.conf (kept through ucf) $(uend)"
 check "U4 the link is not counted among the gone (still 2)" summary_has "$GONE_SUM"
 rm -f /etc/idmapd.conf; mv "$W/idmapd.conf" /etc/idmapd.conf
 mv "$W/smb.conf.u2" /etc/samba/smb.conf
@@ -115,7 +119,7 @@ check "U4 back: no gone file left, nothing about uc-dropper" bash -c '! grep -q 
 
 # U5: only the named packages: --verify samba-common leaves grub's and the unregistered nfs.conf out
 v samba-common
-check "U5 --verify samba-common names smb.conf" row "EDITED    /etc/samba/smb.conf (kept by samba-common through ucf) $END"
+check "U5 --verify samba-common names smb.conf" row "EDITED    /etc/samba/smb.conf (kept by samba-common through ucf) $(uend samba-common)"
 check "U5 --verify samba-common leaves out grub and nfs.conf" bash -c '! grep -q -E "/etc/default/grub|/etc/nfs.conf" '"$W/v.txt"
 
 # U6: nfs-common's /etc/default/nfs-common, its conffile and ucf-kept, changed by the person: named once, by its
@@ -166,12 +170,63 @@ v uc-owner uc-keeper
 check "U7 untouched: no row for the diverted name or its owner's copy" bash -c '! grep -q uc-demo '"$W/v.txt"
 echo 'UC_DEMO=person' >/etc/default/uc-demo
 v uc-owner uc-keeper
-check "U7 the person's change at the diverted name: named with uc-keeper" row "EDITED    /etc/default/uc-demo (kept by uc-keeper through ucf) $END"
+check "U7 the person's change at the diverted name: named with uc-keeper" row "EDITED    /etc/default/uc-demo (kept by uc-keeper through ucf) $(uend uc-keeper)"
 dpkg -P uc-keeper >>"$W/uc.log" 2>&1
 check "U7 removal: the owner's file back, ucf's records gone" bash -c 'grep -q owner /etc/default/uc-demo && ! grep -q uc-demo /var/lib/ucf/hashfile /var/lib/ucf/registry'
 v uc-owner
 check "U7 after the removal: no row" bash -c '! grep -q uc-demo '"$W/v.txt"
 dpkg -P uc-owner >>"$W/uc.log" 2>&1
+
+# U11 (continuation 14): ucf's record is the md5sum of the default the package last offered, so a file with other bytes
+# is said as that, never as the person's: the three shapes measured on an installed edition machine. (a) A package's
+# own older default kept at an upgrade, the new one beside it as PATH.ucf-dist (libreoffice-common's main.xcd; here
+# ucf's UCF_FORCE_CONFFOLD, which keeps an untouched file and records the new default); (b) a file the package's own
+# script changed after ucf wrote it (r-base-core's postinst writes the paper size into Renviron); (c) a file changed by
+# hand. A PATH.ucf-dist that is not the recorded default is not named as it. Not counted, exit 0, in the ten languages.
+d=$W/uc-shapes; mkdir -p "$d/DEBIAN" "$d/usr/share/uc-shapes"
+for ver in 1.0 1.1; do
+	# only uc-kept's default changes between the versions; the other two keep theirs, so ucf puts nothing beside them
+	printf 'UC_SHAPE=uc-kept\nVERSION=%s\n' "$ver" >"$d/usr/share/uc-shapes/uc-kept"
+	for f in uc-script uc-hand; do printf 'UC_SHAPE=%s\n' "$f" >"$d/usr/share/uc-shapes/$f"; done
+	printf 'Package: uc-shapes\nVersion: %s\nArchitecture: all\nMaintainer: test <t@example.org>\nDepends: ucf\nDescription: keeps three files through ucf\n' "$ver" >"$d/DEBIAN/control"
+	force=; [ "$ver" = 1.0 ] || force='UCF_FORCE_CONFFOLD=1 '
+	{ printf '#!/bin/sh\nset -e\nif [ "$1" = configure ]; then\n'
+	  printf '\t%sDEBIAN_FRONTEND=noninteractive ucf /usr/share/uc-shapes/uc-kept /etc/default/uc-kept\n' "$force"
+	  for f in uc-script uc-hand; do printf '\tDEBIAN_FRONTEND=noninteractive ucf /usr/share/uc-shapes/%s /etc/default/%s\n' "$f" "$f"; done
+	  for f in uc-kept uc-script uc-hand; do printf '\tucfr uc-shapes /etc/default/%s\n' "$f"; done
+	  printf '\tsed -i "s/^UC_SHAPE=uc-script$/UC_SHAPE=written-by-the-script/" /etc/default/uc-script\nfi\n'; } >"$d/DEBIAN/postinst"
+	printf '#!/bin/sh\nset -e\nif [ "$1" = purge ]; then\n\tfor f in uc-kept uc-script uc-hand; do\n\t\tcommand -v ucf >/dev/null && ucf --purge /etc/default/$f && ucfr --purge uc-shapes /etc/default/$f\n\t\trm -f /etc/default/$f /etc/default/$f.ucf-dist /etc/default/$f.ucf-old\n\tdone\nfi\n' >"$d/DEBIAN/postrm"
+	chmod 755 "$d/DEBIAN/postinst" "$d/DEBIAN/postrm"
+	dpkg-deb --root-owner-group -b "$d" "$W/uc-shapes_$ver.deb" >/dev/null
+done
+dpkg -i "$W/uc-shapes_1.0.deb" >"$W/shapes.log" 2>&1 && dpkg -i "$W/uc-shapes_1.1.deb" >>"$W/shapes.log" 2>&1
+echo '# a person was here' >>/etc/default/uc-hand
+check "U11 setup: uc-kept is 1.0's default with 1.1's beside it and recorded; uc-script written by the script; uc-hand changed" bash -c '
+	grep -q VERSION=1.0 /etc/default/uc-kept && grep -q VERSION=1.1 /etc/default/uc-kept.ucf-dist &&
+	[ "$(awk "\$2 == \"/etc/default/uc-kept\" {print \$1}" /var/lib/ucf/hashfile)" = "$(md5sum </etc/default/uc-kept.ucf-dist | cut -d" " -f1)" ] &&
+	grep -q written-by-the-script /etc/default/uc-script && grep -q "a person" /etc/default/uc-hand' || tail -6 "$W/shapes.log"
+v uc-shapes
+check "U11 (a) an older default kept, the recorded one beside it: named with it" row "EDITED    /etc/default/uc-kept (kept by uc-shapes through ucf) (differs from the default uc-shapes last offered, which is beside it as /etc/default/uc-kept.ucf-dist: left as it is)"
+check "U11 (b) changed by the package's own script: what the record shows" row "EDITED    /etc/default/uc-script (kept by uc-shapes through ucf) $(uend uc-shapes)"
+check "U11 (c) changed by hand: what the record shows" row "EDITED    /etc/default/uc-hand (kept by uc-shapes through ucf) $(uend uc-shapes)"
+check "U11 no row says changed by the person for a file kept through ucf" bash -c '! grep -E "through ucf\) \(changed by the person" '"$W/v.txt"
+check "U11 not counted: exit 0" rc 0
+printf 'UC_SHAPE=an-older-default\n' >/etc/default/uc-hand.ucf-dist
+v uc-shapes
+check "U11 a PATH.ucf-dist that is not the recorded default is not named as it" row "EDITED    /etc/default/uc-hand (kept by uc-shapes through ucf) $(uend uc-shapes)"
+rm -f /etc/default/uc-hand.ucf-dist
+prev=
+for L in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
+	LANG=$L.UTF-8 dpkg-stereo --verify uc-shapes >"$W/v-$L.txt" 2>&1
+	a=$(grep '^EDITED    /etc/default/uc-kept ' "$W/v-$L.txt"); b=$(grep '^EDITED    /etc/default/uc-script ' "$W/v-$L.txt")
+	echo "      $L: ${a#EDITED    /etc/default/uc-kept (kept by uc-shapes through ucf) }"
+	check "U11 $L: both sentences name the package, the beside one the default's path, in its own words" bash -c '
+		case "$1" in *uc-shapes*/etc/default/uc-kept.ucf-dist*) ;; *) exit 1 ;; esac
+		case "$2" in *"(kept by uc-shapes through ucf) ("*uc-shapes*")") ;; *) exit 1 ;; esac
+		[ "$1" != "$3" ] && ! printf "%s" "$1$2" | grep -q "changed by the person"' _ "$a" "$b" "$prev"
+	prev=$a
+done
+dpkg -P uc-shapes >>"$W/shapes.log" 2>&1
 
 # U8: a non-root run: said once, never a row per file; incomplete (exit 2). A non-root --verify stops at dpkg-stereo's
 # own guard (LOCAL23) before it reads anything; a file kept through ucf that root cannot read is counted the same way

@@ -1,4 +1,17 @@
 -------------------------------------------------------------------------------
+  Version 0.1.47 (2026-11-22)
+-------------------------------------------------------------------------------
+  * A file kept through ucf whose bytes are not the md5sum ucf recorded is said as what the records show (row 813,
+    continuation 14): "EDITED    PATH (kept by PACKAGE through ucf) (differs from the default PACKAGE last offered:
+    left as it is)", and with "which is beside it as PATH.ucf-dist" when that file holds the recorded default. ucf's
+    record is the md5sum of the default the package last offered, so the verifier cannot tell a person's change
+    from a package's own: measured on an installed edition machine, r-base-core's postinst writes the paper size into
+    /etc/R/Renviron after ucf, and libreoffice-common's /etc/libreoffice/registry/main.xcd is its own older default
+    with the new one beside it as main.xcd.ucf-dist; 0.1.46 called both "changed by the person". A file no package
+    registered with ucfr gets the same sentence without a package. The keyword EDITED, the counting (not a problem)
+    and the exit status are unchanged. The sentence is LOCAL103 to LOCAL106, in the ten languages.
+
+-------------------------------------------------------------------------------
   Version 0.1.46 (2026-11-22)
 -------------------------------------------------------------------------------
   * --verify names a person's change to a file that maintainer scripts keep through ucf, for every package (row

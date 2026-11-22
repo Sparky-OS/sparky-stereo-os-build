@@ -2311,7 +2311,7 @@ def verify(P, names, deep=False):
     # A file that maintainer scripts keep through ucf is in no package's file list, so neither dpkg --verify nor the
     # records above judge it (row 813: sparky-stereo-console's files at the names it diverts, samba-common's smb.conf,
     # grub's /etc/default/grub). It is judged against what ucf last wrote, by the md5sum ucf recorded: other bytes
-    # are the person's, said as any conffile the person changed after an upgrade is said, and not counted. A file
+    # differ from the default the package last offered, and are left as they are and not counted. A file
     # that is gone is no fault and not the person's either: ucf itself leaves a removed file removed ("Not replacing
     # deleted config file"), and a package's own script may have removed it without telling ucf (libdebuginfod-common's
     # postinst runs rm -f with no ucf --purge), so who removed it cannot be told. It is only counted in the summary,
@@ -2350,7 +2350,22 @@ def verify(P, names, deep=False):
             have = None
         ucf_checked += 1
         if have != want:
-            print(f'EDITED    {path} ({who}) (changed by the person: left as they made it)')
+            # ucf's record is the md5sum of the default the package last offered, not of what a person did: a package's
+            # own script may change the file after ucf wrote it (r-base-core writes the paper size into Renviron), and a
+            # package may have ucf keep its own older default (libreoffice-common's main.xcd, with main.xcd.ucf-dist
+            # beside it). So the row says what the records show (row 813, continuation 14). The default beside the file,
+            # PATH.ucf-dist, is named when it holds the default ucf recorded.
+            dist = path + '.ucf-dist'
+            try:
+                with open(P.real(dist), 'rb') as f:
+                    beside = md5(f.read()) == want
+            except OSError:
+                beside = False
+            if owner:
+                said = text('LOCAL104', [owner, dist]) if beside else text('LOCAL103', [owner])
+            else:
+                said = text('LOCAL106', [dist]) if beside else text('LOCAL105')
+            print(f'EDITED    {path} ({who}) ({said})')
     lost = sum(n for n, _ in unchecked.values())
     print(f'dpkg-stereo: {len(files) - lost} projected files checked, {bad} problems'
           + (f', {back} in their package\'s own bytes (restored, not projected)' if back else '')

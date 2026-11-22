@@ -30,7 +30,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261122~sparky9~0+lc1
+VERSION=20261122.1~sparky9~0+lc1
 PKG=sparky-stereo-console
 B=$HERE/base
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/console-build.XXXXXX")
@@ -160,7 +160,11 @@ for f in $MANAGED; do
 	mv "$D$f" "$S/defaults$f"
 	chmod 644 "$S/defaults$f"
 done
-rmdir "$D/etc/update-motd.d" "$D/etc/zsh"
+# The package keeps owning every folder it puts a file into: /etc/update-motd.d and /etc/zsh stay in its data, empty,
+# so dpkg never removes them under the files ucf keeps there. On a system without zsh-common the console was the only
+# owner of /etc/zsh; 20261122 dropped the folder with its plain file, dpkg removed it at the unpack, and the postinst's
+# ucf could not create /etc/zsh/zshrc (continuation 14, measured on an installed machine; Debian's dpkg-maintscript-helper(1):
+# directories a package needs "need to be shipped in the new packages, or dpkg will not be able to remove them on purge").
 subst() { # subst DIVERTED TEMPLATE: the maintainer-script template with this package's names
 	sed -e "s|@PACKAGE@|$PKG|g" -e "s|@DIVERTED@|$1|g" -e "s|@GIVEN_BACK@|$GIVEN_BACK|g" -e "s|@CONFF@|$CONFF|g" \
 		-e "s|@MANAGED@|$MANAGED|g" -e "s|@FIRST@|$FIRST|g" "$2"

@@ -1,4 +1,18 @@
 -------------------------------------------------------------------------------
+  Version 20261122.1~sparky9~0 (2026-11-22)
+-------------------------------------------------------------------------------
+  * The package owns every folder it puts a file into: /etc/zsh and /etc/update-motd.d are in its data again, empty,
+    as they were up to 20261102 with the files in them. On a system without zsh-common the console was the only owner
+    of /etc/zsh; 20261122 no longer shipped a file there, so dpkg removed the folder at the unpack and the postinst
+    stopped with "cp: cannot create regular file '/etc/zsh/zshrc': No such file or directory" (the package
+    half-configured, apt exit 100; measured on an installed machine and on a minimal edition system). A fresh install
+    without zsh-common stopped the same way. A machine left half-configured by 20261122 configures with this version,
+    a person's change to /etc/zsh/zshrc kept.
+  * No empty folder of ours is left: /var/lib/sparky-stereo-console goes after the upgrade that empties it, the
+    folders of the files ucf kept go at the removal when no other package lists them, and the folders under
+    /var/backups/sparky-stereo-console go at the purge when nothing of the person's is in them.
+
+-------------------------------------------------------------------------------
   Version 20261122~sparky9~0 (2026-11-22)
 -------------------------------------------------------------------------------
   * A person's change to the console's files under /etc is kept across upgrades (Debian Policy 10.7.3; row 813).
