@@ -216,8 +216,9 @@ bool applyCanvas(bool enable, uint32_t eyeWidth, uint32_t eyeHeight, QWidget *pa
 	}
 	if (config_save_safe(config, "tmp", nullptr) != 0)
 		blog(LOG_ERROR, "[sparky-stereo-obs] the profile's video settings could not be saved");
-	// the layout before the reset: OBS lays its preview out in the canvas's scene space, one eye of a 3D canvas
-	setCanvasLayout(enable);
+	// the layout with the reset, in the same step as the canvas size: OBS keeps scene positions relative to the scene
+	// space (one eye of a 3D canvas), which must never be half the old canvas, nor the whole new one, between the two
+	setCanvasLayout(enable, true);
 	obs_frontend_reset_video();
 	state.enabled = enable;
 	state.eyeWidth = eyeWidth;
@@ -510,10 +511,20 @@ void onEvent(enum obs_frontend_event event, void *)
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 	case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
 		loadState();
-		// OBS reset its video before the modules loaded: once more now, so the preview takes the scene space
-		if (setCanvasLayout(canvasIsStereo()) && !obs_frontend_streaming_active() && !obs_frontend_recording_active() &&
-		    !obs_frontend_replay_buffer_active())
-			obs_frontend_reset_video();
+		// OBS reset its video before the modules loaded: once more now, the layout with it, so the preview takes the
+		// scene space; with an output running no reset can be made, and the layout is taken at once
+		{
+			const bool stereo = canvasIsStereo();
+			if ((obs_get_video_stereo3d(nullptr) == OBS_STEREO3D_SIDE_BY_SIDE) != stereo) {
+				if (!obs_frontend_streaming_active() && !obs_frontend_recording_active() &&
+				    !obs_frontend_replay_buffer_active()) {
+					setCanvasLayout(stereo, true);
+					obs_frontend_reset_video();
+				} else {
+					setCanvasLayout(stereo);
+				}
+			}
+		}
 		watchPreviews();
 		updatePreviews();
 		startDefault();
@@ -560,9 +571,17 @@ void tell(const QString &sentence)
 
 } // namespace SparkyStereo
 
+// Every video reset (Enable 3D, Settings, Video, a profile): libobs takes the layout in the same step as the size, and a
+// stereo canvas given another size becomes 2D there; the previews follow it on the next turn of the event loop.
+static void videoReset(void *, calldata_t *)
+{
+	QMetaObject::invokeMethod(qApp, [] { SparkyStereo::updatePreviews(); }, Qt::QueuedConnection);
+}
+
 bool obs_module_load(void)
 {
 	obs_register_source(&sparky_stereo_input_info);
+	signal_handler_connect(obs_get_signal_handler(), "video_reset", videoReset, nullptr);
 	obs_frontend_add_event_callback(SparkyStereo::onEvent, nullptr);
 	obs_frontend_add_tools_menu_item(obs_module_text("Menu"), [](void *) { SparkyStereo::showDialog(); }, nullptr);
 	blog(LOG_INFO, "[sparky-stereo-obs] loaded, version %s", PROJECT_VERSION);
@@ -571,5 +590,6 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
+	signal_handler_disconnect(obs_get_signal_handler(), "video_reset", videoReset, nullptr);
 	obs_frontend_remove_event_callback(SparkyStereo::onEvent, nullptr);
 }
