@@ -52,7 +52,7 @@ def http(base,path,data=None,content='application/json',method=None):
 def multipart(wav):
     boundary='lc73-a10-known-clip'
     value=('--'+boundary+'\r\nContent-Disposition: form-data; name="file"; filename="fox.wav"\r\nContent-Type: audio/wav\r\n\r\n').encode()+wav.read_bytes()
-    for key,text in [('language','en'),('response_format','json'),('threads','4')]:
+    for key,text in [('language','en'),('response_format','json'),('n_threads','4')]:
         value+=('\r\n--'+boundary+'\r\nContent-Disposition: form-data; name="'+key+'"\r\n\r\n'+text).encode()
     return value+('\r\n--'+boundary+'--\r\n').encode(),'multipart/form-data; boundary='+boundary
 
@@ -147,6 +147,7 @@ def session(config):
                             if v.get('time',0)>=start and known(v.get('data','')):visible=v;break
                         if not samples or now-samples[-1]['time']>=1:
                             t=temperature(Path(config['hwmon'])) if config.get('fixture') else temperature();samples.append(dict(time=now,temperature=t,cpu_ticks=cpu_ticks(),load=Path('/proc/loadavg').read_text().strip()))
+                            (folder/'samples.json').write_text(json.dumps(samples,indent=2))
                             if t['celsius'] is not None and t['celsius']>=62:raise RuntimeError('A10 temperature reached 62 C; stopped')
                         if drain and final and visible:break
                     elapsed=time.monotonic()-start
@@ -175,7 +176,7 @@ def session(config):
             transcript=http(base,'/v1/audio/transcriptions',body,content);save(entry['id']+'-vibe-transcript.json',transcript)
             row(entry['id']+'/Vibe words','exact known clip words',transcript,known(transcript.get('text','')))
             http(base,'/v1/models',method='DELETE');server.terminate();server.wait(timeout=30)
-            row(entry['id']+'/one file','same inode, checksum and one pathname; neither program copied it',dict(path=str(model),inode=identity,sha256=digest(model)),digest(model)==before and identity==(model.stat().st_dev,model.stat().st_ino) and model.stat().st_nlink==1)
+            row(entry['id']+'/one file','both programs used this path; inode/checksum unchanged, link count one',dict(path=str(model),inode=identity,sha256=digest(model)),digest(model)==before and identity==(model.stat().st_dev,model.stat().st_ino) and model.stat().st_nlink==1)
         return 0
     finally:
         if active:action('off')

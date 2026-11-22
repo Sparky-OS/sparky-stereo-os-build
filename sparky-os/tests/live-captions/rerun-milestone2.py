@@ -80,7 +80,7 @@ def main():
         create('source-and-kit-checks',cfg['build_image'],['bash','-c',checkscript],[(repo/'sparky-os/packages/sparky-stereo-live-captions','/recipe',True),(out,'/out',False)])
         log=(out/'source-and-kit-checks.log').read_text();row('model-free controls','17 adapter and 5 kit negative tests pass',log.count('\nOK\n'),log.count('\nOK\n')==2 and 'Ran 17 tests' in log and 'Ran 5 tests' in log)
         lc=out/'lifecycle';lc.mkdir()
-        create('package-lifecycle',cfg['lifecycle_image'],['bash','/proof/package-lifecycle.sh'],[(cfg['archive'],'/archive',True),(cfg['published'],'/published',True),(cfg['row70'],'/row70',True),(cfg['vibe_stage'],'/vibe-stage',True),(stage,'/stage',True),(lc,'/out',False)])
+        create('package-lifecycle',cfg['lifecycle_image'],['bash','/proof/package-lifecycle.sh'],[(cfg['archive'],'/archive',True),(cfg['published'],'/published',True),(cfg['row70'],'/row70',True),(cfg['vibe_stage'],'/vibe-stage',True),(stage,'/stage',True),(lc,'/out',False)],['-e','BASELINE_ONLY=0','-e','PLAN_ONLY=0'])
         for file,prefixword,names in [('upgrade-plan.txt','Inst ',{'sparky-stereo-partners','sparky-stereo-live-captions'}),('remove-plan.txt','Remv ',{'sparky-stereo-partners','sparky-stereo-live-captions'})]:
             lines=[x for x in (lc/file).read_text().splitlines() if x.startswith(prefixword)]
             row(file,'actual apt '+prefixword.strip()+' for both packages',lines,{x.split()[1] for x in lines}==names)

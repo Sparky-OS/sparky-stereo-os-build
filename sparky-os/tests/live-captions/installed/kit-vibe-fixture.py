@@ -18,7 +18,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
    if set(value)!={'path','gpu_device','no_gpu'} or not value['no_gpu']:self.send_error(400);return
    model=value['path'];self.reply({'status':'loaded','model':Path(model).name})
   elif self.path=='/v1/audio/transcriptions':
-   if not model or b'name="file"; filename="fox.wav"' not in body or b'RIFF' not in body:self.send_error(400);return
+   if not model or b'name="file"; filename="fox.wav"' not in body or b'RIFF' not in body or b'name="n_threads"' not in body or b'name="threads"' in body:self.send_error(400);return
    self.reply({'text':'The quick brown fox jumps over the lazy dog.'})
   else:self.send_error(404)
  def do_DELETE(self):

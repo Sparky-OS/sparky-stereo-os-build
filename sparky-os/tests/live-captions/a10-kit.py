@@ -116,7 +116,7 @@ def main():
         wait('private user bus',lambda:(Path('/run/user')/str(uid)/'bus').is_socket())
         result=out/'measurements';config=work/'session.json';config.write_text(json.dumps(dict(output=str(result),boot=True,trials=3)))
         os.chown(out,uid,uid)
-        command=['runuser','-u',account,'--','env','HOME='+str(home),'XDG_RUNTIME_DIR=/run/user/'+str(uid),'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(uid)+'/bus','LANG=C.UTF-8','OMP_NUM_THREADS=4',sys.executable,str(Path(__file__).with_name('a10-live.py')),str(config)]
+        command=['runuser','-u',account,'--','env','-i','PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin','USER='+account,'LOGNAME='+account,'HOME='+str(home),'XDG_RUNTIME_DIR=/run/user/'+str(uid),'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(uid)+'/bus','LANG=C.UTF-8','OMP_NUM_THREADS=4',sys.executable,str(Path(__file__).with_name('a10-live.py')),str(config)]
         with (out/'live.log').open('w') as log:
             child=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
             try:rc=child.wait(timeout=3600)

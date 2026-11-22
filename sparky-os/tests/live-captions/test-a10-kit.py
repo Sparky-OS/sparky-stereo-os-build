@@ -10,7 +10,7 @@ def load(name,file):
 kit=load('kit','a10-kit.py');live=load('live','a10-live.py')
 class Mechanics(unittest.TestCase):
  def test_words_not_any_caption(self):
-  self.assertFalse(live.known('A caption appeared.'));self.assertFalse(live.known('The quick brown fox.'))
+  self.assertFalse(live.known(''));self.assertFalse(live.known('A caption appeared.'));self.assertFalse(live.known('The quick brown fox.'))
   self.assertTrue(live.known('The quick brown fox jumps over the lazy dog.'))
  def test_hwmon_without_thermal_zones(self):
   with tempfile.TemporaryDirectory() as d:
@@ -19,7 +19,8 @@ class Mechanics(unittest.TestCase):
    (p/'temp1_input').unlink();self.assertIsNone(live.temperature(Path(d))['celsius']);self.assertIn('unavailable',live.temperature(Path(d))['warning'])
  def test_package_change_refused(self):
   for plan in ['Inst old [1] (2 repo)\n','Remv old [1]\n','Inst old (1 repo)\n']:
-   with self.assertRaises(RuntimeError):kit.safe_additions(plan,{'old:amd64':('1','installed')})
+   for state in ('installed','config-files'):
+    with self.assertRaises(RuntimeError):kit.safe_additions(plan,{'old:amd64':('1',state)})
   self.assertEqual(kit.safe_additions('Inst new (1 repo)\n',{}),['new'])
  def test_download_offered_and_verified(self):
   data=b'synthetic download witness; never a model';item=dict(url='https://fixture.invalid/witness',bytes=len(data),sha256=__import__('hashlib').sha256(data).hexdigest())
@@ -34,5 +35,5 @@ class Mechanics(unittest.TestCase):
  def test_multipart_real_field(self):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/'fox.wav';p.write_bytes(b'RIFF synthetic')
-   data,content=live.multipart(p);self.assertIn(b'name="file"; filename="fox.wav"',data);self.assertIn(b'RIFF synthetic',data);self.assertIn('boundary=',content)
+   data,content=live.multipart(p);self.assertIn(b'name="file"; filename="fox.wav"',data);self.assertIn(b'RIFF synthetic',data);self.assertIn('boundary=',content);self.assertIn(b'name="n_threads"',data);self.assertNotIn(b'name="threads"',data)
 if __name__=='__main__':unittest.main()
