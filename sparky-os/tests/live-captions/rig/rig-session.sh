@@ -113,14 +113,14 @@ assert any('kaption' in w.get('cls','').lower() for w in ws),ws
 assert any(w.get('desktop') for w in ws), 'No Plasma desktop window'
 PYCHECK
 sleep 1
-python3 /proof/capture.py "$out/desktop.png" > "$out/desktop-capture.json"
+python3 /proof/capture-visible.py "$out" desktop "$scale" > "$out/desktop-capture.json"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["width"]==3840 and d["height"]==1080,d' "$out/desktop-capture.json"
 python3 /proof/mark_pns.py "$out/desktop.png" "$out/desktop.pns" > "$out/desktop-mark.txt"
 WAYLAND_DEBUG=client mpv --no-config --no-audio --loop-file=inf --fullscreen --vo=gpu-next --gpu-context=wayland /fixtures/stereo.mkv > "$out/mpv.log" 2>&1 &
 pids+=("$!")
 sleep 5
 python3 /proof/kwin_windows.py "$out/kwin.log" > "$out/windows-video.json"
-python3 /proof/capture.py "$out/video.png" > "$out/video-capture.json"
+python3 /proof/capture-visible.py "$out" video "$scale" > "$out/video-capture.json"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["width"]==3840 and d["height"]==1080,d' "$out/video-capture.json"
 python3 /proof/mark_pns.py "$out/video.png" "$out/video.pns" > "$out/video-mark.txt"
 cat /proc/loadavg > "$out/load-after.txt"
