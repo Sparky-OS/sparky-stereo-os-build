@@ -55,3 +55,21 @@ Forwarded: not-needed
      }
      q->removeSubjob(job);
      Q_ASSERT(!q->hasSubjobs());
+
+--- a/autotests/jobtest.cpp
++++ b/autotests/jobtest.cpp
+@@ -1172,7 +1172,13 @@
+         }
+         return;
+     }
+-    QVERIFY2(job->exec(), qPrintable(job->errorString()));
++    if (edited) {
++        // The published Debian patch reports a directory that could not be removed.
++        QVERIFY(!job->exec());
++        QCOMPARE(job->error(), KIO::ERR_CANNOT_RMDIR);
++    } else {
++        QVERIFY2(job->exec(), qPrintable(job->errorString()));
++    }
+ 
+     for (int i = 0; i < 3; ++i) {
+         QVERIFY(QFile::exists(destDir + QStringLiteral("/smallFiles/file%1").arg(i)));
