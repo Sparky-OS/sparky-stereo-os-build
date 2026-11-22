@@ -1,0 +1,233 @@
+Description: Icon: each eye its view of an icon the theme has in stereo
+ While the edition's Qt Quick draws a window once per eye it sets the window's _q_stereo_eye
+ before it polishes and synchronizes the window for that eye. An Icon whose icon the theme has
+ in stereo (KIconEngine counts each drawing of such an icon on the application,
+ _q_stereo_icons_drawn) then makes its image again for that eye, naming the eye on the
+ application while it asks (_q_stereo_icon_eye), with no animation; it also marks its window
+ (_q_stereo_icon), so that the KDE platform theme draws the window once per eye on an output that
+ shows two eyes. Any other icon, and any window not drawn once per eye, is drawn as before.
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-22
+---
+diff --git a/src/primitives/icon.cpp b/src/primitives/icon.cpp
+index d2b7779..0880fb0 100644
+--- a/src/primitives/icon.cpp
++++ b/src/primitives/icon.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include <QBitmap>
+ #include <QDebug>
++#include <QDynamicPropertyChangeEvent>
+ #include <QGuiApplication>
+ #include <QIcon>
+ #include <QNetworkReply>
+@@ -27,6 +28,38 @@
+ 
+ using namespace Qt::StringLiterals;
+ 
++// The eye a window is drawn for while the edition's Qt draws it once per eye (its _q_stereo_eye): 1 the left eye,
++// 2 the right eye, else 0
++static int stereoEye(const QWindow *window)
++{
++    const int eye = window ? window->property("_q_stereo_eye").toInt() : 0;
++    return eye == 1 || eye == 2 ? eye : 0;
++}
++
++// While an icon is asked for one eye, the application names the eye (_q_stereo_icon_eye), which KIconEngine reads
++class StereoEyeAsk
++{
++public:
++    explicit StereoEyeAsk(int eye)
++        : m_eye(eye)
++    {
++        if (m_eye) {
++            qApp->setProperty("_q_stereo_icon_eye", m_eye);
++        }
++    }
++    ~StereoEyeAsk()
++    {
++        if (m_eye) {
++            qApp->setProperty("_q_stereo_icon_eye", QVariant());
++        }
++    }
++    StereoEyeAsk(const StereoEyeAsk &) = delete;
++    StereoEyeAsk &operator=(const StereoEyeAsk &) = delete;
++
++private:
++    const int m_eye;
++};
++
+ Icon::Icon(QQuickItem *parent)
+     : QQuickItem(parent)
+     , m_active(false)
+@@ -323,57 +356,104 @@ void Icon::updatePolish()
+             m_oldIcon = m_icon;
+         }
+ 
++        m_eye = stereoEye(window());
++        m_icon = loadImage(size, m_eye);
++    }
++
++    // don't animate initial setting
++    bool animated = m_animated && !m_oldIcon.isNull() && !m_sizeChanged && !m_blockNextAnimation && !isSoftwareRendering();
++
++    if (animated && m_animation) {
++        m_animValue = 0.0;
++        m_animation->setStartValue((qreal)0);
++        m_animation->setEndValue((qreal)1);
++        m_animation->start();
++    } else {
++        if (m_animation) {
++            m_animation->stop();
++        }
++        m_animValue = 1.0;
++        m_blockNextAnimation = false;
++    }
++    m_textureChanged = true;
++    updatePaintedGeometry();
++    update();
++}
++
++QImage Icon::loadImage(const QSize &size, int eye)
++{
++    QImage image;
++    const QVariant drawnBefore = qApp->property("_q_stereo_icons_drawn");
++    {
++        const StereoEyeAsk ask(eye);
+         switch (m_source.userType()) {
+         case QMetaType::QPixmap:
+-            m_icon = m_source.value<QPixmap>().toImage();
++            image = m_source.value<QPixmap>().toImage();
+             break;
+         case QMetaType::QImage:
+-            m_icon = m_source.value<QImage>();
++            image = m_source.value<QImage>();
+             break;
+         case QMetaType::QBitmap:
+-            m_icon = m_source.value<QBitmap>().toImage();
++            image = m_source.value<QBitmap>().toImage();
+             break;
+         case QMetaType::QIcon: {
+-            m_icon = iconPixmap(m_source.value<QIcon>());
++            image = iconPixmap(m_source.value<QIcon>());
+             break;
+         }
+         case QMetaType::QUrl:
+         case QMetaType::QString:
+-            m_icon = findIcon(size);
++            image = findIcon(size);
+             break;
+         case QMetaType::QBrush:
+             // todo: fill here too?
+         case QMetaType::QColor:
+-            m_icon = QImage(size, QImage::Format_Alpha8);
+-            m_icon.fill(m_source.value<QColor>());
++            image = QImage(size, QImage::Format_Alpha8);
++            image.fill(m_source.value<QColor>());
+             break;
+         default:
+             break;
+         }
++    }
++
++    if (image.isNull()) {
++        image = QImage(size, QImage::Format_Alpha8);
++        image.fill(Qt::transparent);
++    }
+ 
+-        if (m_icon.isNull()) {
+-            m_icon = QImage(size, QImage::Format_Alpha8);
+-            m_icon.fill(Qt::transparent);
++    // KIconEngine counts each drawing of an icon the theme has in stereo (_q_stereo_icons_drawn). Such an icon is
++    // asked again for each eye while its window is drawn once per eye, and the window is marked (_q_stereo_icon)
++    // so that the KDE platform theme draws it once per eye on an output that shows two eyes.
++    m_stereo = qApp->property("_q_stereo_icons_drawn") != drawnBefore;
++    if (m_stereo && m_window) {
++        m_window->removeEventFilter(this);
++        m_window->installEventFilter(this);
++        if (!m_window->property("_q_stereo_icon").toBool()) {
++            m_window->setProperty("_q_stereo_icon", true);
+         }
+     }
++    return image;
++}
+ 
+-    // don't animate initial setting
+-    bool animated = m_animated && !m_oldIcon.isNull() && !m_sizeChanged && !m_blockNextAnimation && !isSoftwareRendering();
++bool Icon::eventFilter(QObject *watched, QEvent *event)
++{
++    if (watched == m_window && event->type() == QEvent::DynamicPropertyChange
++        && static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName() == "_q_stereo_eye") {
++        stereoEyeChanged();
++    }
++    return QQuickItem::eventFilter(watched, event);
++}
+ 
+-    if (animated && m_animation) {
+-        m_animValue = 0.0;
+-        m_animation->setStartValue((qreal)0);
+-        m_animation->setEndValue((qreal)1);
+-        m_animation->start();
+-    } else {
+-        if (m_animation) {
+-            m_animation->stop();
+-        }
+-        m_animValue = 1.0;
+-        m_blockNextAnimation = false;
++void Icon::stereoEyeChanged()
++{
++    // Qt Quick sets the eye before it polishes and synchronizes the window for it: the image for that eye replaces
++    // the other eye's, with no animation, and what the item dirties now is drawn by that eye's pass
++    const int eye = stereoEye(m_window);
++    if (!m_stereo || eye == m_eye || m_source.isNull() || qFuzzyIsNull(width()) || qFuzzyIsNull(height())) {
++        return;
+     }
++    m_eye = eye;
++    m_icon = loadImage(QSize(width(), height()), eye);
+     m_textureChanged = true;
+-    updatePaintedGeometry();
+     update();
+ }
+ 
+@@ -696,11 +776,16 @@ void Icon::itemChange(QQuickItem::ItemChange change, const QQuickItem::ItemChang
+     } else if (change == QQuickItem::ItemSceneChange) {
+         if (m_window) {
+             disconnect(m_window.data(), &QWindow::visibleChanged, this, &Icon::windowVisibleChanged);
++            m_window->removeEventFilter(this);
+         }
+         m_window = value.window;
+         if (m_window) {
+             connect(m_window.data(), &QWindow::visibleChanged, this, &Icon::windowVisibleChanged);
+             m_devicePixelRatio = m_window->effectiveDevicePixelRatio();
++            if (m_stereo) {
++                // The image is made again for the new window, which learns that it shows a stereo icon then
++                polish();
++            }
+         }
+     } else if (change == ItemVisibleHasChanged && value.boolValue) {
+         m_blockNextAnimation = true;
+diff --git a/src/primitives/icon.h b/src/primitives/icon.h
+index e07ea29..5c15d0f 100644
+--- a/src/primitives/icon.h
++++ b/src/primitives/icon.h
+@@ -302,6 +302,10 @@ protected:
+ private:
+     void valueChanged(const QVariant &value);
+     void windowVisibleChanged(bool visible);
++    bool eventFilter(QObject *watched, QEvent *event) override;
++    // The image of the source for the window's eye, and whether it is an icon the theme has in stereo
++    QImage loadImage(const QSize &size, int eye);
++    void stereoEyeChanged();
+     QSize iconSizeHint() const;
+     inline QImage iconPixmap(const QIcon &icon) const;
+     QIcon loadFromTheme(const QString &iconName) const;
+@@ -337,4 +341,7 @@ private:
+     bool m_roundToIconSize = true;
+     bool m_blockNextAnimation = false;
+     QPointer<QQuickWindow> m_window;
++    // Whether the icon has a stereo picture, and the eye its image is for (0 outside an eye pass)
++    bool m_stereo = false;
++    int m_eye = 0;
+ };

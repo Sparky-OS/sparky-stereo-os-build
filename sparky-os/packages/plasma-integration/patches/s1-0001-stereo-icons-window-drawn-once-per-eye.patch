@@ -1,0 +1,300 @@
+Description: A window showing an icon the theme has in stereo is drawn once per eye on a stereo output
+ KIconEngine counts each drawing of an icon the icon theme has in stereo on the application
+ (_q_stereo_icons_drawn, KIconThemes 6.32.0-1+stereo3d3). The platform theme marks the widget
+ window being painted at that moment (_q_stereo_icon); an item that draws itself, such as
+ Kirigami's Icon, marks its own window. While a marked window is on an output that shows two eyes
+ (a 3D mode, a stereo pair of outputs or anaglyph, read with the stereo layer's
+ Stereo::ScreenMode), it gets _q_stereo_depth, which makes the edition's Qt draw it once per eye,
+ so that each eye shows its view of the icon; on any other output the property is taken away
+ again (unless something else, such as a depth style, set it), and a window that never drew such
+ an icon is never touched. Only on Wayland, the route of the edition's per-eye drawing.
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-22
+---
+diff --git a/qt6/CMakeLists.txt b/qt6/CMakeLists.txt
+index 5083755..a6a5227 100644
+--- a/qt6/CMakeLists.txt
++++ b/qt6/CMakeLists.txt
+@@ -27,6 +27,7 @@ find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS
+ )
+ 
+ find_package(KF6ColorScheme ${KF6_MIN_VERSION} REQUIRED CONFIG)
++find_package(StereoLayer 1.22 REQUIRED CONFIG)
+ 
+ ecm_set_disabled_deprecation_versions(QT 5.15.2
+     KF 5.101
+diff --git a/qt6/autotests/CMakeLists.txt b/qt6/autotests/CMakeLists.txt
+index a401bb1..fe31ee6 100644
+--- a/qt6/autotests/CMakeLists.txt
++++ b/qt6/autotests/CMakeLists.txt
+@@ -43,6 +43,7 @@ macro(FRAMEWORKINTEGRATION_TESTS _testname)
+         KF6::StatusNotifierItem
+         KF6::WindowSystem
+         KF6::GuiAddons
++        Stereo::Layer
+         Qt6::WaylandClient
+         XCB::XCB
+         Wayland::Client
+@@ -73,6 +74,7 @@ target_sources(kdeplatformtheme_unittest6 PRIVATE
+   ../src/platformtheme/kdeplatformfiledialogbase.cpp
+   ../src/platformtheme/kdeplatformsystemtrayicon.cpp ../src/platformtheme/kdeplatformsystemtrayicon.h
+   ../src/platformtheme/kwaylandintegration.cpp ../src/platformtheme/kwaylandintegration.h
++  ../src/platformtheme/stereoicons.cpp ../src/platformtheme/stereoicons.h
+   ../src/platformtheme/x11integration.cpp ../src/platformtheme/x11integration.h
+   ../src/platformtheme/qxdgdesktopportalfiledialog.cpp
+   ../src/platformtheme/qdbusmenubarwrapper.h
+diff --git a/qt6/src/platformtheme/CMakeLists.txt b/qt6/src/platformtheme/CMakeLists.txt
+index f26d50e..6831fe5 100644
+--- a/qt6/src/platformtheme/CMakeLists.txt
++++ b/qt6/src/platformtheme/CMakeLists.txt
+@@ -21,6 +21,7 @@ set(platformtheme_SRCS
+     kdeplatformmessagedialoghelper.cpp kdeplatformmessagedialoghelper.h
+     kdeplatformsystemtrayicon.cpp kdeplatformsystemtrayicon.h
+     kwaylandintegration.cpp kwaylandintegration.h
++    stereoicons.cpp stereoicons.h
+     x11integration.cpp x11integration.h
+     main.cpp
+     qxdgdesktopportalfiledialog.cpp
+@@ -64,6 +65,7 @@ target_link_libraries(KDEPlasmaPlatformTheme6
+         KF6::Notifications
+         KF6::WindowSystem
+         KF6::GuiAddons
++        Stereo::Layer
+         XCB::XCB
+         Qt6::WaylandClient
+         Qt6::GuiPrivate
+diff --git a/qt6/src/platformtheme/kdeplatformtheme.cpp b/qt6/src/platformtheme/kdeplatformtheme.cpp
+index 12b7de2..97b0054 100644
+--- a/qt6/src/platformtheme/kdeplatformtheme.cpp
++++ b/qt6/src/platformtheme/kdeplatformtheme.cpp
+@@ -17,6 +17,7 @@
+ #include "khintssettings.h"
+ #include "kiodelegate.h"
+ #include "kwaylandintegration.h"
++#include "stereoicons.h"
+ #include "x11integration.h"
+ 
+ #include <QApplication>
+@@ -54,6 +55,8 @@ KdePlatformTheme::KdePlatformTheme()
+     // explicitly not KWindowSystem::isPlatformWayland to not include the kwin process
+     if (QGuiApplication::platformName() == QLatin1String("wayland")) {
+         m_kwaylandIntegration.reset(new KWaylandIntegration(this));
++        // A window showing an icon the theme has in stereo is drawn once per eye on an output that shows two eyes
++        m_stereoIcons.reset(new StereoIcons);
+     }
+ 
+ #if HAVE_X11
+diff --git a/qt6/src/platformtheme/kdeplatformtheme.h b/qt6/src/platformtheme/kdeplatformtheme.h
+index e4d8b6b..b994120 100644
+--- a/qt6/src/platformtheme/kdeplatformtheme.h
++++ b/qt6/src/platformtheme/kdeplatformtheme.h
+@@ -63,6 +63,7 @@ private:
+     KHintsSettings *m_hints = nullptr;
+     KFontSettingsData *m_fontsData = nullptr;
+     QScopedPointer<KWaylandIntegration> m_kwaylandIntegration;
++    QScopedPointer<class StereoIcons> m_stereoIcons;
+     QScopedPointer<X11Integration> m_x11Integration;
+ };
+ 
+diff --git a/qt6/src/platformtheme/stereoicons.cpp b/qt6/src/platformtheme/stereoicons.cpp
+new file mode 100644
+index 0000000..d9707e9
+--- /dev/null
++++ b/qt6/src/platformtheme/stereoicons.cpp
+@@ -0,0 +1,137 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: LGPL-2.0-or-later
++*/
++
++#include "stereoicons.h"
++
++#include <QApplication>
++#include <QDynamicPropertyChangeEvent>
++#include <QScreen>
++#include <QWidget>
++#include <QWindow>
++
++#include <stereo-layer/screenmode.h>
++
++static constexpr char IconsDrawnProperty[] = "_q_stereo_icons_drawn";
++static constexpr char IconProperty[] = "_q_stereo_icon";
++static constexpr char DepthProperty[] = "_q_stereo_depth";
++
++StereoIcons::StereoIcons(QObject *parent)
++    : QObject(parent)
++{
++    QCoreApplication::instance()->installEventFilter(this);
++}
++
++StereoIcons::~StereoIcons() = default;
++
++bool StereoIcons::eventFilter(QObject *watched, QEvent *event)
++{
++    if (event->type() == QEvent::DynamicPropertyChange) {
++        const QByteArray name = static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName();
++        if (name == IconsDrawnProperty && watched == QCoreApplication::instance()) {
++            iconsDrawn();
++        } else if (name == IconProperty && watched->isWindowType() && watched->property(IconProperty).toBool()) {
++            watch(static_cast<QWindow *>(watched));
++        }
++    }
++    return false;
++}
++
++// Whether the widget or one inside it is being painted (Qt sets WA_WState_InPaintEvent around a paint event)
++static bool paintingIn(const QWidget *widget)
++{
++    if (widget->testAttribute(Qt::WA_WState_InPaintEvent)) {
++        return true;
++    }
++    for (const QObject *child : widget->children()) {
++        if (child->isWidgetType() && !static_cast<const QWidget *>(child)->isWindow() && paintingIn(static_cast<const QWidget *>(child))) {
++            return true;
++        }
++    }
++    return false;
++}
++
++void StereoIcons::iconsDrawn()
++{
++    // A stereo icon was just drawn: if a widget window not yet marked is being painted, it showed the icon
++    if (!qobject_cast<QApplication *>(QCoreApplication::instance())) {
++        return;
++    }
++    const auto topLevels = QApplication::topLevelWidgets();
++    for (const QWidget *topLevel : topLevels) {
++        QWindow *window = topLevel->windowHandle();
++        if (!window || !topLevel->isVisible() || window->property(IconProperty).toBool()) {
++            continue;
++        }
++        if (paintingIn(topLevel)) {
++            window->setProperty(IconProperty, true);
++            return;
++        }
++    }
++}
++
++void StereoIcons::watch(QWindow *window)
++{
++    if (!m_windows.contains(window)) {
++        m_windows.insert(window, false);
++        connect(window, &QWindow::screenChanged, this, [this, window] {
++            update(window);
++        });
++        connect(window, &QObject::destroyed, this, [this, window] {
++            m_windows.remove(window);
++        });
++    }
++    update(window);
++}
++
++Stereo::ScreenMode *StereoIcons::screenMode(QScreen *screen)
++{
++    Stereo::ScreenMode *&mode = m_screenModes[screen];
++    if (!mode) {
++        mode = new Stereo::ScreenMode(this);
++        mode->setScreen(screen);
++        connect(mode, &Stereo::ScreenMode::modeChanged, this, [this, screen] {
++            for (auto it = m_windows.cbegin(); it != m_windows.cend(); ++it) {
++                if (it.key()->screen() == screen) {
++                    update(it.key());
++                }
++            }
++        });
++        connect(screen, &QObject::destroyed, this, [this, screen] {
++            delete m_screenModes.take(screen);
++        });
++    }
++    return mode;
++}
++
++void StereoIcons::update(QWindow *window)
++{
++    QScreen *screen = window->screen();
++    const Stereo::OutputMode mode = screen ? screenMode(screen)->mode() : Stereo::OutputMode::Unknown;
++    const bool twoEyes = mode == Stereo::OutputMode::Stereo || mode == Stereo::OutputMode::Anaglyph;
++    bool &ours = m_windows[window];
++    const bool depth = window->property(DepthProperty).toBool();
++    if (twoEyes && !depth) {
++        window->setProperty(DepthProperty, true);
++        ours = true;
++    } else if (!twoEyes && depth && ours) {
++        window->setProperty(DepthProperty, QVariant());
++        ours = false;
++    } else {
++        return;
++    }
++    // Qt Widgets reads _q_stereo_depth when it paints the window, Qt Quick when the property changes
++    if (qobject_cast<QApplication *>(QCoreApplication::instance())) {
++        const auto topLevels = QApplication::topLevelWidgets();
++        for (QWidget *topLevel : topLevels) {
++            if (topLevel->windowHandle() == window) {
++                topLevel->update();
++                break;
++            }
++        }
++    }
++}
++
++#include "moc_stereoicons.cpp"
+diff --git a/qt6/src/platformtheme/stereoicons.h b/qt6/src/platformtheme/stereoicons.h
+new file mode 100644
+index 0000000..01a0698
+--- /dev/null
++++ b/qt6/src/platformtheme/stereoicons.h
+@@ -0,0 +1,51 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: LGPL-2.0-or-later
++*/
++
++#pragma once
++
++#include <QHash>
++#include <QObject>
++
++class QScreen;
++class QWindow;
++
++namespace Stereo
++{
++class ScreenMode;
++}
++
++/*
++ * A window that shows an icon the icon theme has in stereo is drawn once per eye while it is on
++ * an output that shows two eyes (a 3D mode, a stereo pair of outputs, anaglyph), so that each eye
++ * gets its view of the icon; on any other output, and for a window that never drew such an icon,
++ * nothing changes.
++ *
++ * KIconEngine counts each drawing of such an icon on the application (_q_stereo_icons_drawn). A
++ * widget window drawing one is marked here (_q_stereo_icon); an item that draws itself, such as
++ * Kirigami's Icon, marks its own window. A marked window gets _q_stereo_depth, which makes the
++ * edition's Qt draw it once per eye, while Stereo::ScreenMode says its screen shows two eyes; the
++ * property is taken away again when it does not, unless something else set it.
++ */
++class StereoIcons : public QObject
++{
++    Q_OBJECT
++public:
++    explicit StereoIcons(QObject *parent = nullptr);
++    ~StereoIcons() override;
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++
++private:
++    void iconsDrawn();
++    void watch(QWindow *window);
++    void update(QWindow *window);
++    Stereo::ScreenMode *screenMode(QScreen *screen);
++
++    // The windows that drew a stereo icon, and whether their _q_stereo_depth is ours
++    QHash<QWindow *, bool> m_windows;
++    QHash<QScreen *, Stereo::ScreenMode *> m_screenModes;
++};
