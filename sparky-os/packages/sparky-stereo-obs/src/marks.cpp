@@ -173,7 +173,7 @@ void onPacket(obs_output_t *, struct encoder_packet *packet, struct encoder_pack
 
 } // namespace
 
-void setCanvasLayout(bool stereo)
+bool setCanvasLayout(bool stereo)
 {
 	uint32_t flags = 0;
 	const enum obs_stereo3d_type before = obs_get_video_stereo3d(&flags);
@@ -181,7 +181,9 @@ void setCanvasLayout(bool stereo)
 	if (before != after || flags != 0) {
 		obs_set_video_stereo3d(after, 0);
 		blog(LOG_INFO, "[sparky-stereo-obs] canvas layout: %s", stereo ? "side by side, left eye first" : "2D");
+		return true;
 	}
+	return false;
 }
 
 MarkPlan planFor(OutputKind kind)

@@ -19,7 +19,8 @@ struct MarkPlan {
 
 // Hands the edition's libobs the main canvas's layout: full side by side, left eye first, on a stereo canvas, 2D otherwise.
 // The encoders and muxers of the edition's OBS read it when they start and write the 3D marks from it.
-void setCanvasLayout(bool stereo);
+// Returns true when the layout changed.
+bool setCanvasLayout(bool stereo);
 
 // The plan for the next start of kind, from the encoder the output already has or, before its first start, the one
 // the profile names (Settings, Output).

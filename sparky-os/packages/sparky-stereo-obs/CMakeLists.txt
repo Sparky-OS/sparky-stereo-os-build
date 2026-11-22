@@ -18,16 +18,20 @@ pkg_check_modules(STEREO_POLICY REQUIRED IMPORTED_TARGET stereo-policy>=1.23.0)
 # Stereo::ScreenMode: whether a screen shows 3D, the one signal the edition's capture programs read (Spectacle's
 # ImagePlatformKWin::updateStereoOutputs())
 find_package(StereoLayer 1.23 REQUIRED)
+# The previews as 3D areas: their Wayland surfaces declared full side by side
+pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.4)
+find_package(Qt6 REQUIRED COMPONENTS Gui)
 
 add_library(sparky-stereo-obs MODULE
 	src/plugin.cpp
 	src/marks.cpp
 	src/sei.c
 	src/stereo-input.cpp
+	src/preview.cpp
 	src/layer-words.cpp)
 set_target_properties(sparky-stereo-obs PROPERTIES PREFIX "")
 target_link_libraries(sparky-stereo-obs PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets
-	PkgConfig::STEREO_POLICY Stereo::Layer)
+	PkgConfig::STEREO_POLICY PkgConfig::STEREO_DECLARE Stereo::Layer Qt6::Gui)
 target_compile_options(sparky-stereo-obs PRIVATE -Wall -Wextra)
 target_compile_definitions(sparky-stereo-obs PRIVATE PROJECT_VERSION="${PROJECT_VERSION}")
 

@@ -31,7 +31,7 @@ constexpr int kAnaglyph[3][2][12] = {
 struct Filter {
 	obs_source_t *context = nullptr;
 	gs_effect_t *effect = nullptr;
-	gs_eparam_t *mode = nullptr, *phase = nullptr, *viewSize = nullptr, *sourceSize = nullptr;
+	gs_eparam_t *mode = nullptr, *phase = nullptr, *viewSize = nullptr, *sourceSize = nullptr, *onlyEye = nullptr;
 	gs_eparam_t *weights[6] = {};
 	std::string input = "automatic";
 	bool swap = false;
@@ -56,6 +56,14 @@ const stereo_policy_input_format *formatById(const std::string &id)
 // The packings that need more than the one picture a filter is handed (frames in turn, both views in one block, a
 // picture and its depth) are listed, as every list of the edition lists the whole specification, and are not converted
 // yet: say so where the person chose it and in OBS's log.
+// A 3D canvas lays its scenes out in one eye's space and draws them once per eye (libobs, obs_get_video_eye_size()):
+// the filter is then one view wide and gives each eye pass its own view, the left one outside an eye pass, as a 2D
+// screen shows a pair. On a 2D canvas it gives both views side by side, as before.
+bool canvasIsThreeD()
+{
+	return obs_get_video_eye_size(nullptr, nullptr);
+}
+
 bool convertsOnePicture(const stereo_policy_input_format *format)
 {
 	if (format->anaglyph || format->view == 3)
@@ -172,6 +180,7 @@ void *filterCreate(obs_data_t *settings, obs_source_t *context)
 		f->phase = gs_effect_get_param_by_name(f->effect, "phase");
 		f->viewSize = gs_effect_get_param_by_name(f->effect, "view_size");
 		f->sourceSize = gs_effect_get_param_by_name(f->effect, "source_size");
+		f->onlyEye = gs_effect_get_param_by_name(f->effect, "only_eye");
 		const char *names[6] = {"left_r", "left_g", "left_b", "right_r", "right_g", "right_b"};
 		for (int i = 0; i < 6; ++i)
 			f->weights[i] = gs_effect_get_param_by_name(f->effect, names[i]);
@@ -246,8 +255,10 @@ void filterRender(void *data, gs_effect_t *)
 	}
 	if (!obs_source_process_filter_begin(f->context, GS_RGBA, OBS_NO_DIRECT_RENDERING))
 		return;
+	const int onlyEye = canvasIsThreeD() ? (obs_get_render_eye() == OBS_RENDER_EYE_RIGHT ? 1 : 0) : -1;
 	gs_effect_set_int(f->mode, f->decidedMode);
 	gs_effect_set_int(f->phase, f->decidedPhase);
+	gs_effect_set_int(f->onlyEye, onlyEye);
 	int viewSize[2] = {(int)f->viewWidth, (int)f->viewHeight};
 	int sourceSize[2] = {(int)f->sourceWidth, (int)f->sourceHeight};
 	gs_effect_set_val(f->viewSize, viewSize, sizeof(viewSize));
@@ -265,14 +276,15 @@ void filterRender(void *data, gs_effect_t *)
 	}
 	gs_blend_state_push();
 	gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
-	obs_source_process_filter_end(f->context, f->effect, 2 * f->viewWidth, f->viewHeight);
+	obs_source_process_filter_end(f->context, f->effect, onlyEye >= 0 ? f->viewWidth : 2 * f->viewWidth,
+				      f->viewHeight);
 	gs_blend_state_pop();
 }
 
 uint32_t filterWidth(void *data)
 {
 	auto *f = static_cast<Filter *>(data);
-	return 2 * f->viewWidth;
+	return canvasIsThreeD() ? f->viewWidth : 2 * f->viewWidth;
 }
 
 uint32_t filterHeight(void *data)

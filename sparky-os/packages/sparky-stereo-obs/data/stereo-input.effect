@@ -9,6 +9,8 @@ uniform texture2d image;
 
 uniform int mode;
 uniform int phase;
+// -1: both views side by side; 0 or 1: that eye's view alone, for an eye pass of a 3D canvas
+uniform int only_eye;
 uniform int2 view_size;
 uniform int2 source_size;
 // anaglyph: for each output eye, the weights of R, G and B for each channel and the channel's divisor
@@ -41,10 +43,10 @@ float channel(float4 weights, float3 rgb)
 
 float4 PSUnpack(VertData v_in) : TARGET
 {
-	int2 out_size = int2(view_size.x * 2, view_size.y);
+	int2 out_size = only_eye >= 0 ? view_size : int2(view_size.x * 2, view_size.y);
 	int2 p = int2(min(v_in.uv * float2(out_size), float2(out_size) - 0.5));
-	int eye = p.x >= view_size.x ? 1 : 0;
-	int x = p.x - eye * view_size.x;
+	int eye = only_eye >= 0 ? only_eye : (p.x >= view_size.x ? 1 : 0);
+	int x = only_eye >= 0 ? p.x : p.x - eye * view_size.x;
 	int y = p.y;
 	int part = eye == 0 ? phase : 1 - phase;
 	int2 at = int2(x, y);
