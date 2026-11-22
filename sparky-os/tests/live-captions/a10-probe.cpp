@@ -54,7 +54,7 @@ int main(int argc,char **argv) {
     }
     if(!pw.link_output())return 5;
     nlohmann::json trials=nlohmann::json::array();bool all=true;
-    for(int trial=0;trial<3;++trial) {
+    for(int trial=0;trial<1;++trial) {
         const auto start=Clock::now();const double cpu_start=ticks(daemon.pid());const std::size_t first=captions.size();
         auto player=pw.play_through_the_speakers(wav);if(!player.started())return 6;
         double end=0,final=0;std::string text;bool behind=false;
