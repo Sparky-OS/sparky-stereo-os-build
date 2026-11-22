@@ -9,27 +9,28 @@ import org.kde.kirigami as Kirigami
 ColumnLayout {
     id: captions
     property var page
-    readonly property var data: page ? (page.status.liveCaptions || {}) : ({})
-    readonly property var words: data.labels || ({})
-    readonly property var models: data.models || []
+    readonly property var captionStatus: page ? (page.status.liveCaptions || {}) : ({})
+    readonly property var words: captionStatus.labels || ({})
+    readonly property var models: captionStatus.models || []
     function act(args) { page.act(["live-captions"].concat(args)) }
     spacing: Kirigami.Units.largeSpacing
     Kirigami.Heading { level: 2; text: captions.words.title || "" }
     QQC2.Label { Layout.fillWidth: true; wrapMode: Text.Wrap; text: captions.words.privacy || "" }
     QQC2.Switch {
+        objectName: "liveSwitch"
         text: checked ? captions.words.off : captions.words.on
-        checked: !!captions.data.on
+        checked: !!captions.captionStatus.on
         onClicked: captions.act([checked ? "on" : "off"])
     }
-    QQC2.Label { Layout.fillWidth: true; wrapMode: Text.Wrap; text: captions.data.message || "" }
+    QQC2.Label { Layout.fillWidth: true; wrapMode: Text.Wrap; text: captions.captionStatus.message || "" }
     QQC2.Label { Layout.fillWidth: true; wrapMode: Text.Wrap; text: captions.words.card || "" }
     QQC2.CheckBox {
-        text: captions.words.login || ""; checked: !!captions.data.login
+        text: captions.words.login || ""; checked: !!captions.captionStatus.login
         onClicked: captions.act(["login", checked ? "on" : "off"])
     }
     QQC2.CheckBox {
-        text: captions.words.microphone || ""; checked: !!captions.data.microphone
-        enabled: !captions.data.on
+        text: captions.words.microphone || ""; checked: !!captions.captionStatus.microphone
+        enabled: !captions.captionStatus.on
         onClicked: captions.act(["microphone", checked ? "on" : "off"])
     }
     QQC2.Label { text: captions.words.model || "" }
@@ -38,7 +39,7 @@ ColumnLayout {
         Layout.fillWidth: true
         textRole: "id"; valueRole: "id"; model: captions.models
         // No initial selection means no implicit default speech model.
-        currentIndex: captions.models.findIndex(m => m.path === captions.data.model)
+        currentIndex: captions.models.findIndex(m => m.path === captions.captionStatus.model)
     }
     FileDialog {
         id: existing
@@ -55,23 +56,23 @@ ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
         QQC2.Button {
             text: captions.words.existing || ""
-            enabled: !captions.data.on
+            enabled: !captions.captionStatus.on
             onClicked: existing.open()
         }
         QQC2.Button {
             text: captions.words.choose || ""
-            enabled: model.currentIndex >= 0 && !captions.data.on
+            enabled: model.currentIndex >= 0 && !captions.captionStatus.on
             onClicked: captions.act(["select", model.currentValue])
         }
         QQC2.Button {
             text: captions.words.download || ""
-            enabled: model.currentIndex >= 0 && !captions.data.on
+            enabled: model.currentIndex >= 0 && !captions.captionStatus.on
             onClicked: captions.act(["download", model.currentValue])
         }
         QQC2.Button {
             text: captions.words.anyway || ""
-            visible: captions.data.held === true
-            enabled: model.currentIndex >= 0 && !captions.data.on
+            visible: captions.captionStatus.held === true
+            enabled: model.currentIndex >= 0 && !captions.captionStatus.on
             onClicked: captions.act(["download", model.currentValue, "--even-if-metered"])
         }
         QQC2.Button { text: captions.words.refresh || ""; onClicked: captions.page.refresh() }

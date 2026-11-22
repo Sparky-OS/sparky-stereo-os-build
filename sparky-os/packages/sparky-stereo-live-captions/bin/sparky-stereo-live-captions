@@ -97,6 +97,8 @@ def publish(path, data, expected=None):
     private_dir(path.parent)
     if fingerprint(path) != expected:
         raise Refused('changed', str(path))
+    if expected is not None and not path.stat().st_mode & stat.S_IWUSR:
+        raise Refused('changed', str(path))
     fd, temporary = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
     try:
         with os.fdopen(fd, 'wb') as stream:
@@ -175,12 +177,16 @@ class HTTPSRedirect(urllib.request.HTTPRedirectHandler):
 
 def download(entry, even=False):
     print(say('offer', entry['id'], entry['bytes'], entry['url'], entry['sha256']), flush=True)
-    if partners().held(even):
-        raise Refused('held')
+    value = partners().Settings().get(['Default', 'speech'], 'Model', '')
+    if value and Path(value).is_absolute() and Path(value).name == entry['file']:
+        verify_model(dict(entry, path=value))
+        return
     dest = model_path(entry)
     if os.path.lexists(dest):
         verify_model(entry)
         return
+    if partners().held(even):
+        raise Refused('held')
     private_dir(dest.parent)
     fd, temporary = tempfile.mkstemp(prefix='.download-', dir=dest.parent)
     try:
@@ -218,7 +224,7 @@ def unit(*args, check=True):
 
 
 def vibe_plan(path):
-    """Only an absent store, our unchanged store, or the exact row-69 seed."""
+    """Only an absent store, our unchanged store, or the exact edition seed."""
     target = data_home() / 'github.com.thewh1teagle.vibe/app_config.json'
     record = state_home() / 'vibe.json'
     before = fingerprint(target)
@@ -248,6 +254,7 @@ def vibe_plan(path):
 def select(name):
     if running('vibe') or running('captiond') or running('kaption') or unit('is-active', check=False).returncode == 0:
         raise Refused('running')
+    shared_choice_guard()
     entry = model_entry(name) if not Path(name).is_absolute() else entry_for_path(Path(name))
     path = verify_model(entry)
     target, record, before, contents = vibe_plan(path)
@@ -261,8 +268,15 @@ def select(name):
 
 def chosen():
     api = partners()
+    shared_choice_guard()
     value = api.Settings().get(['Default', 'speech'], 'Model', '')
     return entry_for_path(Path(value))
+
+
+def shared_choice_guard():
+    settings = partners().Settings()
+    if settings.get(['Program', 'vibe', 'speech'], 'Model') or settings.get(['Program', 'vibe', 'speech'], 'Interface'):
+        raise Refused('own')
 
 
 def entry_for_path(path):
@@ -282,7 +296,7 @@ def gpu_route():
         raise Refused('unavailable', card['problem'] or card['id'])
     # The shared wrapper constrains the visible back ends to the chosen PCI card.
     command = ['sparky-stereo-gpu-run', '--compute', '--category', 'partners', '/usr/bin/captiond', '--list-devices']
-    out = subprocess.run(command, capture_output=True, text=True, check=True, timeout=120)
+    out = subprocess.run(command, capture_output=True, text=True, check=True, timeout=120, env=cleaned_env())
     devices = []
     for line in out.stdout.splitlines():
         match = re.fullmatch(r'\s*(\d+)\s+(\S+)\s+(GPU|CPU)\s+(.+?)\s*', line)
@@ -303,7 +317,10 @@ def route_matches(expected, event):
 
 
 def cleaned_env():
-    return {k: v for k, v in os.environ.items() if not k.startswith('CAPTIOND_')}
+    # The wrapper otherwise treats inherited visibility as an explicit override.
+    # This workflow was chosen on the page; that page remains its authority.
+    visibility = {'CUDA_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'GGML_VK_VISIBLE_DEVICES'}
+    return {k: v for k, v in os.environ.items() if not k.startswith('CAPTIOND_') and k not in visibility}
 
 
 def terminate(children):
@@ -385,6 +402,8 @@ def serve():
             while b'\n' in pending:
                 line, pending = pending.split(b'\n', 1)
                 event = json.loads(line)
+                if event.get('type') == 'error':
+                    raise Refused('failed', event.get('message', event.get('code', '?')))
                 if event.get('type') == 'hello':
                     hello = event.get('proto') == 1 and event.get('daemon') == 'captiond'
                     if not hello:

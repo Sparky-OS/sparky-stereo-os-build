@@ -84,6 +84,13 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(a.verify_model(a.chosen()),outside)
         self.assertFalse(self.model.exists())
 
+    def test_download_reuses_selected_external_file(self):
+        outside=self.root/'old-library'/self.entry['file'];outside.parent.mkdir();self.model.rename(outside)
+        a.select(str(outside))
+        with patch.object(a.urllib.request,'build_opener') as opener:a.download(self.entry)
+        opener.assert_not_called();self.assertFalse(self.model.exists())
+        self.assertEqual(len(list(self.root.rglob('*.bin'))),1)
+
     def test_known_seed_preserves_unrelated_values(self):
         target=a.data_home()/'github.com.thewh1teagle.vibe/app_config.json'
         target.parent.mkdir();target.write_text(json.dumps(dict(self.seed,**{'model.gpuDevice':2})))
@@ -116,8 +123,21 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaises(a.Refused):a.select('tiny')
         self.assertEqual(self.model.read_bytes(),b'changed')
 
+    def test_readonly_store_is_not_replaced(self):
+        a.select('tiny')
+        target=a.data_home()/'github.com.thewh1teagle.vibe/app_config.json'
+        before=target.read_bytes();target.chmod(0o400)
+        with self.assertRaises(a.Refused):a.select('tiny')
+        self.assertEqual(target.read_bytes(),before)
+
     def test_running_app_refused(self):
         with patch.object(a,'running',lambda name: name=='vibe'),self.assertRaises(a.Refused):a.select('tiny')
+        self.assertFalse((a.data_home()/'github.com.thewh1teagle.vibe/app_config.json').exists())
+
+    def test_personal_program_override_kept(self):
+        key=(('Program','vibe','speech'),'Model');self.settings[key]='personal-choice'
+        with self.assertRaises(a.Refused):a.select('tiny')
+        self.assertEqual(self.settings[key],'personal-choice')
         self.assertFalse((a.data_home()/'github.com.thewh1teagle.vibe/app_config.json').exists())
 
     def test_metered_does_not_fetch(self):
@@ -138,8 +158,9 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(list(self.model.parent.glob('.download-*')))
 
     def test_inherited_captiond_settings_removed(self):
-        with patch.dict(os.environ,{'CAPTIOND_INPUT':'auto-source','CAPTIOND_GPU':'false'}):
+        with patch.dict(os.environ,{'CAPTIOND_INPUT':'auto-source','CAPTIOND_GPU':'false','CUDA_VISIBLE_DEVICES':'wrong'}):
             self.assertFalse(any(k.startswith('CAPTIOND_') for k in a.cleaned_env()))
+            self.assertNotIn('CUDA_VISIBLE_DEVICES',a.cleaned_env())
 
     def session(self,mode,mic=False):
         a.select('tiny');self.settings[(('LiveCaptions',),'Microphone')]='true' if mic else 'false'
