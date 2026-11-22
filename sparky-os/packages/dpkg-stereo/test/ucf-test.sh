@@ -99,7 +99,7 @@ UC_POSTINST_END
 cat >"$d/DEBIAN/postrm" <<'UC_POSTRM_END'
 #!/bin/sh
 set -e
-if [ "$1" = remove ] || [ "$1" = purge ]; then
+if { [ "$1" = remove ] || [ "$1" = purge ]; } && [ "$(dpkg-divert --listpackage /etc/default/uc-demo)" = uc-keeper ]; then
 	rm -f /etc/default/uc-demo /etc/default/uc-demo.ucf-dist
 	if command -v ucf >/dev/null; then ucf --package uc-keeper --purge /etc/default/uc-demo; ucfr --purge uc-keeper /etc/default/uc-demo; fi
 	dpkg-divert --quiet --package uc-keeper --remove --rename --divert /etc/default/uc-demo.debian /etc/default/uc-demo
