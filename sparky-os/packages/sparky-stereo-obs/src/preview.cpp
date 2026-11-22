@@ -182,6 +182,18 @@ public:
 protected:
 	bool eventFilter(QObject *object, QEvent *event) override
 	{
+		// Qt sends a window its Hide event before the platform window drops its wl_surface, while the widget's own
+		// Hide event comes after: the declaration and the second view go here, while the surface exists. (A surface
+		// destroyed declared with a two-view buffer corrupted the heap on radeonsi when the preview was shown again;
+		// ORDER 61 milestone 3, step 3.)
+		if (event->type() == QEvent::Hide && object->isWindowType()) {
+			for (auto &[key, area] : areas)
+				if (area.widget && area.declared && area.widget->windowHandle() == object) {
+					undeclare(area);
+					area.shown = Shown::Nothing;
+				}
+			return false;
+		}
 		auto *widget = qobject_cast<QWidget *>(object);
 		if (!widget || !widget->inherits("OBSQTDisplay"))
 			return false;
@@ -189,6 +201,21 @@ protected:
 			if (areas.find(widget) == areas.end()) {
 				areas[widget].widget = widget;
 				QObject::connect(widget, &QObject::destroyed, qApp, [widget] { areas.erase(widget); });
+			}
+			// OBSQTDisplay destroys its obs_display when its window is hidden and says so by setting obsDisplay to 0,
+			// before the widget's Hide event: the old display is gone at once, so it is dropped here, never touched
+			// again, and its surface's declaration goes with it while the surface still exists
+			if (event->type() == QEvent::DynamicPropertyChange &&
+			    static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName() == "obsDisplay") {
+				Area &area = areas[widget];
+				auto *now = reinterpret_cast<obs_display_t *>(widget->property("obsDisplay").value<quintptr>());
+				if (now != area.display) {
+					if (area.declared)
+						stereo_remove_wayland(area.declared);
+					area.declared = nullptr;
+					area.display = now;
+					area.shown = Shown::Nothing;
+				}
 			}
 			QMetaObject::invokeMethod(qApp, [widget] { apply(widget); }, Qt::QueuedConnection);
 		} else if (event->type() == QEvent::Hide) {

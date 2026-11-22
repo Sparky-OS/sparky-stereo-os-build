@@ -263,6 +263,12 @@ void filterRender(void *data, gs_effect_t *)
 	int sourceSize[2] = {(int)f->sourceWidth, (int)f->sourceHeight};
 	gs_effect_set_val(f->viewSize, viewSize, sizeof(viewSize));
 	gs_effect_set_val(f->sourceSize, sourceSize, sizeof(sourceSize));
+	// the weights are uniforms of the effect: set every frame (zero outside an anaglyph input), or libobs logs each
+	// unset one as "set to invalid size 0" on every draw
+	struct vec4 none;
+	vec4_zero(&none);
+	for (int i = 0; i < 6; ++i)
+		gs_effect_set_vec4(f->weights[i], &none);
 	if (f->decidedMode == Anaglyph && f->anaglyphPair >= 1 && f->anaglyphPair <= 3) {
 		for (int out = 0; out < 2; ++out) {
 			// the left output eye takes the left eye's view of the colours, or the right one's with the swap
