@@ -8,6 +8,8 @@ export DOCKER_HOST=unix:///K3D/partners/queue/science-paraview-edition-build-and
 CA="-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro"
 G=/mnt/games/k3d-temp/build/science-paraview-50f
 mkdir -p work/cmp2
+# a restage replaces the folders of these three versions (literal paths)
+rm -rf /var/lib/sparky-lanes/science-paraview-50f/stage/paraview-6.1.1+dfsg1-3+stereo3d2 /var/lib/sparky-lanes/science-paraview-50f/stage/jmol-16.3.55+dfsg-1+stereo3d3 /var/lib/sparky-lanes/science-paraview-50f/stage/stereo-matplotlib-0.1.2
 step() { # NAME VERSION_FILE_STEM STAGE_FOLDER CHANGES
   local n=$1 stem=$2 st=$3 ch=$4 W=$G/$1/pkg
   grep -q 'container exit 0' build/out-$n/exit.txt || { echo "$n: build failed"; return 1; }
