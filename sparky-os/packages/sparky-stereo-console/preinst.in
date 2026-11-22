@@ -64,7 +64,7 @@ if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
     # Before @FIRST@ the files under /etc were plain files, which dpkg replaced at every upgrade, a person's change
     # with them (Debian Policy 10.7.3: "local changes must be preserved during a package upgrade"). From @FIRST@
     # @CONFF@ are conffiles, and @MANAGED@ (at names this package diverts, where dpkg cannot keep two packages'
-    # conffiles apart) are made and kept by the postinst. Each such file is set aside here, so dpkg asks nothing about
+    # conffiles apart) are kept through ucf by the postinst. Each such file is set aside here, so dpkg asks nothing about
     # a file it has no record of and removes nothing of the person's; the postinst gives a changed one back.
     if [ "$1" = "install" ] && [ -z "$2" ] || dpkg --compare-versions "$2" lt @FIRST@; then
         sums=

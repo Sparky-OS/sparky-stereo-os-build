@@ -3,7 +3,6 @@
 set -e
 package=@PACKAGE@
 held=/var/lib/$package/held
-state=/var/lib/$package/written
 defaults=/usr/share/$package/defaults
 
 say_default() {
@@ -36,22 +35,31 @@ dist_of() {
     esac
 }
 
-# What the postinst wrote at a name it keeps: PATH MD5 MODE TOLD (TOLD: the default last said to the person, or -)
-row() { [ -f "$state" ] && awk -v p="$1" '$1 == p {print $'"$2"'; exit}' "$state" || :; }
-set_row() {
-    mkdir -p "${state%/*}"
-    { [ -f "$state" ] && awk -v p="$1" '$1 != p' "$state"; printf '%s %s %s %s\n' "$1" "$2" "$3" "$4"; } >"$state.new"
-    mv "$state.new" "$state"
-}
-write_default() {
-    mode=$(stat -c %a "$defaults$1")
-    [ "${1#/etc/update-motd.d/}" = "$1" ] || mode=755
-    mkdir -p "${1%/*}"
-    cp "$defaults$1" "$1.$package-new"
-    chmod "$mode" "$1.$package-new"
-    mv -f "$1.$package-new" "$1"
-    rm -f "$(dist_of "$1")"
-    set_row "$1" "$(md5sum <"$1" | cut -d' ' -f1)" "$mode" -
+# A file at a name this package diverts, kept through ucf (Debian Policy 10.7.3: scripts that "create, update and
+# maintain the file" and "must not overwrite the user's version"; ucf records what it wrote in /var/lib/ucf/hashfile,
+# which dpkg-stereo --verify reads). ucf replaces an untouched file with the new default and creates a missing one
+# it never wrote. A file the person changed, replaced or removed is what ucf asks about; its question's default is
+# "keep the local version", with the new default written beside it as PATH.ucf-dist, and debconf's noninteractive
+# frontend takes that default without asking. UCF_FORCE_CONFFOLD cannot do this: it also keeps an untouched file
+# from the new default, and dpkg's --force-confdef (DPKG_FORCE) overrides it and makes ucf ask (row 813, measured
+# with ucf 3.0056). The new default beside a kept file is said once, in the person's language.
+keep_through_ucf() {
+    dist=$1.ucf-dist
+    before=
+    [ ! -f "$dist" ] || before=$(md5sum <"$dist" | cut -d' ' -f1)
+    created=
+    [ -e "$1" ] || [ -L "$1" ] || created=1
+    DEBIAN_FRONTEND=noninteractive ucf "$defaults$1" "$1"
+    ucfr "$package" "$1"
+    # ucf copies a default it creates with the default's mode; a motd script runs only when executable, and the
+    # default beside a kept one must not (run-parts --lsbsysinit would take NAME.ucf-dist for a script)
+    if [ -n "$created" ] && [ -f "$1" ] && [ "${1#/etc/update-motd.d/}" != "$1" ]; then
+        chmod 755 "$1"
+    fi
+    if [ -f "$dist" ] && [ "$(md5sum <"$dist" | cut -d' ' -f1)" != "$before" ]; then
+        chmod 644 "$dist"
+        say_default "$1" "$dist"
+    fi
 }
 
 if [ "$1" = "configure" ]; then
@@ -80,38 +88,20 @@ if [ "$1" = "configure" ]; then
             rm -f "$held$f"
         fi
     done
-    # Files at names this package diverts, made and kept here (Debian Policy 10.7.3: scripts that "create, update and
-    # maintain the file" and "must not overwrite the user's version"): an untouched one follows the package's new
-    # default; one the person changed, replaced or removed stays as they made it, and the new default is put beside
-    # it and said once.
+    # Files at names this package diverts, kept through ucf. Before @FIRST@ they were plain files of the package:
+    # the preinst set each aside and marked the ones the person had changed (against the old version's md5sums). An
+    # untouched one goes, so ucf creates the new default; a changed one goes back to its name first, so ucf, which
+    # has no record of it, keeps it and puts the new default beside it.
     for f in @MANAGED@; do
-        new=$(md5sum <"$defaults$f" | cut -d' ' -f1)
-        written=$(row "$f" 2)
-        if [ -e "$held$f.edited" ]; then
-            mv "$held$f" "$f"
+        if [ -e "$held$f" ] || [ -L "$held$f" ]; then
+            if [ -e "$held$f.edited" ] && [ ! -e "$f" ] && [ ! -L "$f" ]; then
+                mv "$held$f" "$f"
+            else
+                rm -f "$held$f"
+            fi
             rm -f "$held$f.edited"
-            set_row "$f" - - -
-        elif [ -e "$held$f" ] || [ -L "$held$f" ]; then
-            rm -f "$held$f"
-            write_default "$f"
-            continue
-        elif [ -z "$written" ] && [ ! -e "$f" ] && [ ! -L "$f" ]; then
-            write_default "$f"
-            continue
-        elif [ -z "$written" ]; then
-            set_row "$f" - - -
-        elif [ -f "$f" ] && [ ! -L "$f" ] && [ "$(md5sum <"$f" | cut -d' ' -f1)" = "$written" ] &&
-            [ "$(stat -c %a "$f")" = "$(row "$f" 3)" ]; then
-            [ "$written" = "$new" ] || write_default "$f"
-            continue
         fi
-        if [ "$(row "$f" 4)" != "$new" ]; then
-            dist=$(dist_of "$f")
-            cp "$defaults$f" "$dist"
-            chmod 644 "$dist"
-            say_default "$f" "$dist"
-            set_row "$f" "$(row "$f" 2)" "$(row "$f" 3)" "$new"
-        fi
+        keep_through_ucf "$f"
     done
     [ ! -d "$held" ] || find "$held" -depth -type d -empty -delete
 fi

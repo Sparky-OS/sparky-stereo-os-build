@@ -5,10 +5,14 @@
     Up to 20261121.1 all eight were plain files, and dpkg replaced them at every upgrade with no word.
   * /etc/motd, /etc/skel/.bash_aliases and /etc/skel/.selected_editor are conffiles.
   * /etc/issue, /etc/issue.net, /etc/update-motd.d/10-uname, /etc/nanorc and /etc/zsh/zshrc, at names the package
-    diverts, are made and kept by the postinst from /usr/share/sparky-stereo-console/defaults: an untouched one
-    follows the new default, a changed one stays and the new default is put beside it as FILE.dpkg-dist and said
-    once. A conffile at a diverted name took the owning package's hash at install (dpkg asked about a file nobody
-    had touched) and could not be removed (dpkg-divert refused to rename over it); measured with dpkg 1.23.11.
+    diverts, are kept through ucf by the postinst from /usr/share/sparky-stereo-console/defaults (Depends: ucf): an
+    untouched one follows the new default, a changed one stays and the new default is put beside it as FILE.ucf-dist
+    and said once; ucf's records let dpkg-stereo --verify name a person's change to them. ucf's own question is
+    answered by its default ("keep the local version") through debconf's noninteractive frontend, so nothing is
+    asked; UCF_FORCE_CONFFOLD would keep an untouched file from the new default, and dpkg's --force-confdef
+    overrides it (measured with ucf 3.0056). A conffile at a diverted name took the owning package's hash at
+    install (dpkg asked about a file nobody had touched) and could not be removed (dpkg-divert refused to rename
+    over it); measured with dpkg 1.23.11.
   * At the upgrade from an older version, an untouched file follows the new one and a changed one stays, the new
     default beside it, said once in ten languages; nothing is asked. At the removal, a changed file at a diverted
     name is kept in /var/backups/sparky-stereo-console and said, and the owning package's own file is back.
