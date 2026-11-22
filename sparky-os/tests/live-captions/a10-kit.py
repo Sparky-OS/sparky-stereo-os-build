@@ -20,9 +20,11 @@ CPP = '// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos\n// SPDX-License-Iden
 def command(args,**kwargs):
     return subprocess.run(args,text=True,check=True,**kwargs)
 
-def installed():
+def package_states():
     rows=subprocess.check_output(['dpkg-query','-W','-f=${binary:Package}\t${Version}\t${db:Status-Status}\n'],text=True)
-    return {p:v for p,v,s in (line.split('\t') for line in rows.splitlines()) if s=='installed'}
+    return {p:(v,s) for p,v,s in (line.split('\t') for line in rows.splitlines()) if s!='not-installed'}
+def installed():
+    return {p:v for p,(v,s) in package_states().items() if s=='installed'}
 
 def package_plan(text):
     return [line.split()[1] for line in text.splitlines() if line.startswith('Inst ')]
@@ -57,7 +59,10 @@ def main():
     stage=args.stage.resolve(strict=True);out=args.output.resolve()
     if out.exists():raise SystemExit('Output must be a new folder.')
     out.mkdir(parents=True);work=out/'scratch';work.mkdir();cache=work/'apt-cache';cache.mkdir()
-    before=installed();(out/'packages-before.json').write_text(json.dumps(before,indent=2))
+    before=installed();before_states=package_states();before_auto=set(subprocess.check_output(['apt-mark','showauto'],text=True).split())
+    (out/'packages-before.json').write_text(json.dumps(before,indent=2))
+    (out/'package-states-before.json').write_text(json.dumps(before_states,indent=2))
+    (out/'auto-before.json').write_text(json.dumps(sorted(before_auto),indent=2))
     expected={line.split(None,1)[1].lstrip('* '):line.split()[0] for line in (stage/'SHA256SUMS').read_text().splitlines()}
     names=['captiond','libcaptiond-client0','libcaptiond-client-dev','libcaptiond-client-tests-dev','kaption','qaption','kaption-common']
     debs=[]
@@ -68,11 +73,13 @@ def main():
     wanted=debs+['g++','pkgconf','pipewire-bin','libwhisper1=1.9.5+dfsg-1','libggml0=0.29.0-1']
     apt=['apt-get','-y','--no-install-recommends','-o','Dir::Cache::archives='+str(cache)]
     env=dict(os.environ,DEBIAN_FRONTEND='noninteractive');new=[];success=False;cleanup_error=None
+    def interrupted(signum,frame):raise KeyboardInterrupt('Termination requested; cleaning kit additions')
+    signal.signal(signal.SIGTERM,interrupted)
     try:
         plan=subprocess.check_output(apt+['--simulate','install']+wanted,text=True,env=env);(out/'install-plan.txt').write_text(plan)
         if any(line.startswith('Remv ') for line in plan.splitlines()):raise RuntimeError('Install would remove an existing package; refused.')
         planned=package_plan(plan)
-        def already(p):return p in before or p+':amd64' in before
+        def already(p):return p in before_states or p+':amd64' in before_states
         if any(already(p) for p in planned):raise RuntimeError('Install would change an existing package version; refused.')
         new=planned
         uris=subprocess.check_output(apt+['--print-uris','install']+wanted,text=True,env=env);(out/'download-plan.txt').write_text(uris)
@@ -122,7 +129,7 @@ def main():
         (out/'rows.json').write_text(json.dumps(rows,indent=2));success=all(r['exit']==0 for r in rows)
     finally:
         try:
-            now=installed();remove=[p for p in new if p in now or p+':amd64' in now]
+            now=package_states();remove=[p for p in new if p in now or p+':amd64' in now]
             if remove:
                 plan=subprocess.check_output(['apt-get','--simulate','purge']+remove,text=True,env=env)
                 removals={line.split()[1].split(':')[0] for line in plan.splitlines() if line.startswith(('Remv ','Purg '))}
@@ -131,8 +138,14 @@ def main():
                 command(['apt-get','-y','purge']+remove,env=env,stdout=(out/'apt-remove.log').open('w'),stderr=subprocess.STDOUT)
             remaining=installed();(out/'packages-after.json').write_text(json.dumps(remaining,indent=2))
             changed={p:(v,remaining.get(p)) for p,v in before.items() if remaining.get(p)!=v}
-            leftover={p:v for p,v in remaining.items() if p not in before and p.split(':')[0] in {x.split(':')[0] for x in new}}
+            leftover={p:v for p,v in package_states().items() if p not in before_states and p.split(':')[0] in {x.split(':')[0] for x in new}}
             if changed or leftover:raise RuntimeError('Cleanup differs: '+repr(dict(changed=changed,leftover=leftover)))
+            after_auto=set(subprocess.check_output(['apt-mark','showauto'],text=True).split())
+            original_names={p.split(':')[0] for p in before}
+            restore_auto=sorted((before_auto-after_auto)&original_names)
+            restore_manual=sorted((after_auto-before_auto)&original_names)
+            if restore_auto:command(['apt-mark','auto']+restore_auto)
+            if restore_manual:command(['apt-mark','manual']+restore_manual)
         except Exception as e:cleanup_error=str(e)
         shutil.rmtree(work)
         (out/'cleanup.json').write_text(json.dumps(dict(scratch_removed=not work.exists(),package_cleanup_error=cleanup_error),indent=2))
