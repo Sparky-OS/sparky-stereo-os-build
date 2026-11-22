@@ -51,6 +51,7 @@ SOURCES = {
     'kdenlive-order61g.po.patch': ('kdenlive', None),
     'kalzium-stereo3d.po.patch': ('kalzium', None),
     'kf6-kfilemetadata-stereo3d.po.patch': ('kf6-kfilemetadata', None),
+    'kf6-kfilemetadata-order46b.po.patch': ('kf6-kfilemetadata', None),
     'kf6-kio-gpu-launch.po.patch': ('kf6-kio', None),
     'kinfocenter-stereo3d.po.patch': ('kinfocenter', None),
     'kinfocenter-displaycal.po.patch': ('kinfocenter', None),

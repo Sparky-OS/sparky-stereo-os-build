@@ -6,8 +6,9 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m3}
-version=${VERSION:-20261119.2~sparky9~0+lc1}
-base=${BASE_VERSION:-20261119.2~sparky9~0+lc1}
+. "$repo/package-versions.sh"
+version=${GLASS_VERSION:?package-versions.sh must define GLASS_VERSION}
+base=$version
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-m3-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 RECIPE=$repo

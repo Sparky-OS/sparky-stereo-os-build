@@ -1,0 +1,32 @@
+--- a/debian/control
++++ b/debian/control
+@@ -1,9 +1,10 @@
+ Source: kf6-kiconthemes
+ Section: libs
+-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
++Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++XSBC-Original-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+ Uploaders: Aurélien COUDERC <coucouf@debian.org>,
+            Patrick Franz <deltaone@debian.org>,
+-Build-Depends: debhelper-compat (= 14),
++Build-Depends: qt6-svg-plugins <!nocheck>, debhelper-compat (= 14),
+                dh-sequence-kf6,
+                dh-sequence-pkgkde-symbolshelper,
+                dh-sequence-qmldeps,
+@@ -26,7 +27,7 @@
+                xauth <!nocheck>,
+                xvfb <!nocheck>,
+ Standards-Version: 4.7.4
+-Homepage: https://invent.kde.org/frameworks/kiconthemes
++Homepage: https://sparkylinux.org
+ Vcs-Browser: https://salsa.debian.org/qt-kde-team/kde/kf6-kiconthemes
+ Vcs-Git: https://salsa.debian.org/qt-kde-team/kde/kf6-kiconthemes.git
+ 
+--- a/debian/libkf6iconthemes6.symbols
++++ b/debian/libkf6iconthemes6.symbols
+@@ -170,3 +170,5 @@
+  kiconloader_ms_between_checks@Base 6.0.0
+  qt_plugin_instance@Base 6.0.0
+  qt_plugin_query_metadata_v2@Base 6.0.0
++ _ZNK10KIconTheme20stereoIconPathByNameERK7QStringiN11KIconLoader9MatchTypeEd@Base 6.30.0-1+stereo3d1~
++ _ZNK11KIconLoader14loadStereoIconERK7QStringRK5QSizedP7QPixmapS7_@Base 6.30.0-1+stereo3d1~

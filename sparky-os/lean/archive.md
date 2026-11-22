@@ -79,7 +79,8 @@ The candidate replaces only its own same-name entry in its side's universe.
 Identical unchanged inputs share their verified content-addressed bytes across both sides.
 A predecessor whose executable or runtime libraries do not resolve in the qualified environment cannot establish a passing baseline.
 
-Each architecture gets separate APT state and one frozen signed-index view for candidate and predecessor comparisons.
+By default, each architecture gets separate APT state and one frozen signed-index view for candidate and predecessor comparisons.
+The explicit [archive-transition rule](#a-dated-view-for-an-archive-transition) below is the only exception for a predecessor; the candidate always stays in its frozen view.
 Downloads use APT's selected URL, signed size and SHA-256, then independently check the archive control identity against the signed index before extraction.
 Each case asks APT for the signed records of all its downloaded identities together, `apt-cache show NAME:ARCH=VERSION ...`, at most 1024 identities and 128 KiB of arguments per call.
 A record already read is reused for the rest of the run for the same identity and SHA-256 under the same local index digest: the public indexes are frozen for the architecture's context, and the local index is the only other source APT reads.
@@ -172,3 +173,134 @@ Native debhelper builds can pass the same edition snapshots as the CLI with
 newline-separated list of readable archives. The embedded link gate reads these
 files before qualification; an unreadable list fails the build and removes its
 outputs. `SPARKY_LC_MIN_FREE_GIB` and `SPARKY_LC_ROOT_MIN_FREE_GIB` set its disk floors.
+
+## A dated view for an archive transition
+
+By default both sides still use the candidate's frozen signed indexes.
+When the public archives moved under an already published edition, an explicit pair of options enables a second view:
+
+```sh
+--previous-archive-config /path/to/publication-sources.json \
+--previous-published-at 2026-11-19T07:05:00Z
+```
+
+The second source list has the same archives, suites, components, architecture restrictions and public signing keys, in the same order.
+Its URIs may point to dated archive snapshots or a retained signed mirror.
+Debian must use `https://snapshot.debian.org/archive/debian/TIMESTAMP` (or `debian-security`).
+The changed archive's snapshot timestamp and signed Release Date must be no later than the supplied publication instant.
+APT authenticates each InRelease with its explicit Signed-By key.
+The gate additionally binds every retained Packages target to its own InRelease SHA-256 and size, checks its frozen bytes, and compares signed Origin, Label, Suite and Codename across views.
+Every configured archive must be represented.
+It records the complete metadata, dates and hashes in `predecessor-views.json`.
+Expired freshness can be disabled in the source configuration, but authentication and hashes cannot.
+
+An unrelated archive lacking a dated signed copy may use the candidate's exact frozen index with `--previous-archive-policy /path/to/search-evidence.json`.
+That JSON names the publication instant and `candidate_frozen`, keyed by the one-based source-list position.
+Each entry binds `uri`, `suite` and three `searches`: `official-mirrors`, `retained-baseline`, and `archive-search`.
+Each search records `result: no-dated-signed-copy`, a substantive `summary`, and nonempty `files` containing `path` and `sha256` for the actual retained search results.
+The gate checks the cutoff, archive identity, search categories, outcome and every evidence-file hash.
+This is an evidence-bound search result, not a claim that software can prove worldwide nonexistence.
+The gate then checks InRelease and every Packages hash equal the candidate view, and that no solver-named package belongs to this archive's authenticated indexes.
+Package names appearing in the solver's dependency chain are attributed too, not only its terminal cause.
+Ambiguous names occurring in multiple indexes conservatively name every such archive.
+An implicated archive with only a later index still blocks.
+An unchanged candidate index whose signed Date already precedes publication needs no absence exception.
+
+The previous edition's exact sibling universe is tried in the candidate view first.
+No selected candidate identity may be present in that previous snapshot or either public archive view.
+Only a complete APT dependency-solver refusal is eligible for the dated or mixed retry.
+Every conditional-policy attempt must record its terminal unsatisfied relation or conflict.
+An unavailable external provider is judged by that provider, not solely by the package carrying the relation; the checked publication-time absence rule below applies even when its owner is taken.
+The gate retains the complete logs and hashes and names those external owners in `dated-predecessor-eligibility.json`.
+APT's preceding request chain is not the terminal cause: it necessarily includes the predecessor that was requested.
+Unknown diagnostic forms, a missing provider belonging to either edition set, download failures, signature failures, extraction failures, space refusals and link failures do not authorize the publication-time absence exception.
+The parser accepts APT's terminal conflicting-assignment diagnostic and its classic unmet-dependency rows; ambiguity fails closed.
+
+The dated or mixed retry uses only the unchanged previous sibling snapshot.
+It must solve, link and pass applicable start probes there; failure in both views blocks unless the publication-time absence rule below proves that no usable baseline existed.
+The previous build's narrow Recommends probe also stays in its chosen view.
+The candidate always solves, links and starts in the candidate view, with the existing regression checks unchanged.
+Every input result identifies its predecessor view and each archive’s view, reason and InRelease hash; the successful summary counts dated and mixed baselines. A mixed-view solver refusal retains every attempt and identifies the named packages and archives.
+A dated baseline is not a substitute candidate dependency or a waiver of a failed candidate start.
+The signed offline tests cover the current-view refusal, dated success, failure in both views, a snapshot after publication, candidate contamination, an external cause that is itself taken, key mismatch, changed metadata, and the existing missing-library regression.
+
+
+## Keep the publication's archive views
+
+Pass `--archive-evidence /path/to/pool-evidence/archive-views` to retain the candidate's authenticated view for each architecture.
+The gate copies every InRelease and Packages file plus the public signing keys, with an archive-view.json and SHA256SUMS; it independently verifies each Packages hash against InRelease and each copied file against its source.
+It never hard-links an archive input.
+Check `sha256sum -c SHA256SUMS` in every architecture directory and retain the complete successful gate log beside the record.
+The publication step must copy this evidence directory into the round's supply-chain record before the round goes online, then verify its sums there.
+The archive-view record identifies inputs; it does not by itself certify a successful whole-pool gate.
+A round published without its archive views cannot later serve as a dated predecessor for an archive that moves; an independently authenticated snapshot service is then required.
+
+## A published predecessor already uninstallable at publication
+
+A relation owner can be one of the selected candidate names while its missing provider is wholly external.
+The opt-in historical mode checks concrete Package names and virtual Provides in the candidate set, the full previous edition set, and every authenticated Packages index of both views.
+A provider present in any of those sets is not absent, even when its version cannot satisfy the relation.
+An edition-owned provider therefore cannot enter this exception.
+
+After a complete current-view solver refusal, the gate walks only mandatory single-alternative Depends and Pre-Depends through matching previous-edition controls from the requested predecessor.
+The required path and the exact missing relation must be supported by a retained solver attempt.
+Other conditional-policy attempts are retained too, including a final mutually conflicting policy combination.
+It does not use a missing dependency of an unrelated previous package as evidence about this input.
+The predecessor is then solved again with its unchanged siblings in the authenticated dated or mixed view.
+A dated success remains a real baseline; it never enters the no-baseline case.
+A dated failure qualifies as already uninstallable only when it confirms the same required external name, absent from every provider set in both views.
+The unchanged-index archive exceptions still require their search records, equal signed bytes, and no solver attribution to those archives.
+
+The evidence records the requested input and predecessor, publication instant, required relation path, previous input hashes, all attempts and their full lines, both authenticated index views, and the same-name candidate relation owner's replacement dependencies and their actual provider package/version identities.
+The result says `predecessor view=uninstallable-at-publication`.
+The candidate must qualify in its current view and pass the existing baseline-free link checks and its own start probes in full.
+No predecessor failure excuses a candidate failure.
+The summary lists these repairs under `published predecessor not installable at its publication`; the round description names them as repairs of already published breakage.
+
+Use `--collect-predecessor-stops` for a complete inventory of uncovered predecessor-eligibility refusals.
+Each refusal is printed and retained in `predecessor-stops.json`; checking continues with the next input and the invocation exits 1 if any remains.
+`uninstallable-predecessors.json` holds every input covered by the checked absence rule.
+A candidate link failure, space refusal or initialization failure still stops normally, and neither an incomplete run nor an uncovered refusal prints a passing whole-pool result.
+Without the option the gate still stops at its first refusal.
+The signed offline controls cover default-mode refusal, absent external-provider success, both edition-owned provider refusals, dated provider success using a real baseline, continuation after an uncovered stop, and a real missing-library candidate regression that still fails without a baseline.
+
+Symptom: a published Perl binding requires an ABI name that neither the current nor its own publication-time signed indexes provides, while the successor depends on the ABI those indexes actually provide.
+Cause: the old binding was already uninstallable when published; its relation owner having a successor does not make the absent external ABI an edition package.
+Fix: establish the absence in both complete views, retain every solver attempt and qualify the candidate with no usable baseline.
+Found by: the first solver attempts named the old ABI, the last named conflicting driver policies, and the signed Packages records identified the current runtime's newer Provides.
+
+## No baseline available from the predecessor's archives
+
+With `--allow-unavailable-baseline`, a current-view predecessor solver refusal may identify an archive whose publication-time signed index cannot be recovered.
+The existing archive-policy search evidence must establish that absence, and the complete solver attempts must attribute the failure to that archive.
+The gate first tries the unchanged predecessor in the candidate view; a successful solve always remains the baseline.
+It never substitutes a later implicated archive or relaxes its authentication to manufacture a historical baseline.
+Instead it records `no-baseline-available`, the implicated archives, publication instant, every attempt and the authenticated views and search evidence.
+The candidate receives no inherited-failure allowance: it must independently install, link and start in the candidate's frozen view.
+This is distinct from proof that a predecessor was already uninstallable at publication, which requires both views to exist.
+Without the option, the earlier refusal is unchanged.
+The controls include a candidate with a real unresolved library, which still fails in this mode.
+
+## Bound reuse after a gate rule changes
+
+Use `--reuse-manifest`, `--reuse-seed` and `--suite-record` only with a complete prior inventory and retained signed views.
+The manifest binds every prior passing result to its candidate and predecessor SHA-256, all original sibling inputs, the old gate's complete Python modules and smoke table, and both authenticated archive views.
+The gate restores the retained indexes by copy, authenticates each InRelease with its configured archive key and checks each Packages file against its InRelease before solving anything.
+It refuses changed keys, source configuration, metadata bytes, result records or original packages.
+The suite record binds the passing whole-toolkit log to the current gate code.
+Changed packages and the conservative transitive reverse dependency set, including alternative relations, recommendations, conflicts and virtual providers, always run fresh.
+An input without a passing prior record also runs fresh.
+
+A deterministic sample of 24 otherwise reusable inputs runs first under the new code, with at least four mixed baselines and every publication-time-uninstallable baseline.
+The seed, selected names, old and new code hashes and dependency closure are retained.
+Every sampled verdict must match its previous findings, notes and predecessor class.
+Only then may unchanged comparisons reuse their bound passing records.
+Every row of `bound-verdict.json` says fresh or reused and carries its input, view and code binding; reused rows additionally name the whole-suite and sample certification.
+All fresh failures are collected, and a failed sample refuses reuse rather than hiding its disagreement.
+Exit zero requires one successful verdict for every input and unchanged package and code hashes at completion.
+The signed integration fixture checks fresh and reused rows together; other controls reject changed bindings, incomplete sample coverage and a failed suite.
+
+Symptom: a proof rerun meets archive movement rather than a candidate regression, while hundreds of already completed comparisons remain identical.
+Cause: some publication-time third-party indexes were never retained, and a changed gate rule invalidates unconditional reuse of old results.
+Fix: record the unavailable baseline explicitly, require every candidate check, then certify bound reuse with the full toolkit suite and a reproducible fresh sample.
+Found by: reading every predecessor solver attempt, attributing its packages to signed archives and comparing complete comparison inputs.

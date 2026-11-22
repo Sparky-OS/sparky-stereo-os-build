@@ -617,7 +617,7 @@ class Archive:
     apply after the gate's own exact pins, as on a system that has them installed.
     """
 
-    def __init__(self, config, scratch, arch, min_free_gib=None, root_min_free_gib=1):
+    def __init__(self, config, scratch, arch, min_free_gib=None, root_min_free_gib=1, frozen_view=None):
         self.arch = arch
         self.scratch = Path(scratch).resolve()
         ancestor = self.scratch
@@ -723,7 +723,24 @@ class Archive:
                                            f'APT::Architectures {{ "{arch}"; }};\n')
         self.ensure_space(len(lines) << 30)
         self.run(['apt-config', 'dump'], 'configuration')
-        self.run(['apt-get', '-y', '-o', 'APT::Update::Error-Mode=any', '-o', 'Debug::Acquire::gpgv=true', 'update'], 'update')
+        if frozen_view:
+            retained = Path(frozen_view)
+            old = json.loads((retained / 'metadata.json').read_text())
+            if old['sources'] != self.sources:
+                raise package.Invalid('retained archive configuration differs')
+            for row in old['keys']:
+                if digest(self.base / row['path']) != row['sha256']:
+                    raise package.Invalid('retained archive signing key differs')
+            for row in old['metadata']:
+                relative = Path(row['path'])
+                if relative.parent != Path('state/lists') or relative.name in ('lock', 'partial'):
+                    raise package.Invalid('unsafe retained archive metadata path')
+                source = retained / relative
+                if digest(source) != row['sha256'] or source.stat().st_size != row['size']:
+                    raise package.Invalid('retained archive metadata differs: ' + str(source))
+                shutil.copyfile(source, self.base / relative)
+        else:
+            self.run(['apt-get', '-y', '-o', 'APT::Update::Error-Mode=any', '-o', 'Debug::Acquire::gpgv=true', 'update'], 'update')
         self.metadata = [{'path': str(p.relative_to(self.base)), 'size': p.stat().st_size, 'sha256': digest(p)}
                          for p in sorted((self.base / 'state/lists').iterdir()) if p.is_file() and p.name != 'lock']
         if not any(p['path'].endswith('InRelease') or p['path'].endswith('Release.gpg') for p in self.metadata):
@@ -734,6 +751,26 @@ class Archive:
                      for p in sorted((self.base / 'etc').glob('key-*.gpg'))],
             'configuration_sha256': digest(self.base / 'apt.conf'),
             'trust': 'APT update succeeded with Signed-By; insecure and unauthenticated inputs disabled'}, indent=2) + '\n')
+        if frozen_view:
+            from .historical import authenticated_view
+            _, rows = authenticated_view(self)
+            verified = set()
+            for row in rows:
+                if row['InRelease'] in verified:
+                    continue
+                active = [n for n in range(len(self.sources)) if n not in self.skipped_sources]
+                key = self.base / f"etc/key-{active[int(row['source'])-1]}.gpg"
+                command = ['sqv', '--keyring', str(key), '--cleartext', row['InRelease'],
+                           '--output', str(self.base / ('verified-release-' + row['source']))]
+                run = subprocess.run(command, capture_output=True, text=True, env=self.env)
+                (self.base / ('signature-' + row['source'] + '.log')).write_text(run.stdout + run.stderr)
+                if run.returncode:
+                    raise package.Invalid('retained InRelease signature refused: ' + row['InRelease'] + ': ' + run.stderr)
+                verified.add(row['InRelease'])
+            (self.base / 'retained-authentication.json').write_text(json.dumps({
+                'source': str(frozen_view), 'signatures': len(verified), 'Packages': len(rows),
+                'method': 'sqv with configured archive key; every Packages equals signed InRelease SHA256'}, indent=2) + '\n')
+
 
     def ensure_space(self, required=0):
         space(self.scratch, required, self.minimum, self.root_minimum)
@@ -814,7 +851,14 @@ class Archive:
         other.public_sources = self.public_sources.replace(old, new)
         other.env = {**self.env, 'HOME': new, 'APT_CONFIG': str(other.base / 'apt.conf')}
         other._active = set()
+        if getattr(self, "previous_view", None) is not None:
+            other.previous_view = self.previous_view.private()
         return other
+
+    def qualify_previous(self, deb, siblings=()):
+        if getattr(self, 'previous_view', None) is not None:
+            return self.previous_view.qualify(self, deb, siblings)
+        return self.qualify(deb, siblings)
 
     def preferences(self, item):
         """{name: bytes} of the files a supplied package ships in /etc/apt/preferences.d, read once per hash.
@@ -1032,6 +1076,8 @@ class Archive:
                                           for item in self.ordered_by_policy(inputs, chosen, conditional)}
                     return plan, label
         (directory / 'policy-attempts.json').write_text(json.dumps(attempts, indent=2) + '\n')
+        last_error.attempts = attempts
+        last_error.directory = directory
         raise last_error
 
     def candidate_priority(self, owner, candidate):

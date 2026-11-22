@@ -1,0 +1,504 @@
+From 7a69e0b4e0379a320c57fc30eac2a66c510365f8 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 7 Oct 2026 20:46:28 -0300
+Subject: [PATCH] Decode stereo SEI through a keyframe and preserve declared
+ multi-view eyes
+
+Use native frame side data with bounded probing. Check every packed layout and both multi-view orders using generated clips, and omit unordered views. Keep the upstream MIME coverage corpus separate from stereo fixtures.
+
+Assisted-by: gpt-6.1-sol via Codex
+---
+ autotests/ffmpegextractortest.cpp             |  91 ++++++++++---
+ autotests/pngextractortest.cpp                |  14 +-
+ .../samplefiles/generate_stereo_multiview.py  |  70 ++++++++++
+ .../samplefiles/generate_stereo_video.py      | 121 ++++++++++++++++++
+ src/extractors/ffmpegextractor.cpp            |  92 ++++++++++++-
+ src/properties.h                              |   9 +-
+ 6 files changed, 372 insertions(+), 25 deletions(-)
+ create mode 100644 autotests/samplefiles/generate_stereo_multiview.py
+ create mode 100644 autotests/samplefiles/generate_stereo_video.py
+
+--- a/autotests/ffmpegextractortest.cpp
++++ b/autotests/ffmpegextractortest.cpp
+@@ -12,6 +12,10 @@
+ #include <QMimeDatabase>
+ #include <QObject>
+ #include <QTest>
++
++extern "C" {
++#include <libavcodec/avcodec.h>
++}
+ 
+ using namespace KFileMetaData;
+ using namespace Qt::StringLiterals;
+@@ -32,6 +36,8 @@
+     void testCoverimage_data();
+     void testLocation();
+     void testApple();
++    void testSeiLayout();
++    void testSeiLayout_data();
+     void testStereoLayout();
+     void testStereoLayout_data();
+     void testStereoLayoutAbsent();
+@@ -116,27 +122,82 @@
+         << QVariant();
+ }
+ 
++void ffmpegExtractorTest::testSeiLayout_data()
++{
++    QTest::addColumn<QString>("baseName");
++    QTest::addColumn<QString>("layout");
++    const QStringList layouts = {QStringLiteral("checkerboard"), QStringLiteral("columnInterleaved"),
++        QStringLiteral("rowInterleaved"), QStringLiteral("sideBySide"), QStringLiteral("topBottom"),
++        QStringLiteral("frameSequential"), QStringLiteral("mono")};
++    for (const auto &codec : {QStringLiteral("h264"), QStringLiteral("hevc")}) {
++        for (int type = codec == QStringLiteral("hevc") ? 3 : 0; type <= 5; ++type) {
++            for (int right : {0, 1}) {
++                const QString name = QStringLiteral("test_sei_%1_%2_%3").arg(codec).arg(type).arg(right);
++                const QString layout = layouts.at(type) + (type == 6 ? QString() : (right ? QStringLiteral("RightFirst") : QStringLiteral("LeftFirst")));
++                QTest::addRow("%s", qPrintable(name)) << name << layout;
++            }
++        }
++        for (int right : {0, 1}) {
++            const QString name = QStringLiteral("test_sei_%1_quincunx_%2").arg(codec).arg(right);
++            QTest::addRow("%s", qPrintable(name)) << name
++                << (right ? QStringLiteral("sideBySideQuincunxRightFirst") : QStringLiteral("sideBySideQuincunxLeftFirst"));
++        }
++    }
++    QTest::addRow("keyframe after non-keyframe") << QStringLiteral("test_sei_delayed_key") << QStringLiteral("sideBySideLeftFirst");
++    QTest::addRow("plain") << QStringLiteral("test_sei_plain") << QString();
++    QTest::addRow("multiview left") << QStringLiteral("test_mv_left") << QStringLiteral("multiViewLeftFirst");
++    QTest::addRow("multiview right") << QStringLiteral("test_mv_right") << QStringLiteral("multiViewRightFirst");
++    QTest::addRow("multiview unspecified") << QStringLiteral("test_mv_unknown") << QString();
++}
++
++void ffmpegExtractorTest::testSeiLayout()
++{
++    QFETCH(QString, baseName);
++    QFETCH(QString, layout);
++    const QString fileName = testFilePath(QStringLiteral("stereo/") + baseName, QStringLiteral("mp4"));
++    QVERIFY(QFile::exists(fileName));
++    const bool multiview = baseName.startsWith(QStringLiteral("test_mv_"));
++    const char *decoder = baseName.contains(QStringLiteral("hevc")) || multiview ? "hevc" : "h264";
++    if ((!layout.isEmpty() || multiview) && !avcodec_find_decoder_by_name(decoder)) {
++        QSKIP("Native codec with stereo frame side data is unavailable");
++    }
++#if LIBAVCODEC_VERSION_MAJOR < 61
++    if (multiview) {
++        QSKIP("This FFmpeg version cannot decode MV-HEVC");
++    }
++#endif
++    FFmpegExtractor plugin{this};
++    SimpleExtractionResult result(fileName, QStringLiteral("video/mp4"));
++    plugin.extract(&result);
++    QVERIFY(result.types().contains(Type::Video));
++    if (layout.isEmpty()) {
++        QVERIFY(!result.properties().contains(Property::Stereo3dLayout));
++    } else {
++        QCOMPARE(result.properties().value(Property::Stereo3dLayout).toString(), layout);
++    }
++}
++
+ void ffmpegExtractorTest::testStereoLayout_data()
+ {
+     QTest::addColumn<QString>("fileBase");
+     QTest::addColumn<QString>("expectedLayout");
+ 
+     const std::initializer_list<std::pair<QString, QString>> cases = {
+-        {QStringLiteral("test_stereo0"), QStringLiteral("mono")},
+-        {QStringLiteral("test_stereo1"), QStringLiteral("sideBySideLeftFirst")},
+-        {QStringLiteral("test_stereo2"), QStringLiteral("topBottomRightFirst")},
+-        {QStringLiteral("test_stereo3"), QStringLiteral("topBottomLeftFirst")},
+-        {QStringLiteral("test_stereo4"), QStringLiteral("checkerboardRightFirst")},
+-        {QStringLiteral("test_stereo5"), QStringLiteral("checkerboardLeftFirst")},
+-        {QStringLiteral("test_stereo6"), QStringLiteral("rowInterleavedRightFirst")},
+-        {QStringLiteral("test_stereo7"), QStringLiteral("rowInterleavedLeftFirst")},
+-        {QStringLiteral("test_stereo8"), QStringLiteral("columnInterleavedRightFirst")},
+-        {QStringLiteral("test_stereo9"), QStringLiteral("columnInterleavedLeftFirst")},
+-        {QStringLiteral("test_stereo10"), QStringLiteral("anaglyphCyanRed")},
+-        {QStringLiteral("test_stereo12"), QStringLiteral("anaglyphGreenMagenta")},
+-        {QStringLiteral("test_stereo11"), QStringLiteral("sideBySideRightFirst")},
+-        {QStringLiteral("test_stereo13"), QStringLiteral("blockLacedLeftFirst")},
+-        {QStringLiteral("test_stereo14"), QStringLiteral("blockLacedRightFirst")},
++        {QStringLiteral("stereo/test_stereo0"), QStringLiteral("mono")},
++        {QStringLiteral("stereo/test_stereo1"), QStringLiteral("sideBySideLeftFirst")},
++        {QStringLiteral("stereo/test_stereo2"), QStringLiteral("topBottomRightFirst")},
++        {QStringLiteral("stereo/test_stereo3"), QStringLiteral("topBottomLeftFirst")},
++        {QStringLiteral("stereo/test_stereo4"), QStringLiteral("checkerboardRightFirst")},
++        {QStringLiteral("stereo/test_stereo5"), QStringLiteral("checkerboardLeftFirst")},
++        {QStringLiteral("stereo/test_stereo6"), QStringLiteral("rowInterleavedRightFirst")},
++        {QStringLiteral("stereo/test_stereo7"), QStringLiteral("rowInterleavedLeftFirst")},
++        {QStringLiteral("stereo/test_stereo8"), QStringLiteral("columnInterleavedRightFirst")},
++        {QStringLiteral("stereo/test_stereo9"), QStringLiteral("columnInterleavedLeftFirst")},
++        {QStringLiteral("stereo/test_stereo10"), QStringLiteral("anaglyphCyanRed")},
++        {QStringLiteral("stereo/test_stereo12"), QStringLiteral("anaglyphGreenMagenta")},
++        {QStringLiteral("stereo/test_stereo11"), QStringLiteral("sideBySideRightFirst")},
++        {QStringLiteral("stereo/test_stereo13"), QStringLiteral("blockLacedLeftFirst")},
++        {QStringLiteral("stereo/test_stereo14"), QStringLiteral("blockLacedRightFirst")},
+     };
+ 
+     for (const auto& [fileBase, expectedLayout] : cases) {
+--- a/autotests/pngextractortest.cpp
++++ b/autotests/pngextractortest.cpp
+@@ -25,7 +25,7 @@
+ {
+     PngExtractor plugin{this};
+ 
+-    QString fileName = testFilePath(QStringLiteral("test_stereo1.png"));
++    QString fileName = testFilePath(QStringLiteral("stereo/test_stereo1.png"));
+     QMimeDatabase mimeDb;
+     QString mimeType = MimeUtils::strictMimeType(fileName, mimeDb).name();
+     QVERIFY(plugin.mimetypes().contains(mimeType));
+@@ -44,10 +44,10 @@
+     QTest::addColumn<QString>("expectedLayout");
+ 
+     QTest::addRow("left first")
+-        << QStringLiteral("test_stereo1.png")
++        << QStringLiteral("stereo/test_stereo1.png")
+         << QStringLiteral("sideBySideLeftFirst");
+     QTest::addRow("right first")
+-        << QStringLiteral("test_stereo0.png")
++        << QStringLiteral("stereo/test_stereo0.png")
+         << QStringLiteral("sideBySideRightFirst");
+ }
+ 
+@@ -71,10 +71,10 @@
+ void PngExtractorTest::testInvalidStereoLayout_data()
+ {
+     QTest::addColumn<QString>("fileName");
+-    QTest::addRow("reserved mode") << QStringLiteral("test_stereo_invalid.png");
+-    QTest::addRow("bad CRC") << QStringLiteral("test_stereobadcrc.png");
+-    QTest::addRow("bad length") << QStringLiteral("test_stereobadlength.png");
+-    QTest::addRow("after IDAT") << QStringLiteral("test_stereolate.png");
++    QTest::addRow("reserved mode") << QStringLiteral("stereo/test_stereo_invalid.png");
++    QTest::addRow("bad CRC") << QStringLiteral("stereo/test_stereobadcrc.png");
++    QTest::addRow("bad length") << QStringLiteral("stereo/test_stereobadlength.png");
++    QTest::addRow("after IDAT") << QStringLiteral("stereo/test_stereolate.png");
+     QTest::addRow("unmarked") << QStringLiteral("test.png");
+ }
+ 
+--- /dev/null
++++ b/autotests/samplefiles/generate_stereo_multiview.py
+@@ -0,0 +1,70 @@
++#!/usr/bin/env python3
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++# SPDX-License-Identifier: CC0-1.0
++"""Generate MV-HEVC, using H.265 G.14.2.3 to declare either eye order."""
++import os
++import pathlib
++import re
++import subprocess
++
++root = pathlib.Path(__file__).parent / 'stereo'
++scratch = pathlib.Path(os.environ['STEREO_VIDEO_SCRATCH']).resolve()
++scratch.mkdir(parents=True, exist_ok=True)
++
++
++def run(*args):
++    subprocess.run(args, check=True)
++
++
++def ue(value):
++    bits = bin(value + 1)[2:]
++    return '0' * (len(bits) - 1) + bits
++
++
++def reference(left, right):
++    bits = ue(31) + '0' + ue(0) + ue(left) + ue(right) + '000000' + '0' + '0' + '0'
++    bits += '1' + '0' * ((-len(bits) - 1) % 8)
++    return int(bits, 2).to_bytes(len(bits) // 8, 'big')
++
++
++def escape(data):
++    out = bytearray()
++    zeros = 0
++    for byte in data:
++        if zeros >= 2 and byte <= 3:
++            out.append(3)
++            zeros = 0
++        out.append(byte)
++        zeros = zeros + 1 if byte == 0 else 0
++    return bytes(out)
++
++
++for name, y, u, v in [('left', 81, 90, 240), ('right', 41, 240, 110)]:
++    (scratch / (name + '.yuv')).write_bytes((bytes([y]) * 256 + bytes([u]) * 64 + bytes([v]) * 64) * 2)
++config = scratch / 'multiview.cfg'
++config.write_text(f'--num-views 2\n--format 0\n--input "{scratch}/left.yuv"\n--input "{scratch}/right.yuv"\n')
++encoded = scratch / 'multiview.hevc'
++run(os.environ['STEREO_X265_MV'], '--ctu', '16', '--multiview-config', str(config), '--input-res',
++    '16x16', '--fps', '2', '--frames', '2', '--pools', '1', '--frame-threads', '1',
++    '--keyint', '1', '--bframes', '0', '--repeat-headers', '--preset', 'ultrafast', '--output', str(encoded))
++for order in ('left', 'right', 'unknown'):
++    parts = re.split(b'\x00\x00\x00?\x01', encoded.read_bytes())
++    found = 0
++    for i, nal in enumerate(parts):
++        if not nal or (nal[0] >> 1) & 63 != 39:
++            continue
++        data = re.sub(b'\x00\x00\x03', b'\x00\x00', nal[2:])
++        # x265 emits this message as its own prefix SEI NAL unit.
++        if data[:1] != bytes([176]):
++            continue
++        found += 1
++        if order == 'unknown':
++            parts[i] = b''
++        else:
++            payload = reference(0, 1) if order == 'left' else reference(1, 0)
++            parts[i] = nal[:2] + escape(bytes([176, len(payload)]) + payload + b'\x80')
++    assert found == 4, found  # Two access units, each with a prefix SEI for both layers.
++    stream = scratch / f'multiview-{order}.hevc'
++    stream.write_bytes(b''.join(b'\x00\x00\x00\x01' + part for part in parts if part))
++    run('ffmpeg', '-v', 'error', '-y', '-r', '2', '-i', str(stream), '-c', 'copy',
++        str(root / f'test_mv_{order}.mp4'))
+--- /dev/null
++++ b/autotests/samplefiles/generate_stereo_video.py
+@@ -0,0 +1,121 @@
++#!/usr/bin/env python3
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++# SPDX-License-Identifier: CC0-1.0
++"""Generate tiny clips; change SEI eye order independently of the encoders."""
++import os
++import pathlib
++import re
++import subprocess
++
++root = pathlib.Path(__file__).parent.resolve() / 'stereo'
++root.mkdir(exist_ok=True)
++scratch = pathlib.Path(os.environ['STEREO_VIDEO_SCRATCH'])
++scratch.mkdir(parents=True, exist_ok=True)
++x265 = os.environ['STEREO_X265']
++
++
++def run(*args):
++    subprocess.run(args, check=True)
++
++
++def escape(data):
++    out = bytearray()
++    zeros = 0
++    for byte in data:
++        if zeros >= 2 and byte <= 3:
++            out.append(3)
++            zeros = 0
++        out.append(byte)
++        zeros = zeros + 1 if byte == 0 else 0
++    return bytes(out)
++
++
++def reverse_order(data, hevc):
++    parts = re.split(b'\x00\x00\x00?\x01', data)
++    found = 0
++    for i, nal in enumerate(parts):
++        header = 2 if hevc else 1
++        typ = (nal[0] >> 1) & 63 if hevc and nal else nal[0] & 31 if nal else -1
++        if typ != (39 if hevc else 6):
++            continue
++        rbsp = re.sub(b'\x00\x00\x03', b'\x00\x00', nal[header:])
++        if rbsp[:1] != b'\x2d':
++            continue
++        payload = bytearray(rbsp)
++        # ue(0), cancel, type and quincunx occupy ten bits; interpretation occupies six.
++        assert payload[3] & 63 == 1
++        payload[3] = (payload[3] & 192) | 2
++        parts[i] = nal[:header] + escape(payload)
++        found += 1
++    assert found >= 2, found
++    return b''.join(b'\x00\x00\x00\x01' + part for part in parts if part)
++
++
++def quincunx(data, hevc, right):
++    parts = re.split(b'\x00\x00\x00?\x01', data)
++    found = 0
++    for i, nal in enumerate(parts):
++        header = 2 if hevc else 1
++        if not nal or ((nal[0] >> 1) & 63 if hevc else nal[0] & 31) != (39 if hevc else 6):
++            continue
++        rbsp = re.sub(b'\x00\x00\x03', b'\x00\x00', nal[header:])
++        if rbsp[:1] != b'\x2d':
++            continue
++        # Table D-8 type 3, quincunx=1: grid-position fields are absent.
++        bits = '10' + '0000011' + '1' + format(2 if right else 1, '06b')
++        bits += '000100' + '00000000' + '10'
++        assert len(bits) == 32
++        payload = int(bits, 2).to_bytes(4, 'big')
++        parts[i] = nal[:header] + escape(bytes([45, 4]) + payload + b'\x80')
++        found += 1
++    assert found == 2
++    return b''.join(b'\x00\x00\x00\x01' + part for part in parts if part)
++
++
++raw = scratch / 'pair.yuv'
++# Constant red left and blue right YUV420 samples, no photographs.
++row = bytes([81] * 8 + [41] * 8)
++frame = row * 16 + bytes([90] * 4 + [240] * 4) * 8 + bytes([240] * 4 + [110] * 4) * 8
++raw.write_bytes(frame * 4)
++for hevc in (False, True):
++    codec = 'hevc' if hevc else 'h264'
++    for typ in ((3, 4, 5) if hevc else range(6)):
++        encoded = scratch / f'{codec}-{typ}.bin'
++        if hevc:
++            run(x265, '--ctu', '16', '--input', str(raw), '--input-res', '16x16', '--fps', '2', '--frames', '4',
++                '--pools', '1', '--frame-threads', '1', '--keyint', '2', '--min-keyint', '2',
++                '--no-scenecut', '--bframes', '0', '--repeat-headers', '--frame-packing', str(typ),
++                '--preset', 'ultrafast', '--output', str(encoded))
++        else:
++            run('ffmpeg', '-v', 'error', '-y', '-f', 'rawvideo', '-pixel_format', 'yuv420p',
++                '-video_size', '16x16', '-framerate', '2', '-i', str(raw), '-c:v', 'libx264',
++                '-threads', '1', '-x264-params', f'frame-packing={typ}:keyint=2:min-keyint=2:scenecut=0:bframes=0',
++                '-f', 'h264', str(encoded))
++            if typ == 3:
++                parts = re.split(b'\x00\x00\x00?\x01', encoded.read_bytes())
++                removed_slice = removed_sei = False
++                for i, nal in enumerate(parts):
++                    if not nal:
++                        continue
++                    if nal[0] & 31 == 5 and not removed_slice:
++                        parts[i] = b''
++                        removed_slice = True
++                    elif nal[0] & 31 == 6 and nal[1:2] == bytes([45]) and not removed_sei:
++                        parts[i] = b''
++                        removed_sei = True
++                assert removed_slice and removed_sei
++                delayed = scratch / 'delayed.h264'
++                delayed.write_bytes(b''.join(b'\x00\x00\x00\x01' + part for part in parts if part))
++                run('ffmpeg', '-v', 'error', '-y', '-r', '2', '-i', str(delayed), '-c', 'copy',
++                    str(root / 'test_sei_delayed_key.mp4'))
++        for right in (False, True):
++            stream = scratch / f'{codec}-{typ}-{int(right)}.bin'
++            stream.write_bytes(reverse_order(encoded.read_bytes(), hevc) if right else encoded.read_bytes())
++            run('ffmpeg', '-v', 'error', '-y', '-f', codec, '-r', '2', '-i', str(stream), '-c', 'copy',
++                str(root / f'test_sei_{codec}_{typ}_{int(right)}.mp4'))
++            if typ == 3:
++                stream.write_bytes(quincunx(encoded.read_bytes(), hevc, right))
++                run('ffmpeg', '-v', 'error', '-y', '-f', codec, '-r', '2', '-i', str(stream), '-c', 'copy',
++                    str(root / f'test_sei_{codec}_quincunx_{int(right)}.mp4'))
++run('ffmpeg', '-v', 'error', '-y', '-f', 'rawvideo', '-pixel_format', 'yuv420p', '-video_size', '16x16',
++    '-framerate', '2', '-i', str(raw), '-c:v', 'libx264', '-threads', '1', str(root / 'test_sei_plain.mp4'))
+--- a/src/extractors/ffmpegextractor.cpp
++++ b/src/extractors/ffmpegextractor.cpp
+@@ -127,9 +127,97 @@
+     return layout;
+ }
+ 
+-void extractStereoLayout(ExtractionResult *result, const AVStream *stream)
++QString decodedStereoLayout(AVFormatContext *format, const AVStream *stream)
++{
++    const auto *parameters = stream->codecpar;
++    if (parameters->codec_id != AV_CODEC_ID_H264 && parameters->codec_id != AV_CODEC_ID_HEVC) {
++        return {};
++    }
++    const AVCodec *decoder = avcodec_find_decoder(parameters->codec_id);
++    if (!decoder) {
++        return {};
++    }
++    AVCodecContext *context = avcodec_alloc_context3(decoder);
++    if (!context) {
++        return {};
++    }
++    const auto contextGuard = qScopeGuard([&context]() { avcodec_free_context(&context); });
++    if (avcodec_parameters_to_context(context, parameters) < 0) {
++        return {};
++    }
++    context->thread_count = 1;
++    if (avcodec_open2(context, decoder, nullptr) < 0) {
++        return {};
++    }
++    AVFrame *frame = av_frame_alloc();
++    AVPacket *packet = av_packet_alloc();
++    const auto frameGuard = qScopeGuard([&frame]() { av_frame_free(&frame); });
++    const auto packetGuard = qScopeGuard([&packet]() { av_packet_free(&packet); });
++    if (!frame || !packet) {
++        return {};
++    }
++
++    // Bound metadata probing even when an input has no decodable keyframe.
++    qint64 bytes = 0;
++    for (int packets = 0; packets < 512 && bytes < 32 * 1024 * 1024; ++packets) {
++        const bool end = av_read_frame(format, packet) < 0;
++        if (!end && packet->stream_index != stream->index) {
++            av_packet_unref(packet);
++            continue;
++        }
++        bytes += packet->size;
++        const int sent = avcodec_send_packet(context, end ? nullptr : packet);
++        av_packet_unref(packet);
++        if (sent < 0 && sent != AVERROR(EAGAIN)) {
++            break;
++        }
++        while (avcodec_receive_frame(context, frame) == 0) {
++            if (const auto *data = av_frame_get_side_data(frame, AV_FRAME_DATA_STEREO3D)) {
++                if (data->size >= offsetof(AVStereo3D, flags) + sizeof(AVStereo3D::flags)) {
++                    const auto *stereo = reinterpret_cast<const AVStereo3D *>(data->data);
++#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(59, 39, 100)
++                    if (parameters->codec_id == AV_CODEC_ID_HEVC && av_frame_get_side_data(frame, AV_FRAME_DATA_VIEW_ID)
++                        && data->size >= offsetof(AVStereo3D, view) + sizeof(AVStereo3D::view)) {
++                        if (stereo->view == AV_STEREO3D_VIEW_LEFT) {
++                            return QStringLiteral("multiViewLeftFirst");
++                        }
++                        if (stereo->view == AV_STEREO3D_VIEW_RIGHT) {
++                            return QStringLiteral("multiViewRightFirst");
++                        }
++                        return {};
++                    }
++#endif
++                    const QString layout = stereoLayoutString(stereo);
++                    if (!layout.isEmpty()) {
++                        return layout;
++                    }
++                }
++            }
++#if LIBAVUTIL_VERSION_MAJOR >= 58
++            const bool key = frame->flags & AV_FRAME_FLAG_KEY;
++#else
++            const bool key = frame->key_frame;
++#endif
++            av_frame_unref(frame);
++            if (key) {
++                return {};
++            }
++        }
++        if (end) {
++            break;
++        }
++    }
++    return {};
++}
++
++void extractStereoLayout(ExtractionResult *result, AVFormatContext *format, const AVStream *stream)
+ {
+     if (!result->inputFlags().testFlag(ExtractionResult::ExtractMetaData)) {
++        return;
++    }
++
++    if (const QString layout = decodedStereoLayout(format, stream); !layout.isEmpty()) {
++        result->add(Property::Stereo3dLayout, layout);
+         return;
+     }
+ 
+@@ -271,7 +359,7 @@
+                     result->add(Property::ColorSpace, QString::fromUtf8(av_color_space_name(codec->color_space)));
+                 }
+ 
+-                extractStereoLayout(result, stream);
++                extractStereoLayout(result, fmt_ctx, stream);
+             }
+         }
+ 
+--- a/src/properties.h
++++ b/src/properties.h
+@@ -109,7 +109,14 @@
+  * \value[since 6.13] PixelFormat The Pixel format used by the media (image or video)
+  * \value[since 6.13] ColorSpace The Color space used by the media (image or video)
+  * \value[since 6.16] AssistiveAlternateDescription A brief textual description of the purpose and meaning of an image. The text can be used by assistive technology.
+- * \value Stereo3dLayout The stereo layout of the visual content, as a stable string identifier. The identifier includes the eye order for layouts that have one.
++ * \value Stereo3dLayout The declared stereo layout, stored as a QString. Unmarked files have no value.
++ * Values are "mono", "sideBySideLeftFirst", "sideBySideRightFirst",
++ * "sideBySideQuincunxLeftFirst", "sideBySideQuincunxRightFirst", "topBottomLeftFirst", "topBottomRightFirst",
++ * "checkerboardLeftFirst", "checkerboardRightFirst", "rowInterleavedLeftFirst", "rowInterleavedRightFirst",
++ * "columnInterleavedLeftFirst", "columnInterleavedRightFirst", "frameSequentialLeftFirst", "frameSequentialRightFirst",
++ * "anaglyphCyanRed", "anaglyphGreenMagenta", "blockLacedLeftFirst", "blockLacedRightFirst",
++ * "multiViewLeftFirst" and "multiViewRightFirst". First refers to spatial or temporal order for packed views,
++ * the base view for multi-view video, and the first individual image for MPO.
+  */
+ enum Property {
+     Empty = 0,

@@ -21,6 +21,12 @@ It retains unreadable paths and reads binary controls and source descriptors.
 It records the published indexes' hashes; archive hashes are compared only for staged binaries matching an indexed identity, including Architecture-Variant.
 An explicit binary Source version takes precedence over its binary version.
 
+For several storage roots or explicit stage paths, use `scoped-inventory.py --root STORAGE --stages STAGES.txt --published TREE --output EVIDENCE`.
+Repeat `--root` for each permitted storage root; `STAGES.txt` contains one literal directory per line, including output folders whose names do not begin with `stage`.
+It records and excludes symlink files, symlink directories and explicitly named paths with a symlink ancestor.
+Directory discovery and file discovery inside each stage each have their own `--depth` bound (default four); missing and unreadable paths remain in `search-errors.txt`.
+Run `python3 tools/publication-reconcile/test_scoped_inventory.py` to check those boundaries.
+
 The acceptance-rules input is a private, reviewed JSON list, in first-match order.
 Each row has root, source, version, decision and reason; null source/version matches any value under that root.
 A candidate rule means the coordinator accepted that generation, not that its build is qualified.
@@ -49,3 +55,10 @@ The `proof/` scripts install a published edition first, verify that its own dpkg
 Use `--metrics FILE` to retain sampled scratch usage, its measured peak and both disk free-space values as JSONL. The default sampling interval is five seconds; `--interval-seconds` must be finite and positive. The peak is the largest observed sample, not a continuous filesystem high-water mark.
 
 For a newly authorized successor, `rebuild-native.py --new-source-build` accepts an input-only descriptor directory with no reference binaries and retains the actual native archives and receipts. It does not relax default receipt-repair equality. `compare-authored.py` checks a compiled successor against the accepted primary and HR archives: member properties, restored authored data, complete ELF string tables, printable constant strings of at least four bytes, exported interfaces and NEEDED libraries. Compiler/package versions and build identifiers are explicit metadata differences; short binary rodata fragments and raw dumps remain evidence.
+
+Before freezing, run `check-replacement-versions.py --published-index PACKAGES --debs-file CANDIDATES --output VERSIONS.tsv`.
+Repeat `--published-index` for every published architecture index, including `binary-all`.
+It reads each actual binary control and requires its version to sort strictly above the newest published version of that binary name and architecture variant.
+Equal versions and downgrades fail with both versions named; a previously absent name is recorded separately.
+Keep this pre-freeze result alongside the later installed-target assertion; neither replaces the other.
+Run `python3 tools/publication-reconcile/test_replacement_versions.py` for the ordering regressions.

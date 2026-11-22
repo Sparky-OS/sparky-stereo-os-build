@@ -7,8 +7,16 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m2}
-version=${VERSION:-20261104.1~sparky9~0+lc1}
-look_version=${LOOK_VERSION:-20261119.2~sparky9~0+lc1}
+. "$repo/package-versions.sh"
+version=${GTK_VERSION:?package-versions.sh must define GTK_VERSION}
+look_version=${GLASS_VERSION:?package-versions.sh must define GLASS_VERSION}
+gtk_min=${GTK_MIN_VERSION:?package-versions.sh must define GTK_MIN_VERSION}
+build_gtk=true
+case "${1:-}" in
+	--look-only) build_gtk=false ;;
+	'') ;;
+	*) echo "Usage: $0 [--look-only]" >&2; exit 2 ;;
+esac
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 RECIPE=$repo
@@ -60,6 +68,7 @@ doc() { # dir package copyright-body-file
 }
 
 # 1. sparky-stereo-gtk
+if "$build_gtk"; then
 g=$work/sparky-stereo-gtk
 mkdir -p "$g/usr/bin" "$g/usr/share/themes" "$g/usr/lib/systemd/user/graphical-session.target.wants" "$g/etc/xdg/autostart"
 install -m 755 "$repo/bin/sparky-stereo-gtk-sync" "$g/usr/bin/"
@@ -102,6 +111,7 @@ control "$g" sparky-stereo-gtk "breeze-gtk-theme, kde-config-gtk-style, libglib2
 	"sparky-stereo-gtk-sync picks the theme from the KDE colour scheme at login and whenever kdeglobals changes;" \
 	"kde-config-gtk-style keeps the colours in step."
 build "$g" sparky-stereo-gtk
+fi
 
 # 2. sparky-stereo-look-kubabbar-glass
 k=$work/sparky-stereo-look-kubabbar-glass
@@ -153,7 +163,7 @@ fi
 POSTRM
 chmod 755 "$k/DEBIAN/postrm"
 cp "$repo/README.md" "$repo/ABOUT.md" "$k/usr/share/doc/sparky-stereo-look-kubabbar-glass/"
-control "$k" sparky-stereo-look-kubabbar-glass "dbus-bin, kde-style-breeze, kwin-style-aurorae, libkf6config-bin, oxygen-icon-theme, sparky-stereo-gtk (= $version), sparky-stereo-look, sparky-stereo-problems" \
+control "$k" sparky-stereo-look-kubabbar-glass "dbus-bin, kde-style-breeze, kwin-style-aurorae, libkf6config-bin, oxygen-icon-theme, sparky-stereo-gtk (>= $gtk_min), sparky-stereo-look, sparky-stereo-problems" \
 	"kde-style-oxygen-qt6, qt6-style-kvantum, qt5-style-kvantum, sddm" "" \
 	"Kubabbar Glass, the classic Sparky Stereo OS look" \
 	"Kubabbar Glass is our own name for this look, chosen by Daniel Ramos on 14 October 2026." \

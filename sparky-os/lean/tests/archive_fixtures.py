@@ -37,7 +37,7 @@ def deb(base, name, version='1', arch='amd64', depends='', extra='', files=None)
     return out
 
 
-def signed_archive(base, additional=(), transform=None, flat=False):
+def signed_archive(base, additional=(), transform=None, flat=False, variants=()):
     """Minimal amd64 runtime and packages for solver edge cases.
 
     flat=True publishes it as a flat repository (Packages and Release at the top, the
@@ -69,6 +69,7 @@ def signed_archive(base, additional=(), transform=None, flat=False):
     index.parent.mkdir(parents=True, exist_ok=True)
     index.write_bytes(subprocess.check_output(['dpkg-scanpackages', '--multiversion', 'pool', '/dev/null'], cwd=repo,
                                              stderr=subprocess.DEVNULL))
+    raw_index = index.read_text()
     if transform:
         index.write_text(transform(index.read_text()))
     release = index.parent / 'Release' if flat else repo / 'dists/fixture/Release'
@@ -92,6 +93,23 @@ def signed_archive(base, additional=(), transform=None, flat=False):
     subprocess.run(['gpg', '--batch', '--yes', '--pinentry-mode', 'loopback', '--passphrase', '',
                     '--clearsign', '--output', str(release.with_name('InRelease')), str(release)],
                    env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for name, change, date in variants:
+        variant = base / name
+        shutil.copytree(repo, variant / 'repo')
+        changed_index = variant / 'repo' / index.relative_to(repo)
+        changed_index.write_text(change(raw_index))
+        changed_release = variant / 'repo' / release.relative_to(repo)
+        text = release.read_text()
+        text = text.replace('Date: Mon, 26 Oct 2026 00:00:00 UTC', 'Date: ' + date)
+        content = changed_index.read_bytes()
+        text = text[:text.index('SHA256:')] + 'SHA256:\n ' + hashlib.sha256(content).hexdigest() + \
+            f' {len(content)} ' + str(index.relative_to(release.parent)) + '\n'
+        changed_release.write_text(text)
+        subprocess.run(['gpg', '--batch', '--yes', '--pinentry-mode', 'loopback', '--passphrase', '',
+                        '--clearsign', '--output', str(changed_release.with_name('InRelease')), str(changed_release)],
+                       env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        (variant / 'archive.json').write_text(json.dumps([{'uri': (variant / 'repo').as_uri(),
+            'suite': '/' if flat else 'fixture', 'components': [] if flat else ['main'], 'keyring': str(keyring)}]))
     subprocess.run(['gpgconf', '--kill', 'gpg-agent'], env=env, check=True)
     keywork.cleanup()
     config = base / 'archive.json'
