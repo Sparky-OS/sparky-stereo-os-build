@@ -1,7 +1,8 @@
 #!/bin/sh
 # preinst script
 set -e
-package=sparky-stereo-console
+package=@PACKAGE@
+held=/var/lib/$package/held
 
 say_kept() {
     locale=${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}
@@ -23,6 +24,17 @@ say_kept() {
     logger -t "$package" -- "$message" 2>/dev/null || :
 }
 
+# A file the person did not make: the old version's own bytes (its md5sums), or a default another package puts at
+# that name (base-files' postinst writes /etc/motd from /usr/share/base-files/motd, and our older postrm put it back).
+not_theirs() {
+    have=$(md5sum <"$1" | cut -d' ' -f1)
+    [ -n "$sums" ] && [ "$(awk -v p="${1#/}" '$2 == p {print $1}' "$sums")" = "$have" ] && return 0
+    case "$1" in
+    /etc/motd) [ -f /usr/share/base-files/motd ] && [ "$(md5sum </usr/share/base-files/motd | cut -d' ' -f1)" = "$have" ] && return 0 ;;
+    esac
+    return 1
+}
+
 if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
     for f in @DIVERTED@; do
         before=$(dpkg-divert --listpackage "$f")
@@ -37,16 +49,33 @@ if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
     # Up to 20261102 our own copy of bash's skel .bashrc was at @GIVEN_BACK@. It is no file of ours any more, so dpkg
     # removes it at this unpack; a person's change to it is kept and said. Not in /etc/skel: useradd copies every file
     # there into each new account (Debian's adduser skips *.dpkg-old, useradd does not).
-    f=@GIVEN_BACK@
-    if [ "$1" = "upgrade" ] && [ "$(dpkg-divert --listpackage "$f")" = "$package" ] && [ -f "$f" ]; then
-        sums=$(dpkg-query --control-path "$package" md5sums 2>/dev/null) || sums=
-        want=$([ -n "$sums" ] && awk -v p="${f#/}" '$2 == p {print $1}' "$sums")
-        have=$(md5sum <"$f" | cut -d' ' -f1)
-        if [ -n "$want" ] && [ "$want" != "$have" ]; then
-            mkdir -p /var/backups
-            cp -p "$f" /var/backups/sparky-stereo-console-skel.bashrc
-            say_kept
+    for f in @GIVEN_BACK@; do
+        if [ "$1" = "upgrade" ] && [ "$(dpkg-divert --listpackage "$f")" = "$package" ] && [ -f "$f" ]; then
+            sums=$(dpkg-query --control-path "$package" md5sums 2>/dev/null) || sums=
+            want=$([ -n "$sums" ] && awk -v p="${f#/}" '$2 == p {print $1}' "$sums")
+            have=$(md5sum <"$f" | cut -d' ' -f1)
+            if [ -n "$want" ] && [ "$want" != "$have" ]; then
+                mkdir -p /var/backups
+                cp -p "$f" /var/backups/sparky-stereo-console-skel.bashrc
+                say_kept
+            fi
         fi
+    done
+    # Before @FIRST@ the files under /etc were plain files, which dpkg replaced at every upgrade, a person's change
+    # with them (Debian Policy 10.7.3: "local changes must be preserved during a package upgrade"). From @FIRST@
+    # @CONFF@ are conffiles, and @MANAGED@ (at names this package diverts, where dpkg cannot keep two packages'
+    # conffiles apart) are kept through ucf by the postinst. Each such file is set aside here, so dpkg asks nothing about
+    # a file it has no record of and removes nothing of the person's; the postinst gives a changed one back.
+    if [ "$1" = "install" ] && [ -z "$2" ] || dpkg --compare-versions "$2" lt @FIRST@; then
+        sums=
+        [ "$1" = "upgrade" ] && { sums=$(dpkg-query --control-path "$package" md5sums 2>/dev/null) || sums=; }
+        for f in @CONFF@ @MANAGED@; do
+            [ -f "$f" ] || [ -L "$f" ] || continue
+            mkdir -p "$held${f%/*}"
+            rm -f "$held$f.edited"
+            not_theirs "$f" || : >"$held$f.edited"
+            mv "$f" "$held$f"
+        done
     fi
 fi
 exit 0

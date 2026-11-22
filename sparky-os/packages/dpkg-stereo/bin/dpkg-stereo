@@ -688,6 +688,34 @@ def diverted_away(path, package, table):
     return bool(row) and (row[1] is None or row[1] == package.split(':')[0])
 
 
+UCF_STATE = '/var/lib/ucf'
+
+
+def ucf_kept(P):
+    """{path: (md5, package or None)}: the files maintainer scripts keep through ucf. ucf(1) records the md5sum of
+    what it last wrote for each file in /var/lib/ucf/hashfile ("md5  path"), and ucfr(1) the package that registered
+    the file in /var/lib/ucf/registry ("package path"); a file a package hands to ucf without ucfr has no package
+    (nfs-common's /etc/nfs.conf). Read only: nothing in /var/lib/ucf is written, projected or restored (row 813)."""
+    out = {}
+    try:
+        with open(P.real(UCF_STATE + '/hashfile'), encoding='utf-8', errors='surrogateescape') as f:
+            for line in f:
+                parts = line.rstrip('\n').split(None, 1)
+                if len(parts) == 2 and len(parts[0]) == 32 and parts[1].strip().startswith('/'):
+                    out[parts[1].strip()] = [parts[0].lower(), None]
+    except FileNotFoundError:
+        return {}
+    try:
+        with open(P.real(UCF_STATE + '/registry'), encoding='utf-8', errors='surrogateescape') as f:
+            for line in f:
+                parts = line.split(None, 1)
+                if len(parts) == 2 and parts[1].strip() in out:
+                    out[parts[1].strip()][1] = parts[0]
+    except FileNotFoundError:
+        pass
+    return {path: tuple(row) for path, row in out.items()}
+
+
 def _work(args):
     path, real, package, seen = args
     try:
@@ -2280,6 +2308,49 @@ def verify(P, names, deep=False):
             print(f'UNRECORDED {path} (lean, without its record, which dpkg-stereo 0.1.28 or older lost: it gets it '
                   f'back once the .deb of {row["package"]} {row["version"]} is at hand; dpkg-stereo --problems)')
             unrecorded += 1
+    # A file that maintainer scripts keep through ucf is in no package's file list, so neither dpkg --verify nor the
+    # records above judge it (row 813: sparky-stereo-console's files at the names it diverts, samba-common's smb.conf,
+    # grub's /etc/default/grub). It is judged against what ucf last wrote, by the md5sum ucf recorded: other bytes
+    # are the person's, said as any conffile the person changed after an upgrade is said, and not counted. A file
+    # that is gone is no fault and not the person's either: ucf itself leaves a removed file removed ("Not replacing
+    # deleted config file"), and a package's own script may have removed it without telling ucf (libdebuginfod-common's
+    # postinst runs rm -f with no ucf --purge), so who removed it cannot be told. It is only counted in the summary,
+    # listed as GONE by --deep, and never changes the exit status (row 813, continuation 13: on two edition machines
+    # nobody touched that way, ucf's records named two and three such files). A path of a package's
+    # own list, where that package's copy is (nfs-common lists /etc/default/nfs-common as a conffile and hands it to
+    # ucf too, and Lean Code projects it), stays with its package's judgement above: ucf's md5sum is of the
+    # original, never of the lean file. A file only root can read is counted, and said once, never a row each.
+    ucf_checked = ucf_unread = ucf_gone = 0
+    for path, (want, owner) in sorted(ucf_kept(P).items()):
+        if names and (owner is None or (owner not in names and owner.split(':')[0] not in names)):
+            continue
+        # a record or left row of PATH names the package whose copy it judges; under a diversion that copy is at the
+        # diverted name (nano's /etc/nanorc.debian), and the file at the name is the diverting package's, kept through
+        # ucf (sparky-stereo-console's /etc/nanorc)
+        at_path = [r['package'] for r in (files.get(path), left.get(path)) if r is not None]
+        at_path += [n for n, own in conf.items() if path in own]
+        if any(on_disk(P, path, n, divs) == P.real(path) for n in at_path):
+            continue
+        who = f'kept by {owner} through ucf' if owner else 'kept through ucf'
+        try:
+            with open(P.real(path), 'rb') as f:
+                have = md5(f.read())
+        except FileNotFoundError:
+            if not os.path.lexists(P.real(path)):
+                ucf_gone += 1
+                if deep:
+                    print(f'GONE      {path} ({who})')
+                continue
+            # a link whose target is gone stands at the name: something other than what ucf wrote, as below
+            have = None
+        except PermissionError:
+            ucf_unread += 1
+            continue
+        except OSError:
+            have = None
+        ucf_checked += 1
+        if have != want:
+            print(f'EDITED    {path} ({who}) (changed by the person: left as they made it)')
     lost = sum(n for n, _ in unchecked.values())
     print(f'dpkg-stereo: {len(files) - lost} projected files checked, {bad} problems'
           + (f', {back} in their package\'s own bytes (restored, not projected)' if back else '')
@@ -2289,13 +2360,19 @@ def verify(P, names, deep=False):
           + (f', {sum(map(len, waiting.values()))} C and C++ files of {len(waiting)} package versions waiting for '
              f'their .deb (PENDING)' if waiting else '')
           + (f', {lost} files NOT checked against their package (NODEB)' if lost else '')
-          + (f', {unrecorded} lean files without their record (UNRECORDED)' if unrecorded else ''))
+          + (f', {unrecorded} lean files without their record (UNRECORDED)' if unrecorded else '')
+          + (f', {ucf_checked} files kept through ucf checked' if ucf_checked else '')
+          + (f', {text("LOCAL102", [ucf_gone])}' if ucf_gone else '')
+          + (f', {ucf_unread} files kept through ucf NOT read (only root can read them)' if ucf_unread else ''))
+    if ucf_unread:
+        import shlex
+        say('LOCAL23', [' '.join(['sudo', 'dpkg-stereo'] + [shlex.quote(x) for x in sys.argv[1:]])], sys.stdout)
     if lost:
         # an incomplete check is never a clean one: dpkg(1)'s exit status 2 is an error interacting with the system
         shown = '; '.join(f'{p} {v}: {why}' for (p, v), (_, why) in sorted(unchecked.items())[:3])
         say('LOCAL15', [lost, shown + (f' (+{len(unchecked) - 3})' if len(unchecked) > 3 else '')], sys.stdout)
     # a lean file without its record cannot be checked either: the check is not complete
-    return 1 if bad else 2 if lost or unrecorded else 0
+    return 1 if bad else 2 if lost or unrecorded or ucf_unread else 0
 
 
 def debsums_front(P, names):

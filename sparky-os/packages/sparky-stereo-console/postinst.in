@@ -1,0 +1,110 @@
+#!/bin/sh
+# postinst script
+set -e
+package=@PACKAGE@
+held=/var/lib/$package/held
+defaults=/usr/share/$package/defaults
+
+say_default() {
+    locale=${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}
+    case "$locale" in C|C.*|POSIX) locale=en ;; *) locale=${LANGUAGE:-$locale} ;; esac
+    locale=${locale%%:*}
+    case "$locale" in
+        pl*) format='Twoje zmiany w %s zachowano; nowe ustawienie domyślne jest w %s.' ;;
+        pt*) format='Suas alterações em %s foram mantidas; o novo padrão está em %s.' ;;
+        de*) format='Ihre Änderungen an %s bleiben erhalten; die neue Vorgabe steht in %s.' ;;
+        es*) format='Sus cambios en %s se conservan; el nuevo valor predeterminado está en %s.' ;;
+        fr*) format='Vos modifications de %s sont conservées ; la nouvelle version par défaut est dans %s.' ;;
+        ja*) format='%s への変更は保持されました。新しい既定のファイルは %s にあります。' ;;
+        ko*) format='%s에 대한 변경 사항은 유지되었습니다. 새 기본 파일은 %s에 있습니다.' ;;
+        zh_CN*|zh_SG*) format='您对 %s 的修改已保留；新的默认文件位于 %s。' ;;
+        zh_TW*|zh_HK*|zh_MO*) format='您對 %s 的修改已保留；新的預設檔案位於 %s。' ;;
+        *) format='Your changes to %s are kept; the new default is in %s.' ;;
+    esac
+    message=$(printf "$format" "$1" "$2")
+    printf '%s: %s\n' "$package" "$message" >&2
+    logger -t "$package" -- "$message" 2>/dev/null || :
+}
+
+# Where a new default goes beside a file the person changed: dpkg's own name for it, except in /etc/skel, which
+# useradd copies whole into every new account.
+dist_of() {
+    case "$1" in
+    /etc/skel/*) echo "/var/backups/$package$1.dpkg-dist" ;;
+    *) echo "$1.dpkg-dist" ;;
+    esac
+}
+
+# A file at a name this package diverts, kept through ucf (Debian Policy 10.7.3: scripts that "create, update and
+# maintain the file" and "must not overwrite the user's version"; ucf records what it wrote in /var/lib/ucf/hashfile,
+# which dpkg-stereo --verify reads). ucf replaces an untouched file with the new default and creates a missing one
+# it never wrote. A file the person changed, replaced or removed is what ucf asks about; its question's default is
+# "keep the local version", with the new default written beside it as PATH.ucf-dist, and debconf's noninteractive
+# frontend takes that default without asking. UCF_FORCE_CONFFOLD cannot do this: it also keeps an untouched file
+# from the new default, and dpkg's --force-confdef (DPKG_FORCE) overrides it and makes ucf ask (row 813, measured
+# with ucf 3.0056). The new default beside a kept file is said once, in the person's language.
+keep_through_ucf() {
+    dist=$1.ucf-dist
+    before=
+    [ ! -f "$dist" ] || before=$(md5sum <"$dist" | cut -d' ' -f1)
+    created=
+    [ -e "$1" ] || [ -L "$1" ] || created=1
+    # --package: ucf follows a dpkg diversion unless it is the diverting package's own (ucf(1) -P); without it, ucf
+    # judged and wrote the owning package's copy at the diverted name (measured, row 813)
+    DEBIAN_FRONTEND=noninteractive ucf --package "$package" "$defaults$1" "$1"
+    ucfr "$package" "$1"
+    # ucf copies a default it creates with the default's mode; a motd script runs only when executable, and the
+    # default beside a kept one must not (run-parts --lsbsysinit would take NAME.ucf-dist for a script)
+    if [ -n "$created" ] && [ -f "$1" ] && [ "${1#/etc/update-motd.d/}" != "$1" ]; then
+        chmod 755 "$1"
+    fi
+    if [ -f "$dist" ] && [ "$(md5sum <"$dist" | cut -d' ' -f1)" != "$before" ]; then
+        chmod 644 "$dist"
+        say_default "$1" "$dist"
+    fi
+}
+
+if [ "$1" = "configure" ]; then
+    # 20261102 and older diverted @GIVEN_BACK@; dpkg has removed our copy at this unpack, so the owning package's own
+    # goes back to its name with whatever the person changed in it. In the postinst: a preinst removal would make
+    # dpkg delete that file as one our old version shipped (measured, rows 629/802).
+    for f in @GIVEN_BACK@; do
+        if [ "$(dpkg-divert --listpackage "$f")" = "$package" ]; then
+            dpkg-divert --quiet --package "$package" --remove --rename --divert "$f.debian" "$f"
+        fi
+    done
+    # Conffiles from @FIRST@ on: dpkg has installed each one where the preinst set the old file aside. A file the
+    # person had changed goes back to its name, as dpkg keeps a changed conffile, and the new one goes beside it.
+    for f in @CONFF@; do
+        [ -e "$held$f" ] || [ -L "$held$f" ] || continue
+        if [ -e "$held$f.edited" ]; then
+            dist=$(dist_of "$f")
+            if [ -e "$f" ]; then
+                mkdir -p "${dist%/*}"
+                mv -f "$f" "$dist"
+            fi
+            mv "$held$f" "$f"
+            rm -f "$held$f.edited"
+            say_default "$f" "$dist"
+        else
+            rm -f "$held$f"
+        fi
+    done
+    # Files at names this package diverts, kept through ucf. Before @FIRST@ they were plain files of the package:
+    # the preinst set each aside and marked the ones the person had changed (against the old version's md5sums). An
+    # untouched one goes, so ucf creates the new default; a changed one goes back to its name first, so ucf, which
+    # has no record of it, keeps it and puts the new default beside it.
+    for f in @MANAGED@; do
+        if [ -e "$held$f" ] || [ -L "$held$f" ]; then
+            if [ -e "$held$f.edited" ] && [ ! -e "$f" ] && [ ! -L "$f" ]; then
+                mv "$held$f" "$f"
+            else
+                rm -f "$held$f"
+            fi
+            rm -f "$held$f.edited"
+        fi
+        keep_through_ucf "$f"
+    done
+    [ ! -d "$held" ] || find "$held" -depth -type d -empty -delete
+fi
+exit 0

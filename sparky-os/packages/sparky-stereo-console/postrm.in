@@ -1,8 +1,9 @@
 #!/bin/sh
 # postrm script: dpkg has already removed our files and catalogs.
 set -e
-package=sparky-stereo-console
+package=@PACKAGE@
 key=after-removal:sparky-stereo-console:motd
+held=/var/lib/$package/held
 
 say_unsaved() {
     locale=${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}
@@ -28,11 +29,67 @@ say_unsaved() {
     logger --socket-errors=on -t "$package" -- "$message" || :
 }
 
+say_moved() {
+    locale=${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}
+    case "$locale" in C|C.*|POSIX) locale=en ;; *) locale=${LANGUAGE:-$locale} ;; esac
+    locale=${locale%%:*}
+    case "$locale" in
+        pl*) format='Twoje zmiany w %s zachowano w %s.' ;;
+        pt*) format='Suas alterações em %s foram mantidas em %s.' ;;
+        de*) format='Ihre Änderungen an %s bleiben in %s erhalten.' ;;
+        es*) format='Sus cambios en %s se conservan en %s.' ;;
+        fr*) format='Vos modifications de %s sont conservées dans %s.' ;;
+        ja*) format='%s への変更は %s に保存されました。' ;;
+        ko*) format='%s에 대한 변경 사항은 %s에 보존되었습니다.' ;;
+        zh_CN*|zh_SG*) format='您对 %s 的修改已保留在 %s 中。' ;;
+        zh_TW*|zh_HK*|zh_MO*) format='您對 %s 的修改已保留在 %s 中。' ;;
+        *) format='Your changes to %s are kept in %s.' ;;
+    esac
+    message=$(printf "$format" "$1" "$2")
+    printf '%s: %s\n' "$package" "$message" >&2
+    logger -t "$package" -- "$message" 2>/dev/null || :
+}
+
+# The md5sum ucf recorded for a file it keeps (ucf(1): /var/lib/ucf/hashfile). Read as a file: Policy 6.5 lets a
+# postrm rely only on Essential packages, and ucf may already be gone.
+ucf_sum() { [ -f /var/lib/ucf/hashfile ] && awk -v p="$1" '$2 == p {print $1; exit}' /var/lib/ucf/hashfile || :; }
+
 if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
     sparky-stereo-problems clear --all "$package"
 fi
 case "$1" in
+abort-install|abort-upgrade)
+    # the preinst set these aside before the unpack that failed: back to their names
+    for f in @CONFF@ @MANAGED@; do
+        if { [ -e "$held$f" ] || [ -L "$held$f" ]; } && [ ! -e "$f" ] && [ ! -L "$f" ]; then
+            mv "$held$f" "$f"
+        fi
+        rm -f "$held$f.edited"
+    done
+    ;;
+esac
+case "$1" in
 remove|purge|abort-install)
+    # The files ucf keeps for this package at names it diverts: an untouched one (what ucf last wrote) goes, one the
+    # person changed is kept in /var/backups and said, so the owning package's own file can come back to its name.
+    # ucf's records of them go too: the file leaves its name now, and a record without its file would keep ucf from
+    # writing the default again at a later install ("Not replacing deleted config file", ucf 3.0056).
+    for f in @MANAGED@; do
+        [ "$(dpkg-divert --listpackage "$f")" = "$package" ] || continue
+        if [ -e "$f" ] || [ -L "$f" ]; then
+            if [ -f "$f" ] && [ ! -L "$f" ] && [ "$(md5sum <"$f" | cut -d' ' -f1)" = "$(ucf_sum "$f")" ]; then
+                rm -f "$f"
+            else
+                kept=/var/backups/$package$f
+                mkdir -p "${kept%/*}"
+                mv -f "$f" "$kept"
+                say_moved "$f" "$kept"
+            fi
+        fi
+        rm -f "$f.ucf-dist" "$f.ucf-old" "$f.ucf-new"
+        if command -v ucf >/dev/null 2>&1; then ucf --package "$package" --purge "$f"; fi
+        if command -v ucfr >/dev/null 2>&1; then ucfr --purge "$package" "$f"; fi
+    done
     for f in @DIVERTED@; do
         [ "$(dpkg-divert --listpackage "$f")" = "$package" ] || continue
         dpkg-divert --quiet --package "$package" --remove --rename --divert "$f.debian" "$f"
@@ -70,4 +127,11 @@ remove|purge|abort-install)
     fi
     ;;
 esac
+if [ "$1" = purge ]; then
+    # the new defaults the postinst put beside the person's own skel files; the person's own copies stay
+    for f in @CONFF@; do
+        case "$f" in /etc/skel/*) rm -f "/var/backups/$package$f.dpkg-dist" ;; esac
+    done
+    rm -rf "/var/lib/$package"
+fi
 exit 0

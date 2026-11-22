@@ -1,0 +1,138 @@
+#!/bin/bash
+# sparky-stereo-console: a person's change to the console's eight files under /etc is kept across upgrades (row 813).
+# Root, in a throwaway container of the published edition (the console and its diversions installed), no network.
+#   etc-files.sh CASE NEW [FROM]
+#     CASE  up-none     upgrade, nothing changed: every file is the new package's, nothing said, nothing asked,
+#                       what a login and a new account show is unchanged; then removal and purge
+#           up-edited   a person's change planted in each of the eight files before the upgrade: each kept byte
+#                       for byte, the new default beside it and said once, nothing asked, each named by
+#                       dpkg-stereo --verify (or --verify --deep); then removal and purge
+#                       TTY=1: the upgrade runs at a pseudo-terminal with debconf's readline frontend, so any question
+#                       waits for an answer and the run fails at its time limit; ROUND=1: with the round's
+#                       --force-confdef --force-confold (dpkg hands them to ucf as DPKG_FORCE)
+#           fresh       the published console purged first, then the package under test installed
+#           say         the sentences in the ten languages
+#     NEW   a folder with the package under test and its -lc-hr companion; FROM: a folder installed first
+# apt runs carry no --force-conf* (unless ROUND=1) and read /dev/null: a dpkg question fails the run. The five at
+# diverted names are kept through ucf (its records in /var/lib/ucf). Exit 1 on any FAIL.
+set -u
+CASE=$1 NEW=$(readlink -f "$2") FROM=${3:-}
+PKG=sparky-stereo-console
+EIGHT="/etc/issue /etc/issue.net /etc/motd /etc/nanorc /etc/zsh/zshrc /etc/update-motd.d/10-uname /etc/skel/.bash_aliases /etc/skel/.selected_editor"
+FIVE="/etc/issue /etc/issue.net /etc/update-motd.d/10-uname /etc/nanorc /etc/zsh/zshrc"
+T=/tmp/etc-files; rm -rf $T; mkdir -p $T/ref $T/before
+failed=0
+check() { if eval "$1"; then echo "PASS $2"; else echo "FAIL $2"; failed=1; fi; }
+apt_y() { apt-get -y -q -o Dpkg::Use-Pty=0 -o APT::Color=0 "$@" </dev/null; }
+apt_up() { # the upgrade under test: plain, or at a pseudo-terminal (TTY=1), with the round's flags (ROUND=1)
+	a="-y -q -o Dpkg::Use-Pty=0 -o APT::Color=0"
+	[ "${ROUND:-}" != 1 ] || a="$a -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+	if [ "${TTY:-}" = 1 ]; then
+		DEBIAN_FRONTEND=readline TERM=xterm timeout 300 script -qec "apt-get $a install $*" /dev/null </dev/null | tr -d '\r'
+		return "${PIPESTATUS[0]}"
+	fi
+	apt-get $a install "$@" </dev/null
+}
+ucf_sum() { awk -v p="$1" '$2 == p {print $1; exit}' /var/lib/ucf/hashfile 2>/dev/null; }
+ucf_pkg() { awk -v p="$1" '$NF == p {print $1; exit}' /var/lib/ucf/registry 2>/dev/null; }
+ucf_ours() { grep -l -F -e /etc/issue -e /etc/nanorc -e /etc/zsh/zshrc -e /etc/update-motd.d/10-uname /var/lib/ucf/hashfile /var/lib/ucf/registry 2>/dev/null; ls /var/lib/ucf/cache 2>/dev/null | grep -E '^:etc:(issue|issue.net|nanorc|zsh:zshrc|update-motd.d:10-uname)$'; }
+sha() { sha256sum <"$1" 2>/dev/null | cut -c1-64; }
+asked() { grep -c -E 'Configuration file|end of file on <standard input>|Modified locally|Deleted locally|What do you want to do about modified configuration file|locally modified|Need debconf to interact' "$1"; }
+dpkg-deb -x "$NEW/${PKG}_"*_all.deb $T/ref
+ref() { case $1 in /etc/motd|/etc/skel/*) echo "$T/ref$1" ;; *) echo "$T/ref/usr/share/$PKG/defaults$1" ;; esac; }
+view() { # view FILE HOME-FILE: what a login shows (the login texts, the message of the day, nano, zsh), and a new home
+	{ for f in /etc/issue /etc/issue.net /etc/motd; do echo "== $f"; cat "$f"; done
+	  echo '== 10-uname'; sh /etc/update-motd.d/10-uname
+	  echo '== nano'; cat /etc/nanorc
+	  echo '== zsh'; cat /etc/zsh/zshrc; } >"$1" 2>&1
+	u=u$RANDOM; useradd -m -s /bin/bash "$u" && { echo "== home"; ls -A "/home/$u"
+	  for f in .bash_aliases .selected_editor .bashrc; do echo "== $f"; cat "/home/$u/$f" 2>/dev/null; done; userdel -r "$u" 2>/dev/null; } >"$2" 2>&1; }
+named() { grep -E "^(CHANGED|LCCHANGED|EDITED|AFTERINST|MISSING) +$1( |$)" $T/verify.txt $T/deep.txt >/dev/null; }
+
+if [ "$CASE" = say ]; then
+	S=/tmp/say.sh
+	dpkg-deb -e "$NEW/${PKG}_"*_all.deb $T/ctl
+	{ echo 'package=sparky-stereo-console'; sed -n '/^say_default() {/,/^}/p' $T/ctl/postinst; sed -n '/^say_moved() {/,/^}/p' $T/ctl/postrm; } >$S
+	prev=
+	for L in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
+		a=$(LANG=$L.UTF-8 sh -c ". $S; say_default /etc/issue /etc/issue.dpkg-dist" 2>&1)
+		b=$(LANG=$L.UTF-8 sh -c ". $S; say_moved /etc/issue /var/backups/$PKG/etc/issue" 2>&1)
+		echo "$L: $a | $b"
+		check '[ -n "$a" ] && [ "$a" != "$prev" ] && case "$a" in *"/etc/issue"*"/etc/issue.dpkg-dist"*) true ;; *) false ;; esac' "$L: the upgrade sentence names both paths, in its own words"
+		check 'case "$b" in *"/etc/issue"*"/var/backups/'$PKG'/etc/issue"*) true ;; *) false ;; esac' "$L: the removal sentence names both paths"
+		prev=$a
+	done
+	exit $failed
+fi
+
+if [ "$CASE" = fresh ]; then
+	dpkg --purge $PKG $PKG-lc-hr >$T/purge0.log 2>&1
+	check '[ -z "$(dpkg-divert --listpackage /etc/issue)" ] && [ -f /etc/issue ]' "the published console purged: base-files' /etc/issue back, no diversion"
+	apt_y install "$NEW"/*.deb >$T/install.log 2>&1; rc=$?
+	check '[ $rc = 0 ] && [ "$(asked $T/install.log)" = 0 ]' "fresh install: rc $rc, nothing asked"
+	for f in $EIGHT; do check '[ "$(sha "$f")" = "$(sha "$(ref "$f")")" ]' "fresh: $f is the package's"; done
+	for f in /etc/issue:base-files /etc/issue.net:base-files /etc/update-motd.d/10-uname:base-files /etc/nanorc:nano /etc/zsh/zshrc:zsh-common; do
+		p=${f%%:*} o=${f#*:}; h=$(dpkg-query -W -f='${Conffiles}\n' "$o" 2>/dev/null | awk -v p="$p" '$1 == p {print $2}')
+		check '[ -n "$h" ] && [ "$h" != newconffile ] && [ "$(md5sum <"$p.debian" | cut -d" " -f1)" = "$h" ]' "fresh: $o's $p kept at $p.debian with its hash ($h)"
+	done
+	check '! grep -q "Your changes" $T/install.log' "fresh: nothing said"
+	for f in $FIVE; do check '[ "$(ucf_sum "$f")" = "$(md5sum <"$f" | cut -d" " -f1)" ] && [ "$(ucf_pkg "$f")" = $PKG ]' "fresh: ucf records $f for $PKG with what it wrote"; done
+	check '[ "$(stat -c %a /etc/update-motd.d/10-uname)" = 755 ]' "fresh: 10-uname is executable"
+	exit $failed
+fi
+
+[ -n "$FROM" ] && { apt_y install "$FROM"/*.deb >$T/from.log 2>&1 || { echo "FAIL installing FROM"; tail -3 $T/from.log; exit 1; }; }
+echo "from: $(dpkg-query -W -f='${Version}' $PKG)"
+view $T/view-before.txt $T/home-before.txt
+if [ "$CASE" = up-edited ]; then
+	for f in $EIGHT; do mkdir -p "${f%/*}"; [ -e "$f" ] || : >"$f"; printf '# a person'"'"'s change to %s\n' "$f" >>"$f"; cp -p "$f" "$T/before/${f//\//_}"; done
+fi
+apt_up "$NEW"/*.deb >$T/up.log 2>&1; rc=$?
+echo "to: $(dpkg-query -W -f='${Version}' $PKG)"
+check '[ $rc = 0 ] && [ "$(asked $T/up.log)" = 0 ]' "upgrade: rc $rc, nothing asked"
+check '[ "$(dpkg-query -W -f="\${Status}" $PKG)" = "install ok installed" ] && [ -z "$(dpkg --audit 2>&1)" ]' "upgrade: installed, dpkg --audit empty"
+dpkg-stereo --verify >$T/verify.txt 2>&1; vrc=$?
+# --deep reads a package's own .deb from APT's cache; the package under test is put there for the run (no network)
+cp "$NEW"/*.deb /var/cache/apt/archives/
+dpkg-stereo --deep --verify $PKG base-files nano zsh-common >$T/deep.txt 2>&1
+rm -f /var/cache/apt/archives/"$PKG"*.deb
+if [ "$CASE" = up-none ]; then
+	for f in $EIGHT; do check '[ "$(sha "$f")" = "$(sha "$(ref "$f")")" ]' "untouched: $f is the new package's"; done
+	check '! grep -q "Your changes" $T/up.log' "untouched: nothing said"
+	check '[ -z "$(ls -d /etc/*.dpkg-* /etc/skel/*.dpkg-* /etc/zsh/*.dpkg-* /etc/update-motd.d/*.dpkg-* /etc/*.ucf-* /etc/zsh/*.ucf-* /etc/update-motd.d/*.ucf-* /var/lib/'$PKG'/held 2>/dev/null)" ]' "untouched: nothing left beside the files"
+	for f in $FIVE; do check '[ "$(ucf_sum "$f")" = "$(md5sum <"$(ref "$f")" | cut -d" " -f1)" ] && [ "$(ucf_pkg "$f")" = $PKG ]' "untouched: ucf records $f for $PKG with the new default"; done
+	check '[ "$(stat -c %a /etc/update-motd.d/10-uname)" = 755 ]' "untouched: 10-uname is executable"
+	check '[ $vrc = 0 ] && ! grep -q -E "^(CHANGED|LCCHANGED|EDITED|MISSING)" $T/verify.txt' "untouched: dpkg-stereo --verify clean (rc $vrc)"
+	for f in $EIGHT; do check '! named "$f"' "untouched: --verify and --deep say nothing of $f"; done
+	view $T/view-after.txt $T/home-after.txt
+	check 'cmp -s $T/view-before.txt $T/view-after.txt' "untouched: the login texts, the message of the day, nanorc and zshrc are byte for byte the same"
+	# from 20261102 a new home differs by design (20261121: .bash_aliases in place of the diverted .bashrc, REPORT-3)
+	[ -z "$FROM" ] || check 'cmp -s $T/home-before.txt $T/home-after.txt' "untouched: a new account's home is byte for byte the same"
+else
+	for f in $EIGHT; do check '[ "$(sha "$f")" = "$(sha "$T/before/${f//\//_}")" ]' "edited: the person's $f kept byte for byte"; done
+	for f in $EIGHT; do
+		case $f in /etc/skel/*) d=/var/backups/$PKG$f.dpkg-dist ;; /etc/motd) d=$f.dpkg-dist ;; *) d=$f.ucf-dist ;; esac
+		check '[ "$(grep -c -F "Your changes to $f are kept; the new default is in $d." $T/up.log)" = 1 ] && [ "$(sha "$d")" = "$(sha "$(ref "$f")")" ]' "edited: $f said once, the new default at $d"
+	done
+	check '[ -z "$(ls /etc/skel | grep dpkg)" ]' "edited: nothing new in /etc/skel for useradd to copy"
+	check '[ "$(stat -c %a /etc/update-motd.d/10-uname.ucf-dist)" = 644 ] && run-parts --lsbsysinit --test /etc/update-motd.d | grep -q -x /etc/update-motd.d/10-uname && ! run-parts --lsbsysinit --test /etc/update-motd.d | grep -q ucf-dist' "edited: run-parts runs 10-uname and not the default beside it"
+	for f in $FIVE; do check '[ "$(ucf_pkg "$f")" = $PKG ] && [ "$(ucf_sum "$f")" = "$(md5sum <"$(ref "$f")" | cut -d" " -f1)" ] && [ "$(ucf_sum "$f")" != "$(md5sum <"$f" | cut -d" " -f1)" ]' "edited: ucf records the new default for $f, which differs from the person's"; done
+	for f in $EIGHT; do check 'named "$f"' "edited: dpkg-stereo --verify or --deep names $f"; done
+fi
+dpkg -r $PKG >$T/remove.log 2>&1; rc=$?
+check '[ $rc = 0 ]' "removal: rc $rc"
+for f in $FIVE; do check '[ -z "$(dpkg-divert --listpackage "$f")" ] && [ ! -e "$f.debian" ] && [ -e "$f" ] && ! grep -q "a person" "$f"' "removal: the owning package's $f back at its name"; done
+if [ "$CASE" = up-edited ]; then
+	for f in $FIVE; do check '[ "$(sha "/var/backups/'$PKG'$f")" = "$(sha "$T/before/${f//\//_}")" ] && grep -q -F "Your changes to $f are kept in /var/backups/'$PKG'$f." $T/remove.log' "removal: the person's $f kept in /var/backups/$PKG$f and said"; done
+fi
+check '[ -z "$(ucf_ours)" ] && [ -z "$(ls -d /etc/*.ucf-* /etc/zsh/*.ucf-* /etc/update-motd.d/*.ucf-* 2>/dev/null)" ]' "removal: ucf's records of the five gone (hashfile, registry, cache), nothing beside the files"
+if [ "$CASE" = up-none ]; then
+	apt_y install "$NEW"/*.deb >$T/reinstall.log 2>&1; rc=$?
+	for f in $FIVE; do check '[ $rc = 0 ] && [ "$(sha "$f")" = "$(sha "$(ref "$f")")" ] && [ "$(ucf_pkg "$f")" = $PKG ]' "reinstall after the removal: $f is the package's again, kept through ucf"; done
+	dpkg -r $PKG >$T/remove2.log 2>&1
+fi
+dpkg --purge $PKG >$T/purge.log 2>&1; rc=$?
+check '[ $rc = 0 ] && [ ! -e /var/lib/'$PKG' ] && [ ! -e /etc/skel/.selected_editor ] && cmp -s /etc/motd /usr/share/base-files/motd' "purge: rc $rc, the state gone, Debian's motd back"
+check '[ -z "$(ucf_ours)" ]' "purge: nothing of the five in ucf's hashfile, registry or cache"
+echo "INFO ucf's own rotated copies that still name one of the five: $(grep -l -F -e /etc/issue -e /etc/nanorc /var/lib/ucf/hashfile.* /var/lib/ucf/registry.* 2>/dev/null | tr '\n' ' ')"
+exit $failed

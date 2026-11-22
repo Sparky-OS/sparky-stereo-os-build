@@ -20,12 +20,17 @@
 # before its owner's conffile may be installed: the preinst moves the owner's pending PATH.dpkg-new to the diverted
 # name, so our file at PATH never replaces it (Debian Policy, appendix 7: "dpkg does not handle it well").
 # Up to 20261102 the skel .bashrc was diverted too; the postinst gives bash's own back (rows 629/802).
-# Last update 2026/11/21
+# A person's change to a file under /etc is kept across upgrades (Debian Policy 10.7.3; row 813): /etc/motd and the
+# two skel files are conffiles; the five at diverted names are kept through ucf by the postinst from the defaults in
+# /usr/share/sparky-stereo-console/defaults, because a conffile there takes the owning package's hash and cannot be
+# removed again (measured with dpkg 1.23.11, row 813); ucf's records let dpkg-stereo --verify name a person's change
+# to them. Up to 20261121.1 all eight were plain files.
+# Last update 2026/11/22
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261121.1~sparky9~0+lc1
+VERSION=20261122~sparky9~0+lc1
 PKG=sparky-stereo-console
 B=$HERE/base
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/console-build.XXXXXX")
@@ -144,26 +149,29 @@ ZSH
 chmod 644 "$D/etc/zsh/zshrc"
 DIVERTED="/etc/issue /etc/issue.net /etc/update-motd.d/10-uname /etc/nanorc /etc/zsh/zshrc"
 GIVEN_BACK=/etc/skel/.bashrc
-sed -e "s|@DIVERTED@|$DIVERTED|" -e "s|@GIVEN_BACK@|$GIVEN_BACK|" "$HERE/preinst.in" >"$D/DEBIAN/preinst"
-# 20261102 and older diverted $GIVEN_BACK; dpkg has removed our copy at this unpack, so bash's own goes back to its
-# name with whatever the person changed in it. In the postinst: a preinst removal would make dpkg delete bash's
-# file as one our old version shipped (measured, rows 629/802).
-cat >"$D/DEBIAN/postinst" <<EOF
-#!/bin/sh
-# postinst script
-set -e
-if [ "\$1" = "configure" ]; then
-	for f in $GIVEN_BACK; do
-		if [ "\$(dpkg-divert --listpackage "\$f")" = $PKG ]; then
-			dpkg-divert --quiet --package $PKG --remove --rename --divert "\$f.debian" "\$f"
-		fi
-	done
-fi
-exit 0
-EOF
-sed "s|@DIVERTED@|$DIVERTED $GIVEN_BACK|" "$HERE/postrm.in" >"$D/DEBIAN/postrm"
+# Row 813: the conffiles from this version on, the files the maintainer scripts keep through ucf at the diverted
+# names (their defaults ship under $S/defaults), and the first version with either: the preinst sets the older plain files
+# aside before the unpack, so dpkg asks nothing and removes nothing of the person's.
+CONFF="/etc/motd /etc/skel/.bash_aliases /etc/skel/.selected_editor"
+MANAGED=$DIVERTED
+FIRST=20261122~
+for f in $MANAGED; do
+	mkdir -p "$(dirname "$S/defaults$f")"
+	mv "$D$f" "$S/defaults$f"
+	chmod 644 "$S/defaults$f"
+done
+rmdir "$D/etc/update-motd.d" "$D/etc/zsh"
+subst() { # subst DIVERTED TEMPLATE: the maintainer-script template with this package's names
+	sed -e "s|@PACKAGE@|$PKG|g" -e "s|@DIVERTED@|$1|g" -e "s|@GIVEN_BACK@|$GIVEN_BACK|g" -e "s|@CONFF@|$CONFF|g" \
+		-e "s|@MANAGED@|$MANAGED|g" -e "s|@FIRST@|$FIRST|g" "$2"
+}
+subst "$DIVERTED" "$HERE/preinst.in" >"$D/DEBIAN/preinst"
+# 20261102 and older diverted $GIVEN_BACK: the postinst gives the owning package's file back (a preinst removal would
+# make dpkg delete it as one our old version shipped, measured, rows 629/802)
+subst "$DIVERTED" "$HERE/postinst.in" >"$D/DEBIAN/postinst"
+subst "$DIVERTED $GIVEN_BACK" "$HERE/postrm.in" >"$D/DEBIAN/postrm"
 chmod 755 "$D/DEBIAN/preinst" "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
-printf '%s\n' /etc/ssh/sshd_config.d/sparky-stereo-banner.conf /etc/xdg/fastfetch/config.jsonc >"$D/DEBIAN/conffiles"
+printf '%s\n' /etc/ssh/sshd_config.d/sparky-stereo-banner.conf /etc/xdg/fastfetch/config.jsonc $CONFF >"$D/DEBIAN/conffiles"
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOF'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
@@ -176,11 +184,11 @@ Files: *
     Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
     License: GPL-3
 
-Files: etc/issue, etc/issue.net, etc/motd, usr/share/sparky-stereo-console/sparky-leaf.txt
+Files: usr/share/sparky-stereo-console/defaults/etc/issue, usr/share/sparky-stereo-console/defaults/etc/issue.net, etc/motd, usr/share/sparky-stereo-console/sparky-leaf.txt
     The ASCII art and texts: Copyright (C) 2018-2026 Daniel Ramos (Capitain Jack)
     License: GPL-3
 
-File: etc/issue (the Debian swirl)
+File: usr/share/sparky-stereo-console/defaults/etc/issue (the Debian swirl)
     The Debian logo in ASCII as drawn in screenFetch, by Brett Bohnenkamper (KittyKatt)
     License: GPL-3+
 
@@ -189,7 +197,7 @@ File: etc/skel/.bash_aliases
     prompt forced on, grep, dir and vdir in colour, GCC's colours, and nano as EDITOR and VISUAL
     License: GPL-3+
 
-File: etc/nanorc
+File: usr/share/sparky-stereo-console/defaults/etc/nanorc
     Debian's /etc/nanorc (package nano), with its first example interface palette switched on
     Copyright (C) the GNU nano authors
     License: GPL-3+
@@ -228,7 +236,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: command-not-found, fastfetch, sparky-stereo-problems (>= 0.1.1)
+Depends: command-not-found, fastfetch, sparky-stereo-problems (>= 0.1.1), ucf (>= 3.0056)
 Conflicts: neofetch
 Section: System
 Priority: optional
