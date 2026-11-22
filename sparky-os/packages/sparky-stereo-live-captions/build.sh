@@ -19,7 +19,7 @@ SRC=$WORK/source   # not named package-version: dch renames a folder that is
 python3 "$TOOLKIT/../tools/copy-recipe.py" "$HERE" "$SRC"
 python3 "$TOOLKIT/repo/reproducible.py" normalize "$SOURCE_DATE_EPOCH" "$SRC"
 (cd "$SRC" && PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare . "$VERSION+lc1" --build-dependency sparky-stereo-problems)
-(cd "$SRC" && PYTHONPATH="$TOOLKIT" dpkg-buildpackage -us -uc -sa -j"${JOBS:-4}" >"$WORK/build.log" 2>&1) || { tail -40 "$WORK/build.log"; exit 1; }
+(cd "$SRC" && PYTHONPATH="$TOOLKIT" dpkg-buildpackage -us -uc -sa -j"${JOBS:-4}" >"$WORK/build.log" 2>&1) || { cp "$WORK/build.log" "$OUT/build.log"; tail -40 "$WORK/build.log"; exit 1; }
 cp "$WORK"/*.deb "$WORK"/*.dsc "$WORK"/*.tar.xz "$WORK"/*.buildinfo "$WORK"/*.changes "$WORK"/*.json "$OUT/" 2>/dev/null || true
 cp "$WORK/build.log" "$OUT/build.log"
 # the release gate: every archive and its HR companions carry a valid lc1 record, and the build record is written beside them
