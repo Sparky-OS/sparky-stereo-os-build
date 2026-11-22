@@ -70,6 +70,7 @@ INSTALL=r'''set -euo pipefail
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 apt-get --yes --allow-downgrades --no-install-recommends install /out/debs/*.deb
+getent passwd 1000 >/dev/null || useradd --create-home --uid 1000 --shell /bin/bash builder
 dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${Status}\n' > /out/installed.tsv
 systemctl --global is-enabled captiond.service captiond.socket > /out/activation.txt || [ "$?" = 1 ]
 find /etc/systemd/user /home/builder -type l -name '*caption*' -print > /out/activation-links.txt
