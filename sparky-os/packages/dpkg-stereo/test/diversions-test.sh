@@ -146,8 +146,9 @@ dpki --force-confold -i "$W/dv-owner_4.0_all.deb"; rc=$?
 check "upgrade with the person's edit, --force-confold: exit 0" [ $rc = 0 ]
 check "the person's edit is kept" cmp -s $D "$W/edited.bak"
 verify; show
-# after an upgrade, a person's edit of a conffile is named as EDITED (left as they made it), as for every conffile
-check "--verify names the edit" says "^EDITED    $C (changed by the person: left as they made it)$"
+# after an upgrade, a person's edit of a conffile is named as EDITED (left as they made it), as for every conffile; a copy
+# at a diverted name says where it is, in its own parentheses before the line's fixed end (0.1.45)
+check "--verify names the edit at its diverted name" says "^EDITED    $C (at $D: dv-owner's copy, diverted by dv-replace) (changed by the person: left as they made it)$"
 dpki -r dv-replace || bad "removing dv-replace"
 check "the edit moved back with the owner's copy" cmp -s $C "$W/edited.bak"
 verify; show

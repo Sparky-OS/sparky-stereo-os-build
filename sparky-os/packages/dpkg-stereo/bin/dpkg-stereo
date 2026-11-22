@@ -950,7 +950,8 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     t0 = time.time()
     done = skipped = same = 0
     pys = []
-    unrecorded = {}        # lean conffiles found without a record: judge_unrecorded's to decide
+    unrecorded = {}        # lean conffiles found without a record, their original at hand: the judgement's to decide
+    maybe = {}             # path -> (row, dpkg's hash, handler): lean conffiles found without a record
     pointer = project.core.POINTER_URL.encode()
     # a handful of files (a package or two after an upgrade) is quicker in this process than in a pool
     pool = None
@@ -987,8 +988,9 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
             if path in conf and md5(data) != conf[path] and pointer in data:
                 # a lean conffile without a record of this version: the one judgement decides whether it is the
                 # projection of its package's file (its record comes back) or the person's (0.1.45, rows 629/802: a
-                # reinstall's projection called such a file "changed by the person", and nobody had touched it)
-                unrecorded[path] = {'path': path, 'package': name, 'handler': '', 'reason': ''}
+                # reinstall's projection called such a file "changed by the person", and nobody had touched it), when
+                # that file's original is in the pristine store (below)
+                maybe[path] = ({'path': path, 'package': name, 'handler': '', 'reason': ''}, conf[path], r.handler)
                 continue
             if path in conf and md5(data) != conf[path]:
                 left[path] = {'path': path, 'package': name, 'handler': r.handler,
@@ -1019,6 +1021,18 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
             left.pop(path, None)
             done += 1
             same += r.check == 'the same bytes as a checked projection'
+    if maybe:
+        # the engine keeps the original of every conffile it projected: with that original (dpkg's hash of the version
+        # installed now) at hand the judgement says whether the file is its projection; without it, the file is not the
+        # projection of anything this engine projected at that version, which dpkg too keeps as a local change (an
+        # upgrade whose conffile changed, the old lean file kept by the person's answer or --force-confold): the
+        # person's, as before, and nothing is fetched to say so
+        at_hand = pristine_by_md5(P, {want for _, want, _ in maybe.values()})
+        for path, (row, want, handler) in maybe.items():
+            if want in at_hand:
+                unrecorded[path] = row
+            else:
+                left[path] = dict(row, handler=handler, reason=PERSON_CHANGED)
     # the records first: a file written lean is recorded before anything else can fail
     files.save()
     left.save()
@@ -2937,15 +2951,17 @@ def unrecorded_rows(P, pkgs, names=None, db=None):
     """{path: row} (LEFT_COLS, handler and reason empty) of the lean conffiles without a record: a conffile of an
     installed package (PKGS; NAMES limits them) that dpkg records with a real hash and that has no record, whose copy
     where dpkg keeps it (on_disk: under another package's diversion, at the diverted name) carries the Lean Code pointer
-    and differs from that hash, with no left row or one that calls it the person's (a projection wrote that for such a
-    file until 0.1.45, at a reinstall of its package). Lean, with nothing to vouch for it. The diverting package's own
-    copy, a locally diverted copy and an lc1 package's conffiles are not these."""
+    and differs from that hash, with no left row, or with one that calls it the person's while the original of dpkg's
+    hash is in the pristine store (a projection wrote that row for such a file until 0.1.45, at a reinstall of its
+    package; without that original the row is dpkg's own view too, and nothing is fetched to question it). Lean, with
+    nothing to vouch for it. The diverting package's own copy, a locally diverted copy and an lc1 package's conffiles
+    are not these."""
     db = db or dpkg_db(P)
     divs = diversion_table(P)
     have = set(Records(P, 'records'))
     left = Records(P, 'left')
     pointer = project.core.POINTER_URL.encode()
-    rows = {}
+    rows, theirs = {}, {}
     for name, paths in conffiles(P, db).items():
         if name not in pkgs or (names is not None and name not in names):
             continue
@@ -2962,6 +2978,11 @@ def unrecorded_rows(P, pkgs, names=None, db=None):
                 continue
             if pointer in data and md5(data) != want:
                 rows[path] = {'path': path, 'package': name, 'handler': '', 'reason': ''}
+                if row:
+                    theirs[path] = want
+    if theirs:
+        at_hand = pristine_by_md5(P, set(theirs.values()))
+        rows = {p: r for p, r in rows.items() if p not in theirs or theirs[p] in at_hand}
     built = lc1_names(P, {r['package'] for r in rows.values()})
     return {p: r for p, r in rows.items() if r['package'] not in built}
 
