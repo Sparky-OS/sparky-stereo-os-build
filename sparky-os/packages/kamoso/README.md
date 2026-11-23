@@ -86,3 +86,8 @@ reports it once per recording, retaining the original timestamps of later pairs.
 It does not discard the recording. A blocked-source-pad test forces repeated
 drops without artificial CPU load and proves finalization and the notice reset
 for the next recording. This does not explain the earlier missing MP4 reports.
+
+Constant-quality x264 still applies a 2,048 kbit/s VBV ceiling by default.
+Set vbv-buf-capacity=0 to disable that ceiling, matching the ordinary Theora
+quality route's absence of a bitrate ceiling. Verify rc=crf, lookahead and the
+absence of vbv_maxrate in the encoder options written inside the actual film.

@@ -2163,7 +2163,7 @@ Last-Update: 2026-11-22
 +};
 --- /dev/null
 +++ b/src/video/stereorecorder.cpp
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,140 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereorecorder.h"
@@ -2222,13 +2222,14 @@ Last-Update: 2026-11-22
 +    qInfo() << "Stereo recording temporary file" << m_path;
 +    // Camerabin's 2D profile uses quality-based Theora and Vorbis. H.264 is
 +    // necessary for frame-packing SEI; keep its normal quality preset rather
-+    // than disabling lookahead with zerolatency. Preserve full chroma here.
++    // than disabling lookahead with zerolatency. Disable the default VBV cap:
++    // camerabin's quality-based Theora has no bitrate ceiling. Keep full chroma.
 +    // Matroska keeps Vorbis; mp4mux cannot mux Vorbis, so MP4 uses AAC.
 +    const char *audioCodec=container==QLatin1String("mp4")?"avenc_aac ! aacparse":"vorbisenc ! vorbisparse";
 +    const QByteArray description=QByteArray(
 +        "appsrc name=pair is-live=true do-timestamp=true format=time block=false max-buffers=8 "
 +        "! queue max-size-buffers=8 max-size-bytes=0 max-size-time=0 ! videoconvert "
-+        "! video/x-raw,format=Y444 ! x264enc pass=qual ! h264parse ! mq.sink_0 "
++        "! video/x-raw,format=Y444 ! x264enc pass=qual vbv-buf-capacity=0 ! h264parse ! mq.sink_0 "
 +        "autoaudiosrc name=audio ! audioconvert ! ")+audioCodec+" ! mq.sink_1 "
 +        "multiqueue name=mq mq.src_0 ! mux.video_0 mq.src_1 ! mux.audio_0 "+muxName+" name=mux ! filesink name=file";
 +    GError *error=nullptr;
@@ -2325,7 +2326,7 @@ Last-Update: 2026-11-22
 +            auto *factory=gst_element_get_factory(child);
 +            if(!factory){g_value_reset(&item);continue;}
 +            QJsonObject row{{QStringLiteral("factory"),QString::fromUtf8(gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)))}};
-+            for(const char *prop:{"quality","bitrate","pass","quantizer","tune","speed-preset"}) {
++            for(const char *prop:{"quality","bitrate","vbv-buf-capacity","pass","quantizer","tune","speed-preset"}) {
 +                auto *spec=g_object_class_find_property(G_OBJECT_GET_CLASS(child),prop);
 +                if(!spec || !(spec->flags&G_PARAM_READABLE))continue;
 +                GValue value=G_VALUE_INIT;g_value_init(&value,spec->value_type);g_object_get_property(G_OBJECT(child),prop,&value);
