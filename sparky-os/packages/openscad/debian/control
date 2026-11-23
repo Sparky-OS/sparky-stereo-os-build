@@ -1,0 +1,74 @@
+Source: openscad
+Section: graphics
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends:
+    debhelper-compat (= 13),
+    cmake,
+    ninja-build,
+    pkgconf,
+    bison,
+    flex,
+    gettext,
+    qt6-base-dev,
+    qt6-base-private-dev,
+    qt6-5compat-dev,
+    qt6-multimedia-dev,
+    qt6-svg-dev,
+    libqscintilla2-qt6-dev,
+    libcgal-dev,
+    libclipper2-dev,
+    libmimalloc-dev,
+    libopencsg-dev (>= 1.6.0),
+    libtbb-dev,
+    lib3mf-dev,
+    libspnav-dev,
+    libhidapi-dev,
+    libeigen3-dev,
+    libboost-regex-dev,
+    libboost-program-options-dev,
+    libdouble-conversion-dev,
+    libxml2-dev,
+    libzip-dev,
+    libcairo2-dev,
+    libfontconfig-dev,
+    libfreetype-dev,
+    libharfbuzz-dev,
+    libglib2.0-dev,
+    libgmp-dev,
+    libmpfr-dev,
+    libssl-dev,
+    libgl-dev,
+    libegl-dev,
+    libx11-dev,
+    libstereo-declare-dev (>= 1.12.2)
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: openscad
+Architecture: any
+Depends:
+    ${shlibs:Depends},
+    ${misc:Depends},
+    ${qt6:private-abi}
+Recommends:
+    openscad-mcad
+Suggests:
+    meshlab,
+    geomview,
+    librecad
+Description: script file based graphical CAD environment
+ OpenSCAD is a software for creating solid 3D CAD objects. It focuses on CAD
+ aspects rather than artistic ones.
+ .
+ OpenSCAD is not an interactive modeller. Instead it is something like a
+ 3D-compiler that reads in a script file that describes the object and renders
+ the 3D model from this script. This gives the designer full control over the
+ modelling process and enables him to easily change any step in the modelling
+ process or make designes that are defined by configurable parameters.
+ .
+ Sparky Stereo OS build: the 3D view shows the preview and the rendered model
+ as a stereo pair on a 3D screen, as deep as the depth limits set once in the
+ desktop's 3D settings allow.

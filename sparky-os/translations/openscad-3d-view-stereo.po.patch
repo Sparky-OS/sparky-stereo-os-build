@@ -1,0 +1,426 @@
+diff --git a/locale/LINGUAS b/locale/LINGUAS
+index d961d8129..5ad6be43d 100644
+--- a/locale/LINGUAS
++++ b/locale/LINGUAS
+@@ -1,2 +1,2 @@
+ # available languages
+-cs de es fr gl hy it ka lo pl pt_BR ru sv tr uk zh_CN zh_TW
++cs de es fr gl hy it ja ka ko lo pl pt_BR ru sv tr uk zh_CN zh_TW
+diff --git a/locale/de.po b/locale/de.po
+index cec525635..78b1ed27e 100644
+--- a/locale/de.po
++++ b/locale/de.po
+@@ -3863,3 +3863,39 @@ msgstr ""
+ 
+ #~ msgid "CGAL Grid Only"
+ #~ msgstr "CGAL Gitter anzeigen"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "3D-Anzeigeeinstellungen ..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "Die Anzeigeeinstellungen konnten nicht geöffnet werden."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "3D-Tiefe: Dieser Desktop bietet keine Tiefengrenzen, deshalb sehen beide Augen dasselbe Bild"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "3D-Tiefe: Der Desktop hat die Tiefengrenzen noch nicht geliefert, beide Augen sehen vorerst dasselbe Bild"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "3D-Tiefe: Dieses Fenster kann die Tiefengrenzen des Desktops nicht lesen, deshalb sehen beide Augen dasselbe Bild"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "3D einschalten (gilt für neue Fenster)"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "Dieser Desktop bietet keine Stereo-Puffer, deshalb bleibt die 3D-Ansicht 2D."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D: Diese Ansicht hat keine Stereo-Puffer erhalten, deshalb wird sie in 2D gezeigt"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "3D-Tiefe: Die Tiefe dieser Ansicht konnte nicht gelesen werden, deshalb sehen beide Augen dasselbe Bild"
+diff --git a/locale/es.po b/locale/es.po
+index bffa00f0e..af9243625 100644
+--- a/locale/es.po
++++ b/locale/es.po
+@@ -3710,3 +3710,39 @@ msgstr ""
+ 
+ #~ msgid "Extrusion"
+ #~ msgstr "Extrusión"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "Ajustes de la pantalla 3D..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "No se pudieron abrir los Ajustes de pantalla."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "Profundidad 3D: este escritorio no ofrece límites de profundidad, así que los dos ojos ven la misma imagen"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "Profundidad 3D: el escritorio aún no ha entregado los límites de profundidad, por ahora los dos ojos ven la misma imagen"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "Profundidad 3D: esta ventana no puede leer los límites de profundidad del escritorio, así que los dos ojos ven la misma imagen"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "Activar 3D (se aplica a las ventanas nuevas)"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "Este escritorio no ofrece búferes estéreo, así que la vista 3D sigue en 2D."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D: esta vista no recibió búferes estéreo, así que se muestra en 2D"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "Profundidad 3D: no se pudo leer la profundidad de esta vista, así que los dos ojos ven la misma imagen"
+diff --git a/locale/fr.po b/locale/fr.po
+index a36f8fa15..ed7f3ef6a 100644
+--- a/locale/fr.po
++++ b/locale/fr.po
+@@ -3639,3 +3639,39 @@ msgstr ""
+ 
+ #~ msgid "Error-Log"
+ #~ msgstr "Journal des erreurs"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "Réglages de l'écran 3D..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "Impossible d'ouvrir les Réglages de l'écran."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "Profondeur 3D : ce bureau n’offre pas de limites de profondeur, les deux yeux voient donc la même image"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "Profondeur 3D : le bureau n’a pas encore transmis les limites de profondeur, les deux yeux voient la même image pour l’instant"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "Profondeur 3D : cette fenêtre ne peut pas lire les limites de profondeur du bureau, les deux yeux voient donc la même image"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "Activer la 3D (effective pour les nouvelles fenêtres)"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "Ce bureau n’offre pas de tampons stéréo : la vue 3D reste donc en 2D."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D : cette vue n’a pas reçu de tampons stéréo, elle est donc affichée en 2D"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "Profondeur 3D : la profondeur de cette vue n’a pas pu être lue, les deux yeux voient donc la même image"
+diff --git a/locale/pl.po b/locale/pl.po
+index 287048604..acf90ff20 100644
+--- a/locale/pl.po
++++ b/locale/pl.po
+@@ -3911,3 +3911,39 @@ msgstr ""
+ 
+ #~ msgid "Untitled%1"
+ #~ msgstr "BezTytułu%1"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "Ustawienia wyświetlacza 3D..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "Nie udało się otworzyć ustawień wyświetlacza."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "Głębia 3D: ten pulpit nie podaje limitów głębi, więc oba oczy widzą ten sam obraz"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "Głębia 3D: pulpit nie przekazał jeszcze limitów głębi, na razie oba oczy widzą ten sam obraz"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "Głębia 3D: to okno nie może odczytać limitów głębi pulpitu, więc oba oczy widzą ten sam obraz"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "Włącz 3D (działa w nowych oknach)"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "Ten pulpit nie udostępnia buforów stereo, więc widok 3D pozostaje w 2D."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D: ten widok nie otrzymał buforów stereo, więc jest wyświetlany w 2D"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "Głębia 3D: nie udało się odczytać głębi tego widoku, więc oba oczy widzą ten sam obraz"
+diff --git a/locale/pt_BR.po b/locale/pt_BR.po
+index 7f7cda06e..68a7feab7 100644
+--- a/locale/pt_BR.po
++++ b/locale/pt_BR.po
+@@ -3760,3 +3760,39 @@ msgstr ""
+ 
+ #~ msgid "Print Service not available"
+ #~ msgstr "Serviço de Impressão não disponível"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "Configurações da tela 3D..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "Não foi possível abrir as Configurações de tela."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "Profundidade 3D: este desktop não oferece limites de profundidade, então os dois olhos veem a mesma imagem"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "Profundidade 3D: o desktop ainda não entregou os limites de profundidade, por enquanto os dois olhos veem a mesma imagem"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "Profundidade 3D: esta janela não consegue ler os limites de profundidade do desktop, então os dois olhos veem a mesma imagem"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "Ativar 3D (vale para janelas novas)"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "Este desktop não oferece buffers estéreo, então a visão 3D fica em 2D."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D: esta visão não recebeu buffers estéreo, então é mostrada em 2D"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "Profundidade 3D: não foi possível ler a profundidade desta visão, então os dois olhos veem a mesma imagem"
+diff --git a/locale/zh_CN.po b/locale/zh_CN.po
+index abef3d990..5590c5e2b 100644
+--- a/locale/zh_CN.po
++++ b/locale/zh_CN.po
+@@ -3848,3 +3848,39 @@ msgstr ""
+ 
+ #~ msgid "Untitled.csg"
+ #~ msgstr "未命名.csg"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "3D 显示设置..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "无法打开显示设置。"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "3D 深度：此桌面未提供深度限制，因此两眼显示相同的画面"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "3D 深度：桌面尚未提供深度限制，暂时两眼显示相同的画面"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "3D 深度：此窗口无法读取桌面的深度限制，因此两眼显示相同的画面"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "启用 3D（对新窗口生效）"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "此桌面不提供立体缓冲区，因此 3D 视图保持 2D。"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D：此视图未获得立体缓冲区，因此以 2D 显示"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "3D 深度：无法读取此视图的深度，因此两眼显示相同的画面"
+diff --git a/locale/zh_TW.po b/locale/zh_TW.po
+index 3d289ae37..0b816e903 100644
+--- a/locale/zh_TW.po
++++ b/locale/zh_TW.po
+@@ -3867,3 +3867,39 @@ msgstr ""
+ 
+ #~ msgid "/"
+ #~ msgstr "/"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "3D 顯示設定..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "無法開啟顯示設定。"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "3D 深度：此桌面未提供深度限制，因此兩眼顯示相同的畫面"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "3D 深度：桌面尚未提供深度限制，暫時兩眼顯示相同的畫面"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "3D 深度：此視窗無法讀取桌面的深度限制，因此兩眼顯示相同的畫面"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "啟用 3D（對新視窗生效）"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "此桌面不提供立體緩衝區，因此 3D 檢視維持 2D。"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D：此檢視未取得立體緩衝區，因此以 2D 顯示"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "3D 深度：無法讀取此檢視的深度，因此兩眼顯示相同的畫面"
+diff --git a/locale/ja.po b/locale/ja.po
+new file mode 100644
+index 000000000..9e1655896
+--- /dev/null
++++ b/locale/ja.po
+@@ -0,0 +1,49 @@
++# Japanese translation of OpenSCAD: the stereo 3D view's sentences only (Sparky Stereo OS).
++# A first draft with AI assistance, pending review by native speakers.
++msgid ""
++msgstr ""
++"Project-Id-Version: OpenSCAD 2026.11\n"
++"PO-Revision-Date: 2026-11-23 06:00+0000\n"
++"Last-Translator: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\n"
++"Language-Team: none\n"
++"Language: ja\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "3D ディスプレイの設定..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "ディスプレイ設定を開けませんでした。"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "3D奥行き: このデスクトップは奥行きの上限を提供しないため、両目に同じ画像を表示します"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "3D奥行き: デスクトップがまだ奥行きの上限を渡していないため、今は両目に同じ画像を表示します"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "3D奥行き: このウィンドウはデスクトップの奥行きの上限を読み取れないため、両目に同じ画像を表示します"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "3D を有効にする (新しいウィンドウに反映)"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "このデスクトップはステレオバッファーを提供しないため、3D ビューは 2D のままです。"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D: このビューはステレオバッファーを得られなかったため、2D で表示します"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "3D奥行き: このビューの奥行きを読み取れなかったため、両目に同じ画像を表示します"
+diff --git a/locale/ko.po b/locale/ko.po
+new file mode 100644
+index 000000000..5d63bba1f
+--- /dev/null
++++ b/locale/ko.po
+@@ -0,0 +1,49 @@
++# Korean translation of OpenSCAD: the stereo 3D view's sentences only (Sparky Stereo OS).
++# A first draft with AI assistance, pending review by native speakers.
++msgid ""
++msgstr ""
++"Project-Id-Version: OpenSCAD 2026.11\n"
++"PO-Revision-Date: 2026-11-23 06:00+0000\n"
++"Last-Translator: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\n"
++"Language-Team: none\n"
++"Language: ko\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D display settings..."
++msgstr "3D 디스플레이 설정..."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Display Settings could not be opened."
++msgstr "디스플레이 설정을 열 수 없습니다."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this desktop offers no depth limits, so both eyes show the same picture"
++msgstr "3D 깊이: 이 데스크톱은 깊이 한계를 제공하지 않아 두 눈에 같은 화면을 보여 줍니다"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"
++msgstr "3D 깊이: 데스크톱이 아직 깊이 한계를 전달하지 않아 지금은 두 눈에 같은 화면을 보여 줍니다"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"
++msgstr "3D 깊이: 이 창은 데스크톱의 깊이 한계를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "Enable 3D (applies to new windows)"
++msgstr "3D 켜기 (새 창에 적용)"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "This desktop offers no stereo buffers, so the 3D view stays 2D."
++msgstr "이 데스크톱은 스테레오 버퍼를 제공하지 않아 3D 보기는 2D로 유지됩니다."
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D: this view got no stereo buffers, so it is shown in 2D"
++msgstr "3D: 이 보기는 스테레오 버퍼를 받지 못해 2D로 표시됩니다"
++
++#: src/gui/Stereo3dView.cc src/gui/Preferences.ui
++msgid "3D depth: the depth of this view could not be read, so both eyes show the same picture"
++msgstr "3D 깊이: 이 보기의 깊이를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다"

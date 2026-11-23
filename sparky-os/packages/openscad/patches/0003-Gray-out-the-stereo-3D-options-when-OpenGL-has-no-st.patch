@@ -1,0 +1,284 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 12 Oct 2026 16:07:15 -0300
+Subject: [PATCH 3/4] Gray out the stereo 3D options when OpenGL has no stereo
+ buffers
+
+In Preferences, 3D View, the "stereo 3D view" checkbox and the eye
+separation are disabled when the 3D view cannot get stereo buffers on
+this system, with a tooltip that says why. The stored setting is kept:
+a setting that is on stays on and is shown checked.
+
+Stereo3dView::isAvailable() finds out once per session, when the
+Preferences window is first shown. With the stereo setting on, the 3D
+view's own context format answers it. Otherwise a context is created
+with the view's format plus StereoBuffers, without a surface, and its
+format is read: Qt picks the framebuffer configuration when it creates
+the context (GLX_STEREO on xcb; Qt's EGL contexts are never stereo),
+and QOpenGLWidget draws each eye only when its own context's format is
+stereo, so this is the same answer the view gets. The context is
+created in QGLView2.cc, next to getGLContext() and setGLContext(),
+because <QOpenGLContext> does not go together with GLEW.
+
+With Qt before 6.5, where Stereo3dView is a stub, the options are
+disabled with their own tooltip.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit c810a549d520b52c6586c78b979b7f7d439d94ba)
+---
+ src/gui/Preferences.cc  | 16 ++++++++++++++
+ src/gui/Preferences.h   |  1 +
+ src/gui/QGLView.cc      |  7 ++----
+ src/gui/QGLView.h       |  3 +++
+ src/gui/QGLView2.cc     | 17 ++++++++++++++-
+ src/gui/Stereo3dView.cc | 48 +++++++++++++++++++++++++++++++++++++++++
+ src/gui/Stereo3dView.h  |  7 ++++++
+ 7 files changed, 93 insertions(+), 6 deletions(-)
+
+diff --git a/src/gui/Preferences.cc b/src/gui/Preferences.cc
+index 511dc00ec..08a69d54d 100644
+--- a/src/gui/Preferences.cc
++++ b/src/gui/Preferences.cc
+@@ -83,6 +83,7 @@
+ #include "gui/PrintService.h"
+ #include "gui/QSettingsCached.h"
+ #include "gui/SettingsWriter.h"
++#include "gui/Stereo3dView.h"
+ 
+ namespace {
+ 
+@@ -800,6 +801,20 @@ void Preferences::on_doubleSpinBoxStereo3dEyeSeparation_valueChanged(double val)
+   emit requestRedraw();
+ }
+ 
++// Grays out the stereo 3D options when the 3D view cannot draw in stereo. The stored setting stays
++// as it is.
++void Preferences::updateStereo3dOptions()
++{
++  if (Stereo3dView::isAvailable()) return;
++  const QString reason = Stereo3dView::unavailableReason();
++  this->checkBoxStereo3dView->setEnabled(false);
++  this->labelStereo3dEyeSeparation->setEnabled(false);
++  this->doubleSpinBoxStereo3dEyeSeparation->setEnabled(false);
++  this->checkBoxStereo3dView->setToolTip(reason);
++  this->labelStereo3dEyeSeparation->setToolTip(reason);
++  this->doubleSpinBoxStereo3dEyeSeparation->setToolTip(reason);
++}
++
+ void Preferences::on_spinBoxIndentationWidth_valueChanged(int val)
+ {
+   Settings::Settings::indentationWidth.setValue(val);
+@@ -1870,6 +1885,7 @@ void Preferences::showEvent(QShowEvent *e)
+   if (!this->printPageSetupDone) {
+     setup3DPrintPage();
+   }
++  updateStereo3dOptions();
+   QMainWindow::showEvent(e);
+   hidePasswords();
+ }
+diff --git a/src/gui/Preferences.h b/src/gui/Preferences.h
+index 38ca68caf..7d733693f 100644
+--- a/src/gui/Preferences.h
++++ b/src/gui/Preferences.h
+@@ -220,6 +220,7 @@ private:
+   void removeDefaultSettings();
+   void setupFeaturesPage();
+   void setup3DPrintPage();
++  void updateStereo3dOptions();
+   void writeSettings();
+   void hidePasswords();
+   void addPrefPage(QActionGroup *group, QAction *action, QWidget *widget);
+diff --git a/src/gui/QGLView.cc b/src/gui/QGLView.cc
+index cb7e541e1..a67b46adc 100644
+--- a/src/gui/QGLView.cc
++++ b/src/gui/QGLView.cc
+@@ -73,9 +73,7 @@
+ #include "gui/qt-obsolete.h"
+ #include "gui/Measurement.h"
+ 
+-namespace {
+-
+-QSurfaceFormat compatibleWidgetFormat()
++QSurfaceFormat QGLView::compatibleWidgetFormat()
+ {
+   auto format = QSurfaceFormat::defaultFormat();
+   format.setRenderableType(QSurfaceFormat::OpenGL);
+@@ -85,8 +83,6 @@ QSurfaceFormat compatibleWidgetFormat()
+   return format;
+ }
+ 
+-}  // namespace
+-
+ QGLView::QGLView(QWidget *parent) : QOpenGLWidget(parent)
+ {
+   setFormat(compatibleWidgetFormat());
+@@ -161,6 +157,7 @@ void QGLView::initializeGL()
+   PRINTD(gl_dump());
+ 
+   GLView::initializeGL();
++  stereo3d.initialize();
+ 
+   this->selector = std::make_unique<MouseSelector>(this);
+ 
+diff --git a/src/gui/QGLView.h b/src/gui/QGLView.h
+index 7cc28944e..b3b229f8a 100644
+--- a/src/gui/QGLView.h
++++ b/src/gui/QGLView.h
+@@ -45,6 +45,8 @@ public:
+ #ifdef ENABLE_OPENCSG
+   bool hasOpenCSGSupport() { return this->is_opencsg_capable; }
+ #endif
++  // The surface format the 3D view asks for
++  static QSurfaceFormat compatibleWidgetFormat();
+   // Properties
+   bool orthoMode() const { return (this->cam.projection == Camera::ProjectionType::ORTHOGONAL); }
+   void setOrthoMode(bool enabled);
+@@ -134,3 +136,4 @@ signals:
+ class QOpenGLContext;
+ QOpenGLContext *getGLContext();
+ void setGLContext(QOpenGLContext *);
++QSurfaceFormat createdContextFormat(const QSurfaceFormat& format);
+diff --git a/src/gui/QGLView2.cc b/src/gui/QGLView2.cc
+index beb2b1e4f..6a2fefaa4 100644
+--- a/src/gui/QGLView2.cc
++++ b/src/gui/QGLView2.cc
+@@ -24,7 +24,8 @@
+  */
+ 
+ /*
+- * This file defines two helper functions for saving and restoring OpenGL contexts.
++ * This file defines two helper functions for saving and restoring OpenGL contexts,
++ * and one that tells which format a new context gets.
+  * They are in a separate file (rather than in the more obvious QGLView.cc) because
+  * <QOpenGLContext> is incompatible with GLEW and produces compilation warning messages.
+  * Putting them in a separate file in helper functions allows the main file to need
+@@ -33,6 +34,7 @@
+  * See also the discussion at QGLView::mouseDoubleClickEvent().
+  */
+ #include <QOpenGLContext>
++#include <QSurfaceFormat>
+ 
+ QOpenGLContext *getGLContext()
+ {
+@@ -51,3 +53,16 @@ void setGLContext(QOpenGLContext *ctx)
+     ctx->makeCurrent(ctx->surface());
+   }
+ }
++
++QSurfaceFormat createdContextFormat(const QSurfaceFormat& format)
++{
++  /*
++   * Qt picks the framebuffer configuration when it creates the context, so the
++   * created context's format is what the system gives for the format asked.  No
++   * surface is needed, so no window is shown, and the current context stays current.
++   */
++  QOpenGLContext context;
++  context.setFormat(format);
++  if (!context.create()) return {};
++  return context.format();
++}
+diff --git a/src/gui/Stereo3dView.cc b/src/gui/Stereo3dView.cc
+index ba26af258..f5c4ee3ab 100644
+--- a/src/gui/Stereo3dView.cc
++++ b/src/gui/Stereo3dView.cc
+@@ -3,6 +3,8 @@
+ #include <QString>
+ #include <QtGlobal>
+ 
++#include "gui/qtgettext.h"
++
+ #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+ 
+ // QGLView.h first: the OpenGL loader must come before the Qt OpenGL headers
+@@ -12,6 +14,14 @@
+ #include <QOpenGLWidget>
+ #include <QSettings>
+ #include <QSurfaceFormat>
++#include <optional>
++
++namespace {
++
++// Whether the 3D view gets stereo buffers, once it is known
++std::optional<bool> stereoBuffers;
++
++}  // namespace
+ 
+ Stereo3dView::Stereo3dView(QGLView& view) : view(view), stereo(Settings::Settings::stereo3dView.value())
+ {
+@@ -27,6 +37,30 @@ void Stereo3dView::requestStereoBuffers(QSurfaceFormat& format)
+   }
+ }
+ 
++bool Stereo3dView::isAvailable()
++{
++  if (!stereoBuffers) {
++    // Qt picks the framebuffer configuration when it creates the context, and QOpenGLWidget draws
++    // each eye only when its own context's format is stereo, so a context with the view's format
++    // gives the same answer the view gets.
++    auto format = QGLView::compatibleWidgetFormat();
++    format.setOption(QSurfaceFormat::StereoBuffers);
++    stereoBuffers = createdContextFormat(format).stereo();
++  }
++  return *stereoBuffers;
++}
++
++QString Stereo3dView::unavailableReason()
++{
++  return _("OpenGL on this system has no stereo buffers, which the stereo 3D view needs.");
++}
++
++void Stereo3dView::initialize()
++{
++  // A view that asked for stereo buffers knows from its own format whether it got them
++  if (stereo) stereoBuffers = view.format().stereo();
++}
++
+ bool Stereo3dView::drawsEyes() const
+ {
+   return stereo && view.format().stereo();
+@@ -74,6 +108,20 @@ void Stereo3dView::requestStereoBuffers(QSurfaceFormat& /*format*/)
+ {
+ }
+ 
++bool Stereo3dView::isAvailable()
++{
++  return false;
++}
++
++QString Stereo3dView::unavailableReason()
++{
++  return _("The stereo 3D view needs OpenSCAD built with Qt 6.5 or later.");
++}
++
++void Stereo3dView::initialize()
++{
++}
++
+ void Stereo3dView::beginEye()
+ {
+ }
+diff --git a/src/gui/Stereo3dView.h b/src/gui/Stereo3dView.h
+index bb78f1036..2a7ae1160 100644
+--- a/src/gui/Stereo3dView.h
++++ b/src/gui/Stereo3dView.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <QString>
+ #include <QtGlobal>
+ 
+ class QGLView;
+@@ -22,7 +23,13 @@ public:
+ 
+   // Asks for stereo buffers in the default surface format when the preference is on
+   static void requestStereoBuffers(QSurfaceFormat& format);
++  // Whether the 3D view can be drawn in stereo on this system, found out once per session
++  static bool isAvailable();
++  // Why the stereo 3D view is not available, for the tooltip of its preferences
++  static QString unavailableReason();
+ 
++  // From QGLView::initializeGL()
++  void initialize();
+   // Around GLView::paintGL(): sets the offset of the eye drawn now, then sets up the camera between
+   // the eyes again, which picking uses
+   void beginEye();
