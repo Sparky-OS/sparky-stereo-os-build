@@ -9,3 +9,7 @@ Source: https://github.com/google/spatial-media/blob/master/docs/spherical-video
 Read-only upstream main, path history, merge-request and issue searches on 2026-11-23 found no matching st3d writer. The latest qtmux path change concerned reordered presentation timestamps. Names credited in the original element: Thiago Sousa Santos and Mark Nauwelaerts. This patch is Daniel Campos Ramos's edition change; nothing was filed upstream.
 
 Native plugin proof passes x264 frame-packing SEI and MP4 st3d together. Full binary/source package gates and file-by-file comparison remain required before stage admission. VA and NVENC encoder changes belong in gst-plugins-bad1.0-dmo and are separate unfinished work; Kamoso refuses those unmarked routes before recording.
+
+The Qt plugin also carries Will's upstream MR !12461: a recreated material must parse its caps before mapping the next buffer. Without it, hiding and showing Kamoso's live viewfinder aborts at gstqsg6material.cc:497. The source contains the separate pending-caps fix discussed in issue #4944 already; that is not the same change. Both upstream Qt5 and Qt6 hunks are retained with Will's credit.
+
+Source: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12461

@@ -289,10 +289,11 @@ Last-Update: 2026-11-22
          GstPointer<GstElement> m_viewfinder;
 --- a/src/video/webcamcontrol.cpp
 +++ b/src/video/webcamcontrol.cpp
-@@ -6,6 +6,14 @@
+@@ -6,6 +6,15 @@
  
  
  #include "webcamcontrol.h"
++#include <QPointer>
 +#include "stereopreview.h"
 +#include "stereophoto.h"
 +#include "stereorecorder.h"
@@ -304,7 +305,86 @@ Last-Update: 2026-11-22
  #include "kamosoSettings.h"
  #include <devicemanager.h>
  #include <kamosodirmodel.h>
-@@ -202,6 +210,26 @@
+@@ -82,9 +91,16 @@
+     {
+     }
+ 
+-    ~PipelineItem() {
++    ~PipelineItem() { clearPipeline(); }
++
++    void clearPipeline() {
++        if (m_bus) {
++            gst_bus_remove_watch(m_bus.data());
++            m_bus.reset(nullptr);
++        }
+         if (m_pipeline)
+             gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
++        m_pipeline.reset(nullptr);
+     }
+ 
+     void onBusMessage(GstMessage* message)
+@@ -95,9 +111,8 @@
+             break;
+         case GST_MESSAGE_ERROR:  {//Some error occurred.
+             qCritical() << "error on:" << m_description << debugMessage(message);
+-            gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
+-            m_pipeline.reset(nullptr);
+-            Q_EMIT failed();
++            clearPipeline();
++            QMetaObject::invokeMethod(this, [this] { Q_EMIT failed(); }, Qt::QueuedConnection);
+         }   break;
+         default:
+             break;
+@@ -121,15 +136,26 @@
+     }
+ 
+     Q_SCRIPTABLE void refresh() {
++        auto *item = qobject_cast<QQuickItem *>(parent());
++        if (!m_complete || !item || !item->window()) return;
++        QPointer<PipelineItem> guard(this);
++        item->window()->scheduleRenderJob(QRunnable::create([guard] {
++            if (guard) guard->refreshPipeline();
++        }), QQuickWindow::BeforeSynchronizingStage);
++        item->window()->update();
++    }
++
++    void refreshPipeline() {
+         if (!m_description.isEmpty() && m_complete && parent()) {
+-            if(m_pipeline)
+-                gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
++            clearPipeline();
+ 
+             GError* e = nullptr;
+             m_pipeline.reset(GST_PIPELINE(gst_parse_launch(m_description.toUtf8().constData(), &e)));
+             if (e) {
+                 qWarning() << "error:" << e->message;
+-                Q_EMIT failed();
++                g_error_free(e);
++                clearPipeline();
++                QMetaObject::invokeMethod(this, [this] { Q_EMIT failed(); }, Qt::QueuedConnection);
+                 return;
+             }
+             Q_ASSERT(m_pipeline);
+@@ -145,7 +171,9 @@
+             gst_bin_add_many(GST_BIN(m_pipeline.data()), glupload, sink, nullptr);
+             bool correct = gst_element_link_many(lastItem, glupload, sink, nullptr);
+             Q_ASSERT(correct);
+-            gst_bus_add_watch (gst_pipeline_get_bus(m_pipeline.data()), &pipelineWatch, this);
++            gst_object_unref(lastItem);
++            m_bus.reset(gst_pipeline_get_bus(m_pipeline.data()));
++            gst_bus_add_watch(m_bus.data(), &pipelineWatch, this);
+         }
+         setPlaying(m_playing);
+     }
+@@ -182,6 +210,7 @@
+     bool m_complete = false;
+     QString m_description;
+     GstPointer<GstPipeline> m_pipeline;
++    GstPointer<GstBus> m_bus;
+     GstPointer<GstElement> m_viewfinder;
+ };
+ 
+@@ -202,6 +231,27 @@
  
  WebcamControl::WebcamControl()
  {
@@ -315,6 +395,7 @@ Last-Update: 2026-11-22
 +    m_stereoRecorder = new StereoRecorder(this);
 +    connect(m_stereoPreview, &StereoPreview::pairReady, m_stereoRecorder, &StereoRecorder::push);
 +    connect(m_stereoRecorder, &StereoRecorder::failed, this, [this](const QString &message) {
++        qWarning() << message;
 +        Q_EMIT m_kamoso->error(message);
 +        m_kamoso->setRecording(false);
 +    });
@@ -331,7 +412,7 @@ Last-Update: 2026-11-22
      QQmlApplicationEngine* engine = new QQmlApplicationEngine(this);
      engine->rootContext()->setContextObject(new KLocalizedContext(engine));
      m_kamoso = new Kamoso(this);
-@@ -219,6 +247,8 @@
+@@ -219,6 +269,8 @@
  
      engine->load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
      auto rootObject = qobject_cast<QQuickWindow *> (engine->rootObjects().constFirst());
@@ -340,7 +421,7 @@ Last-Update: 2026-11-22
      m_surface = rootObject->findChild<QQuickItem *>("sink");
      Q_ASSERT(m_surface);
  
-@@ -231,6 +261,7 @@
+@@ -231,6 +283,7 @@
  
  WebcamControl::~WebcamControl()
  {
@@ -348,7 +429,7 @@ Last-Update: 2026-11-22
      DeviceManager::self()->save();
      Settings::self()->save();
      delete m_kamoso;
-@@ -238,9 +269,20 @@
+@@ -238,9 +291,20 @@
  
  void WebcamControl::stop()
  {
@@ -369,7 +450,7 @@ Last-Update: 2026-11-22
      }
  }
  
-@@ -264,6 +306,46 @@
+@@ -264,6 +328,46 @@
  
      WebcamControl* wc = static_cast<WebcamControl*>(user_data);
      wc->setReadyForCapture(is_ready);
@@ -416,7 +497,7 @@ Last-Update: 2026-11-22
  }
  
  bool WebcamControl::playDevice(Device *device)
-@@ -280,8 +362,26 @@
+@@ -280,8 +384,26 @@
      if (m_pipeline)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -443,7 +524,7 @@ Last-Update: 2026-11-22
          g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
          g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
                           G_CALLBACK(captureReadyChanged), this);
-@@ -296,6 +396,13 @@
+@@ -296,6 +418,13 @@
      }
      if (!m_viewfinder) {
          Q_ASSERT(m_surface);
@@ -457,7 +538,7 @@ Last-Update: 2026-11-22
          m_viewfinder.reset(gst_bin_new("viewfinder"));
          auto glupload = gst_element_factory_make_full("glupload", nullptr);
          auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
-@@ -309,6 +416,8 @@
+@@ -309,6 +438,8 @@
          GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
          gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
          gst_object_unref(sink_pad);
@@ -466,7 +547,7 @@ Last-Update: 2026-11-22
      }
  
      GstElement* source;
-@@ -320,7 +429,9 @@
+@@ -320,7 +451,9 @@
  
      if (!m_pipeline) {
          m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
@@ -477,7 +558,7 @@ Last-Update: 2026-11-22
          g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
          g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
      }
-@@ -395,6 +506,53 @@
+@@ -395,6 +528,58 @@
          qWarning() << "couldn't take photo, no pipeline";
          return;
      }
@@ -522,16 +603,21 @@ Last-Update: 2026-11-22
 +        // The effects gallery consumes a flat sample, not an unmarked pair.
 +        const QImage pair = m_stereoPreview->captureImage();
 +        if (pair.isNull() || !url.isLocalFile()) return;
-+        QImageWriter writer(url.toLocalFile(), "jpeg");
-+        if (writer.write(pair.copy(0, 0, pair.width() / 2, pair.height())))
-+            m_kamoso->setSampleImage(url.toLocalFile());
-+        else Q_EMIT m_kamoso->error(writer.errorString());
++        // sampleImage() removes its placeholder after takePhoto() returns.
++        // Match camerabin's asynchronous capture, including the file write,
++        // and avoid notifying QML while it is evaluating that getter.
++        QMetaObject::invokeMethod(this, [this, pair, url] {
++            QImageWriter writer(url.toLocalFile(), "jpeg");
++            if (writer.write(pair.copy(0, 0, pair.width() / 2, pair.height())))
++                m_kamoso->setSampleImage(url.toLocalFile());
++            else Q_EMIT m_kamoso->error(writer.errorString());
++        }, Qt::QueuedConnection);
 +        return;
 +    }
      m_emitTaken = emitTaken;
  
      g_object_set(m_pipeline.data(), "mode", 1, nullptr);
-@@ -419,8 +577,14 @@
+@@ -419,8 +604,14 @@
      return QDir::tempPath() + QStringLiteral("/kamoso_%1.mkv").arg(date);
  }
  
@@ -541,14 +627,14 @@ Last-Update: 2026-11-22
 +{
 +    if (m_pairActive) {
 +        const QString error = m_stereoRecorder->start(destination, m_stereoPreview->captureImage().size(), Settings::stereoEncoder(), Settings::stereoVideoContainer());
-+        if (!error.isEmpty()) { Q_EMIT m_kamoso->error(error); return false; }
++        if (!error.isEmpty()) { qWarning() << error; Q_EMIT m_kamoso->error(error); return false; }
 +        return true;
 +    }
 +    if (!m_pipeline) return false;
      m_videoDestination = destination;
      m_tmpVideoPath = destination.isLocalFile() ? destination.toLocalFile() : temporaryVideoFile();
  
-@@ -429,10 +593,13 @@
+@@ -429,10 +620,13 @@
                                      nullptr);
  
      g_signal_emit_by_name (m_pipeline.data(), "start-capture", 0);
@@ -562,7 +648,7 @@ Last-Update: 2026-11-22
      g_signal_emit_by_name(m_pipeline.data(), "stop-capture", 0);
  }
  
-@@ -453,11 +620,14 @@
+@@ -453,11 +647,14 @@
      if (prevstate != GST_STATE_NULL)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -1250,7 +1336,15 @@ Last-Update: 2026-11-22
      m_webcamControl->takePhoto(path, true);
  
      if (m_sampleImagePath.isEmpty() && path.isLocalFile()) {
-@@ -91,7 +91,7 @@
+@@ -81,6 +81,7 @@
+ 
+ void Kamoso::setRecording(bool recording)
+ {
++    qInfo() << "Recording action" << recording << "active" << m_recordingTimer.isActive();
+     if (!DeviceManager::self()->playingDevice()) {
+         qWarning() << "No device found";
+         Q_EMIT error(i18n("No device found"));
+@@ -91,7 +92,7 @@
          return;
  
      if (recording) {
@@ -1259,7 +1353,7 @@ Last-Update: 2026-11-22
          m_recordingTime.restart();
          m_recordingTimer.start();
          auto job = KIO::mkpath(Settings::saveVideos());
-@@ -106,7 +106,7 @@
+@@ -106,7 +107,7 @@
          });
      } else {
          m_webcamControl->stopRecording();
@@ -1424,7 +1518,7 @@ Last-Update: 2026-11-22
 +};
 --- /dev/null
 +++ b/src/video/stereorecorder.cpp
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,118 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereorecorder.h"
@@ -1450,6 +1544,7 @@ Last-Update: 2026-11-22
 +    m_directory.reset(); m_stopping=false; m_frames=0;
 +}
 +QString StereoRecorder::start(const QUrl &destination, const QSize &size, const QString &encoder, const QString &container) {
++    qInfo() << "Stereo recording requested" << destination << size << encoder << container;
 +    if(busy()) return i18n("The previous recording is still being saved.");
 +    if(size.isEmpty() || size.width()%2) return i18n("Wait for a complete stereo frame before recording.");
 +    // These hardware plugins have not yet passed the frame-packing SEI gate.
@@ -1513,6 +1608,7 @@ Last-Update: 2026-11-22
 +void StereoRecorder::stop() {
 +    if(!m_pipeline || m_stopping) return;
 +    if (!m_frames) { reset(); Q_EMIT failed(i18n("No stereo frames arrived during recording. No file was saved.")); return; }
++    qInfo() << "Finalizing stereo recording" << m_frames << "frames";
 +    m_stopping=true;
 +    gst_app_src_end_of_stream(GST_APP_SRC(m_source));
 +    auto *audio=gst_bin_get_by_name(GST_BIN(m_pipeline),"audio");
@@ -1603,3 +1699,14 @@ Last-Update: 2026-11-22
  
                  Kirigami.PlaceholderMessage {
                      anchors.centerIn: parent
+--- a/src/qml/Config.qml
++++ b/src/qml/Config.qml
+@@ -55,7 +55,7 @@
+         ListElement { filters: "coloreffects preset=xray" }
+     }
+ 
+-    readonly property string sampleImage: view.visible && WebcamControl.currentDevice.length > 0 && sampleImage !== Kamoso.sampleImage ? Kamoso.sampleImage : ""
++    readonly property string sampleImage: view.visible && WebcamControl.currentDevice.length > 0 ? Kamoso.sampleImage : ""
+ 
+     delegate: Rectangle {
+         readonly property int borderWidth: 2
