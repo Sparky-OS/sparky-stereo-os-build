@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Model-free adapter controls: synthetic bytes and a Unix-socket peer only."""
+from collections import Counter
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -10,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import string
 import subprocess
 import sys
 import tempfile
@@ -200,15 +202,50 @@ class AdapterTests(unittest.TestCase):
 
     def test_microphone_explicit(self):self.session('normal',True)
 
-    def test_languages_and_pending_list(self):
-        en=json.loads((HERE/'lang/en.json').read_text());pt=json.loads((HERE/'lang/pt_BR.json').read_text())
-        self.assertEqual(set(en),set(pt))
-        for key,text in en.items():
-            import string
-            fields=lambda s:[f for _,f,_,_ in string.Formatter().parse(s) if f is not None]
-            self.assertEqual(fields(text),fields(pt[key]))
-        rows=(HERE/'share/pending-translation.tsv').read_text().splitlines()[1:]
-        self.assertEqual({r.split('\t')[0] for r in rows},set(en))
+    def test_languages_and_placeholders(self):
+        folder = HERE / 'lang'
+        en = json.loads((folder / 'en.json').read_text())
+        locales = {'en': 'en_US', 'pt_BR': 'pt_BR', 'de': 'de_DE', 'es': 'es_ES',
+                   'fr': 'fr_FR', 'ja': 'ja_JP', 'ko': 'ko_KR', 'pl': 'pl_PL',
+                   'zh_CN': 'zh_CN', 'zh_TW': 'zh_TW'}
+        self.assertEqual({p.stem for p in folder.glob('*.json')}, set(locales))
+        self.assertEqual({p.name for p in folder.iterdir() if p.is_file() and not p.suffix}, set(locales))
+        formatter = string.Formatter()
+        for lang, locale in locales.items():
+            with self.subTest(lang=lang):
+                expected = json.loads((folder / f'{lang}.json').read_text())
+                self.assertEqual(set(expected), set(en))
+                with patch.dict(os.environ, LC_ALL='', LC_MESSAGES='', LANG=locale + '.UTF-8'):
+                    self.assertEqual(a.labels(), expected)
+                    journal = dict(line.split('=', 1) for line in (folder / lang).read_text().splitlines())
+                    self.assertEqual(set(journal), set(en))
+                    for key, source in en.items():
+                        value = expected[key]
+                        self.assertTrue(value.strip(), key)
+                        if lang != 'en':
+                            self.assertNotEqual(value, source, key)
+                        source_fields = [field for _, field, _, _ in formatter.parse(source) if field is not None]
+                        fields = [field for _, field, _, _ in formatter.parse(value) if field is not None]
+                        self.assertEqual(Counter(fields), Counter(source_fields), key)
+                        self.assertEqual(fields, sorted(fields, key=int), key)
+                        args = tuple(f'arg-{i}' for i in range(len(source_fields)))
+                        journal_value = json.loads(journal[key])
+                        self.assertEqual(a.say(key, *args), journal_value % args, key)
+
+    def test_locale_precedence_and_aliases(self):
+        for env, lang in (
+            ({'LC_ALL': 'fr_CA.UTF-8', 'LC_MESSAGES': 'es_ES', 'LANG': 'de_DE'}, 'fr'),
+            ({'LC_MESSAGES': 'es_MX.UTF-8', 'LANG': 'de_DE'}, 'es'),
+            ({'LANG': 'pt_BR.UTF-8'}, 'pt_BR'),
+            ({'LANG': 'zh_HK.UTF-8'}, 'zh_TW'),
+            ({'LANG': 'zh_SG.UTF-8'}, 'zh_CN'),
+            ({'LANG': 'C.UTF-8'}, 'en'),
+            ({'LANG': 'it_IT.UTF-8'}, 'en'),
+            ({'LANG': '../../fr'}, 'en'),
+        ):
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                expected = json.loads((HERE / 'lang' / f'{lang}.json').read_text())
+                self.assertEqual(a.labels(), expected)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

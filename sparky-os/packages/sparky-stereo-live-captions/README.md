@@ -27,9 +27,8 @@ waits on metered or unknown connections, and publishes a verified file
 exclusively. No model is included in the package. The file-open dialog can
 reuse an existing file without downloading or moving it.
 
-English and Brazilian Portuguese sentences are in lang/*.json. The matching
-extensionless files feed the edition's Problems catalog. Every sentence owed
-to the other eight languages is listed in share/pending-translation.tsv.
+The ten locale catalogues in lang/*.json supply the adapter and the Partners
+page. The matching extensionless files feed the edition's Problems catalog.
 
 The native programs remain unchanged. This package contains no depth rule;
 subtitle placement is the compositor's responsibility.
