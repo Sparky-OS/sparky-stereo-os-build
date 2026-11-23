@@ -158,10 +158,13 @@ def parse_strace(fn, stats):
                 stats['fd_inherited'] += 1
             if o is not None: o['mapped'] += int(mm.group(1))
             continue
+        if line.startswith('mmap(') and re.match(r'^mmap\([^)]*,\s*-1,\s*\d+\)', line):
+            continue      # an anonymous mapping: no file
         mc = CALL.match(line)
         if not mc:
             if re.match(r'^(open|openat|read|pread64|readv|preadv|close|mmap)\(', line) and ' = -1 ' not in line + ' ':
                 stats['unparsed'] += 1
+                stats.setdefault('examples', {}).setdefault(line.split('(')[0], line[:160])
             continue
         name, fd, ppath, res = mc.group(1), mc.group(2), mc.group(3), mc.group(5)
         if name == 'close':
@@ -205,6 +208,7 @@ def add(acc, **kw):
 def analyse(root, opens, authored_root, assumed_whole, rec):
     """opens: list of dict(path, read, mapped, count). returns the aggregate dict."""
     tot = new_acc(); by_pkg = collections.defaultdict(new_acc); by_handler = collections.defaultdict(new_acc)
+    by_path = collections.defaultdict(new_acc)
     by_kind = collections.defaultdict(new_acc); unatt = collections.defaultdict(new_acc); unatt_paths = collections.defaultdict(collections.Counter)
     for o in opens:
         n = o.get('count', 1)
@@ -262,8 +266,7 @@ def analyse(root, opens, authored_root, assumed_whole, rec):
         lsav = None
         if ll is not None and hl is not None and hr_b > lean_b:
             lsav = (hl - ll) if full else int(round((hl - ll) * (sav / max(hr_b - lean_b, 1))))
-        for acc in (tot, by_pkg[c['pkg']], by_handler[h or '?'], by_kind[kind]):
-            add(acc, opens=0)  # make sure keys exist
+        pa = by_path[real]; add(pa, opens=n, bytes_read_lean=eff * n, saved_bytes=sav * n, lean_size=0); pa['lean_size'] = lean_b; pa['hr_size'] = hr_b
         for acc, isT in ((tot, True), (by_pkg[c['pkg']], False), (by_handler[h or '?'], False), (by_kind[kind], False)):
             if not isT: add(acc, opens=n, bytes_read=rd * n)
             add(acc, attributed_opens=n)
@@ -275,7 +278,7 @@ def analyse(root, opens, authored_root, assumed_whole, rec):
                 if mode == 'mapped': add(acc, mapped_opens=n)
                 if lsav is not None: add(acc, saved_lines=lsav * n, lines_counted_opens=n)
                 else: add(acc, lines_unknown_opens=n)
-    return dict(totals=tot, by_package=by_pkg, by_handler=by_handler, by_kind=by_kind, unattributed=unatt,
+    return dict(by_path=by_path, totals=tot, by_package=by_pkg, by_handler=by_handler, by_kind=by_kind, unattributed=unatt,
                 unattributed_top={k: v.most_common(5) for k, v in unatt_paths.items()})
 
 
@@ -291,8 +294,21 @@ def tabulate(title, d, first):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--strace', nargs='*', default=[]); ap.add_argument('--paths', nargs='*', default=[])
+    ap.add_argument('--static', action='store_true', help='no trace: what the disk does not hold (bytes_hr - bytes over every projected record)')
     ap.add_argument('--root', default='/'); ap.add_argument('--authored-root'); ap.add_argument('--json')
     a = ap.parse_args(argv)
+    if a.static:
+        rec = Records(a.root); agg = collections.defaultdict(collections.Counter)
+        for path, rs in rec.by.items():
+            for c in rs:
+                if c['status'] == 'projected':
+                    k = c['src'] + '/' + (c['handler'] or '?'); agg[k]['files'] += 1; agg[k]['lean_bytes'] += c['bytes']; agg[k]['authored_bytes'] += c['bytes_hr']; agg[k]['not_held'] += c['bytes_hr'] - c['bytes']
+        tt = collections.Counter()
+        for k, v in sorted(agg.items()):
+            print(f"{k:28} {v['files']:7} files {v['authored_bytes']:11} -> {v['lean_bytes']:11} bytes ({v['not_held']} not held)"); tt.update(v)
+        print(f"static total: {tt['files']} projected files, authored {tt['authored_bytes']} bytes, installed {tt['lean_bytes']} bytes, not held {tt['not_held']}")
+        if a.json: json.dump({k: dict(v) for k, v in agg.items()} | {'total': dict(tt)}, open(a.json, 'w'), indent=1, sort_keys=True)
+        return 0
     if not a.strace and not a.paths:
         ap.error('give --strace or --paths')
     rec = Records(a.root)
@@ -321,8 +337,8 @@ def main(argv=None):
           f"({100.0 * t['saved_bytes'] / max(t['bytes_read'] + t['saved_bytes'], 1):.3f}% of what the authored forms would have cost), "
           f"of it estimated for partial reads {t['saved_bytes_partial_estimate']}; lines not read {t['saved_lines']} (lines unknown for {t['lines_unknown_opens']} opens)")
     if a.json:
-        js = {k: ({kk: dict(vv) for kk, vv in v.items()} if isinstance(v, dict) and k != 'totals' and k != 'unattributed_top' else v) for k, v in res.items()}
-        js['totals'] = dict(t); js['unattributed'] = {k: dict(v) for k, v in res['unattributed'].items()}
+        js = {k: ({kk: dict(vv) for kk, vv in v.items()} if isinstance(v, dict) and k not in ('totals', 'unattributed_top', 'by_path') else v) for k, v in res.items()}
+        js['by_path'] = {k: dict(v) for k, v in res['by_path'].items()}; js['totals'] = dict(t); js['unattributed'] = {k: dict(v) for k, v in res['unattributed'].items()}
         js['trace'] = dict(stats=dict(stats), assumed_whole=assumed, root=a.root)
         json.dump(js, open(a.json, 'w'), indent=1, sort_keys=True)
     return 0
