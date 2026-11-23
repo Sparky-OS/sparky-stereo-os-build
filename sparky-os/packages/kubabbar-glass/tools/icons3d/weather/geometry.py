@@ -197,7 +197,7 @@ def _parameters(name):
     if key in ('severe-alert','none-available','pressure','humidity'):
         return dict(family='status', sign='alert' if key=='severe-alert' else key)
     if key.startswith('clear') or key in ('sunrise','sunset'):
-        return dict(family='moon' if night else 'sun', windy=windy, horizon=key in ('sunrise','sunset'), inset=.86 if key=='clear' else 1)
+        return dict(family='moon' if night else 'sun', windy=windy, horizon=key if key in ('sunrise','sunset') else None, inset=.86 if key=='clear' else 1)
     if key in ('fog','mist'):
         return dict(family='fog')
     if key == 'windy':
@@ -241,7 +241,16 @@ def _model(params, phase, disc_back):
         if params.get('horizon') or params.get('windy'):
             shapes = scaled(shapes,.70,y=.16)
         if params.get('horizon'):
-            shapes.append(ribbon('horizon',0,-.40,-.27,1.32,'d78a68',0))
+            rising = params['horizon'] == 'sunrise'
+            sun_colour = 'ffb845' if rising else 'ed774d'
+            shapes = [replace(shape, colour=sun_colour) for shape in shapes]
+            shapes.append(prism('horizon', ((-.65,-.047),(.65,-.047),(.65,.047),(-.65,.047)),
+                                0,-.38,-.27,.06,'67748f',bevel=0))
+            # The arrow remains legible in a monochrome 22 px view.
+            arrow = ((-.07,-.19),(.07,-.19),(.07,-.02),(.20,-.02),(0,.17),(-.20,-.02),(-.07,-.02))
+            shapes.append(prism('horizon-direction',arrow,.55,.29 if rising else .00,.15,.08,
+                                '79a6ba' if rising else 'a884b5',
+                                angle=0 if rising else pi,bevel=0))
         if params.get('windy'):
             shapes += wind(phase, overlay=True)
         return shapes
@@ -276,11 +285,11 @@ def parameters(name):
 
 def model(params, phase, disc_back):
     shapes = _model(params, phase, disc_back)
-    if not params.get('symbolic'):
-        return shapes
-    # Keep the authored depth and silhouette while using a neutral palette.
-    def neutral(shape):
-        red, green, blue = (int(shape.colour[i:i+2],16) for i in (0,2,4))
-        grey = round(38 + .55*(.2126*red + .7152*green + .0722*blue))
-        return replace(shape,colour=f'{grey:02x}'*3)
-    return [neutral(shape) for shape in shapes]
+    if params.get('symbolic'):
+        return [replace(shape,colour='e6e7e8') for shape in shapes]
+    if params.get('contrast'):
+        colours = {'crescent':'bf8a46','star':'819ac0','snow-':'7295bc'}
+        return [replace(shape,colour=next((colour for prefix,colour in colours.items()
+                                          if shape.name.startswith(prefix)),shape.colour))
+                for shape in shapes]
+    return shapes

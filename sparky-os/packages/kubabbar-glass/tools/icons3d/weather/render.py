@@ -108,7 +108,7 @@ def image_data(exr, size, sample_scale):
     return np.rint(np.concatenate((srgb,alpha),axis=2)*65535).astype(np.uint16)
 
 
-def render_pair(size, camera, rig, exr, supersample):
+def render_pair(size, camera, rig, exr, supersample, symbolic=False):
     base, convergence = camera
     cameras, right = rig
     studio.place_eyes(cameras,right,2*convergence*math.tan(studio.HFOV/2),base)
@@ -119,7 +119,11 @@ def render_pair(size, camera, rig, exr, supersample):
     for eye in ('left','right'):
         scene.camera = cameras[eye]
         bpy.ops.render.render(write_still=True)
-        views.append(image_data(exr,size,supersample))
+        image = image_data(exr,size,supersample)
+        if symbolic:
+            # One panel-text tint, with the rendered silhouette and depth retained in alpha.
+            image[..., :3] = (image[..., 3:4] > 0) * np.array([230, 231, 232], dtype=np.uint16) * 257
+        views.append(image)
     exr.unlink()
     return views
 
@@ -149,15 +153,17 @@ def rerender_edges(out, scratch, size):
     for label, feature in recipe['features'].items():
         shape = shapes[feature['name']]
         objects = set_geometry([shape],cameras['centre'].rotation_euler.to_matrix(),objects,materials)
-        views = render_pair(size,recipe['camera'][str(size)],(cameras,right),scratch/'edge.exr',recipe['supersample'])
+        views = render_pair(size,recipe['camera'][str(size)],(cameras,right),scratch/'edge.exr',recipe['supersample'],recipe['parameters'].get('symbolic',False))
         write_png(out/f'edge-{label}.pns',views,pair_mark=True)
         feature['size'] = size
     recipe_path.write_text(json.dumps(recipe,indent=2)+'\n')
 
 
-def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, static_only):
+def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, static_only, contrast=False):
     start = time.monotonic()
     params = parameters(name)
+    if contrast:
+        params['contrast'] = True
     phases = [model(params,i/FRAMES,DISC_BACK) for i in range(FRAMES+1)]
     out.mkdir(parents=True, exist_ok=True)
     scratch.mkdir(parents=True, exist_ok=True)
@@ -180,7 +186,7 @@ def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, sta
         objects = set_geometry(shapes,cameras['centre'].rotation_euler.to_matrix(),objects,materials)
         for size in selected:
             dest = scratch/f'{size}-{frame:02}.png'
-            views = render_pair(size,camera[size],(cameras,right),scratch/'eye.exr',supersample)
+            views = render_pair(size,camera[size],(cameras,right),scratch/'eye.exr',supersample,params.get('symbolic',False))
             if frame==0:
                 write_png(out/f'{size}.pns',views,pair_mark=True)
             if not static_only and size in loop_sizes:
@@ -193,7 +199,7 @@ def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, sta
             return sum(point[2] for point in shape.outline)/len(shape.outline)
         for label, feature in (('near',max(visible,key=depth)),('far',min(visible,key=depth))):
             objects = set_geometry([feature],cameras['centre'].rotation_euler.to_matrix(),objects,materials)
-            views = render_pair(64,camera[64],(cameras,right),scratch/'edge.exr',supersample)
+            views = render_pair(64,camera[64],(cameras,right),scratch/'edge.exr',supersample,params.get('symbolic',False))
             write_png(out/f'edge-{label}.pns',views,pair_mark=True)
             zs = [point[2] for ring in feature.rings for point in ring]
             features[label] = dict(name=feature.name,z=depth(feature),extrema=[min(zs),max(zs)])
@@ -212,6 +218,7 @@ def main():
     parser.add_argument('--loops',type=int,nargs='+',default=LOOP_SIZES)
     parser.add_argument('--supersample',type=int,default=2)
     parser.add_argument('--samples',type=int,default=12)
+    parser.add_argument('--contrast',action='store_true')
     parser.add_argument('--static-only',action='store_true')
     parser.add_argument('--edges-only',type=int,choices=LOOP_SIZES)
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
@@ -220,7 +227,7 @@ def main():
             rerender_edges(args.output/name,args.scratch/name,args.edges_only)
             continue
         render_name(name,args.output/name,args.scratch/name,tuple(args.sizes),tuple(args.loops),
-                    args.supersample,args.samples,args.static_only)
+                    args.supersample,args.samples,args.static_only,args.contrast)
 
 
 if __name__=='__main__':
