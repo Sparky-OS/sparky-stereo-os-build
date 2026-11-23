@@ -6,6 +6,49 @@ Author: Daniel Campos Ramos
 Forwarded: no
 Last-Update: 2026-11-22
 
+--- /dev/null
++++ b/autotests/stereopublisher-test.cpp
+@@ -0,0 +1,40 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "stereopublisher.h"
++#include <QtTest>
++class StereoPublisherTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase() { gst_init(nullptr, nullptr); }
++    void invalidPairIsNotPublished() {
++        StereoPublisher publisher;
++        QSignalSpy failed(&publisher, &StereoPublisher::failed);
++        publisher.push({});
++        publisher.push(QImage(3, 2, QImage::Format_RGBA8888));
++        QCOMPARE(failed.count(), 0);
++    }
++    void unavailablePublisherIsSaidOnceUntilReset() {
++        auto *registry = gst_registry_get();
++        auto *factory = gst_registry_find_feature(registry, "pipewiresink", GST_TYPE_ELEMENT_FACTORY);
++        QVERIFY(factory);
++        gst_registry_remove_feature(registry, factory);
++        StereoPublisher publisher;
++        QSignalSpy failed(&publisher, &StereoPublisher::failed);
++        QImage pair(4, 2, QImage::Format_RGBA8888); pair.fill(Qt::red);
++        publisher.push(pair);
++        const int first = failed.count();
++        publisher.push(pair);
++        const int second = failed.count();
++        publisher.reset();
++        publisher.push(pair);
++        const int third = failed.count();
++        gst_registry_add_feature(registry, factory);
++        gst_object_unref(factory);
++        QCOMPARE(first, 1); QCOMPARE(second, 1); QCOMPARE(third, 2);
++        QVERIFY(failed.at(0).at(0).toString().contains(QStringLiteral("could not be shared")));
++        QVERIFY(failed.at(0).at(0).toString().contains(QStringLiteral("pipewiresink")));
++    }
++};
++QTEST_GUILESS_MAIN(StereoPublisherTest)
++#include "stereopublisher-test.moc"
 --- a/src/devicemanager.cpp
 +++ b/src/devicemanager.cpp
 @@ -19,6 +19,15 @@
@@ -705,7 +748,7 @@ Last-Update: 2026-11-22
 +            wrapMode: Text.WordWrap
 +            color: "white"
 +            visible: WebcamControl.stereoEnabled && (WebcamControl.stereoMessage.length > 0 || (WebcamControl.stereoFrame && WebcamControl.flatOutput))
-+            text: WebcamControl.stereoFrame && WebcamControl.flatOutput ? i18n("This display is in 2D. Showing the left eye.") : WebcamControl.stereoMessage
++            text: [WebcamControl.stereoFrame && WebcamControl.flatOutput ? i18n("This display is in 2D. Showing the left eye.") : "", WebcamControl.stereoMessage].filter(function(message) { return message.length > 0; }).join("\n")
          }
  
          Text {
@@ -1514,7 +1557,7 @@ Last-Update: 2026-11-22
 +}
 --- /dev/null
 +++ b/autotests/CMakeLists.txt
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,24 @@
 +find_package(Qt6 REQUIRED COMPONENTS Test)
 +add_executable(stereopreview-test stereopreview-test.cpp ../src/video/stereopreview.cpp ../src/video/stereoeffects.cpp)
 +target_include_directories(stereopreview-test PRIVATE ../src/video)
@@ -1534,6 +1577,11 @@ Last-Update: 2026-11-22
 +target_include_directories(stereoeffects-test PRIVATE ../src/video)
 +target_link_libraries(stereoeffects-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
 +add_test(NAME stereoeffects COMMAND stereoeffects-test)
++
++add_executable(stereopublisher-test stereopublisher-test.cpp ../src/video/stereopublisher.cpp)
++target_include_directories(stereopublisher-test PRIVATE ../src/video)
++target_link_libraries(stereopublisher-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
++add_test(NAME stereopublisher COMMAND stereopublisher-test)
 --- /dev/null
 +++ b/autotests/stereopreview-test.cpp
 @@ -0,0 +1,378 @@
