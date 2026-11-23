@@ -45,3 +45,18 @@ list is added. Native tests enumerate the QML list itself, probe each eye's
 unmodified input samples and dimensions, check history over three frames, and
 compare a spatial effect with independent per-eye controls. Camera sequence
 pairing still belongs to the future shared engine route, row 839.
+
+The processed pair is also published as a PipeWire Video/Source camera through
+pipewiresink, with media.role Camera, side-by-side mode, two views and no
+half-aspect or right-first flag. It keeps the native RGBA sample grid and
+clock timestamps. Enable 3D off, a flat source, source replacement and program
+exit remove the node. Kamoso excludes its output nodes from its camera inputs
+so publication cannot feed back into capture, including across instances.
+A publication failure is shown without stopping the viewfinder or recording.
+No separate depth or output-format option is introduced.
+
+The published GStreamer PipeWire adapter loses the layout in both directions.
+The pipewire-stereo-61 recipe owns that repair; its new gstreamer1.0-pipewire
+package is a dependency, alongside the already pinned layer/declaration and
+GStreamer good successors. Independent native PipeWire parsing and ten exact
+frames establish the output camera, separately from compositor rendering.

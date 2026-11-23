@@ -6,6 +6,185 @@ Author: Daniel Campos Ramos
 Forwarded: no
 Last-Update: 2026-11-22
 
+--- a/src/devicemanager.cpp
++++ b/src/devicemanager.cpp
+@@ -19,6 +19,15 @@
+ #include <gst/gstbus.h>
+ 
+ DeviceManager *DeviceManager::s_instance = NULL;
++
++// A processed camera must not become its own capture source, including across instances.
++static bool isKamosoOutput(GstDevice *device)
++{
++    auto *properties = gst_device_get_properties(device);
++    const bool ours = properties && structureValue(properties, "node.name").startsWith(QLatin1String("kamoso.stereo."));
++    if (properties) gst_structure_free(properties);
++    return ours;
++}
+ 
+ static gboolean
+ deviceMonitorWatch(GstBus     */*bus*/, GstMessage *message, gpointer /*user_data*/)
+@@ -61,6 +70,7 @@
+ 
+     /* Initialize camera structures */
+     for(; devices; devices = devices->next) {
++        if (isKamosoOutput(GST_DEVICE(devices->data))) continue;
+         auto device = new Device(GST_DEVICE(devices->data), this);
+         m_deviceList.append(device);
+     }
+@@ -148,6 +158,7 @@
+ 
+ void DeviceManager::deviceAdded(GstDevice* device)
+ {
++    if (isKamosoOutput(device)) return;
+     const int s = m_deviceList.size();
+     auto d = new Device(device, this);
+     for (auto device : qAsConst(m_deviceList)) {
+@@ -202,16 +213,15 @@
+ 
+ void DeviceManager::deviceRemoved(GstDevice* device)
+ {
++    if (isKamosoOutput(device)) return;
+     auto st = gst_device_get_properties(device);
+     auto objectId = objectIdFromProperties(st);
++    if (st) gst_structure_free(st);
+ 
+     for(int i = 0, c = m_deviceList.size(); i<c; ++i) {
+         auto dev = m_deviceList.at(i);
+-        if (m_playingDevice == dev) {
+-            setPlayingDevice(nullptr);
+-        }
+-
+         if (dev->objectId() == objectId) {
++            if (m_playingDevice == dev) setPlayingDevice(nullptr);
+             beginRemoveRows({}, i, i);
+             dev->deleteLater();
+             m_deviceList.removeAt(i);
+--- /dev/null
++++ b/src/video/stereopublisher.cpp
+@@ -0,0 +1,91 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "stereopublisher.h"
++#include <KLocalizedString>
++#include <QCoreApplication>
++#include <gst/app/gstappsrc.h>
++#include <gst/video/video.h>
++#include <cstring>
++
++StereoPublisher::StereoPublisher(QObject *parent) : QObject(parent)
++{
++    m_timer.setInterval(50);
++    connect(&m_timer, &QTimer::timeout, this, &StereoPublisher::poll);
++}
++StereoPublisher::~StereoPublisher() { reset(); }
++void StereoPublisher::reset()
++{
++    m_timer.stop();
++    if (m_pipeline) gst_element_set_state(m_pipeline, GST_STATE_NULL);
++    if (m_source) gst_object_unref(m_source);
++    if (m_bus) gst_object_unref(m_bus);
++    if (m_pipeline) gst_object_unref(m_pipeline);
++    m_pipeline = m_source = nullptr;
++    m_bus = nullptr;
++    m_size = {};
++    m_refused = false;
++}
++void StereoPublisher::refuse(const QString &reason)
++{
++    reset();
++    m_refused = true;
++    Q_EMIT failed(i18n("The 3D camera could not be shared with other programs: %1", reason));
++}
++void StereoPublisher::push(const QImage &pair)
++{
++    if (m_refused || pair.isNull() || pair.width() % 2) return;
++    if (m_pipeline && pair.size() != m_size) reset();
++    if (!m_pipeline) {
++        GError *error = nullptr;
++        m_pipeline = gst_parse_launch("appsrc name=pair is-live=true do-timestamp=true format=time block=false max-buffers=1 leaky-type=downstream ! pipewiresink name=camera mode=provide use-bufferpool=false sync=false", &error);
++        if (error || !m_pipeline) {
++            const QString detail = error ? QString::fromUtf8(error->message) : i18n("The camera publisher is unavailable.");
++            g_clear_error(&error);
++            refuse(detail);
++            return;
++        }
++        auto *sink = gst_bin_get_by_name(GST_BIN(m_pipeline), "camera");
++        const QByteArray name = "kamoso.stereo." + QByteArray::number(QCoreApplication::applicationPid());
++        const QByteArray description = i18n("Kamoso 3D camera").toUtf8();
++        auto *props = gst_structure_new("props", "media.class", G_TYPE_STRING, "Video/Source",
++            "media.role", G_TYPE_STRING, "Camera", "node.name", G_TYPE_STRING, name.constData(),
++            "node.description", G_TYPE_STRING, description.constData(), "node.virtual", G_TYPE_BOOLEAN, TRUE, nullptr);
++        g_object_set(sink, "stream-properties", props, nullptr);
++        gst_structure_free(props);
++        gst_object_unref(sink);
++        m_source = gst_bin_get_by_name(GST_BIN(m_pipeline), "pair");
++        auto *caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGBA",
++            "width", G_TYPE_INT, pair.width(), "height", G_TYPE_INT, pair.height(),
++            "framerate", GST_TYPE_FRACTION, 0, 1, "views", G_TYPE_INT, 2,
++            "multiview-mode", G_TYPE_STRING, "side-by-side", "multiview-flags", GST_TYPE_VIDEO_MULTIVIEW_FLAGSET, 0, G_MAXUINT, nullptr);
++        gst_app_src_set_caps(GST_APP_SRC(m_source), caps);
++        gst_caps_unref(caps);
++        m_bus = gst_element_get_bus(m_pipeline);
++        m_size = pair.size();
++        if (gst_element_set_state(m_pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
++            refuse(i18n("The camera publisher could not start."));
++            return;
++        }
++        m_timer.start();
++    }
++    const QImage rgba = pair.convertToFormat(QImage::Format_RGBA8888);
++    const size_t stride = size_t(rgba.width()) * 4;
++    auto *buffer = gst_buffer_new_allocate(nullptr, stride * rgba.height(), nullptr);
++    if (!buffer) { refuse(i18n("The camera frame could not be copied.")); return; }
++    for (int y = 0; y < rgba.height(); ++y)
++        gst_buffer_fill(buffer, size_t(y) * stride, rgba.constScanLine(y), stride);
++    if (gst_app_src_push_buffer(GST_APP_SRC(m_source), buffer) != GST_FLOW_OK)
++        refuse(i18n("The camera publisher refused a frame."));
++}
++void StereoPublisher::poll()
++{
++    if (!m_bus) return;
++    auto *message = gst_bus_pop_filtered(m_bus, GST_MESSAGE_ERROR);
++    if (!message) return;
++    GError *error = nullptr;
++    gst_message_parse_error(message, &error, nullptr);
++    const QString detail = QString::fromUtf8(error->message);
++    g_clear_error(&error);
++    gst_message_unref(message);
++    refuse(detail);
++}
+--- /dev/null
++++ b/src/video/stereopublisher.h
+@@ -0,0 +1,28 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#pragma once
++#include <QObject>
++#include <QImage>
++#include <QTimer>
++#include <gst/gst.h>
++
++class StereoPublisher : public QObject
++{
++    Q_OBJECT
++public:
++    explicit StereoPublisher(QObject *parent = nullptr);
++    ~StereoPublisher() override;
++    void push(const QImage &pair);
++    void reset();
++Q_SIGNALS:
++    void failed(const QString &message);
++private:
++    void poll();
++    void refuse(const QString &reason);
++    GstElement *m_pipeline = nullptr;
++    GstElement *m_source = nullptr;
++    GstBus *m_bus = nullptr;
++    QTimer m_timer;
++    QSize m_size;
++    bool m_refused = false;
++};
 --- /dev/null
 +++ b/src/video/stereoeffects.h
 @@ -0,0 +1,45 @@
@@ -354,7 +533,7 @@ Last-Update: 2026-11-22
 +endif()
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -12,6 +12,10 @@
+@@ -12,6 +12,11 @@
      kamoso.cpp
      previewfetcher.cpp
      video/webcamcontrol.cpp
@@ -362,10 +541,11 @@ Last-Update: 2026-11-22
 +    video/stereoeffects.cpp
 +    video/stereophoto.cpp
 +    video/stereorecorder.cpp
++    video/stereopublisher.cpp
  
      resources.qrc
  )
-@@ -20,7 +24,8 @@
+@@ -20,7 +25,8 @@
  target_link_libraries(kamoso
      Qt::Core Qt::Gui Qt::Widgets Qt::Quick
      KF6::KIOFileWidgets KF6::ConfigGui KF6::I18n KF6::Notifications
@@ -531,7 +711,15 @@ Last-Update: 2026-11-22
          Text {
 --- a/src/video/webcamcontrol.h
 +++ b/src/video/webcamcontrol.h
-@@ -19,10 +19,21 @@
+@@ -11,6 +11,7 @@
+ #include <QObject>
+ #include <QUrl>
+ #include <QQuickItem>
++#include <QStringList>
+ 
+ #include "gstpointer.h"
+ #include <gst/gstpipeline.h>
+@@ -19,10 +20,22 @@
  
  namespace QGst { namespace Quick { class VideoSurface; } }
  
@@ -539,6 +727,7 @@ Last-Update: 2026-11-22
  class Device;
 +class StereoPreview;
 +class StereoRecorder;
++class StereoPublisher;
 +class QVideoSink;
  class WebcamControl : public QObject
  {
@@ -553,7 +742,7 @@ Last-Update: 2026-11-22
      Q_PROPERTY(QString currentDevice READ currentDevice NOTIFY currentDeviceChanged)
      Q_PROPERTY(bool readyForCapture READ readyForCapture NOTIFY readyForCaptureChanged)
      public:
-@@ -38,6 +49,18 @@
+@@ -38,6 +51,18 @@
              }
          }
  
@@ -562,7 +751,7 @@ Last-Update: 2026-11-22
 +        bool stereoPreviewActive() const { return m_pairActive; }
 +        bool flatOutput() const;
 +        bool stereoFrame() const { return m_stereoFrame; }
-+        QString stereoMessage() const { return m_stereoEffectMessage.isEmpty() ? m_stereoMessage : m_stereoEffectMessage; }
++        QString stereoMessage() const { QStringList messages{m_stereoMessage, m_stereoEffectMessage, m_stereoPublishMessage}; messages.removeAll(QString()); return messages.join(QLatin1Char('\n')); }
 +        QString stereoEffectMessage() const { return m_stereoEffectMessage; }
 +        QVideoSink *stereoSink() const { return m_stereoSink; }
 +        void setStereoSink(QVideoSink *sink);
@@ -572,7 +761,7 @@ Last-Update: 2026-11-22
          QString currentDevice() const { return m_currentDevice; }
          bool mirrored() const { return m_mirror; }
          bool readyForCapture() const { return m_readyForCapture; }
-@@ -47,13 +70,14 @@
+@@ -47,13 +72,14 @@
          bool playDevice(Device* device);
          void stop();
          void takePhoto(const QUrl& url, bool emitTaken);
@@ -588,13 +777,15 @@ Last-Update: 2026-11-22
          void photoTaken(const QString &photoUrl);
          void mirroredChanged(bool mirrored);
          void currentDeviceChanged();
-@@ -66,10 +90,20 @@
+@@ -66,10 +92,22 @@
          void updateSourceFilter();
          void setVideoSettings();
  
 +        void setStereoMessage(const QString &message);
 +        Stereo::ScreenMode *m_screenMode = nullptr;
 +        StereoRecorder *m_stereoRecorder = nullptr;
++        StereoPublisher *m_stereoPublisher = nullptr;
++        QString m_stereoPublishMessage;
 +        StereoPreview *m_stereoPreview = nullptr;
 +        QVideoSink *m_stereoSink = nullptr;
 +        bool m_pairActive = false;
@@ -611,7 +802,7 @@ Last-Update: 2026-11-22
          GstPointer<GstElement> m_viewfinder;
 --- a/src/video/webcamcontrol.cpp
 +++ b/src/video/webcamcontrol.cpp
-@@ -6,6 +6,17 @@
+@@ -6,6 +6,18 @@
  
  
  #include "webcamcontrol.h"
@@ -621,6 +812,7 @@ Last-Update: 2026-11-22
 +#include "stereopreview.h"
 +#include "stereophoto.h"
 +#include "stereorecorder.h"
++#include "stereopublisher.h"
 +#include <QTemporaryDir>
 +#include <QImageWriter>
 +#include <stereo-layer/screenmode.h>
@@ -629,7 +821,7 @@ Last-Update: 2026-11-22
  #include "kamosoSettings.h"
  #include <devicemanager.h>
  #include <kamosodirmodel.h>
-@@ -82,9 +93,16 @@
+@@ -82,9 +94,16 @@
      {
      }
  
@@ -647,7 +839,7 @@ Last-Update: 2026-11-22
      }
  
      void onBusMessage(GstMessage* message)
-@@ -95,9 +113,8 @@
+@@ -95,9 +114,8 @@
              break;
          case GST_MESSAGE_ERROR:  {//Some error occurred.
              qCritical() << "error on:" << m_description << debugMessage(message);
@@ -659,7 +851,7 @@ Last-Update: 2026-11-22
          }   break;
          default:
              break;
-@@ -121,15 +138,31 @@
+@@ -121,15 +139,31 @@
      }
  
      Q_SCRIPTABLE void refresh() {
@@ -694,7 +886,7 @@ Last-Update: 2026-11-22
                  return;
              }
              Q_ASSERT(m_pipeline);
-@@ -145,7 +178,9 @@
+@@ -145,7 +179,9 @@
              gst_bin_add_many(GST_BIN(m_pipeline.data()), glupload, sink, nullptr);
              bool correct = gst_element_link_many(lastItem, glupload, sink, nullptr);
              Q_ASSERT(correct);
@@ -705,7 +897,7 @@ Last-Update: 2026-11-22
          }
          setPlaying(m_playing);
      }
-@@ -182,6 +217,7 @@
+@@ -182,6 +218,7 @@
      bool m_complete = false;
      QString m_description;
      GstPointer<GstPipeline> m_pipeline;
@@ -713,7 +905,7 @@ Last-Update: 2026-11-22
      GstPointer<GstElement> m_viewfinder;
  };
  
-@@ -202,6 +238,32 @@
+@@ -202,6 +239,39 @@
  
  WebcamControl::WebcamControl()
  {
@@ -722,6 +914,12 @@ Last-Update: 2026-11-22
 +    connect(m_screenMode, &Stereo::ScreenMode::modeChanged, this, &WebcamControl::stereoChanged);
 +    m_stereoPreview = new StereoPreview(this);
 +    m_stereoRecorder = new StereoRecorder(this);
++    m_stereoPublisher = new StereoPublisher(this);
++    connect(m_stereoPreview, &StereoPreview::pairReady, m_stereoPublisher, &StereoPublisher::push);
++    connect(m_stereoPublisher, &StereoPublisher::failed, this, [this](const QString &message) {
++        m_stereoPublishMessage = message;
++        Q_EMIT stereoChanged();
++    });
 +    connect(m_stereoPreview, &StereoPreview::pairReady, m_stereoRecorder, &StereoRecorder::push);
 +    connect(m_stereoRecorder, &StereoRecorder::failed, this, [this](const QString &message) {
 +        qWarning() << message;
@@ -738,6 +936,7 @@ Last-Update: 2026-11-22
 +        Q_EMIT stereoChanged();
 +    });
 +    connect(m_stereoPreview, &StereoPreview::stereoFrameChanged, this, [this](bool stereo) {
++        if (!stereo) m_stereoPublisher->reset();
 +        if (m_stereoFrame != stereo) {
 +            m_stereoFrame = stereo;
 +            Q_EMIT stereoChanged();
@@ -746,7 +945,7 @@ Last-Update: 2026-11-22
      QQmlApplicationEngine* engine = new QQmlApplicationEngine(this);
      engine->rootContext()->setContextObject(new KLocalizedContext(engine));
      m_kamoso = new Kamoso(this);
-@@ -219,6 +281,8 @@
+@@ -219,6 +289,8 @@
  
      engine->load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
      auto rootObject = qobject_cast<QQuickWindow *> (engine->rootObjects().constFirst());
@@ -755,7 +954,7 @@ Last-Update: 2026-11-22
      m_surface = rootObject->findChild<QQuickItem *>("sink");
      Q_ASSERT(m_surface);
  
-@@ -231,6 +295,7 @@
+@@ -231,6 +303,7 @@
  
  WebcamControl::~WebcamControl()
  {
@@ -763,10 +962,11 @@ Last-Update: 2026-11-22
      DeviceManager::self()->save();
      Settings::self()->save();
      delete m_kamoso;
-@@ -238,9 +303,20 @@
+@@ -238,9 +311,21 @@
  
  void WebcamControl::stop()
  {
++    QMetaObject::invokeMethod(m_stereoPublisher, &StereoPublisher::reset, Qt::AutoConnection);
 +    m_stereoPreview->setPacking({});
 +    m_stereoFrame = false;
 +    if (m_busWatch && m_pipeline) {
@@ -784,7 +984,7 @@ Last-Update: 2026-11-22
      }
  }
  
-@@ -264,6 +340,46 @@
+@@ -264,6 +349,46 @@
  
      WebcamControl* wc = static_cast<WebcamControl*>(user_data);
      wc->setReadyForCapture(is_ready);
@@ -831,10 +1031,15 @@ Last-Update: 2026-11-22
  }
  
  bool WebcamControl::playDevice(Device *device)
-@@ -280,8 +396,26 @@
+@@ -280,8 +405,31 @@
      if (m_pipeline)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
++    QMetaObject::invokeMethod(this, [this] {
++        m_stereoPublisher->reset();
++        m_stereoPublishMessage.clear();
++        Q_EMIT stereoChanged();
++    }, Qt::AutoConnection);
 +    auto *properties = device->properties();
 +    const QString packing = StereoPreview::cameraPacking(properties);
 +    if (properties)
@@ -858,7 +1063,7 @@ Last-Update: 2026-11-22
          g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
          g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
                           G_CALLBACK(captureReadyChanged), this);
-@@ -296,6 +430,13 @@
+@@ -296,6 +444,13 @@
      }
      if (!m_viewfinder) {
          Q_ASSERT(m_surface);
@@ -872,7 +1077,7 @@ Last-Update: 2026-11-22
          m_viewfinder.reset(gst_bin_new("viewfinder"));
          auto glupload = gst_element_factory_make_full("glupload", nullptr);
          auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
-@@ -309,6 +450,8 @@
+@@ -309,6 +464,8 @@
          GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
          gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
          gst_object_unref(sink_pad);
@@ -881,7 +1086,7 @@ Last-Update: 2026-11-22
      }
  
      GstElement* source;
-@@ -320,7 +463,9 @@
+@@ -320,7 +477,9 @@
  
      if (!m_pipeline) {
          m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
@@ -892,7 +1097,7 @@ Last-Update: 2026-11-22
          g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
          g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
      }
-@@ -395,6 +540,58 @@
+@@ -395,6 +554,58 @@
          qWarning() << "couldn't take photo, no pipeline";
          return;
      }
@@ -951,7 +1156,7 @@ Last-Update: 2026-11-22
      m_emitTaken = emitTaken;
  
      g_object_set(m_pipeline.data(), "mode", 1, nullptr);
-@@ -419,8 +616,14 @@
+@@ -419,8 +630,14 @@
      return QDir::tempPath() + QStringLiteral("/kamoso_%1.mkv").arg(date);
  }
  
@@ -968,7 +1173,7 @@ Last-Update: 2026-11-22
      m_videoDestination = destination;
      m_tmpVideoPath = destination.isLocalFile() ? destination.toLocalFile() : temporaryVideoFile();
  
-@@ -429,10 +632,13 @@
+@@ -429,10 +646,13 @@
                                      nullptr);
  
      g_signal_emit_by_name (m_pipeline.data(), "start-capture", 0);
@@ -982,7 +1187,7 @@ Last-Update: 2026-11-22
      g_signal_emit_by_name(m_pipeline.data(), "stop-capture", 0);
  }
  
-@@ -453,11 +659,13 @@
+@@ -453,11 +673,13 @@
      if (prevstate != GST_STATE_NULL)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  

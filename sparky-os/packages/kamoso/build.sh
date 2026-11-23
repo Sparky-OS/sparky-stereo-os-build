@@ -41,7 +41,7 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 # Keep build and runtime dependencies aligned with capture and gallery features.
-s = p.read_text().replace('Build-Depends:', 'Build-Depends: gstreamer1.0-plugins-good (>= 1.28.9-dmo1+stereo3d1), gstreamer1.0-qt6 (>= 1.28.9-dmo1+stereo3d1), frei0r-plugins, gstreamer1.0-plugins-ugly, gstreamer1.0-libav, kimageformat6-plugins, libstereo-layer-dev (>= 1.23.2), libstereo-policy-dev (>= 1.23.2), qt6-multimedia-dev,').replace('\nDepends:', '\nDepends: gstreamer1.0-plugins-good (>= 1.28.9-dmo1+stereo3d1), gstreamer1.0-qt6 (>= 1.28.9-dmo1+stereo3d1), frei0r-plugins, gstreamer1.0-plugins-ugly, gstreamer1.0-libav, kimageformat6-plugins, libstereo-declare1 (>= 1.12.2), gstreamer1.0-gl, libstereo-layer1 (>= 1.23.2), libstereo-policy1 (>= 1.23.2),', 1)
+s = p.read_text().replace('Build-Depends:', 'Build-Depends: gstreamer1.0-pipewire (>= 1.6.9-2+stereo3d1), gstreamer1.0-plugins-good (>= 1.28.9-dmo1+stereo3d1), gstreamer1.0-qt6 (>= 1.28.9-dmo1+stereo3d1), frei0r-plugins, gstreamer1.0-plugins-ugly, gstreamer1.0-libav, kimageformat6-plugins, libstereo-layer-dev (>= 1.23.2), libstereo-policy-dev (>= 1.23.2), qt6-multimedia-dev,').replace('\nDepends:', '\nDepends: gstreamer1.0-pipewire (>= 1.6.9-2+stereo3d1), gstreamer1.0-plugins-good (>= 1.28.9-dmo1+stereo3d1), gstreamer1.0-qt6 (>= 1.28.9-dmo1+stereo3d1), frei0r-plugins, gstreamer1.0-plugins-ugly, gstreamer1.0-libav, kimageformat6-plugins, libstereo-declare1 (>= 1.12.2), gstreamer1.0-gl, libstereo-layer1 (>= 1.23.2), libstereo-policy1 (>= 1.23.2),', 1)
 p.write_text(s)
 CONTROL
 TOOLKIT="$TOOLKIT" python3 - "$OUT/source/debian/changelog" <<'PY'

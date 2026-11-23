@@ -1,0 +1,133 @@
+Description: Preserve negotiated multiview camera formats in the GStreamer adapter
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-23
+
+--- a/src/gst/gstpipewireformat.c
++++ b/src/gst/gstpipewireformat.c
+@@ -486,6 +486,79 @@
+   }
+ }
+ 
++/* Both APIs use the same public values, including the temporal-mode gap.
++ * Keep this conversion tied to every defined value, not just side by side. */
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_NONE == (int) SPA_VIDEO_MULTIVIEW_MODE_NONE);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_MONO == (int) SPA_VIDEO_MULTIVIEW_MODE_MONO);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_LEFT == (int) SPA_VIDEO_MULTIVIEW_MODE_LEFT);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_RIGHT == (int) SPA_VIDEO_MULTIVIEW_MODE_RIGHT);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_SIDE_BY_SIDE == (int) SPA_VIDEO_MULTIVIEW_MODE_SIDE_BY_SIDE);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_SIDE_BY_SIDE_QUINCUNX == (int) SPA_VIDEO_MULTIVIEW_MODE_SIDE_BY_SIDE_QUINCUNX);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_COLUMN_INTERLEAVED == (int) SPA_VIDEO_MULTIVIEW_MODE_COLUMN_INTERLEAVED);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_ROW_INTERLEAVED == (int) SPA_VIDEO_MULTIVIEW_MODE_ROW_INTERLEAVED);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_TOP_BOTTOM == (int) SPA_VIDEO_MULTIVIEW_MODE_TOP_BOTTOM);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_CHECKERBOARD == (int) SPA_VIDEO_MULTIVIEW_MODE_CHECKERBOARD);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_FRAME_BY_FRAME == (int) SPA_VIDEO_MULTIVIEW_MODE_FRAME_BY_FRAME);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_MULTIVIEW_FRAME_BY_FRAME == (int) SPA_VIDEO_MULTIVIEW_MODE_MULTIVIEW_FRAME_BY_FRAME);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_MODE_SEPARATED == (int) SPA_VIDEO_MULTIVIEW_MODE_SEPARATED);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_FLAGS_NONE == (int) SPA_VIDEO_MULTIVIEW_FLAGS_NONE);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST == (int) SPA_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_FLAGS_LEFT_FLIPPED == (int) SPA_VIDEO_MULTIVIEW_FLAGS_LEFT_FLIPPED);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_FLAGS_LEFT_FLOPPED == (int) SPA_VIDEO_MULTIVIEW_FLAGS_LEFT_FLOPPED);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_FLIPPED == (int) SPA_VIDEO_MULTIVIEW_FLAGS_RIGHT_FLIPPED);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_FLOPPED == (int) SPA_VIDEO_MULTIVIEW_FLAGS_RIGHT_FLOPPED);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_FLAGS_HALF_ASPECT == (int) SPA_VIDEO_MULTIVIEW_FLAGS_HALF_ASPECT);
++G_STATIC_ASSERT ((int) GST_VIDEO_MULTIVIEW_FLAGS_MIXED_MONO == (int) SPA_VIDEO_MULTIVIEW_FLAGS_MIXED_MONO);
++
++static void
++add_multiview (struct spa_pod_builder *b, const GstStructure *s)
++{
++  const GValue *value = gst_structure_get_value (s, "multiview-mode");
++  struct spa_pod_frame f;
++  struct spa_pod_choice *choice;
++  const char *name;
++  int i, count = 0, views;
++  if (value) {
++    for (i = 0; (name = get_nth_string (value, i)); i++) {
++      GstVideoMultiviewMode mode = gst_video_multiview_mode_from_caps_string (name);
++      if (mode == GST_VIDEO_MULTIVIEW_MODE_NONE)
++        continue;
++      if (count++ == 0) {
++        spa_pod_builder_prop (b, SPA_FORMAT_VIDEO_multiviewMode, 0);
++        spa_pod_builder_push_choice (b, &f, SPA_CHOICE_Enum, 0);
++      }
++      spa_pod_builder_id (b, mode);
++    }
++    if (count) {
++      choice = spa_pod_builder_pop (b, &f);
++      if (count == 1)
++        choice->body.type = SPA_CHOICE_None;
++    }
++  }
++  value = gst_structure_get_value (s, "multiview-flags");
++  /* An unconstrained flagset is not a fixed format. Preserve negotiated flags. */
++  if (value && GST_VALUE_HOLDS_FLAG_SET (value) &&
++      gst_value_get_flagset_mask (value) == G_MAXUINT) {
++    spa_pod_builder_prop (b, SPA_FORMAT_VIDEO_multiviewFlags, 0);
++    spa_pod_builder_id (b, gst_value_get_flagset_flags (value));
++  }
++  value = gst_structure_get_value (s, "views");
++  if (value) {
++    for (i = 0; get_nth_int (value, i, &views); i++) {
++      if (i == 0) {
++        spa_pod_builder_prop (b, SPA_FORMAT_VIDEO_views, 0);
++        spa_pod_builder_push_choice (b, &f, get_range_type (value), 0);
++      }
++      spa_pod_builder_int (b, views);
++    }
++    if (i > 0) {
++      choice = spa_pod_builder_pop (b, &f);
++      if (i == 1)
++        choice->body.type = SPA_CHOICE_None;
++    }
++  }
++}
++
+ static void
+ add_video_format (gpointer format_ptr,
+                   gpointer modifiers_ptr,
+@@ -543,6 +616,7 @@
+   }
+ 
+   add_limits (&b, d);
++  add_multiview (&b.b, d->cs);
+ 
+   g_ptr_array_add (d->array, spa_pod_builder_pop (&b.b, &f));
+ }
+@@ -641,6 +715,7 @@
+     spa_pod_builder_id(&b.b, d->type->media_subtype);
+ 
+     add_limits (&b, d);
++  add_multiview (&b.b, d->cs);
+ 
+     g_ptr_array_add (d->array, spa_pod_builder_pop (&b.b, &f));
+   }
+@@ -895,6 +970,11 @@
+   return gst_video_interlace_mode_to_string(idx);
+ }
+ 
++static const char *multiview_mode_id_to_string(uint32_t id)
++{
++  return gst_video_multiview_mode_to_caps_string ((GstVideoMultiviewMode) id);
++}
++
+ static const char *audio_id_to_string(uint32_t id)
+ {
+   int idx;
+@@ -1307,6 +1387,17 @@
+     } else {
+       return NULL;
+     }
++    if ((prop = spa_pod_object_find_prop (obj, NULL, SPA_FORMAT_VIDEO_multiviewMode)))
++      handle_id_prop (prop, "multiview-mode", multiview_mode_id_to_string, res);
++    if ((prop = spa_pod_object_find_prop (obj, NULL, SPA_FORMAT_VIDEO_multiviewFlags))) {
++      uint32_t flags;
++      if (spa_pod_get_id (&prop->value, &flags) == 0)
++        gst_caps_set_simple (res, "multiview-flags", GST_TYPE_VIDEO_MULTIVIEW_FLAGSET,
++            flags, G_MAXUINT, NULL);
++    }
++    if ((prop = spa_pod_object_find_prop (obj, NULL, SPA_FORMAT_VIDEO_views)))
++      handle_int_prop (prop, "views", res);
++    prop = NULL;
+     if ((prop = spa_pod_object_find_prop (obj, prop, SPA_FORMAT_VIDEO_size))) {
+       handle_rect_prop (prop, "width", "height", res);
+     }
