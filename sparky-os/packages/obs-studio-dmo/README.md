@@ -1,6 +1,6 @@
 # obs-studio-dmo, the edition's OBS Studio
 
-deb-multimedia's `obs-studio-dmo` 1:33.0.1-dmo2 (Christian Marillat) rebuilt as `1:33.0.1-dmo2+stereo3d1+lc1` with the patches in `patches/`.
+deb-multimedia's `obs-studio-dmo` 1:33.0.1-dmo2 (Christian Marillat) rebuilt as `1:33.0.1-dmo2+stereo3d2+lc1` with the patches in `patches/` (`+stereo3d1` carried 0001 to 0007).
 libobs carries the main canvas's stereo layout (`obs_set_video_stereo3d()`, `obs_get_video_stereo3d()`, `obs_encoder_get_stereo3d()`, new symbols only), and the writers mark what they write while they work:
 
 | Writer | Mark |
@@ -23,8 +23,8 @@ From `+stereo3d2` (milestone 3) a side by side canvas is drawn once per eye, and
 | 0009 | the frontend: scenes, the preview, the projectors and the multiview in the canvas's scene space (one eye); each display handed to a module through the widget's `obsDisplay` property |
 | 0010 | obs-filters: Render Delay keeps each eye's frames apart |
 | 0011 | media playback: a stream's own stereo mark handed on (`get_stereo3d`), frames in turn and the two views of an MV-HEVC stream paired at the Stereo input filter's request (`set_stereo3d_pairing`). Pairing frames in turn here is a copy of the stereo layer's own rule; queue row 839 moves it (one sequence pairing and one AVStereo3D mapping exported by the layer, used by OBS and Stereo HandBrake) |
-| 0012 | obs-websocket: a hotkey triggered by name (`TriggerHotkeyByName`) runs on the UI thread, as a key press does; it ran on obs-websocket's own request thread, where the preview's hotkeys showed and hid widgets off Qt's main thread and the program died at a show |
-| 0013 | obs-ffmpeg: the custom FFmpeg output's raw callbacks and its stop share a lock on the encoder's data; a frame still being encoded after the stop met a freed encoder (SIGSEGV at the stop; upstream's report of the same race: obs-studio issue 14153) |
+| 0012 | obs-websocket: a hotkey triggered by name (`TriggerHotkeyByName`) runs on the UI thread, as a key press does; it ran on obs-websocket's own request thread, where the preview's hotkeys showed and hid widgets off Qt's main thread and the program died at a show. Red without it: the preview's show ran on "Thread (pooled)" in 4 of 4 calls under gdb, and OBS died in 6 of 6 runs of 50 hides and shows (two pinned CPUs, a drag over the preview first); green with it: 4 of 4 calls on OBS's main thread, 0 deaths in 6 runs. deb-multimedia's own OBS, with no module, died in 2 of 4 such runs |
+| 0013 | obs-ffmpeg: the custom FFmpeg output's raw callbacks and its stop share a lock on the encoder's data; a frame still being encoded after the stop met a freed encoder (SIGSEGV at the stop). Red without it: 2 crashes in 100 starts and stops with the edition's x264, 6 in 100 with deb-multimedia's; green with it: 0 in 100 with each, every file complete. obs-studio issue 14153 reports the same race seen from its other side (a frame of the previous recording in the next one) |
 
 OBS's own screenshots of a 3D canvas stay one picture until the stereo layer writes a marked PNG from pixels (queue row 798).
 The module `sparky-stereo-obs` sets the layout (its "Enable 3D", on by itself when the desktop is in 3D).

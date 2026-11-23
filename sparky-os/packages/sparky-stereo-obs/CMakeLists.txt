@@ -3,7 +3,7 @@
 # The edition's stereo module for OBS Studio: built against the libobs and obs-frontend-api of the OBS the edition
 # installs (deb-multimedia's obs-studio, libobs-dev), the shared stereo policy (libstereo-policy) and Qt 6 Widgets.
 cmake_minimum_required(VERSION 3.25)
-project(sparky-stereo-obs VERSION 0.2.0 LANGUAGES C CXX)
+project(sparky-stereo-obs VERSION 0.3.0 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 set(CMAKE_CXX_STANDARD 17)

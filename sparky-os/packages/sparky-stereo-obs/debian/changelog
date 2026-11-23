@@ -1,3 +1,24 @@
+sparky-stereo-obs (0.3.0) unstable; urgency=medium
+
+  * The preview of a 3D canvas, studio mode's views and the projectors are
+    declared 3D areas on a 3D screen, each OBS overlay drawn in both eyes; a
+    view that cannot be shown in 3D shows the left eye whole and says so
+    (ORDER 61, milestone 3).
+  * Scenes are laid out in one eye's space: a flat source stands at the
+    screen plane in both eyes, a stereo source gives each eye its own view.
+  * The Stereo input filter takes every packing of the stereo layer's input
+    list: frames in turn and the two views of a stream are paired in OBS's
+    decoder, a picture with its depth map is drawn by the layer's depth
+    library with the layer's own options; Automatic reads the source's own
+    mark and, with none, shows it flat and offers the packing.
+  * A source the filter cannot ask for a mark is told so; Swap left and right
+    eyes is not offered where there is no 3D to correct.
+  * Needs the edition's OBS 1:33.0.1-dmo2+stereo3d2 (its libobs draws each
+    eye, its media playback gives the mark): Depends on obs-studio and
+    obs-plugins at that version.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 23 Nov 2026 04:30:00 -0300
+
 sparky-stereo-obs (0.2.0) unstable; urgency=medium
 
   * 3D on by itself (ORDER 61, milestone 2): when a screen shows 3D (the stereo
