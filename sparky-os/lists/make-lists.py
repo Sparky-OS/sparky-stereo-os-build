@@ -279,13 +279,14 @@ group('system', 'System', [
 # 9. Look: Oxygen dark default (Daniel's QPlatinum and Sparky black come as packages of ours).
 # The whole Oxygen suite (Daniel, 2026-10-14: "we need the entire oxygen suite from kde", after a Debian update dropped
 # Oxygen's Qt5 style configuration on his laptop): the Plasma look, icons, cursors, window decoration, the Qt6 and Qt5
-# styles (Qt5 programs still exist), the GTK2 engine, the fonts, the sounds and the wallpapers. KDE's oxygen-gtk for
-# GTK3 is not in Debian: ours to package (MISSING.md).
+# styles (Qt5 programs still exist), the GTK2 engine, the fonts, the sounds and the wallpapers; the Qt5 style, the GTK2
+# engine and the fonts are the edition's own builds since row 59. KDE's oxygen-gtk for GTK3 is not built: GTK 3.24 ignores
+# theming engines ("The 'engine' property is ignored", measured in row 59) and the theme alone draws no widgets; GTK 3
+# and 4 programs wear the look's Sparky-Stereo-Oxygen themes (sparky-stereo-gtk).
 group('look', 'Look', [
     'plasma-theme-oxygen', 'oxygen-icon-theme', 'oxygencursors', 'kde-style-oxygen-qt6',
     'kwin-decoration-oxygen', 'qt6ct',
     'kde-style-oxygen-qt5', 'gtk2-engines-oxygen', 'fonts-oxygen', 'oxygen-sounds', 'oxygen-wallpapers',
-    'oxygen-gtk3',
     'sparky-stereo-plymouth',   # the Stereo boot splash, the default (Daniel 2026-10-24: "default plymouth, approved to stereo")
 ])
 
