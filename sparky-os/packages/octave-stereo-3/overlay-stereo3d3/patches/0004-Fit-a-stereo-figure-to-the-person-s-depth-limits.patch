@@ -1,0 +1,963 @@
+From d841f3c95361a9b8ffc2d3eeea4be9df9b4b0722 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 23 Nov 2026 18:30:00 +0000
+Subject: [PATCH] Fit a stereo figure to the person's depth limits
+
+A stereo figure's 3D axes are drawn for each eye with the separation
+fitted to the depth limits the desktop gives the figure's window (Sparky
+Stereo OS's KWin, read through libstereo-declare), in place of the
+figure property stereoeyeseparation:
+
+- Before the left eye the figure is drawn once from the camera between
+  the eyes into the left buffer.  At the end of each 3D axes (Octave
+  clears the depth buffer at the start of every axes) the renderer
+  reads its depth buffer and keeps, by the axes' handle, the nearest
+  and farthest distance of its pixels, the distance of its camera
+  target and the scale from camera units to buffer pixels.
+
+- Each eye shears the axes' orthographic projection about the camera
+  target, as before; a point at the distance d stands
+  t * xscale * (d - target) pixels further right in the right eye.  The
+  separation t of each axes is the largest under which its nearest
+  pixel stays inside the popped limit and its farthest inside the sunk
+  limit.  A 2D axes is neither sheared nor measured.
+
+- The limits are read four times a second, on Wayland for the
+  top-level window's surface and on X11 on the drawing area's own
+  window, in the pixels of the figure's buffer; a change redraws the
+  figure.  When they are not offered, do not arrive within two seconds
+  or cannot be read, when the depth cannot be read, or when a figure
+  that asked for stereo buffers gets none on a desktop that offers
+  them, the figure asks the interpreter to tell the person once
+  (sparky_stereo_tell, an m-file of the edition with the sentences in
+  ten languages).  A script that sets stereoeyeseparation is told once
+  that it no longer decides the depth.
+
+- Only the drawing area asks for stereo buffers (its own format): the
+  figure window is no longer created with a stereo default format, so
+  menus, toolbar and controls stay one picture.
+
+- A Qt figure's Tools menu gets the edition's Enable 3D and its 3D
+  display settings (sparky_stereo_menu, when the edition's m-file is
+  on the path).
+
+Print and getframe draw one view, from the camera between the eyes, as
+before.
+
+Assisted-by: Claude Opus 5.5 (Anthropic)
+---
+ libgui/graphics/Figure.cc                     |  29 +-
+ libgui/graphics/GLCanvas.cc                   | 266 +++++++++++++++++-
+ libgui/graphics/GLCanvas.h                    |  28 ++
+ libgui/graphics/StereoDepthLimits.cc          | 103 +++++++
+ libgui/graphics/StereoDepthLimits.h           |  68 +++++
+ libgui/graphics/module.mk                     |  13 +-
+ libgui/module.mk                              |   3 +-
+ libinterp/corefcn/gl-render.cc                |  92 +++++-
+ libinterp/corefcn/gl-render.h                 |  48 +++-
+ .../plot/util/private/__add_default_menu__.m  |   7 +
+ 10 files changed, 614 insertions(+), 43 deletions(-)
+ create mode 100644 libgui/graphics/StereoDepthLimits.cc
+ create mode 100644 libgui/graphics/StereoDepthLimits.h
+
+diff --git a/libgui/graphics/Figure.cc b/libgui/graphics/Figure.cc
+index 7170cc5..212633d 100644
+--- a/libgui/graphics/Figure.cc
++++ b/libgui/graphics/Figure.cc
+@@ -45,7 +45,6 @@
+ #include <QToolBar>
+ #include <QWindow>
+ #include <QScreen>
+-#include <QSurfaceFormat>
+ 
+ #include "Canvas.h"
+ #include "Container.h"
+@@ -111,30 +110,10 @@ Figure *
+ Figure::create (octave::interpreter& interp,
+                 const graphics_object& go)
+ {
+-  const auto *fp
+-    = dynamic_cast<const figure::properties *> (&go.get_properties ());
+-
+-  // The surface format of a top-level window is fixed when its native
+-  // window is created, so a stereo figure creates it with stereo.  The
+-  // default format is restored for the windows made after it.
+-  QSurfaceFormat format = QSurfaceFormat::defaultFormat ();
+-
+-  if (fp && fp->is_stereo ())
+-    {
+-      QSurfaceFormat stereo_format = format;
+-      stereo_format.setStereo (true);
+-      QSurfaceFormat::setDefaultFormat (stereo_format);
+-    }
+-
+-  FigureWindow *win = new FigureWindow ();
+-  Figure *fig = new Figure (interp, go, win);
+-
+-  if (fp && fp->is_stereo ())
+-    win->winId ();
+-
+-  QSurfaceFormat::setDefaultFormat (format);
+-
+-  return fig;
++  // Only the drawing area of a stereo figure asks for stereo buffers (its
++  // own format, GLWidget): the figure window stays one picture, the same
++  // in both eyes
++  return new Figure (interp, go, new FigureWindow ());
+ }
+ 
+ Figure::Figure (octave::interpreter& interp,
+diff --git a/libgui/graphics/GLCanvas.cc b/libgui/graphics/GLCanvas.cc
+index aed504f..4982882 100644
+--- a/libgui/graphics/GLCanvas.cc
++++ b/libgui/graphics/GLCanvas.cc
+@@ -27,6 +27,17 @@
+ #  include "config.h"
+ #endif
+ 
++#include <algorithm>
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <iostream>
++#include <limits>
++
++#include <QGuiApplication>
++#include <QWindow>
++#include <QtGui/qpa/qplatformnativeinterface.h>
++
+ #include "GLCanvas.h"
+ #include "gl-select.h"
+ 
+@@ -34,17 +45,64 @@
+ #include "gl2ps-print.h"
+ #include "graphics.h"
+ #include "interpreter.h"
++#include "ovl.h"
++#include "quit.h"
+ 
+ OCTAVE_BEGIN_NAMESPACE(octave)
+ 
++// The limits are read again four times a second; they may come a moment
++// after the first frame, so the person is told after two seconds
++static const int stereo_limits_poll_ms = 250;
++static const int stereo_polls_before_telling = 8;
++
++// The default of the figure property stereoeyeseparation, which no longer
++// decides the depth of a stereo figure
++static const double stereo_separation_property_default = 0.05;
++
++// OCTAVE_STEREO3D_TRACE=1 prints each stereo frame's fit on stderr, for a
++// check against a prediction
++static bool
++stereo_trace ()
++{
++  static const bool trace = std::getenv ("OCTAVE_STEREO3D_TRACE") != nullptr;
++  return trace;
++}
++
++// Whether this desktop gives an OpenGL context stereo buffers: a context
++// with the figure's own format gives the answer the figure gets
++static bool
++desktop_offers_stereo ()
++{
++  static int offered = -1;
++
++  if (offered < 0)
++    {
++      QSurfaceFormat format = QSurfaceFormat::defaultFormat ();
++      format.setStereo (true);
++      QOpenGLContext context;
++      context.setFormat (format);
++      offered = (context.create () && context.format ().stereo ()) ? 1 : 0;
++    }
++
++  return offered == 1;
++}
++
+ GLWidget::GLWidget (Canvas& parent_canvas, QWidget *parent, bool stereo)
+   : QOpenGLWidget (parent), m_parent_canvas (parent_canvas),
+-    m_glfcns (), m_renderer (m_glfcns), m_stereo (stereo), m_stereo_eye (0)
++    m_glfcns (), m_renderer (m_glfcns), m_stereo (stereo), m_stereo_eye (0),
++    m_stereo_measuring (false), m_stereo_separations (), m_limits_timer (),
++    m_limits (), m_polls_without_limits (0), m_told ()
+ {
++  // Only the figure's drawing area asks for stereo buffers: the rest of
++  // the figure window (menus, toolbar, controls) stays one picture, the
++  // same in both eyes
+   QSurfaceFormat format = QSurfaceFormat::defaultFormat ();
+   format.setStereo (stereo);
+   setFormat (format);
+ 
++  m_limits_timer.setInterval (stereo_limits_poll_ms);
++  connect (&m_limits_timer, &QTimer::timeout, this, &GLWidget::poll_limits);
++
+   setFocusPolicy (Qt::ClickFocus);
+   setFocus ();
+   setUpdateBehavior (QOpenGLWidget::PartialUpdate);
+@@ -65,6 +123,162 @@ GLWidget::initializeGL ()
+   // managed by the QOpenGLWidget object so there is else nothing to
+   // do here.  If we used custom shader programs, then we would need
+   // to initialize them here.
++
++  if (m_stereo)
++    {
++      // A figure that asked for stereo buffers knows from its own format
++      // whether it got them
++      if (format ().stereo ())
++        {
++          poll_limits ();
++          m_limits_timer.start ();
++        }
++      else
++        tell (desktop_offers_stereo () ? "no-stereo-buffers"
++                                        : "no-stereo-desktop");
++    }
++}
++
++bool
++GLWidget::draws_eyes () const
++{
++  return m_stereo && format ().stereo ();
++}
++
++void
++GLWidget::tell (const std::string& key)
++{
++  if (! m_told.insert (key).second)
++    return;
++
++  Q_EMIT m_parent_canvas.interpreter_event
++    ([key] (octave::interpreter& interp)
++    {
++      // INTERPRETER THREAD
++
++      try
++        {
++          interp.feval ("sparky_stereo_tell", ovl (key));
++        }
++      catch (const execution_exception&)
++        {
++          interp.recover_from_exception ();
++          std::cerr << "3D: " << key << std::endl;
++        }
++    });
++}
++
++void
++GLWidget::poll_limits ()
++{
++  if (! draws_eyes ())
++    return;
++
++  double w = std::round (width () * devicePixelRatioF ());
++  if (w <= 0)
++    return;
++
++  stereo3d_limits::result r;
++  QPlatformNativeInterface *native = QGuiApplication::platformNativeInterface ();
++  QString platform = QGuiApplication::platformName ();
++
++  if (native && platform.startsWith (QLatin1String ("wayland")))
++    {
++      // A stereo desktop gives the limits for the top-level window's
++      // surface, not for the drawing area's own subsurface
++      QWindow *top = window () ? window ()->windowHandle () : nullptr;
++      void *display = native->nativeResourceForIntegration ("wl_display");
++      void *surface = top ? native->nativeResourceForWindow ("surface", top)
++                          : nullptr;
++      r = stereo3d_limits::wayland (display, surface, w, w);
++    }
++  else if (native && platform == QLatin1String ("xcb"))
++    {
++      // The drawing area's own window is the declared stereo child window
++      // that carries the limits
++      void *display = native->nativeResourceForIntegration ("display");
++      r = stereo3d_limits::x11 (display, winId (), w, w);
++    }
++  else
++    r.status = stereo3d_limits::state::unreadable;
++
++  bool changed = (r.status != m_limits.status || r.sunk != m_limits.sunk
++                  || r.popped != m_limits.popped);
++  m_limits = r;
++
++  if (changed && stereo_trace ())
++    std::fprintf (stderr, "octave stereo3d: limits platform=%s status=%d "
++                  "sunk=%g popped=%g width=%g\n",
++                  platform.toStdString ().c_str (),
++                  static_cast<int> (r.status), r.sunk, r.popped, w);
++
++  if (r.status == stereo3d_limits::state::ok)
++    m_polls_without_limits = 0;
++  else if (++m_polls_without_limits == stereo_polls_before_telling)
++    {
++      switch (r.status)
++        {
++        case stereo3d_limits::state::not_offered:
++          tell ("limits-not-offered");
++          break;
++        case stereo3d_limits::state::not_delivered:
++          tell ("limits-not-delivered");
++          break;
++        default:
++          tell ("limits-unreadable");
++          break;
++        }
++    }
++
++  if (changed)
++    update ();
++}
++
++void
++GLWidget::fit_separations ()
++{
++  m_stereo_separations.clear ();
++
++  if (m_renderer.stereo_depth_unreadable ())
++    tell ("depth-unreadable");
++
++  bool limits = (m_limits.status == stereo3d_limits::state::ok);
++
++  for (const auto& [axes, a] : m_renderer.stereo_measured ())
++    {
++      // With the separation t (summed over both eyes, per unit of depth
++      // in the axes' camera coordinates), a point at the distance d stands
++      // t * xscale * (d - target) buffer pixels further right in the
++      // right eye than in the left: the separation is the largest that
++      // keeps the nearest pixel inside the popped limit and the farthest
++      // inside the sunk limit.  Nothing off the plane of the camera
++      // target: no depth to show.
++      double t = 0.0;
++      double front = a.xscale * (a.target - a.nearest);
++      double behind = a.xscale * (a.farthest - a.target);
++
++      if (limits && a.seen && a.xscale > 0)
++        {
++          double best = std::numeric_limits<double>::infinity ();
++          if (front > 0)
++            best = std::min (best, m_limits.popped / front);
++          if (behind > 0)
++            best = std::min (best, m_limits.sunk / behind);
++          if (std::isfinite (best))
++            t = best;
++        }
++
++      m_stereo_separations[axes] = t;
++
++      if (stereo_trace ())
++        std::fprintf (stderr, "octave stereo3d: fit axes=%.17g limits=%d "
++                      "sunk=%g popped=%g seen=%d xscale=%.9g target=%.9g "
++                      "nearest=%.9g farthest=%.9g separation=%.9g "
++                      "disparity nearest=%.4f farthest=%.4f\n",
++                      axes, limits ? 1 : 0, m_limits.sunk, m_limits.popped,
++                      a.seen ? 1 : 0, a.xscale, a.target, a.nearest,
++                      a.farthest, t, -t * front, t * behind);
++    }
+ }
+ 
+ void
+@@ -79,12 +293,31 @@ GLWidget::draw (graphics_object go)
+ 
+       graphics_object fig = go.get_ancestor ("figure");
+       double dpr = fig.get ("__device_pixel_ratio__").double_value ();
+-      double separation = fig.get ("stereoeyeseparation").double_value ();
+       m_renderer.set_viewport (dpr * width (), dpr * height ());
+       m_renderer.set_device_pixel_ratio (dpr);
+-      m_renderer.set_stereo_eye (m_stereo ? m_stereo_eye : 0, separation);
++
++      if (draws_eyes ())
++        {
++          // The depth is fitted to the person's limits: a script that
++          // sets the old separation property is told once that it no
++          // longer decides it
++          if (fig.get ("stereoeyeseparation").double_value ()
++              != stereo_separation_property_default)
++            tell ("separation-property");
++
++          m_renderer.set_stereo_eye (m_stereo_eye);
++          m_renderer.set_stereo_separations (m_stereo_separations);
++          m_renderer.set_stereo_measuring (m_stereo_measuring);
++        }
++      else
++        {
++          m_renderer.set_stereo_eye (0);
++          m_renderer.set_stereo_measuring (false);
++        }
+ 
+       m_renderer.draw (go);
++
++      m_renderer.set_stereo_measuring (false);
+     }
+ }
+ 
+@@ -105,7 +338,8 @@ GLWidget::do_getPixels (graphics_object go)
+ 
+       unwind_action reset_current ([this] () { end_rendering (); });
+ 
+-      m_renderer.set_stereo_eye (0, 0.0);
++      m_renderer.set_stereo_eye (0);
++      m_renderer.set_stereo_measuring (false);
+ 
+       // When the figure is not visible or its size is frozen for printing,
+       // we use a framebuffer object to make sure we are rendering on a
+@@ -151,7 +385,8 @@ GLWidget::do_print (const QString& file_cmd, const QString& term,
+ 
+       unwind_action reset_current ([this] () { end_rendering (); });
+ 
+-      m_renderer.set_stereo_eye (0, 0.0);
++      m_renderer.set_stereo_eye (0);
++      m_renderer.set_stereo_measuring (false);
+ 
+       graphics_object fig (go.get_ancestor ("figure"));
+ 
+@@ -228,9 +463,24 @@ GLWidget::drawZoomBox (const QPoint& p1, const QPoint& p2)
+ void
+ GLWidget::paintGL ()
+ {
+-  if (m_stereo)
+-    m_stereo_eye = (currentTargetBuffer () == QOpenGLWidget::RightBuffer
+-                    ? 1 : -1);
++  if (draws_eyes ())
++    {
++      // Qt paints the left buffer, then the right one
++      if (currentTargetBuffer () == QOpenGLWidget::LeftBuffer)
++        {
++          // The measuring pass: the whole figure from the camera between
++          // the eyes, into the left buffer, which the left eye then draws
++          // over
++          m_stereo_eye = 0;
++          m_stereo_measuring = true;
++          m_parent_canvas.canvasPaintEvent ();
++          m_stereo_measuring = false;
++          fit_separations ();
++        }
++
++      m_stereo_eye = (currentTargetBuffer () == QOpenGLWidget::RightBuffer
++                      ? 1 : -1);
++    }
+   else
+     m_stereo_eye = 0;
+ 
+diff --git a/libgui/graphics/GLCanvas.h b/libgui/graphics/GLCanvas.h
+index 07917d4..cd75033 100644
+--- a/libgui/graphics/GLCanvas.h
++++ b/libgui/graphics/GLCanvas.h
+@@ -26,13 +26,19 @@
+ #if ! defined (octave_GLCanvas_h)
+ #define octave_GLCanvas_h 1
+ 
++#include <map>
++#include <set>
++#include <string>
++
+ #include <QOffscreenSurface>
+ #include <QOpenGLContext>
+ #include <QOpenGLFramebufferObject>
+ #include <QOpenGLWidget>
++#include <QTimer>
+ 
+ #include "Canvas.h"
+ 
++#include "StereoDepthLimits.h"
+ #include "gl-render.h"
+ #include "qopengl-functions.h"
+ 
+@@ -84,8 +90,30 @@ private:
+   QOpenGLContext m_os_context;
+   QOffscreenSurface m_os_surface;
+ 
++  // Stereo: the figure asked for stereo buffers, and draws each eye
++  // only when it got them
+   bool m_stereo;
+   int m_stereo_eye;
++  bool draws_eyes () const;
++
++  // The measuring pass before the left eye: the figure drawn once from
++  // the camera between the eyes, each 3D axes keeping the depth of its
++  // pixels, from which each axes' separation is fitted to the limits
++  bool m_stereo_measuring;
++  std::map<double, double> m_stereo_separations;
++  void fit_separations ();
++
++  // The person's depth limits, read four times a second so that a
++  // change in the desktop's 3D settings reaches an open figure
++  QTimer m_limits_timer;
++  stereo3d_limits::result m_limits;
++  int m_polls_without_limits;
++  void poll_limits ();
++
++  // A sentence for the person, by its key, printed once in the command
++  // window in the person's language (sparky_stereo_tell)
++  std::set<std::string> m_told;
++  void tell (const std::string& key);
+ };
+ 
+ class GLCanvas : public Canvas
+diff --git a/libgui/graphics/StereoDepthLimits.cc b/libgui/graphics/StereoDepthLimits.cc
+new file mode 100644
+index 0000000..69701b4
+--- /dev/null
++++ b/libgui/graphics/StereoDepthLimits.cc
+@@ -0,0 +1,103 @@
++////////////////////////////////////////////////////////////////////////
++//
++// Copyright (C) 2026 Daniel Ramos (Capitain Jack)
++//
++// This file is part of Octave.
++//
++// Octave is free software: you can redistribute it and/or modify it
++// under the terms of the GNU General Public License as published by
++// the Free Software Foundation, either version 3 of the License, or
++// (at your option) any later version.
++//
++// Octave is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with Octave; see the file COPYING.  If not, see
++// <https://www.gnu.org/licenses/>.
++//
++////////////////////////////////////////////////////////////////////////
++
++#if defined (HAVE_CONFIG_H)
++#  include "config.h"
++#endif
++
++#include <cerrno>
++
++#include <stereo-declare.h>
++
++#include "StereoDepthLimits.h"
++
++OCTAVE_BEGIN_NAMESPACE(octave)
++
++namespace stereo3d_limits
++{
++  static result
++  to_result (int r, const struct stereo_depth_limits& limits)
++  {
++    result res;
++
++    if (r == 0)
++      {
++        res.status = state::ok;
++        res.sunk = limits.sunk;
++        res.popped = limits.popped;
++      }
++    else if (r == -ENOTSUP)
++      res.status = state::not_offered;
++    else if (r == -ENODATA)
++      res.status = state::not_delivered;
++    else
++      res.status = state::unreadable;
++
++    return res;
++  }
++
++  result
++  wayland (void *display, void *surface, double buffer_width,
++           double shown_width)
++  {
++    static void *initialized = nullptr;
++
++    if (! display || ! surface)
++      return result ();
++
++    if (initialized != display)
++      {
++        // The objects the library makes go on the program's default
++        // queue, which Qt dispatches; the first answer can be "not
++        // offered" until the compositor's globals have been dispatched.
++        if (stereo_declare_wayland_init (static_cast<wl_display *> (display),
++                                         nullptr) != 0)
++          return result ();
++
++        initialized = display;
++      }
++
++    struct stereo_depth_limits limits {};
++    int r = stereo_depth_wayland_get_buffer_limits
++              (static_cast<wl_surface *> (surface), buffer_width,
++               shown_width, &limits);
++
++    return to_result (r, limits);
++  }
++
++  result
++  x11 (void *display, unsigned long window, double buffer_width,
++       double shown_width)
++  {
++    if (! display || ! window)
++      return result ();
++
++    struct stereo_depth_limits limits {};
++    int r = stereo_depth_x11_get_buffer_limits
++              (static_cast<Display *> (display), static_cast<Window> (window),
++               buffer_width, shown_width, &limits);
++
++    return to_result (r, limits);
++  }
++}
++
++OCTAVE_END_NAMESPACE(octave)
+diff --git a/libgui/graphics/StereoDepthLimits.h b/libgui/graphics/StereoDepthLimits.h
+new file mode 100644
+index 0000000..1e2d4e2
+--- /dev/null
++++ b/libgui/graphics/StereoDepthLimits.h
+@@ -0,0 +1,68 @@
++////////////////////////////////////////////////////////////////////////
++//
++// Copyright (C) 2026 Daniel Ramos (Capitain Jack)
++//
++// This file is part of Octave.
++//
++// Octave is free software: you can redistribute it and/or modify it
++// under the terms of the GNU General Public License as published by
++// the Free Software Foundation, either version 3 of the License, or
++// (at your option) any later version.
++//
++// Octave is distributed in the hope that it will be useful, but
++// WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with Octave; see the file COPYING.  If not, see
++// <https://www.gnu.org/licenses/>.
++//
++////////////////////////////////////////////////////////////////////////
++
++#if ! defined (octave_StereoDepthLimits_h)
++#define octave_StereoDepthLimits_h 1
++
++#include "octave-config.h"
++
++// The person's depth limits for a stereo figure, read through
++// libstereo-declare.  A stereo desktop (Sparky Stereo OS's KWin) keeps
++// them in one place, its 3D depth settings, and hands them to every
++// window: on Wayland for the top-level window's surface, on X11 as a
++// property of the declared stereo child window.  The library converts
++// them to the pixels of the figure's buffer.  This file keeps the
++// library's X11 header out of the Qt and Octave sources.
++
++OCTAVE_BEGIN_NAMESPACE(octave)
++
++namespace stereo3d_limits
++{
++  enum class state
++  {
++    ok,
++    not_offered,    // this desktop sends no depth limits
++    not_delivered,  // offered, not received yet
++    unreadable      // any other answer of the library
++  };
++
++  struct result
++  {
++    state status = state::not_offered;
++    double sunk = 0.0;    // farthest disparity behind the screen, buffer pixels
++    double popped = 0.0;  // nearest disparity in front of the screen, buffer pixels
++  };
++
++  // display: the program's wl_display; surface: the top-level window's
++  // wl_surface
++  result wayland (void *display, void *surface, double buffer_width,
++                  double shown_width);
++
++  // display: the program's X11 Display; window: the figure's declared
++  // stereo window
++  result x11 (void *display, unsigned long window, double buffer_width,
++              double shown_width);
++}
++
++OCTAVE_END_NAMESPACE(octave)
++
++#endif
+diff --git a/libgui/graphics/module.mk b/libgui/graphics/module.mk
+index 191becd..01c53b6 100644
+--- a/libgui/graphics/module.mk
++++ b/libgui/graphics/module.mk
+@@ -68,6 +68,7 @@ noinst_HEADERS += \
+   %reldir%/QtHandlesUtils.h \
+   %reldir%/RadioButtonControl.h \
+   %reldir%/SliderControl.h \
++  %reldir%/StereoDepthLimits.h \
+   %reldir%/Table.h \
+   %reldir%/TextControl.h \
+   %reldir%/TextEdit.h \
+@@ -106,6 +107,7 @@ noinst_HEADERS += \
+   %reldir%/QtHandlesUtils.cc \
+   %reldir%/RadioButtonControl.cc \
+   %reldir%/SliderControl.cc \
++  %reldir%/StereoDepthLimits.cc \
+   %reldir%/Table.cc \
+   %reldir%/TextControl.cc \
+   %reldir%/TextEdit.cc \
+@@ -140,7 +142,16 @@ nodist_%canon_reldir%_libgraphics_la_SOURCES = $(libgraphics_MOC)
+   -I$(srcdir)/libinterp/template-inst \
+   -Ilibinterp/parse-tree -I$(srcdir)/libinterp/parse-tree \
+   -Ilibinterp/corefcn -I$(srcdir)/libinterp/corefcn \
+-  -I$(srcdir)/libinterp/octave-value
++  -I$(srcdir)/libinterp/octave-value \
++  $(LIBGRAPHICS_STEREO_CPPFLAGS)
++
++## Sparky Stereo OS: a stereo figure reads its window's surface through Qt's
++## native interface (a private header of QtGui) and the person's depth
++## limits through libstereo-declare
++LIBGRAPHICS_STEREO_CPPFLAGS = \
++  -I$(shell $(PKG_CONFIG) --variable=includedir Qt6Gui)/QtGui/$(shell $(PKG_CONFIG) --modversion Qt6Gui) \
++  $(shell $(PKG_CONFIG) --cflags stereo-declare)
++LIBGRAPHICS_STEREO_LIBS = -lstereo-declare
+ 
+ noinst_LTLIBRARIES += %reldir%/libgraphics.la
+ 
+diff --git a/libgui/module.mk b/libgui/module.mk
+index 683abb6..efee0e8 100644
+--- a/libgui/module.mk
++++ b/libgui/module.mk
+@@ -61,7 +61,8 @@ nodist_%canon_reldir%_liboctgui_la_SOURCES = \
+   %reldir%/src/libgui-src.la \
+   libinterp/liboctinterp.la \
+   liboctave/liboctave.la \
+-  $(LIBOCTGUI_LINK_DEPS)
++  $(LIBOCTGUI_LINK_DEPS) \
++  $(LIBGRAPHICS_STEREO_LIBS)
+ 
+ ## Increment the following version numbers as needed and according
+ ## to the rules in the etc/HACKING.md file:
+diff --git a/libinterp/corefcn/gl-render.cc b/libinterp/corefcn/gl-render.cc
+index 4df7d34..20225ad 100644
+--- a/libinterp/corefcn/gl-render.cc
++++ b/libinterp/corefcn/gl-render.cc
+@@ -27,9 +27,11 @@
+ #  include "config.h"
+ #endif
+ 
++#include <algorithm>
+ #include <limits>
+ #include <memory>
+ #include <sstream>
++#include <vector>
+ 
+ #if defined (HAVE_WINDOWS_H)
+ #  define WIN32_LEAN_AND_MEAN
+@@ -693,8 +695,10 @@ opengl_renderer::opengl_renderer (opengl_functions& glfcns)
+     m_camera_pos (), m_camera_dir (), m_view_vector (),
+     m_interpreter ("none"), m_txt_renderer (), m_current_light (0),
+     m_max_lights (0), m_selecting (false), m_stereo_eye (0),
+-    m_stereo_separation (0.0), m_stereo_shear (0.0),
+-    m_stereo_depth (0.0), m_stereo_xscale (1.0), m_printing (false)
++    m_stereo_separations (), m_stereo_measuring (false),
++    m_stereo_measured (), m_stereo_depth_unreadable (false),
++    m_stereo_shear (0.0), m_stereo_depth (0.0), m_stereo_xscale (1.0),
++    m_printing (false)
+ {
+   // This constructor will fail if we don't have OpenGL or if the data
+   // types we assumed in our public interface aren't compatible with the
+@@ -1340,7 +1344,12 @@ opengl_renderer::setup_opengl_transformation (const axes::properties& props)
+   m_stereo_xscale = x_mat2(0, 0);
+   if (m_stereo_eye != 0 && ! props.get_is2D (true))
+     {
+-      m_stereo_shear = -m_stereo_eye * m_stereo_separation / 2.0;
++      // The separation fitted for this axes to the person's depth limits
++      // (none when it was not measured)
++      auto it = m_stereo_separations.find (props.get___myhandle__ ().value ());
++      double separation = (it != m_stereo_separations.end () ? it->second
++                                                              : 0.0);
++      m_stereo_shear = -m_stereo_eye * separation / 2.0;
+       GLdouble stereo_matrix[16] =
+         {
+           1.0, 0.0, 0.0, 0.0,
+@@ -2414,6 +2423,9 @@ opengl_renderer::draw_axes (const axes::properties& props)
+         draw_axes_boxes (props);
+     }
+ 
++  if (m_stereo_measuring && ! is2D)
++    stereo_measure_axes (props);
++
+ #else
+ 
+   octave_unused_parameter (props);
+@@ -2426,6 +2438,80 @@ opengl_renderer::draw_axes (const axes::properties& props)
+ #endif
+ }
+ 
++void
++opengl_renderer::stereo_measure_axes (const axes::properties& props)
++{
++#if defined (HAVE_OPENGL)
++
++  // The axes and its children are drawn from the camera between the eyes.
++  // Each axes clears the depth before it draws, so the depth buffer holds
++  // the nearest pixel of this axes wherever it drew, and the cleared depth
++  // everywhere else.
++#if defined (HAVE_FRAMEWORK_OPENGL)
++  GLint vp[4];
++#else
++  int vp[4];
++#endif
++  m_glfcns.glGetIntegerv (GL_VIEWPORT, vp);
++
++  stereo_axes_depth axes_depth;
++  axes_depth.target = -m_stereo_depth;
++  axes_depth.xscale = m_stereo_xscale;
++
++  int w = vp[2];
++  int h = vp[3];
++
++  if (w > 0 && h > 0)
++    {
++      std::vector<GLfloat> depth (static_cast<std::size_t> (w) * h);
++
++      while (m_glfcns.glGetError () != GL_NO_ERROR)
++        { }
++
++      m_glfcns.glPixelStorei (GL_PACK_ALIGNMENT, 1);
++      m_glfcns.glReadPixels (vp[0], vp[1], w, h, GL_DEPTH_COMPONENT,
++                             GL_FLOAT, depth.data ());
++
++      if (m_glfcns.glGetError () != GL_NO_ERROR)
++        {
++          m_stereo_depth_unreadable = true;
++          return;
++        }
++
++      GLfloat dmin = 1.0f;
++      GLfloat dmax = 0.0f;
++      for (const GLfloat d : depth)
++        {
++          if (d >= 1.0f)
++            continue;
++          dmin = std::min (dmin, d);
++          dmax = std::max (dmax, d);
++        }
++
++      if (dmin <= dmax)
++        {
++          // The window depth to the distance in front of the camera, with
++          // the orthographic projection between the planes m_xZ1 and m_xZ2
++          auto distance = [this] (double d)
++          {
++            return ((2.0 * d - 1.0) * (m_xZ2 - m_xZ1) + m_xZ1 + m_xZ2) / 2.0;
++          };
++
++          axes_depth.nearest = distance (dmin);
++          axes_depth.farthest = distance (dmax);
++          axes_depth.seen = true;
++        }
++    }
++
++  m_stereo_measured[props.get___myhandle__ ().value ()] = axes_depth;
++
++#else
++
++  octave_unused_parameter (props);
++
++#endif
++}
++
+ void
+ opengl_renderer::draw_line (const line::properties& props)
+ {
+diff --git a/libinterp/corefcn/gl-render.h b/libinterp/corefcn/gl-render.h
+index 1e98751..c92a13a 100644
+--- a/libinterp/corefcn/gl-render.h
++++ b/libinterp/corefcn/gl-render.h
+@@ -28,6 +28,8 @@
+ 
+ #include "octave-config.h"
+ 
++#include <map>
++
+ #include "graphics.h"
+ #include "text-renderer.h"
+ 
+@@ -56,11 +58,39 @@ public:
+ 
+   virtual void set_viewport (int w, int h);
+   virtual void set_device_pixel_ratio (double dpr) { m_devpixratio = dpr; }
+-  void set_stereo_eye (int eye, double separation)
++  // Stereo: the eye drawn (-1 the left, 1 the right, 0 one picture).  A
++  // 3D axes is drawn for an eye with the separation set for its handle,
++  // and with none when its handle is not in the map
++  void set_stereo_eye (int eye) { m_stereo_eye = eye; }
++  void set_stereo_separations (const std::map<double, double>& separations)
++  { m_stereo_separations = separations; }
++
++  // While measuring (a pass of one picture, from the camera between the
++  // eyes), each 3D axes drawn keeps the nearest and farthest distance of
++  // its pixels from the camera, the distance of its camera target and its
++  // scale from camera units to buffer pixels
++  struct stereo_axes_depth
++  {
++    double nearest = 0.0;
++    double farthest = 0.0;
++    double target = 0.0;
++    double xscale = 0.0;
++    bool seen = false;    // a pixel of the axes wrote depth
++  };
++
++  void set_stereo_measuring (bool measuring)
+   {
+-    m_stereo_eye = eye;
+-    m_stereo_separation = separation;
++    m_stereo_measuring = measuring;
++    if (measuring)
++      {
++        m_stereo_measured.clear ();
++        m_stereo_depth_unreadable = false;
++      }
+   }
++  const std::map<double, stereo_axes_depth>& stereo_measured () const
++  { return m_stereo_measured; }
++  bool stereo_depth_unreadable () const { return m_stereo_depth_unreadable; }
++
+   virtual Matrix get_viewport_scaled () const;
+   virtual graphics_xform get_transform () const { return m_xform; }
+   virtual uint8NDArray get_pixels (int width, int height);
+@@ -258,9 +288,17 @@ private:
+   // Indicate we are drawing for selection purpose
+   bool m_selecting;
+ 
+-  // Stereo eye selection for 3D axes
++  // Stereo eye selection for 3D axes, and the separation of each 3D axes
++  // by its handle
+   int m_stereo_eye;
+-  double m_stereo_separation;
++  std::map<double, double> m_stereo_separations;
++
++  // While measuring, the depth of each 3D axes drawn, by its handle
++  bool m_stereo_measuring;
++  std::map<double, stereo_axes_depth> m_stereo_measured;
++  bool m_stereo_depth_unreadable;
++
++  void stereo_measure_axes (const axes::properties& props);
+ 
+   // Shear of the current axes for this eye and the depth it leaves at rest
+   double m_stereo_shear;
+diff --git a/scripts/plot/util/private/__add_default_menu__.m b/scripts/plot/util/private/__add_default_menu__.m
+index 5085ae9..94fc0de 100644
+--- a/scripts/plot/util/private/__add_default_menu__.m
++++ b/scripts/plot/util/private/__add_default_menu__.m
+@@ -104,6 +104,13 @@ function __add_default_menu__ (hf, hmenu = [], htb = [])
+                   "menuselectedfcn", @guimode_cb);
+     uimenu (hui2, "label", "Disable Mousezoom", "tag", "zoom_off", ...
+                   "menuselectedfcn", @guimode_cb);
++
++    ## Sparky Stereo OS: a Qt figure's 3D options (Enable 3D, the desktop's
++    ## display settings) in its Tools menu
++    if (strcmp (graphics_toolkit (hf), "qt")
++        && exist ("sparky_stereo_menu", "file"))
++      sparky_stereo_menu (hf, hui);
++    endif
+     hmenu(3) = hui;
+ 
+     ## Default toolbar
+-- 
+2.53.0
+
