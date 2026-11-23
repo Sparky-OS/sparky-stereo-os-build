@@ -1,0 +1,30 @@
+Description: Ask for a stereo drawable only where the display offers one
+ With stereo on by default, a display without a stereo drawable must not stop
+ the game: test the stereo mode first, say once that the game draws in 2D, and
+ leave the usual video mode selection as it is.
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-23
+
+--- torcs-1.3.7+dfsg.orig/src/libs/tgfclient/screen.cpp
++++ torcs-1.3.7+dfsg/src/libs/tgfclient/screen.cpp
+@@ -286,6 +286,19 @@
+ 	// Depending on "video mode init" setting try to get the best mode or try to get a mode in a safe way...
+ 	// This is a workaround for driver/glut/glx bug, which lie about the capabilites of the visual.
+ 
++	// Stereo is asked for only where the display offers a stereo drawable: elsewhere the
++	// game says so once and draws in 2D with its usual video mode.
++	{
++		const char *wanted = getenv("PLIB_SSG_STEREO");
++		if (wanted && (!strcmp(wanted, "ON") || !strcmp(wanted, "1"))) {
++			glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH | GLUT_STEREO);
++			if (!glutGet(GLUT_DISPLAY_MODE_POSSIBLE)) {
++				printf("This display offers no stereo drawable: TORCS draws in 2D.\n");
++				setenv("PLIB_SSG_STEREO", "OFF", 1);
++			}
++		}
++	}
++
+ 	if (strcmp(vinit, GFSCR_VAL_VINIT_BEST) == 0) {
+ 
+ 		// Try to get "best" videomode, z-buffer >= 24bit, visual with alpha channel,
