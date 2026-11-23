@@ -1,0 +1,115 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+export DEB_BUILD_MAINT_OPTIONS=optimize=+lto
+
+# Configure default Java paths using javahelper except on some archs which do not have OpenJDK.
+# This arch list must be kept in sync with the arch list qualifying
+# default-jre and default-jdk in debian/control (see also #947959).
+include /usr/share/dpkg/architecture.mk
+NO_JDK_ARCHS := hppa hurd-amd64 hurd-i386
+ifneq (,$(filter $(DEB_HOST_ARCH),$(NO_JDK_ARCHS)))
+WITH_JAVA_FLAGS := --disable-java
+else
+JAVA_HOME := /usr/lib/jvm/default-java
+# The “client” JVM no longer exists on OpenJDK 21, but is kept here for facilitating backports (see also #1077977)
+JAVA_LIBDIR := $(shell if test -d $(JAVA_HOME)/lib/server; then echo $(JAVA_HOME)/lib/server; elif test -d $(JAVA_HOME)/lib/zero; then echo $(JAVA_HOME)/lib/zero; elif test -d $(JAVA_HOME)/lib/client; then echo $(JAVA_HOME)/lib/client; fi)
+WITH_JAVA_FLAGS := --with-java-homedir=$(JAVA_HOME) --with-java-libdir=$(JAVA_LIBDIR)
+endif
+
+# Needed to force the serial version of HDF5 even if other flavours are
+# installed.
+ifneq ($(wildcard /usr/lib/$(DEB_HOST_MULTIARCH)/hdf5/serial/libhdf5.so),)
+  HDF5_FLAGS := --with-hdf5-includedir=/usr/include/hdf5/serial \
+	--with-hdf5-libdir=/usr/lib/$(DEB_HOST_MULTIARCH)/hdf5/serial
+endif
+
+# Support the nodoc flag of DEB_BUILD_OPTIONS
+ifneq (,$(filter nodoc,$(DEB_BUILD_OPTIONS)))
+override_dh_auto_configure:
+DOC_FLAG := --disable-docs
+endif
+
+# Get the current API version
+API_VERSION = $(shell grep ^OCTAVE_API_VERSION= configure.ac | sed -e 's/OCTAVE_API_VERSION="api-v\(.*\)"/\1/')
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Enforce generic BLAS (in order to avoid tying the binary to OpenBLAS or ATLAS)
+	# Also pass OpenMP flag (#631831)
+	# Pass the install directory of fonts-freefont-otf package
+	dh_auto_configure -- \
+		--with-blas=blas --enable-openmp \
+		--with-system-freefont=/usr/share/fonts/opentype/freefont \
+		--disable-rpath \
+		$(WITH_JAVA_FLAGS) $(HDF5_FLAGS) $(DOC_FLAG)
+
+ifneq (,$(filter $(DEB_HOST_ARCH),$(NO_JDK_ARCHS)))
+override_dh_auto_build-indep:
+	# We can not build octave.jar, and hence octave-common, on these
+	false
+endif
+
+# dh_auto_test tries to run "make test", so override it
+override_dh_auto_test:
+	make check
+	# Run builtin-features to ensure important features are included
+	env OCTAVE=./run-octave debian/tests/builtin-features
+
+# override normal dh_compress call to avoid compressing .pdf files
+override_dh_compress:
+	dh_compress --exclude=.pdf
+
+execute_after_dh_auto_install:
+	# Delete .la files (for liboctgui)
+	find debian/tmp -name '*.la' -delete
+
+# The info files have references to .png images, so also ship those.
+# Note that we do not install all doc/interpreter/*.png, since some are not referenced
+# when compiling the output info (using @ifnotinfo macro).
+# We used to rename them by prefixing their name with "octave-", but this was breaking some
+# info files (see #816534).
+execute_after_dh_installinfo-indep:
+	for f in `grep -a src=\".*\" doc/interpreter/*.info* | sed 's/.*src="\([^"]*\)".*/\1/'`; do \
+		cp doc/interpreter/$$f debian/octave-doc/usr/share/info/; \
+	done
+
+# Strip the executable bit from the .oct files
+# Cannot be done in dh_fixperms, as then dh_strip and dh_shlibdeps don't take the
+# .oct files into account
+execute_after_dh_shlibdeps:
+	find debian/octave -name '*.oct' -exec chmod 644 '{}' ';'
+
+# Avoid useless call of ldconfig in the triggers script of the octave
+# package
+override_dh_makeshlibs:
+	dh_makeshlibs --package=octave --noscripts
+	dh_makeshlibs --no-package=octave
+
+# Provide the virtual package octave-abi-MM
+# Sparky Stereo OS: the figure's drawing area reads the window system's handles through Qt's private
+# QPlatformNativeInterface (patch 0004), so octave needs the Qt it was built with (libqt6core6t64 provides
+# qt6-base-private-abi with Qt's upstream version)
+QT6_ABI := $(shell dpkg-query -W -f='$${Version}' qt6-base-dev | sed -e 's/[+~-].*//')
+override_dh_gencontrol:
+	dh_gencontrol -- -Voctave-abi:Provides=octave-abi-$(API_VERSION) "-Vqt6:private-abi=qt6-base-private-abi (= $(QT6_ABI))"
+
+# Remove the octave_packages file from the octave binary package. This
+# file is modified by the postinst script via the command "pkg
+# rebuild". If it is included in the binary package, then the piuparts
+# test fails.
+execute_after_dh_installdeb-indep:
+	rm -f debian/octave-common/usr/share/octave/site/api-*/octave_packages
+
+# Distribution-only processing; authored source remains in the source archive.
+execute_before_dh_auto_configure:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree project $(CURDIR)
+
+execute_before_dh_auto_clean:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree restore $(CURDIR)
+	rm -rf .sparky-lc
+
+override_dh_builddeb:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance $(CURDIR)/debian/sparky-lean-toolkit/provenance.sh
