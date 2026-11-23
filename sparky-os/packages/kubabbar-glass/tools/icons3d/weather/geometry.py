@@ -76,8 +76,9 @@ def horizon(phase, disc_back, event):
                for i in range(5)]
     shapes.append(prism('horizon', ((-.70,-.04),(.70,-.04),(.70,.04),(-.70,.04)),
                         0, line-.07, -.27, .06, '67748f', bevel=0))
-    arrow = ((0,.23),(.28,-.01),(.09,-.01),(.09,-.23),(-.09,-.23),(-.09,-.01),(-.28,-.01))
-    shapes.append(prism('horizon-direction', arrow, 0, line-.41, .15, .08,
+    # A wide head on a thin stem: turned over, the head and the stem trade places, so the silhouette changes.
+    arrow = ((0,.28),(.32,-.02),(.08,-.02),(.08,-.28),(-.08,-.28),(-.08,-.02),(-.32,-.02))
+    shapes.append(prism('horizon-direction', arrow, 0, line-.455, .15, .08,
                         '79a6ba' if rising else 'a884b5', angle=0 if rising else pi, bevel=0))
     return front(shapes)
 
