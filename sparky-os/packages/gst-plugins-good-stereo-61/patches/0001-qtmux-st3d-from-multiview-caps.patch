@@ -1,0 +1,102 @@
+Description: Write st3d sample-entry metadata from multiview caps
+ Keep existing svmi metadata and write the standard st3d modes where they
+ represent the caps, without inventing a layout for unsupported transforms.
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-23
+
+--- a/gst/isomp4/atoms.h
++++ b/gst/isomp4/atoms.h
+@@ -1108,6 +1108,7 @@
+ AtomInfo *   build_esds_extension        (AtomTRAK * trak, guint8 object_type,
+                                           guint8 stream_type, const GstBuffer * codec_data,
+                                           guint32 avg_bitrate, guint32 max_bitrate);
++AtomInfo *   build_st3d_extension (guint8 mode);
+ AtomInfo *   build_btrt_extension        (guint32 buffer_size_db, guint32 avg_bitrate,
+                                           guint32 max_bitrate);
+ AtomInfo *   build_jp2h_extension        (gint width, gint height, const gchar *colorspace,
+--- a/gst/isomp4/atoms.c
++++ b/gst/isomp4/atoms.c
+@@ -5337,6 +5337,15 @@
+       atom_esds_free);
+ }
+ 
++/* Spherical Video V2: version/flags zero, then stereo_mode. */
++AtomInfo *
++build_st3d_extension (guint8 mode)
++{
++  const guint8 data[5] = { 0, 0, 0, 0, mode };
++  AtomData *atom = atom_data_new_from_data (GST_MAKE_FOURCC ('s', 't', '3', 'd'), data, sizeof (data));
++  return build_atom_info_wrapper ((Atom *) atom, atom_data_copy_data, atom_data_free);
++}
++
+ AtomInfo *
+ build_btrt_extension (guint32 buffer_size_db, guint32 avg_bitrate,
+     guint32 max_bitrate)
+--- a/gst/isomp4/gstqtmux.c
++++ b/gst/isomp4/gstqtmux.c
+@@ -330,6 +330,7 @@
+ enum
+ {
+   PROP_0,
++  PROP_WRITES_ST3D,
+   PROP_MOVIE_TIMESCALE,
+   PROP_TRAK_TIMESCALE,
+   PROP_FAST_START,
+@@ -501,6 +502,10 @@
+ 
+   gobject_class->finalize = gst_qt_mux_finalize;
+   gobject_class->get_property = gst_qt_mux_get_property;
++  g_object_class_install_property (gobject_class, PROP_WRITES_ST3D,
++      g_param_spec_boolean ("writes-st3d", "Writes st3d",
++          "Writes representable multiview caps as a st3d sample-entry box", TRUE,
++          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+   gobject_class->set_property = gst_qt_mux_set_property;
+ 
+   g_object_class_install_property (gobject_class, PROP_MOVIE_TIMESCALE,
+@@ -7257,6 +7262,27 @@
+   if (!entry.fourcc)
+     goto refuse_caps;
+ 
++  if (multiview_mode) {
++    GstVideoMultiviewMode mode = gst_video_multiview_mode_from_caps_string (multiview_mode);
++    guint flags = 0;
++    gint st3d_mode = -1;
++    gst_structure_get_flagset (structure, "multiview-flags", &flags, NULL);
++    /* st3d has no transform flags. Do not describe transformed views as a
++     * plain pair. Existing svmi remains available for other arrangements. */
++    if (!(flags & ~(GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST | GST_VIDEO_MULTIVIEW_FLAGS_HALF_ASPECT))) {
++      if (mode == GST_VIDEO_MULTIVIEW_MODE_MONO)
++        st3d_mode = 0;
++      else if (mode == GST_VIDEO_MULTIVIEW_MODE_SIDE_BY_SIDE)
++        st3d_mode = flags & GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST ? 4 : 2;
++      else if (mode == GST_VIDEO_MULTIVIEW_MODE_TOP_BOTTOM && !(flags & GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST))
++        st3d_mode = 1;
++    }
++    if (st3d_mode >= 0)
++      ext_atom_list = g_list_append (ext_atom_list, build_st3d_extension (st3d_mode));
++    else
++      GST_WARNING_OBJECT (qtmux, "st3d cannot represent multiview-mode %s with flags 0x%x", multiview_mode, flags);
++  }
++
+   if (qtmux_klass->format == GST_QT_MUX_FORMAT_QT ||
+       qtmux_klass->format == GST_QT_MUX_FORMAT_MP4) {
+     const gchar *s;
+@@ -7455,6 +7481,7 @@
+   if (!entry.fourcc)
+     goto refuse_caps;
+ 
++
+   qtpad->fourcc = entry.fourcc;
+   qtpad->trak_ste =
+       (SampleTableEntry *) atom_trak_set_subtitle_type (qtpad->trak,
+@@ -7812,6 +7839,9 @@
+ 
+   GST_OBJECT_LOCK (qtmux);
+   switch (prop_id) {
++    case PROP_WRITES_ST3D:
++      g_value_set_boolean (value, TRUE);
++      break;
+     case PROP_MOVIE_TIMESCALE:
+       g_value_set_uint (value, qtmux->timescale);
+       break;

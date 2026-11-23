@@ -18,3 +18,8 @@ Fresh stereo photos use the edition KImageFormats MPO and JPS writers, which cal
 Pass the checked declaration-library siblings through DECLARE as well as LAYER. Both successors enter a round only with layer 1.23.2 and stereo-declare 1.12.2; layer source closure remains row 742b's matter.
 
 The source-ordinal sequence pairing remains local pending row 839, which will provide shared pairing and AVStereo3D mapping in the layer. This recipe does not build row 839.
+
+
+Stereo recording feeds normalized native-size pairs to x264 with multiview caps and muxes Matroska or MP4 with the owning elements. The source is timestamped on the recording pipeline's clock, shared with automatic audio capture; no frame scaling or finished-file fixup occurs. MP4 requires the qtmux writes-st3d capability and the packaged plugin successor. The 3D-off camerabin recording path remains unchanged. VA-API and NVENC H.264/HEVC are named and refused before starting until their GStreamer elements pass the SEI gate.
+
+The recording is finalized on EOS before moving to the destination. An existing destination is refused. A failed destination transfer retains the completed temporary recording and says its location. Incomplete encoding is not published as a finished recording. Native tests exercise both containers, four hardware refusals and destination preservation.
