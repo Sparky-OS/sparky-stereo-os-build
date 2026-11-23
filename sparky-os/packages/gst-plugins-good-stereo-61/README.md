@@ -13,3 +13,7 @@ Native plugin proof passes x264 frame-packing SEI and MP4 st3d together. Full bi
 The Qt plugin also carries Will's upstream MR !12461: a recreated material must parse its caps before mapping the next buffer. Without it, hiding and showing Kamoso's live viewfinder aborts at gstqsg6material.cc:497. The source contains the separate pending-caps fix discussed in issue #4944 already; that is not the same change. Both upstream Qt5 and Qt6 hunks are retained with Will's credit.
 
 Source: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12461
+
+The full upstream test run exposed the existing late-caps test timeout (120 pass, one timeout). The source carries Dominique Leroux's open MR !12910, commit 6e4d5222c26cf5d719df9409d26bdf51f2130555: timestamped inputs and a condition wait replace the sleep and counted synthetic-clock notifications. Only the test hunk belongs to this source package; the monorepo validate blacklist hunk does not. The test still checks no output before video caps and all seven output buffers. The recipe checks Meson's recorded results because the inherited DMO rules ignore dh_auto_test failures. A failed test therefore refuses qualification even if those rules finish packaging.
+
+Source: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12910

@@ -1,0 +1,242 @@
+Description: flvmux: test: Fix test_video_caps_late by avoiding depending on timing
+ The late-caps test waits for the muxer to observe missing video caps and
+ uses timestamped input buffers instead of sleeps and counted clock cranks.
+ Only the gst-plugins-good test hunk is carried; the monorepo validate
+ blacklist change is outside this source package.
+Origin: backport, https://gitlab.freedesktop.org/gstreamer/gstreamer/-/commit/6e4d5222c26cf5d719df9409d26bdf51f2130555
+Author: Dominique Leroux
+Bug: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/786
+Forwarded: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12910
+Last-Update: 2026-11-23
+
+--- a/tests/check/elements/flvmux.c
++++ b/tests/check/elements/flvmux.c
+@@ -30,6 +30,7 @@
+ 
+ #include <gst/check/gstcheck.h>
+ #include <gst/check/gstharness.h>
++#include <gst/base/gstaggregator.h>
+ 
+ #include <gst/gst.h>
+ 
+@@ -469,86 +470,165 @@ flvdemux_pad_added (GstElement * flvdemux, GstPad * srcpad, DemuxHarnesses * h)
+   gst_caps_unref (caps);
+ }
+ 
++typedef GstClockTime (*GetNextTimeFunc) (GstAggregator * aggregator);
++
++typedef struct
++{
++  GstElement *element;
++  GstAggregatorClass *klass;
++  GetNextTimeFunc original_get_next_time;
++  GstHarness *mux, *a_src, *v_src;
++  DemuxHarnesses sinks;
++  GMutex lock;
++  GCond cond;
++  gboolean waiting_for_video_caps;
++} VideoCapsLate;
++
++static VideoCapsLate *video_caps_late;
++
++static GstClockTime
++video_caps_late_get_next_time (GstAggregator * aggregator)
++{
++  VideoCapsLate *data = video_caps_late;
++  GstClockTime next_time = data->original_get_next_time (aggregator);
++  GstPad *audio =
++      gst_element_get_static_pad (GST_ELEMENT (aggregator), "audio");
++  GstPad *video =
++      gst_element_get_static_pad (GST_ELEMENT (aggregator), "video");
++
++  if (next_time == GST_CLOCK_TIME_NONE && audio && video &&
++      !gst_pad_has_current_caps (video) &&
++      gst_aggregator_pad_has_buffer (GST_AGGREGATOR_PAD (audio))) {
++    g_mutex_lock (&data->lock);
++    data->waiting_for_video_caps = TRUE;
++    g_cond_signal (&data->cond);
++    g_mutex_unlock (&data->lock);
++  }
++
++  gst_clear_object (&audio);
++  gst_clear_object (&video);
++  return next_time;
++}
++
++static void
++video_caps_late_teardown (void)
++{
++  VideoCapsLate *data = video_caps_late;
++
++  if (!data)
++    return;
++
++  /* Stop the worker before restoring the shared class, including on failure
++   * when Check runs without forking. Keep the element alive until restoration. */
++  if (data->element)
++    gst_element_set_state (data->element, GST_STATE_NULL);
++  if (data->a_src)
++    gst_harness_teardown (data->a_src);
++  if (data->v_src)
++    gst_harness_teardown (data->v_src);
++  if (data->mux)
++    gst_harness_teardown (data->mux);
++  if (data->sinks.a_sink)
++    gst_harness_teardown (data->sinks.a_sink);
++  if (data->sinks.v_sink)
++    gst_harness_teardown (data->sinks.v_sink);
++  if (data->klass)
++    data->klass->get_next_time = data->original_get_next_time;
++  gst_clear_object (&data->element);
++  g_cond_clear (&data->cond);
++  g_mutex_clear (&data->lock);
++  g_clear_pointer (&video_caps_late, g_free);
++}
++
++static void
++video_caps_late_push_to_sink (GstHarness * mux, GstHarness * demux)
++{
++  GstBuffer *buffer = gst_harness_pull (mux);
++
++  fail_unless (buffer != NULL, "Muxer did not produce the expected output");
++  fail_unless_equals_int (gst_harness_push (demux, buffer), GST_FLOW_OK);
++}
++
+ GST_START_TEST (test_video_caps_late)
+ {
+-  GstHarness *mux = gst_harness_new_with_padnames ("flvmux", NULL, "src");
+-  GstHarness *a_src =
++  VideoCapsLate *data = g_new0 (VideoCapsLate, 1);
++  GstHarness *mux, *a_src, *v_src, *demux;
++
++  video_caps_late = data;
++  g_mutex_init (&data->lock);
++  g_cond_init (&data->cond);
++  data->element = gst_element_factory_make ("flvmux", NULL);
++  fail_unless (data->element != NULL);
++  gst_object_ref_sink (data->element);
++
++  /* Install before harness construction starts the streaming thread. Only
++   * this test's flvmux instance is active while the class method is replaced. */
++  data->klass = GST_AGGREGATOR_GET_CLASS (data->element);
++  data->original_get_next_time = data->klass->get_next_time;
++  data->klass->get_next_time = video_caps_late_get_next_time;
++
++  mux = data->mux = gst_harness_new_with_element (data->element, NULL, "src");
++  a_src = data->a_src =
+       gst_harness_new_with_element (mux->element, "audio", NULL);
+-  GstHarness *v_src =
++  v_src = data->v_src =
+       gst_harness_new_with_element (mux->element, "video", NULL);
+-  GstHarness *demux = gst_harness_new_with_padnames ("flvdemux", "sink", NULL);
+-  GstHarness *a_sink =
++  demux = gst_harness_new_with_padnames ("flvdemux", "sink", NULL);
++  gst_harness_add_sink_harness (mux, demux);
++  data->sinks.a_sink =
+       gst_harness_new_with_element (demux->element, NULL, NULL);
+-  GstHarness *v_sink =
++  data->sinks.v_sink =
+       gst_harness_new_with_element (demux->element, NULL, NULL);
+-  DemuxHarnesses harnesses = { a_sink, v_sink };
+-  GstTestClock *tclock;
+ 
+   g_object_set (mux->element, "streamable", TRUE,
+       "latency", G_GUINT64_CONSTANT (1), NULL);
+-  gst_harness_use_testclock (mux);
++  /* This tests caps ordering, not elapsed time. With base time and timestamps
++   * zero, every live deadline is already past on the system clock. Wait for
++   * output rather than coordinating a number of test-clock notifications. */
++  gst_element_set_base_time (mux->element, 0);
++  gst_harness_use_systemclock (mux);
+ 
+   g_signal_connect (demux->element, "pad-added",
+-      G_CALLBACK (flvdemux_pad_added), &harnesses);
+-  gst_harness_add_sink_harness (mux, demux);
++      G_CALLBACK (flvdemux_pad_added), &data->sinks);
+ 
+   gst_harness_set_src_caps_str (a_src,
+       "audio/x-speex, rate=(int)16000, channels=(int)1");
+ 
+   fail_unless_equals_int (GST_FLOW_OK, gst_harness_push (a_src,
+-          gst_buffer_new_wrapped_full (GST_MEMORY_FLAG_READONLY,
+-              speex_hdr0, sizeof (speex_hdr0), 0, sizeof (speex_hdr0), NULL,
+-              NULL)));
++          create_buffer (speex_hdr0, sizeof (speex_hdr0), 0, 0)));
+ 
+   fail_unless_equals_int (GST_FLOW_OK, gst_harness_push (a_src,
+-          gst_buffer_new_wrapped_full (GST_MEMORY_FLAG_READONLY,
+-              speex_hdr1, sizeof (speex_hdr1), 0, sizeof (speex_hdr1), NULL,
+-              NULL)));
++          create_buffer (speex_hdr1, sizeof (speex_hdr1), 0, 0)));
+ 
+-  /* Wait a little and make sure no clock was scheduled as this shouldn't happen
+-   * before the caps are set */
+-  g_usleep (40 * 1000);
+-  tclock = gst_harness_get_testclock (mux);
+-  fail_unless (gst_test_clock_get_next_entry_time (tclock) ==
+-      GST_CLOCK_TIME_NONE);
++  g_mutex_lock (&data->lock);
++  while (!data->waiting_for_video_caps)
++    g_cond_wait (&data->cond, &data->lock);
++  g_mutex_unlock (&data->lock);
++  fail_unless_equals_int (gst_harness_buffers_received (mux), 0);
+ 
+   gst_harness_set_src_caps_str (v_src,
+       "video/x-h264, stream-format=(string)avc, alignment=(string)au, "
+       "codec_data=(buffer)0142c00cffe1000b6742c00c95a7201e1108d401000468ce3c80");
+ 
+-  gst_harness_crank_single_clock_wait (mux);
++  video_caps_late_push_to_sink (mux, demux);
+ 
+   fail_unless_equals_int (GST_FLOW_OK, gst_harness_push (a_src,
+-          gst_buffer_new_wrapped_full (GST_MEMORY_FLAG_READONLY,
+-              speex_buf, sizeof (speex_buf), 0, sizeof (speex_buf), NULL,
+-              NULL)));
++          create_buffer (speex_buf, sizeof (speex_buf), 0, 20 * GST_MSECOND)));
+ 
+   fail_unless_equals_int (GST_FLOW_OK, gst_harness_push (v_src,
+-          gst_buffer_new_wrapped_full (GST_MEMORY_FLAG_READONLY,
+-              h264_buf, sizeof (h264_buf), 0, sizeof (h264_buf), NULL, NULL)));
+-
+-  gst_harness_crank_single_clock_wait (mux);
+-  gst_harness_crank_single_clock_wait (mux);
+-  gst_harness_crank_single_clock_wait (mux);
++          create_buffer (h264_buf, sizeof (h264_buf), 0, 40 * GST_MSECOND)));
+ 
+-
+-  /* push from flvmux to demux */
+-  fail_unless_equals_int (GST_FLOW_OK, gst_harness_sink_push_many (mux, 7));
++  /* The header was already forwarded; transfer the remaining output. */
++  for (guint i = 0; i < 6; i++)
++    video_caps_late_push_to_sink (mux, demux);
+ 
+   /* verify we got 2x audio and 1x video buffers out of flvdemux */
+-  gst_buffer_unref (gst_harness_pull (a_sink));
+-  gst_buffer_unref (gst_harness_pull (a_sink));
+-  gst_buffer_unref (gst_harness_pull (v_sink));
++  gst_buffer_unref (gst_harness_pull (data->sinks.a_sink));
++  gst_buffer_unref (gst_harness_pull (data->sinks.a_sink));
++  gst_buffer_unref (gst_harness_pull (data->sinks.v_sink));
+ 
+-  fail_unless (gst_test_clock_get_next_entry_time (tclock) ==
+-      GST_CLOCK_TIME_NONE);
++  fail_unless_equals_int (gst_harness_buffers_received (mux), 7);
+ 
+-  g_clear_object (&tclock);
+-  gst_harness_teardown (a_src);
+-  gst_harness_teardown (v_src);
+-  gst_harness_teardown (mux);
+-  gst_harness_teardown (a_sink);
+-  gst_harness_teardown (v_sink);
++  video_caps_late_teardown ();
+ }
+ 
+ GST_END_TEST;
+@@ -1737,6 +1817,7 @@ flvmux_suite (void)
+   gint loop = 16;
+ 
+   suite_add_tcase (s, tc_chain);
++  tcase_add_checked_fixture (tc_chain, NULL, video_caps_late_teardown);
+ 
+ #ifdef HAVE_VALGRIND
+   if (RUNNING_ON_VALGRIND) {
