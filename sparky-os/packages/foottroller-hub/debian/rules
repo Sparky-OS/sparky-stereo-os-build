@@ -1,0 +1,44 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+export PYTHONPATH := $(CURDIR)/debian/sparky-lean-toolkit
+export LEAN_ZIG := zig
+export PYTHONDONTWRITEBYTECODE := 1
+
+toolkit := debian/sparky-lean-toolkit
+staging := debian/foottroller-hub
+doc := $(staging)/usr/share/doc/foottroller-hub
+
+.PHONY: build build-arch build-indep binary binary-arch binary-indep clean
+build: build-arch
+build-arch: foottroller-hub
+build-indep:
+
+foottroller-hub: $(wildcard src/*.zig)
+	python3 -m lean.source_tree project "$(CURDIR)"
+	zig build-exe src/main.zig --name foottroller-hub -lc -O ReleaseSafe -mcpu=baseline -j4
+	strip --strip-unneeded foottroller-hub
+
+binary: binary-arch
+binary-indep:
+binary-arch: build-arch
+	python3 -c 'from lean.buildrecord import note_start; note_start("..")'
+	install -Dm755 foottroller-hub "$(staging)/usr/bin/foottroller-hub"
+	install -Dm644 foottroller-hub.conf "$(staging)/etc/foottroller-hub.conf"
+	install -Dm644 README.md "$(doc)/README.md"
+	install -Dm644 debian/copyright "$(doc)/copyright"
+	gzip -n9c debian/changelog > "$(doc)/changelog.gz"
+	install -d "$(staging)/DEBIAN"
+	printf '%s\n' /etc/foottroller-hub.conf > "$(staging)/DEBIAN/conffiles"
+	dpkg-shlibdeps -e "$(staging)/usr/bin/foottroller-hub"
+	dpkg-gencontrol -pfoottroller-hub -P"$(staging)"
+	bash "$(toolkit)/provenance.sh" --tree "$(staging)" --source "$(CURDIR)"
+	python3 -m lean.release build-tree "$(staging)" ..
+	for archive in ../foottroller-hub-lc-hr_*.deb; do \
+		if [ -f "$$archive" ]; then dpkg-distaddfile "$${archive##*/}" doc optional || exit; fi; \
+	done
+
+clean:
+	if [ -d .sparky-lc ]; then python3 -m lean.source_tree restore "$(CURDIR)"; fi
+	rm -rf .sparky-lc .zig-cache debian/foottroller-hub
+	rm -f foottroller-hub foottroller-hub.o debian/substvars debian/files
