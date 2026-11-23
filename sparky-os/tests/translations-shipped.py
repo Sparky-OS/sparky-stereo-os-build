@@ -7,7 +7,8 @@ For every catalogue patch in sparky-os/translations (a *.po.patch, and any other
 and each recipe patch listed in RECIPE_CATALOGUES, finds the newest built package of its source and fails on any msgid the patch adds
 that the package's catalogues lack, naming the patch, the language and the string. A patch that changes no gettext catalogue
 (Qt .ts, sView .lng, a desktop or JSON file) and a Qt catalogue kept as .po under poqm/ (installed as .qm) are named as not
-read by this test, never passed over in silence.
+read by this test, never passed over in silence. JSON_CATALOGUES registers recipe-owned JSON
+catalogues that are installed as files and compared by key and value.
 
 A patch that no series names never ships (dpkg-source(1), debian/patches/series: "lists all patches that have to be
 applied"); this test reads what the built packages carry, so it catches a patch no build applied.
@@ -29,11 +30,13 @@ the English (a website's name, a bare "%1:"). Run it where the packages are inst
 Exit 0: every added msgid is shipped. Exit 1: some are not. Exit 2: a package or a patch could not be read."""
 import argparse
 import ctypes
+import json
 import locale
 import os
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -44,6 +47,10 @@ RECIPE_CATALOGUES = {
     'vibe-speech-to-text-pt-br.patch': 'ktextaddons',
     'speech-engines-said-server-at-press-pt-br.patch': 'ktextaddons',
     'speech-to-text-eight-languages.patch': 'ktextaddons',
+}
+
+JSON_CATALOGUES = {
+    'sparky-stereo-live-captions': 'usr/share/sparky-stereo/live-captions/lang',
 }
 
 # patch -> (source package, gettext domain for flat <lang>.po or <domain>_<lang>.po files
@@ -424,6 +431,40 @@ def locale_root(patch):
     return spec[2] if len(spec) > 2 else 'usr/share/locale'
 
 
+def check_json_catalogue(source, locale_dir, version, debs):
+    """Compare each recipe JSON value with the corresponding packaged value."""
+    folder = TRANSLATIONS.parent / 'packages' / source / 'lang'
+    expected = {path.name: json.loads(path.read_text(encoding='utf-8'))
+                for path in sorted(folder.glob('*.json'))}
+    installed_paths = {f'{locale_dir}/{name}': name for name in expected}
+    if not expected:
+        raise SystemExit(f'ERROR {source}: no JSON catalogues under {folder}')
+    installed = {}
+    for deb in debs:
+        with subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE) as payload:
+            with tarfile.open(fileobj=payload.stdout, mode='r|') as archive:
+                for member in archive:
+                    name = installed_paths.get(member.name.removeprefix('./'))
+                    if name and member.isfile():
+                        with archive.extractfile(member) as contents:
+                            installed[name] = json.load(contents)
+            if payload.wait():
+                raise SystemExit(f'ERROR {source}: cannot read {deb.name}')
+    total = sum(map(len, expected.values()))
+    bad = 0
+    for name, values in expected.items():
+        if name not in installed:
+            print(f'FAIL {source} {name}: catalogue missing from {version}')
+            bad += len(values)
+            continue
+        for key, value in values.items():
+            if installed[name].get(key) != value:
+                print(f'FAIL {source} {name}: missing or different value for {key} in {version}')
+                bad += 1
+    print(f'{"FAIL" if bad else "ok  "} {source}: {total - bad}/{total} JSON strings in {source} {version}')
+    return bad
+
+
 def short(ctxt, msgid):
     s = msgid.replace('\n', '\\n')
     s = s if len(s) <= 70 else s[:67] + '...'
@@ -477,6 +518,16 @@ def check_packages(args):
                 bad += 1
         failed += bad
         print(f'{"FAIL" if bad else "ok  "} {patch.name}: {total - bad}/{total} added strings in {source} {version}')
+    for source, locale_dir in JSON_CATALOGUES.items():
+        if only is not None and source not in only:
+            continue
+        found = candidates(source, args.stages, cohort_debs, repo)
+        if not found:
+            print(f'ERROR {source}: no built package of source {source}')
+            unreadable += 1
+            continue
+        version = newest(found)
+        failed += check_json_catalogue(source, locale_dir, version, found[version])
     if unreadable:
         return 2
     return 1 if failed else 0
@@ -525,7 +576,7 @@ def main():
     ap.add_argument('stages', nargs='*', help='stage folders holding built .deb files')
     ap.add_argument('--cohort', default='/K3D/partners/round-next/cohort.list')
     ap.add_argument('--repo', help='the live repository (default: /var/tmp/sparky-repo-current)')
-    ap.add_argument('--only', help='comma-separated patch file names: check only these')
+    ap.add_argument('--only', help='comma-separated patch names or JSON source packages')
     ap.add_argument('--gettext', action='store_true', help='the arguments are patch files; ask glibc gettext')
     args = ap.parse_args()
     if args.gettext:

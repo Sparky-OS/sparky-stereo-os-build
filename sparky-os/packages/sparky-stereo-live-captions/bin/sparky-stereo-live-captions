@@ -34,7 +34,13 @@ class Refused(Exception):
 
 def labels():
     locale = os.environ.get('LC_ALL') or os.environ.get('LC_MESSAGES') or os.environ.get('LANG', '')
-    language = 'pt_BR' if locale.startswith('pt_BR') else 'en'
+    language = re.split(r'[.@]', locale, maxsplit=1)[0]
+    if language.partition('_')[0] == 'zh':
+        language = 'zh_TW' if language in ('zh_TW', 'zh_HK', 'zh_MO') else 'zh_CN'
+    elif language != 'pt_BR':
+        language = language.partition('_')[0]
+    if language not in ('en', 'pt_BR', 'de', 'es', 'fr', 'ja', 'ko', 'pl', 'zh_CN', 'zh_TW'):
+        language = 'en'
     return json.loads((SHARE / 'lang' / (language + '.json')).read_text())
 
 
