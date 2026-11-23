@@ -181,5 +181,6 @@ build "$k" sparky-stereo-look-kubabbar-glass "$look_version"
 fi
 
 (cd "$dest" && sha256sum ./*.deb | sed 's|\./||' > SHA256SUMS)
-printf "%s\n" "${SOURCE_COMMIT:-unknown}" > "$dest/SOURCE-COMMIT"
+# the commit the build record names (build-provenance.sh passes it as SPARKY_BUILD_COMMIT)
+printf "%s\n" "${SOURCE_COMMIT:-${SPARKY_BUILD_COMMIT:-unknown}}" > "$dest/SOURCE-COMMIT"
 cat "$dest/SHA256SUMS"
