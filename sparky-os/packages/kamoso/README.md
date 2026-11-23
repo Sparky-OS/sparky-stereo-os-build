@@ -60,3 +60,10 @@ The pipewire-stereo-61 recipe owns that repair; its new gstreamer1.0-pipewire
 package is a dependency, alongside the already pinned layer/declaration and
 GStreamer good successors. Independent native PipeWire parsing and ten exact
 frames establish the output camera, separately from compositor rendering.
+
+The clean replay exposed frei0r's shared C++ parameter metadata being rewritten
+by simultaneous eye-instance construction (Cartoon aborted with a double free).
+The frei0r-stereo-61 recipe owns the immutable-metadata fix; the camera requires
+that successor too. The same 31 effects remain available and the per-eye
+pipelines and algorithms are unchanged. A deterministic overlapping-construction
+control fails before the header fix and passes after it.
