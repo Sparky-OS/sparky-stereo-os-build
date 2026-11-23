@@ -80,6 +80,9 @@ struct Filter {
 	// the source's own mark
 	Mark mark;
 	bool markFound = false;
+	// the source was asked for its mark and answered (a picture read by the layer, a media source's get_stereo3d);
+	// false for a source the filter cannot ask (a transition's video, a source without the procedure)
+	bool markAsked = false;
 	long pairingAsked = -1;
 	// an image source's file and the stereo layer's pair of it
 	std::string imageFile;
@@ -233,6 +236,7 @@ void readImageMark(Filter *f, const std::string &path)
 	dropLayerPair(f);
 	f->mark = Mark();
 	f->markFound = false;
+	f->markAsked = true;
 	if (path.empty())
 		return;
 	const Stereo::Picture picture =
@@ -268,21 +272,23 @@ bool readMark(Filter *f)
 		return true;
 	}
 	Mark m;
-	bool found = false;
+	bool found = false, asked = false;
 	if (isMediaSource(parent)) {
 		calldata_t cd;
 		calldata_init(&cd);
 		if (proc_handler_call(obs_source_get_proc_handler(parent), "get_stereo3d", &cd)) {
+			asked = true;
 			m = markOfMedia(calldata_int(&cd, "type"), calldata_int(&cd, "flags"), calldata_int(&cd, "paired"),
 					calldata_string(&cd, "stereo_mode"));
 			found = m.layout != STEREO_POLICY_LAYOUT_NONE || m.anaglyph != STEREO_POLICY_ANAGLYPH_NONE;
 		}
 		calldata_free(&cd);
 	}
-	if (m == f->mark && found == f->markFound)
+	if (m == f->mark && found == f->markFound && asked == f->markAsked)
 		return false;
 	f->mark = m;
 	f->markFound = found;
+	f->markAsked = asked;
 	return true;
 }
 
@@ -532,15 +538,17 @@ void filterDefaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "swap", false);
 }
 
-// What the person sees under the list: the source has no mark (Automatic shows it flat), its packing needs a media
-// source's decoder, or its depth could not be drawn; "Swap left and right eyes" only while the source is shown in 3D
-// and its views are not drawn from depth.
+// What the person sees under the list: the source was asked and has no mark (Automatic shows it flat), the source is a
+// kind the filter cannot ask for a mark (also flat), its packing needs a media source's decoder, or its depth could not
+// be drawn; "Swap left and right eyes" only while the source is shown in 3D and its views are not drawn from depth.
 void showNotes(obs_properties_t *props, Filter *f, const stereo_policy_input_format *format)
 {
 	const bool automatic = !strcmp(format->id, "automatic");
 	const bool decoder = pairedByDecoder(format->layout) && f && !isMediaSource(parentOf(f));
-	const bool noMark = automatic && f && !f->markFound;
+	const bool noMark = automatic && f && f->markAsked && !f->markFound;
+	const bool cannotAsk = automatic && f && !f->markAsked;
 	obs_property_set_visible(obs_properties_get(props, "no_mark"), noMark);
+	obs_property_set_visible(obs_properties_get(props, "cannot_ask"), cannotAsk);
 	obs_property_set_visible(obs_properties_get(props, "needs_decoder"), decoder);
 	obs_property_t *depth = obs_properties_get(props, "depth_failed");
 	const bool depthFailed = isDepth(format->layout) && f && f->dibrFailed;
@@ -552,7 +560,7 @@ void showNotes(obs_properties_t *props, Filter *f, const stereo_policy_input_for
 			text.replace(at, 2, f->depthError);
 		obs_property_set_description(depth, text.c_str());
 	}
-	const bool shownIn3D = format->view != 3 && !isDepth(format->layout) && !noMark && !decoder;
+	const bool shownIn3D = format->view != 3 && !isDepth(format->layout) && !noMark && !cannotAsk && !decoder;
 	obs_property_set_visible(obs_properties_get(props, "swap"), shownIn3D);
 }
 
@@ -580,6 +588,7 @@ obs_properties_t *filterProperties(void *data)
 	const QByteArray swap = SparkyStereo::layerWord("Swap left and right eyes").toUtf8();
 	obs_properties_add_bool(props, "swap", swap.constData());
 	const char *notes[][2] = {{"no_mark", "Note.NoMark"},
+				  {"cannot_ask", "Note.CannotAsk"},
 				  {"needs_decoder", "Note.NeedsDecoder"},
 				  {"depth_failed", "Note.DepthFailed"}};
 	for (const auto &n : notes) {
