@@ -1,0 +1,539 @@
+Description: libobs: a side by side canvas drawn once per eye, displays with two views
+ The main canvas, when its layout is side by side (obs_set_video_stereo3d()), lays its scenes out in one eye's space
+ (obs_get_video_eye_size(): the scene's own size, the canvas's for groups and nested scenes) and is drawn once per eye,
+ each pass on its half of the canvas texture, with obs_get_render_eye() telling sources which eye is drawn: a flat
+ source comes out the same in both eyes, at the screen plane; a source holding two views gives each eye its own.
+ A texrender is drawn once per eye pass, so a filter or a transition never hands the right eye the left eye's picture.
+ A display can hold two views side by side (obs_display_set_views()): its swap chain is twice as wide and its draw
+ callbacks run once per eye on that eye's half, each given one view's size; viewports set while the swap chain is the
+ target are relative to the view. In an eye pass the main canvas texture is drawn as that eye. The layout changes in
+ the same step as the canvas size when it is set with OBS_STEREO3D_FLAG_AT_RESET (taken in obs_reset_video()), so the
+ scene space, which scene positions are relative to, never passes through a third size; a stereo canvas reset to
+ another size with no layout set for it becomes 2D there. New functions and a flag only; a 2D canvas and a one-view
+ display take the code paths they took before.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 3)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-22
+---
+diff --git a/libobs/graphics/graphics-internal.h b/libobs/graphics/graphics-internal.h
+index 88423ad..fa091f7 100644
+--- a/libobs/graphics/graphics-internal.h
++++ b/libobs/graphics/graphics-internal.h
+@@ -303,6 +303,11 @@ struct graphics_subsystem {
+ 	struct gs_exports exports;
+ 
+ 	DARRAY(struct gs_rect) viewport_stack;
++	/* one view of a swap chain that holds two side by side: viewports set while the swap chain is the target are
++	 * offset by view_x, and a reset gives the view (view_cx 0: none) */
++	int view_x, view_cx;
++	/* the eye pass texrenders are drawn in (gs_texrender_new_pass) */
++	uint32_t texrender_pass;
+ 
+ 	DARRAY(struct matrix4) matrix_stack;
+ 	size_t cur_matrix;
+diff --git a/libobs/graphics/graphics.c b/libobs/graphics/graphics.c
+index 00abe2e..6ae1a3b 100644
+--- a/libobs/graphics/graphics.c
++++ b/libobs/graphics/graphics.c
+@@ -1139,9 +1139,36 @@ void gs_reset_viewport(void)
+ 		return;
+ 
+ 	gs_get_size(&cx, &cy);
++	if (thread_graphics->view_cx && !gs_get_render_target())
++		cx = (uint32_t)thread_graphics->view_cx;
+ 	gs_set_viewport(0, 0, (int)cx, (int)cy);
+ }
+ 
++void gs_set_swap_view(int x, int cx)
++{
++	if (!gs_valid("gs_set_swap_view"))
++		return;
++
++	thread_graphics->view_x = cx > 0 ? x : 0;
++	thread_graphics->view_cx = cx > 0 ? cx : 0;
++}
++
++void gs_texrender_new_pass(void)
++{
++	if (gs_valid("gs_texrender_new_pass"))
++		thread_graphics->texrender_pass++;
++}
++
++uint32_t gs_texrender_pass(void)
++{
++	return thread_graphics ? thread_graphics->texrender_pass : 0;
++}
++
++static inline int swap_view_x(graphics_t *graphics)
++{
++	return graphics->view_cx && !graphics->exports.device_get_render_target(graphics->device) ? graphics->view_x : 0;
++}
++
+ void gs_set_2d_mode(void)
+ {
+ 	uint32_t cx, cy;
+@@ -2148,7 +2175,7 @@ void gs_set_viewport(int x, int y, int width, int height)
+ 	if (!gs_valid("gs_set_viewport"))
+ 		return;
+ 
+-	graphics->exports.device_set_viewport(graphics->device, x, y, width, height);
++	graphics->exports.device_set_viewport(graphics->device, x + swap_view_x(graphics), y, width, height);
+ }
+ 
+ void gs_get_viewport(struct gs_rect *rect)
+@@ -2159,6 +2186,7 @@ void gs_get_viewport(struct gs_rect *rect)
+ 		return;
+ 
+ 	graphics->exports.device_get_viewport(graphics->device, rect);
++	rect->x -= swap_view_x(graphics);
+ }
+ 
+ void gs_set_scissor_rect(const struct gs_rect *rect)
+diff --git a/libobs/graphics/graphics.h b/libobs/graphics/graphics.h
+index 2b6c515..a5b2200 100644
+--- a/libobs/graphics/graphics.h
++++ b/libobs/graphics/graphics.h
+@@ -592,6 +592,13 @@ EXPORT void gs_draw_cube_backdrop(gs_texture_t *cubetex, const struct quat *rot,
+ 
+ /** sets the viewport to current swap chain size */
+ EXPORT void gs_reset_viewport(void);
++/* Internal to libobs (not exported). For a swap chain that holds two views side by side (obs_display_set_views): the
++ * view at x, cx wide, that viewports set while the swap chain is the render target are relative to; cx 0 ends it. */
++void gs_set_swap_view(int x, int cx);
++/* Internal to libobs. A texrender is drawn once until its reset; an eye pass of a stereo canvas or display starts a new
++ * pass, in which each texrender may be drawn once more, so the second eye never reuses the first eye's picture. */
++void gs_texrender_new_pass(void);
++uint32_t gs_texrender_pass(void);
+ 
+ /** sets default screen-sized orthographic mode */
+ EXPORT void gs_set_2d_mode(void);
+diff --git a/libobs/graphics/texture-render.c b/libobs/graphics/texture-render.c
+index d467e12..d05f0c2 100644
+--- a/libobs/graphics/texture-render.c
++++ b/libobs/graphics/texture-render.c
+@@ -34,6 +34,7 @@ struct gs_texture_render {
+ 	enum gs_zstencil_format zsformat;
+ 
+ 	bool rendered;
++	uint32_t pass;
+ };
+ 
+ gs_texrender_t *gs_texrender_create(enum gs_color_format format, enum gs_zstencil_format zsformat)
+@@ -92,7 +93,7 @@ bool gs_texrender_begin(gs_texrender_t *texrender, uint32_t cx, uint32_t cy)
+ 
+ bool gs_texrender_begin_with_color_space(gs_texrender_t *texrender, uint32_t cx, uint32_t cy, enum gs_color_space space)
+ {
+-	if (!texrender || texrender->rendered)
++	if (!texrender || (texrender->rendered && texrender->pass == gs_texrender_pass()))
+ 		return false;
+ 
+ 	if (!cx || !cy)
+@@ -132,6 +133,7 @@ void gs_texrender_end(gs_texrender_t *texrender)
+ 	gs_viewport_pop();
+ 
+ 	texrender->rendered = true;
++	texrender->pass = gs_texrender_pass();
+ }
+ 
+ void gs_texrender_reset(gs_texrender_t *texrender)
+diff --git a/libobs/obs-display.c b/libobs/obs-display.c
+index c5ddaf5..d34e203 100644
+--- a/libobs/obs-display.c
++++ b/libobs/obs-display.c
+@@ -45,6 +45,8 @@ bool obs_display_init(struct obs_display *display, const struct gs_init_data *gr
+ 		display->cy = cy;
+ 		display->next_cx = cx;
+ 		display->next_cy = cy;
++		display->views = 1;
++		display->next_views = 1;
+ 	}
+ 
+ 	if (pthread_mutex_init(&display->draw_callbacks_mutex, NULL) != 0) {
+@@ -167,16 +169,18 @@ void obs_display_remove_draw_callback(obs_display_t *display, void (*draw)(void
+ 	pthread_mutex_unlock(&display->draw_callbacks_mutex);
+ }
+ 
+-static inline bool render_display_begin(struct obs_display *display, uint32_t cx, uint32_t cy, bool update_color_space)
++static inline bool render_display_begin(struct obs_display *display, uint32_t cx, uint32_t cy, uint32_t views,
++					bool update_color_space)
+ {
+ 	struct vec4 clear_color;
+ 
+ 	gs_load_swapchain(display->swap);
+ 
+-	if ((display->cx != cx) || (display->cy != cy)) {
+-		gs_resize(cx, cy);
++	if ((display->cx != cx) || (display->cy != cy) || (display->views != views)) {
++		gs_resize(cx * views, cy);
+ 		display->cx = cx;
+ 		display->cy = cy;
++		display->views = views;
+ 	} else if (update_color_space) {
+ 		gs_update_color_space();
+ 	}
+@@ -221,8 +225,12 @@ static inline bool render_display_begin(struct obs_display *display, uint32_t cx
+ 		if (use_clear_workaround) {
+ 			gs_effect_t *const solid_effect = obs->video.solid_effect;
+ 			gs_effect_set_vec4(gs_effect_get_param_by_name(solid_effect, "color"), &clear_color);
++			gs_ortho(0.0f, (float)(cx * views), 0.0f, (float)cy, -100.0f, 100.0f);
++			gs_set_viewport(0, 0, cx * views, cy);
+ 			while (gs_effect_loop(solid_effect, "Solid"))
+-				gs_draw_sprite(NULL, 0, cx, cy);
++				gs_draw_sprite(NULL, 0, cx * views, cy);
++			gs_ortho(0.0f, (float)cx, 0.0f, (float)cy, -100.0f, 100.0f);
++			gs_set_viewport(0, 0, cx, cy);
+ 		}
+ 	}
+ 
+@@ -236,7 +244,7 @@ static inline void render_display_end()
+ 
+ void render_display(struct obs_display *display)
+ {
+-	uint32_t cx, cy;
++	uint32_t cx, cy, views;
+ 	bool update_color_space;
+ 
+ 	if (!display || !display->enabled)
+@@ -248,6 +256,7 @@ void render_display(struct obs_display *display)
+ 
+ 	cx = display->next_cx;
+ 	cy = display->next_cy;
++	views = display->next_views;
+ 	update_color_space = display->update_color_space;
+ 
+ 	display->update_color_space = false;
+@@ -256,16 +265,34 @@ void render_display(struct obs_display *display)
+ 
+ 	/* -------------------------------------------- */
+ 
+-	if (render_display_begin(display, cx, cy, update_color_space)) {
++	if (render_display_begin(display, cx, cy, views, update_color_space)) {
+ 		GS_DEBUG_MARKER_BEGIN(GS_DEBUG_COLOR_DISPLAY, "obs_display");
+ 
+ 		pthread_mutex_lock(&display->draw_callbacks_mutex);
+ 
+-		for (size_t i = 0; i < display->draw_callbacks.num; i++) {
+-			struct draw_callback *callback;
+-			callback = display->draw_callbacks.array + i;
++		/* Two views: every callback draws each eye on that eye's half, given one view's size; a view's viewports
++		 * are relative to its half (gs_set_swap_view), and obs_get_render_eye() says which eye it is. */
++		for (uint32_t view = 0; view < views; view++) {
++			if (views > 1) {
++				gs_set_render_target(NULL, NULL);
++				gs_set_swap_view((int)(view * cx), (int)cx);
++				gs_ortho(0.0f, (float)cx, 0.0f, (float)cy, -100.0f, 100.0f);
++				gs_set_viewport(0, 0, cx, cy);
++				obs->video.render_eye_pass = (int)view + 1;
++				gs_texrender_new_pass();
++			}
++
++			for (size_t i = 0; i < display->draw_callbacks.num; i++) {
++				struct draw_callback *callback;
++				callback = display->draw_callbacks.array + i;
++
++				callback->draw(callback->param, cx, cy);
++			}
++		}
+ 
+-			callback->draw(callback->param, cx, cy);
++		if (views > 1) {
++			gs_set_swap_view(0, 0);
++			obs->video.render_eye_pass = 0;
+ 		}
+ 
+ 		pthread_mutex_unlock(&display->draw_callbacks_mutex);
+@@ -295,6 +322,29 @@ void obs_display_set_background_color(obs_display_t *display, uint32_t color)
+ 		display->background_color = color;
+ }
+ 
++void obs_display_set_views(obs_display_t *display, uint32_t views)
++{
++	if (!obs_ptr_valid(display, "obs_display_set_views"))
++		return;
++
++	pthread_mutex_lock(&display->draw_info_mutex);
++	display->next_views = views == 2 ? 2 : 1;
++	pthread_mutex_unlock(&display->draw_info_mutex);
++}
++
++uint32_t obs_display_get_views(obs_display_t *display)
++{
++	uint32_t views = 1;
++
++	if (!obs_ptr_valid(display, "obs_display_get_views"))
++		return views;
++
++	pthread_mutex_lock(&display->draw_info_mutex);
++	views = display->next_views;
++	pthread_mutex_unlock(&display->draw_info_mutex);
++	return views;
++}
++
+ void obs_display_size(obs_display_t *display, uint32_t *width, uint32_t *height)
+ {
+ 	*width = 0;
+diff --git a/libobs/obs-internal.h b/libobs/obs-internal.h
+index 198bba6..c3da2ba 100644
+--- a/libobs/obs-internal.h
++++ b/libobs/obs-internal.h
+@@ -295,6 +295,8 @@ struct obs_display {
+ 	bool enabled;
+ 	uint32_t cx, cy;
+ 	uint32_t next_cx, next_cy;
++	/* views in the surface (1, or 2 side by side); the swap chain is views times cx wide */
++	uint32_t views, next_views;
+ 	uint32_t background_color;
+ 	gs_swapchain_t *swap;
+ 	pthread_mutex_t draw_callbacks_mutex;
+@@ -431,6 +433,14 @@ struct obs_core_video {
+ 	/* the main canvas's stereo layout, enum obs_stereo3d_type, and OBS_STEREO3D_FLAG_* */
+ 	volatile long stereo3d_type;
+ 	volatile long stereo3d_flags;
++	/* a layout set for the next reset (OBS_STEREO3D_FLAG_AT_RESET), taken with the canvas size it was set for */
++	volatile bool stereo3d_pending;
++	long stereo3d_pending_type;
++	long stereo3d_pending_flags;
++	/* the base size the current layout was taken with */
++	uint32_t stereo3d_cx, stereo3d_cy;
++	/* the eye being drawn plus one (0: no eye pass, as the zeroed core starts); graphics thread only */
++	int render_eye_pass;
+ 
+ 	pthread_mutex_t task_mutex;
+ 	struct deque tasks;
+diff --git a/libobs/obs-scene.c b/libobs/obs-scene.c
+index 703b24d..32429a1 100644
+--- a/libobs/obs-scene.c
++++ b/libobs/obs-scene.c
+@@ -340,11 +340,19 @@ static uint32_t scene_getheight(void *data);
+ static uint32_t canvas_getwidth(obs_weak_canvas_t *weak);
+ static uint32_t canvas_getheight(obs_weak_canvas_t *weak);
+ 
++/* The main canvas's scene space: one eye of a side by side canvas, which is drawn once per eye. */
++static inline uint32_t main_scene_width(void)
++{
++	uint32_t cx;
++	obs_get_video_eye_size(&cx, NULL);
++	return cx;
++}
++
+ static inline void get_scene_dimensions(const obs_sceneitem_t *item, float *x, float *y)
+ {
+ 	obs_scene_t *parent = item->parent;
+ 	if (!parent || (parent->is_group && !parent->source->canvas)) {
+-		*x = (float)obs->data.main_canvas->mix->ovi.base_width;
++		*x = (float)main_scene_width();
+ 		*y = (float)obs->data.main_canvas->mix->ovi.base_height;
+ 	} else if (parent->is_group) {
+ 		*x = (float)canvas_getwidth(parent->source->canvas);
+@@ -1465,7 +1473,7 @@ static uint32_t canvas_getwidth(obs_weak_canvas_t *weak)
+ 
+ 	obs_canvas_t *canvas = obs_weak_canvas_get_canvas(weak);
+ 	if (canvas) {
+-		width = canvas->ovi.base_width;
++		width = canvas == obs->data.main_canvas ? main_scene_width() : canvas->ovi.base_width;
+ 		obs_canvas_release(canvas);
+ 	}
+ 
+@@ -1493,7 +1501,7 @@ static uint32_t scene_getwidth(void *data)
+ 	if (scene->source->canvas)
+ 		return canvas_getwidth(scene->source->canvas);
+ 	if (obs->data.main_canvas->mix)
+-		return obs->data.main_canvas->mix->ovi.base_width;
++		return main_scene_width();
+ 	return 0;
+ }
+ 
+diff --git a/libobs/obs-video.c b/libobs/obs-video.c
+index 77e4b8e..0f2390b 100644
+--- a/libobs/obs-video.c
++++ b/libobs/obs-video.c
+@@ -196,10 +196,28 @@ static inline void render_main_texture(struct obs_core_video_mix *video)
+ 
+ 	/* In some cases we can reuse a previous mix's texture and save re-rendering everything */
+ 	size_t reuse_idx;
+-	if (can_reuse_mix_texture(video, &reuse_idx))
++	uint32_t eye_cx, eye_cy, stereo_flags = 0;
++	if (can_reuse_mix_texture(video, &reuse_idx)) {
+ 		draw_mix_texture(reuse_idx);
+-	else
++	} else if (obs->data.main_canvas && video == obs->data.main_canvas->mix &&
++		   obs_get_video_eye_size(&eye_cx, &eye_cy) && eye_cy == base_height) {
++		/* A side by side canvas: its scenes are laid out in one eye's space and drawn once per eye, each on its
++		 * half; a flat source comes out the same in both, at the screen plane, and a source holding two views
++		 * gives each eye its own (obs_get_render_eye()). */
++		obs_get_video_stereo3d(&stereo_flags);
++		for (int eye = 0; eye < 2; eye++) {
++			const int half = (stereo_flags & OBS_STEREO3D_FLAG_INVERT) ? 1 - eye : eye;
++			gs_set_viewport(half * (int)eye_cx, 0, (int)eye_cx, (int)eye_cy);
++			gs_ortho(0.0f, (float)eye_cx, 0.0f, (float)eye_cy, -100.0f, 100.0f);
++			obs->video.render_eye_pass = eye + 1;
++			gs_texrender_new_pass();
++			obs_view_render(video->view);
++		}
++		obs->video.render_eye_pass = 0;
++		set_render_size(base_width, base_height);
++	} else {
+ 		obs_view_render(video->view);
++	}
+ 
+ 	video->texture_rendered = true;
+ 
+diff --git a/libobs/obs.c b/libobs/obs.c
+index 3219997..3d6a76e 100644
+--- a/libobs/obs.c
++++ b/libobs/obs.c
+@@ -704,6 +704,23 @@ static int obs_init_video(struct obs_video_info *ovi)
+ 	if (pthread_mutex_init(&video->mixes_mutex, NULL) < 0)
+ 		return OBS_VIDEO_FAIL;
+ 
++	/* The main canvas's stereo layout changes in the same step as its size: a layout set for this reset is taken now,
++	 * and a stereo canvas given another size with none set for it becomes 2D, since its picture no longer holds the
++	 * pair it was set for. Scene positions are kept relative to the scene space, so the space never passes through a
++	 * size that is neither the old canvas's nor the new one's. */
++	if (os_atomic_exchange_bool(&video->stereo3d_pending, false)) {
++		os_atomic_set_long(&video->stereo3d_flags, video->stereo3d_pending_flags);
++		os_atomic_set_long(&video->stereo3d_type, video->stereo3d_pending_type);
++	} else if (os_atomic_load_long(&video->stereo3d_type) != OBS_STEREO3D_2D &&
++		   (ovi->base_width != video->stereo3d_cx || ovi->base_height != video->stereo3d_cy)) {
++		blog(LOG_INFO, "the canvas is now %ux%u, not the %ux%u its stereo layout was set for: it is 2D",
++		     ovi->base_width, ovi->base_height, video->stereo3d_cx, video->stereo3d_cy);
++		os_atomic_set_long(&video->stereo3d_flags, 0);
++		os_atomic_set_long(&video->stereo3d_type, OBS_STEREO3D_2D);
++	}
++	video->stereo3d_cx = ovi->base_width;
++	video->stereo3d_cy = ovi->base_height;
++
+ 	/* Reset main canvas mix first so it remains first in the rendering order. */
+ 	if (!obs_canvas_reset_video_internal(obs->data.main_canvas, ovi))
+ 		return OBS_VIDEO_FAIL;
+@@ -1681,7 +1698,20 @@ void obs_set_video_stereo3d(enum obs_stereo3d_type type, uint32_t flags)
+ 		blog(LOG_WARNING, "obs_set_video_stereo3d: unknown layout %d, the canvas is taken as 2D", (int)type);
+ 		type = OBS_STEREO3D_2D;
+ 	}
+-	os_atomic_set_long(&video->stereo3d_flags, type == OBS_STEREO3D_2D ? 0 : (long)flags);
++	const bool at_reset = (flags & OBS_STEREO3D_FLAG_AT_RESET) != 0;
++	flags = type == OBS_STEREO3D_2D ? 0 : (flags & ~(uint32_t)OBS_STEREO3D_FLAG_AT_RESET);
++	struct obs_core_video_mix *mix = obs->data.main_canvas ? obs->data.main_canvas->mix : NULL;
++	if (at_reset || !mix) {
++		/* with the next reset, together with the size it is set for (before the first reset: with the first) */
++		video->stereo3d_pending_type = (long)type;
++		video->stereo3d_pending_flags = (long)flags;
++		os_atomic_set_bool(&video->stereo3d_pending, true);
++		return;
++	}
++	os_atomic_set_bool(&video->stereo3d_pending, false);
++	video->stereo3d_cx = mix->ovi.base_width;
++	video->stereo3d_cy = mix->ovi.base_height;
++	os_atomic_set_long(&video->stereo3d_flags, (long)flags);
+ 	os_atomic_set_long(&video->stereo3d_type, (long)type);
+ }
+ 
+@@ -1693,6 +1723,30 @@ enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags)
+ 	return (enum obs_stereo3d_type)os_atomic_load_long(&video->stereo3d_type);
+ }
+ 
++bool obs_get_video_eye_size(uint32_t *cx, uint32_t *cy)
++{
++	uint32_t width = 0, height = 0;
++	bool side_by_side = false;
++
++	if (obs && obs->data.main_canvas && obs->data.main_canvas->mix) {
++		width = obs->data.main_canvas->mix->ovi.base_width;
++		height = obs->data.main_canvas->mix->ovi.base_height;
++		side_by_side = obs_get_video_stereo3d(NULL) == OBS_STEREO3D_SIDE_BY_SIDE && width >= 2;
++		if (side_by_side)
++			width /= 2;
++	}
++	if (cx)
++		*cx = width;
++	if (cy)
++		*cy = height;
++	return side_by_side;
++}
++
++enum obs_render_eye obs_get_render_eye(void)
++{
++	return obs ? (enum obs_render_eye)(obs->video.render_eye_pass - 1) : OBS_RENDER_EYE_NONE;
++}
++
+ enum obs_stereo3d_type obs_encoder_get_stereo3d(const obs_encoder_t *encoder, uint32_t *flags)
+ {
+ 	if (flags)
+@@ -2243,8 +2297,26 @@ static void obs_render_canvas_texture_internal(obs_canvas_t *canvas, enum gs_ble
+ 	gs_blend_state_push();
+ 	gs_blend_function_separate(src_c, dest_c, src_a, dest_a);
+ 
+-	while (gs_effect_loop(effect, tech_name))
+-		gs_draw_sprite(tex, 0, 0, 0);
++	/* In an eye pass a side by side main canvas is drawn as the eye being drawn, at one eye's size, at the origin;
++	 * outside one it is drawn whole, as before: a view one eye wide (the scene space) then holds its left eye, whole,
++	 * as a 2D screen shows a pair, never the two eyes squeezed into one picture. */
++	uint32_t eye_cx, eye_cy, stereo_flags = 0;
++	const bool by_eye = canvas == obs->data.main_canvas && obs_get_render_eye() != OBS_RENDER_EYE_NONE &&
++			    obs_get_video_eye_size(&eye_cx, &eye_cy);
++	uint32_t half = 0;
++	if (by_eye) {
++		obs_get_video_stereo3d(&stereo_flags);
++		half = obs_get_render_eye() == OBS_RENDER_EYE_RIGHT ? 1 : 0;
++		if (stereo_flags & OBS_STEREO3D_FLAG_INVERT)
++			half = 1 - half;
++	}
++
++	while (gs_effect_loop(effect, tech_name)) {
++		if (by_eye)
++			gs_draw_sprite_subregion(tex, 0, half * eye_cx, 0, eye_cx, eye_cy);
++		else
++			gs_draw_sprite(tex, 0, 0, 0);
++	}
+ 
+ 	gs_blend_state_pop();
+ 
+diff --git a/libobs/obs.h b/libobs/obs.h
+index d0730b2..cabd1bf 100644
+--- a/libobs/obs.h
++++ b/libobs/obs.h
+@@ -501,6 +501,10 @@ enum obs_stereo3d_type {
+ 
+ /** The right eye's view comes first (content_interpretation_type 2, H.264 Table D-10). */
+ #define OBS_STEREO3D_FLAG_INVERT (1 << 0)
++/** The layout takes effect with the next obs_reset_video(), in the same step as the canvas size it is set for, so the
++ *  scene space never passes through a size that is neither the old canvas's nor the new one's. Without it a layout takes
++ *  effect at once. A reset to another base size with no layout set for it makes a stereo canvas 2D. */
++#define OBS_STEREO3D_FLAG_AT_RESET (1 << 1)
+ 
+ EXPORT void obs_set_video_stereo3d(enum obs_stereo3d_type type, uint32_t flags);
+ EXPORT enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags);
+@@ -508,6 +512,19 @@ EXPORT enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags);
+  *  OBS_STEREO3D_2D for any other. */
+ EXPORT enum obs_stereo3d_type obs_encoder_get_stereo3d(const obs_encoder_t *encoder, uint32_t *flags);
+ 
++/** The size of one eye of the main canvas, the space its scenes are laid out in: half the base width for a side by side
++ *  canvas, which is drawn once per eye. Returns false, with the base size, for any other canvas. */
++EXPORT bool obs_get_video_eye_size(uint32_t *cx, uint32_t *cy);
++
++/** The eye being drawn. Outside the eye passes of a side by side canvas, and of a display with two views, it is
++ *  OBS_RENDER_EYE_NONE: a source that holds two views then shows its left one, as a 2D screen does. */
++enum obs_render_eye {
++	OBS_RENDER_EYE_NONE = -1,
++	OBS_RENDER_EYE_LEFT = 0,
++	OBS_RENDER_EYE_RIGHT = 1,
++};
++EXPORT enum obs_render_eye obs_get_render_eye(void);
++
+ /** Gets the current audio settings, returns false if no audio */
+ EXPORT bool obs_get_audio_info(struct obs_audio_info *oai);
+ 
+@@ -1085,6 +1102,12 @@ EXPORT void obs_display_set_background_color(obs_display_t *display, uint32_t co
+ 
+ EXPORT void obs_display_size(obs_display_t *display, uint32_t *width, uint32_t *height);
+ 
++/** How many views the display's surface holds: 1, or 2 for a surface the compositor takes as full side by side, left
++ *  eye first. With 2 its buffer is twice the display's width, and the draw callbacks run once per eye on that eye's
++ *  half, each given one view's size; obs_display_size() still gives one view's size. The caller declares the surface. */
++EXPORT void obs_display_set_views(obs_display_t *display, uint32_t views);
++EXPORT uint32_t obs_display_get_views(obs_display_t *display);
++
+ /* ------------------------------------------------------------------------- */
+ /* Sources */
+ 

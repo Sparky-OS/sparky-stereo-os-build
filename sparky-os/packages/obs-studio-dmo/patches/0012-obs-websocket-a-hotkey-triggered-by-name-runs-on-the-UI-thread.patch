@@ -1,0 +1,44 @@
+Description: obs-websocket: a hotkey triggered by name runs on the UI thread
+ TriggerHotkeyByName called the hotkey's callback on obs-websocket's own request thread (a Qt thread pool's), while a
+ key press reaches the same callback on the UI thread through the frontend's router (OBSBasic::HotkeyTriggered queues
+ it to OBSBasic::ProcessHotkey). The frontend's callbacks show and hide widgets: OBSBasic.EnablePreview and
+ DisablePreview call EnablePreviewDisplay, which sets the preview's visibility, and Qt allows that only on the main
+ thread ("QWidget and all its subclasses, are not reentrant. They can only be used from the main thread", Qt 6,
+ Threads and QObjects). Measured on OBS 33.0.1 with the preview a declared 3D area: at the first hide the request thread
+ made six QObjects whose parent lives on the main thread ("QObject::setParent: Cannot set parent, new parent is in a
+ different thread"), and under load OBS died at a show ("malloc(): unaligned tcache chunk detected", "double free or
+ corruption (!prev)").
+ The task is queued inside the UI thread, as obs-websocket's own UI requests queue theirs (SetStudioModeEnabled), and
+ waited for unless the request runs on the graphics thread (a SerialFrame batch), which the UI thread may itself be
+ waiting for; the hotkey's id is passed by value. TriggerHotkeyByKeySequence already takes the router, through
+ obs_hotkey_inject_event().
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 3, continuation 6)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-23
+---
+diff --git a/obs-websocket-5-7-6/src/requesthandler/RequestHandler_General.cpp b/obs-websocket-5-7-6/src/requesthandler/RequestHandler_General.cpp
+index 0bd5436..46b9086 100644
+--- a/obs-websocket-5-7-6/src/requesthandler/RequestHandler_General.cpp
++++ b/obs-websocket-5-7-6/src/requesthandler/RequestHandler_General.cpp
+@@ -265,8 +265,18 @@ RequestResult RequestHandler::TriggerHotkeyByName(const Request &request)
+ 	if (!hotkey)
+ 		return RequestResult::Error(RequestStatus::ResourceNotFound, "No hotkeys were found by that name.");
+ 
+-	obs_hotkey_trigger_routed_callback(obs_hotkey_get_id(hotkey), true);
+-	obs_hotkey_trigger_routed_callback(obs_hotkey_get_id(hotkey), false);
++	// A key press reaches a hotkey's callback on the UI thread, through the frontend's router, and the frontend's
++	// callbacks show and hide widgets (OBSBasic.EnablePreview), which Qt allows only on that thread. Queue the task
++	// inside of the UI thread to prevent race conditions, and wait for it unless this request runs on the graphics
++	// thread (a SerialFrame batch), which the UI thread may itself be waiting for.
++	obs_queue_task(
++		OBS_TASK_UI,
++		[](void *param) {
++			auto id = (obs_hotkey_id)(uintptr_t)param;
++			obs_hotkey_trigger_routed_callback(id, true);
++			obs_hotkey_trigger_routed_callback(id, false);
++		},
++		(void *)(uintptr_t)obs_hotkey_get_id(hotkey), !obs_in_task_thread(OBS_TASK_GRAPHICS));
+ 
+ 	return RequestResult::Success();
+ }

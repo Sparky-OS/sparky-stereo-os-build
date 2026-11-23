@@ -1,0 +1,385 @@
+Description: frontend: scenes and the preview in the canvas's scene space; displays named for a module
+ The preview, studio mode's program view, the projectors, the multiview, item alignment, dropped files and the
+ spacing helpers lay out in the main canvas's scene space (one eye of a side by side canvas, obs_get_video_eye_size()),
+ so a scene item placed at 100 px is at 100 eye samples in both eyes, and a display one eye wide holds the left eye
+ whole, never two squeezed eyes. Each display widget carries its obs_display as the property "obsDisplay" (0 while it
+ has none), for a module that shows it as a 3D area. The output and the encoders keep the canvas's whole size.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 3)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-22
+---
+diff --git a/frontend/components/Multiview.cpp b/frontend/components/Multiview.cpp
+index 9bac0c7..d357f8c 100644
+--- a/frontend/components/Multiview.cpp
++++ b/frontend/components/Multiview.cpp
+@@ -1,4 +1,5 @@
+ #include "Multiview.hpp"
++#include <utility/StereoScene.hpp>
+ 
+ #include <utility/display-helpers.hpp>
+ #include <widgets/OBSBasic.hpp>
+@@ -74,8 +75,8 @@ void Multiview::Update(MultiviewLayout multiviewLayout, bool drawLabel, bool dra
+ 	struct obs_video_info ovi;
+ 	obs_get_video_info(&ovi);
+ 
+-	uint32_t w = ovi.base_width;
+-	uint32_t h = ovi.base_height;
++	uint32_t w = SceneCX();
++	uint32_t h = SceneCY();
+ 	fw = float(w);
+ 	fh = float(h);
+ 	ratio = fw / fh;
+diff --git a/frontend/utility/StereoScene.hpp b/frontend/utility/StereoScene.hpp
+new file mode 100644
+index 0000000..fdfd5f2
+--- /dev/null
++++ b/frontend/utility/StereoScene.hpp
+@@ -0,0 +1,20 @@
++#pragma once
++
++#include <obs.h>
++
++/* The main canvas's scene space, where scenes are laid out and the preview places them: one eye of a side by side
++ * canvas, which libobs draws once per eye (obs_get_video_eye_size()), else the canvas itself. Outputs and encoders keep
++ * the canvas's whole size. */
++static inline uint32_t SceneCX()
++{
++	uint32_t cx = 0;
++	obs_get_video_eye_size(&cx, nullptr);
++	return cx;
++}
++
++static inline uint32_t SceneCY()
++{
++	uint32_t cy = 0;
++	obs_get_video_eye_size(nullptr, &cy);
++	return cy;
++}
+diff --git a/frontend/widgets/OBSBasic.cpp b/frontend/widgets/OBSBasic.cpp
+index 049a8b8..451c28c 100644
+--- a/frontend/widgets/OBSBasic.cpp
++++ b/frontend/widgets/OBSBasic.cpp
+@@ -18,6 +18,7 @@
+ ******************************************************************************/
+ 
+ #include "OBSBasic.hpp"
++#include <utility/StereoScene.hpp>
+ #include "ui-config.h"
+ 
+ #include "ColorSelect.hpp"
+@@ -286,7 +287,7 @@ OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new
+ 		struct obs_video_info ovi;
+ 
+ 		if (obs_get_video_info(&ovi)) {
+-			ResizePreview(ovi.base_width, ovi.base_height);
++			ResizePreview(SceneCX(), SceneCY());
+ 		}
+ 
+ 		UpdateContextBarVisibility();
+@@ -1032,7 +1033,7 @@ void OBSBasic::OBSInit()
+ 
+ 		struct obs_video_info ovi;
+ 		if (obs_get_video_info(&ovi)) {
+-			ResizePreview(ovi.base_width, ovi.base_height);
++			ResizePreview(SceneCX(), SceneCY());
+ 		}
+ 	};
+ 
+@@ -1487,9 +1488,9 @@ int OBSBasic::ResetVideo()
+ 	}
+ 
+ 	if (ret == OBS_VIDEO_SUCCESS) {
+-		ResizePreview(ovi.base_width, ovi.base_height);
++		ResizePreview(SceneCX(), SceneCY());
+ 		if (program) {
+-			ResizeProgram(ovi.base_width, ovi.base_height);
++			ResizeProgram(SceneCX(), SceneCY());
+ 		}
+ 
+ 		const float sdr_white_level = (float)config_get_uint(activeConfiguration, "Video", "SdrWhiteLevel");
+@@ -1506,7 +1507,7 @@ int OBSBasic::ResetVideo()
+ 							OBS::SceneCoordinateMode::Absolute;
+ 			OBS::Rect migrationResolution = currentSceneCollection.getMigrationResolution();
+ 
+-			OBS::Rect videoResolution = OBS::Rect(ovi.base_width, ovi.base_height);
++			OBS::Rect videoResolution = OBS::Rect(SceneCX(), SceneCY());
+ 
+ 			bool canMigrate = usingAbsoluteCoordinates ||
+ 					  (!migrationResolution.isZero() && migrationResolution != videoResolution);
+@@ -1516,7 +1517,7 @@ int OBSBasic::ResetVideo()
+ 			ui->actionRemigrateSceneCollection->setEnabled(false);
+ 		}
+ 
+-		emit CanvasResized(ovi.base_width, ovi.base_height);
++		emit CanvasResized(SceneCX(), SceneCY());
+ 		emit OutputResized(ovi.output_width, ovi.output_height);
+ 	}
+ 
+diff --git a/frontend/widgets/OBSBasicPreview.cpp b/frontend/widgets/OBSBasicPreview.cpp
+index fc57ef8..5e423db 100644
+--- a/frontend/widgets/OBSBasicPreview.cpp
++++ b/frontend/widgets/OBSBasicPreview.cpp
+@@ -1,4 +1,5 @@
+ #include "OBSBasicPreview.hpp"
++#include <utility/StereoScene.hpp>
+ 
+ #include <utility/display-helpers.hpp>
+ #include <widgets/OBSBasic.hpp>
+@@ -186,8 +187,8 @@ static inline vec2 GetOBSScreenSize()
+ 	vec2_zero(&size);
+ 
+ 	if (obs_get_video_info(&ovi)) {
+-		size.x = float(ovi.base_width);
+-		size.y = float(ovi.base_height);
++		size.x = float(SceneCX());
++		size.y = float(SceneCY());
+ 	}
+ 
+ 	return size;
+@@ -2611,9 +2612,9 @@ static void RenderSpacingHelper(int sourceIndex, vec3 &start, vec3 &end, vec3 &v
+ 	float px;
+ 
+ 	if (horizontal) {
+-		px = length * ovi.base_width;
++		px = length * SceneCX();
+ 	} else {
+-		px = length * ovi.base_height;
++		px = length * SceneCY();
+ 	}
+ 
+ 	if (px <= 0.0f) {
+@@ -2694,7 +2695,7 @@ void OBSBasicPreview::DrawSpacingHelpers()
+ 	obs_get_video_info(&ovi);
+ 
+ 	vec3 size;
+-	vec3_set(&size, ovi.base_width, ovi.base_height, 1.0f);
++	vec3_set(&size, SceneCX(), SceneCY(), 1.0f);
+ 
+ 	// Init box transform side locations
+ 	vec3 left, right, top, bottom;
+@@ -2833,7 +2834,7 @@ void OBSBasicPreview::ClampScrollingOffsets()
+ 	vec3 target, offset;
+ 	vec3_set(&target, (float)targetSize.width(), (float)targetSize.height(), 1.0f);
+ 
+-	vec3_set(&offset, (float)ovi.base_width, (float)ovi.base_height, 1.0f);
++	vec3_set(&offset, (float)SceneCX(), (float)SceneCY(), 1.0f);
+ 	vec3_mulf(&offset, &offset, scalingAmount);
+ 
+ 	vec3_sub(&offset, &offset, &target);
+diff --git a/frontend/widgets/OBSBasic_Dropfiles.cpp b/frontend/widgets/OBSBasic_Dropfiles.cpp
+index 3ab81d9..8bd0040 100644
+--- a/frontend/widgets/OBSBasic_Dropfiles.cpp
++++ b/frontend/widgets/OBSBasic_Dropfiles.cpp
+@@ -18,6 +18,7 @@
+ ******************************************************************************/
+ 
+ #include "OBSBasic.hpp"
++#include <utility/StereoScene.hpp>
+ 
+ #include <qt-wrappers.hpp>
+ 
+@@ -86,8 +87,8 @@ void OBSBasic::AddDropURL(QUrl url, QString &name, obs_data_t *settings, const o
+ {
+ 	QUrlQuery query = QUrlQuery(url.query(QUrl::FullyEncoded));
+ 
+-	int cx = (int)ovi.base_width;
+-	int cy = (int)ovi.base_height;
++	int cx = (int)SceneCX();
++	int cy = (int)SceneCY();
+ 
+ 	if (query.hasQueryItem("layer-width")) {
+ 		cx = query.queryItemValue("layer-width").toInt();
+@@ -166,8 +167,8 @@ void OBSBasic::AddDropSource(const char *data, DropType image)
+ 	case DropType_Html:
+ 		obs_data_set_bool(settings, "is_local_file", true);
+ 		obs_data_set_string(settings, "local_file", data);
+-		obs_data_set_int(settings, "width", ovi.base_width);
+-		obs_data_set_int(settings, "height", ovi.base_height);
++		obs_data_set_int(settings, "width", SceneCX());
++		obs_data_set_int(settings, "height", SceneCY());
+ 		name = QUrl::fromLocalFile(QString(data)).fileName();
+ 		type = "browser_source";
+ 		break;
+diff --git a/frontend/widgets/OBSBasic_Preview.cpp b/frontend/widgets/OBSBasic_Preview.cpp
+index 04d7d9b..53967e2 100644
+--- a/frontend/widgets/OBSBasic_Preview.cpp
++++ b/frontend/widgets/OBSBasic_Preview.cpp
+@@ -18,6 +18,7 @@
+ ******************************************************************************/
+ 
+ #include "OBSBasic.hpp"
++#include <utility/StereoScene.hpp>
+ 
+ #include <utility/display-helpers.hpp>
+ #include <widgets/OBSProjector.hpp>
+@@ -138,8 +139,8 @@ void OBSBasic::RenderMain(void *data, uint32_t, uint32_t)
+ 
+ 	obs_get_video_info(&ovi);
+ 
+-	window->previewCX = int(window->previewScale * float(ovi.base_width));
+-	window->previewCY = int(window->previewScale * float(ovi.base_height));
++	window->previewCX = int(window->previewScale * float(SceneCX()));
++	window->previewCY = int(window->previewScale * float(SceneCY()));
+ 
+ 	gs_viewport_push();
+ 	gs_projection_push();
+@@ -156,11 +157,11 @@ void OBSBasic::RenderMain(void *data, uint32_t, uint32_t)
+ 
+ 	/* --------------------------------------- */
+ 
+-	gs_ortho(0.0f, float(ovi.base_width), 0.0f, float(ovi.base_height), -100.0f, 100.0f);
++	gs_ortho(0.0f, float(SceneCX()), 0.0f, float(SceneCY()), -100.0f, 100.0f);
+ 	gs_set_viewport(window->previewX, window->previewY, window->previewCX, window->previewCY);
+ 
+ 	if (window->IsPreviewProgramMode()) {
+-		window->DrawBackdrop(float(ovi.base_width), float(ovi.base_height));
++		window->DrawBackdrop(float(SceneCX()), float(SceneCY()));
+ 
+ 		OBSScene scene = window->GetCurrentScene();
+ 		obs_source_t *source = obs_scene_get_source(scene);
+diff --git a/frontend/widgets/OBSBasic_SceneItems.cpp b/frontend/widgets/OBSBasic_SceneItems.cpp
+index 14229d5..2bf49d0 100644
+--- a/frontend/widgets/OBSBasic_SceneItems.cpp
++++ b/frontend/widgets/OBSBasic_SceneItems.cpp
+@@ -18,6 +18,7 @@
+ ******************************************************************************/
+ 
+ #include "OBSBasic.hpp"
++#include <utility/StereoScene.hpp>
+ #include "ColorSelect.hpp"
+ #include "OBSProjector.hpp"
+ 
+@@ -1240,7 +1241,7 @@ static bool CenterAlignSelectedItems(obs_scene_t * /* scene */, obs_sceneitem_t
+ 	itemInfo.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+ 	itemInfo.rot = 0.0f;
+ 
+-	vec2_set(&itemInfo.bounds, float(ovi.base_width), float(ovi.base_height));
++	vec2_set(&itemInfo.bounds, float(SceneCX()), float(SceneCY()));
+ 	itemInfo.bounds_type = boundsType;
+ 	itemInfo.bounds_alignment = OBS_ALIGN_CENTER;
+ 	itemInfo.crop_to_bounds = obs_sceneitem_get_bounds_crop(item);
+@@ -1337,7 +1338,7 @@ void OBSBasic::CenterSelectedSceneItems(const CenterType &centerType)
+ 	obs_get_video_info(&ovi);
+ 
+ 	vec3 screenCenter;
+-	vec3_set(&screenCenter, float(ovi.base_width), float(ovi.base_height), 0.0f);
++	vec3_set(&screenCenter, float(SceneCX()), float(SceneCY()), 0.0f);
+ 
+ 	vec3_mulf(&screenCenter, &screenCenter, 0.5f);
+ 
+diff --git a/frontend/widgets/OBSBasic_StudioMode.cpp b/frontend/widgets/OBSBasic_StudioMode.cpp
+index e37c4a7..1d5f401 100644
+--- a/frontend/widgets/OBSBasic_StudioMode.cpp
++++ b/frontend/widgets/OBSBasic_StudioMode.cpp
+@@ -18,6 +18,7 @@
+ ******************************************************************************/
+ 
+ #include "OBSBasic.hpp"
++#include <utility/StereoScene.hpp>
+ #include "OBSProjector.hpp"
+ 
+ #include <utility/display-helpers.hpp>
+@@ -39,7 +40,7 @@ void OBSBasic::CreateProgramDisplay()
+ 		struct obs_video_info ovi;
+ 
+ 		if (obs_get_video_info(&ovi)) {
+-			ResizeProgram(ovi.base_width, ovi.base_height);
++			ResizeProgram(SceneCX(), SceneCY());
+ 		}
+ 	};
+ 
+@@ -50,7 +51,7 @@ void OBSBasic::CreateProgramDisplay()
+ 
+ 		struct obs_video_info ovi;
+ 		if (obs_get_video_info(&ovi)) {
+-			ResizeProgram(ovi.base_width, ovi.base_height);
++			ResizeProgram(SceneCX(), SceneCY());
+ 		}
+ 	};
+ 
+@@ -305,15 +306,15 @@ void OBSBasic::RenderProgram(void *data, uint32_t, uint32_t)
+ 
+ 	obs_get_video_info(&ovi);
+ 
+-	window->programCX = int(window->programScale * float(ovi.base_width));
+-	window->programCY = int(window->programScale * float(ovi.base_height));
++	window->programCX = int(window->programScale * float(SceneCX()));
++	window->programCY = int(window->programScale * float(SceneCY()));
+ 
+ 	gs_viewport_push();
+ 	gs_projection_push();
+ 
+ 	/* --------------------------------------- */
+ 
+-	gs_ortho(0.0f, float(ovi.base_width), 0.0f, float(ovi.base_height), -100.0f, 100.0f);
++	gs_ortho(0.0f, float(SceneCX()), 0.0f, float(SceneCY()), -100.0f, 100.0f);
+ 	gs_set_viewport(window->programX, window->programY, window->programCX, window->programCY);
+ 
+ 	obs_render_main_texture_src_color_only();
+diff --git a/frontend/widgets/OBSProjector.cpp b/frontend/widgets/OBSProjector.cpp
+index 8b48e6c..d3b38f6 100644
+--- a/frontend/widgets/OBSProjector.cpp
++++ b/frontend/widgets/OBSProjector.cpp
+@@ -1,4 +1,5 @@
+ #include "OBSProjector.hpp"
++#include <utility/StereoScene.hpp>
+ 
+ #include <OBSApp.hpp>
+ #include <components/Multiview.hpp>
+@@ -179,8 +180,8 @@ void OBSProjector::OBSRender(void *data, uint32_t cx, uint32_t cy)
+ 	} else {
+ 		struct obs_video_info ovi;
+ 		obs_get_video_info(&ovi);
+-		targetCX = ovi.base_width;
+-		targetCY = ovi.base_height;
++		targetCX = SceneCX();
++		targetCY = SceneCY();
+ 	}
+ 
+ 	GetScaleAndCenterPos(targetCX, targetCY, cx, cy, x, y, scale);
+@@ -446,8 +447,8 @@ void OBSProjector::ResizeToContent()
+ 	} else {
+ 		struct obs_video_info ovi;
+ 		obs_get_video_info(&ovi);
+-		targetCX = ovi.base_width;
+-		targetCY = ovi.base_height;
++		targetCX = SceneCX();
++		targetCY = SceneCY();
+ 	}
+ 
+ 	QSize size = this->size();
+diff --git a/frontend/widgets/OBSQTDisplay.cpp b/frontend/widgets/OBSQTDisplay.cpp
+index ab00b96..07cd991 100644
+--- a/frontend/widgets/OBSQTDisplay.cpp
++++ b/frontend/widgets/OBSQTDisplay.cpp
+@@ -74,6 +74,7 @@ OBSQTDisplay::OBSQTDisplay(QWidget *parent, Qt::WindowFlags flags) : QWidget(par
+ 	auto windowVisible = [this](bool visible) {
+ 		if (!visible) {
+ #if !defined(_WIN32) && !defined(__APPLE__)
++			setProperty("obsDisplay", QVariant::fromValue(quintptr(0)));
+ 			display = nullptr;
+ #endif
+ 			return;
+@@ -148,6 +149,9 @@ void OBSQTDisplay::CreateDisplay()
+ 
+ 	display = obs_display_create(&info, backgroundColor);
+ 
++	/* For a module that shows the display in 3D (obs_display_set_views()): the display, valid until the property
++	 * goes back to 0 or the widget is destroyed. */
++	setProperty("obsDisplay", QVariant::fromValue(reinterpret_cast<quintptr>(GetDisplay())));
+ 	emit DisplayCreated(this);
+ }
+ 
+diff --git a/frontend/widgets/OBSQTDisplay.hpp b/frontend/widgets/OBSQTDisplay.hpp
+index 94ad829..9bf7803 100644
+--- a/frontend/widgets/OBSQTDisplay.hpp
++++ b/frontend/widgets/OBSQTDisplay.hpp
+@@ -40,6 +40,7 @@ public:
+ 	void CreateDisplay();
+ 	void DestroyDisplay()
+ 	{
++		setProperty("obsDisplay", QVariant::fromValue(quintptr(0)));
+ 		display = nullptr;
+ 		destroying = true;
+ 	};

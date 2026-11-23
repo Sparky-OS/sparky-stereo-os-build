@@ -6,7 +6,9 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOOLKIT=$(cd "$HERE/../.." && pwd)
 UPSTREAM=1:33.0.1-dmo2
-VERSION=$UPSTREAM+stereo3d1
+VERSION=$UPSTREAM+stereo3d3
+# the last version that added exported functions to libobs (patch 0008): the shlibs minimum (Debian Policy 8.6)
+SHLIBS_MIN=$UPSTREAM+stereo3d2
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the date of the recipe: build-provenance.sh}
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME="Daniel Ramos (Capitain Jack)"
 WORK=$(mktemp -d "$OUT/.obs.XXXXXX")
@@ -18,16 +20,52 @@ for p in "$HERE"/patches/*.patch; do
 	cp "$p" debian/patches/
 	basename "$p" >> debian/patches/series
 done
-# patch 0001 adds three exported functions to libobs, so a program linked against them needs this build: the shlibs
-# minimum moves to it (Debian Policy 8.6, shared library ABI changes); the other packages keep dh_makeshlibs as it was
+# patch 0001 adds three exported functions to libobs and patch 0008 four more, so a program linked against them needs
+# this build: the shlibs minimum moves to it (Debian Policy 8.6, shared library ABI changes); the other packages keep
+# dh_makeshlibs as it was
 printf '\noverride_dh_makeshlibs:\n\tdh_makeshlibs -plibobs0t64 -V"libobs0t64 (>= %s~)"\n\tdh_makeshlibs -Nlibobs0t64\n' \
-	"$VERSION" >> debian/rules
+	"$SHLIBS_MIN" >> debian/rules
 python3 - "$VERSION" <<'PY'
-import os, sys
+import os, re, sys
 version = sys.argv[1]
-# debian/control stays as deb-multimedia ships it: the build's provenance step (repo/provenance.sh --tree, run by Lean
-# Code's dh_builddeb) stamps the binaries with our Maintainer and keeps Christian Marillat as Original-Maintainer
+# debian/control stays as deb-multimedia ships it, with one build dependency more: patch 0011 links media playback
+# with the stereo layer's libstereo-av (pkg-config stereo-av). The build's provenance step (repo/provenance.sh --tree,
+# run by Lean Code's dh_builddeb) stamps the binaries with our Maintainer and keeps Christian Marillat as
+# Original-Maintainer
+control = open('debian/control').read()
+control, n = re.subn(r'^(Build-Depends:[^\n]*\n(?:[ \t][^\n]*\n)*?[ \t][^\n]*libavdevice-dev,)',
+                     r'\1 libstereo-av-dev (>= 1.23.0),', control, count=1, flags=re.M)
+if n != 1:
+    sys.exit('debian/control: no libavdevice-dev in Build-Depends to put libstereo-av-dev beside')
+open('debian/control', 'w').write(control)
 entry = f"""obs-studio-dmo ({version}) unstable; urgency=medium
+
+  * obs-websocket's SetVideoSettings runs the frontend's video reset on the UI
+    thread, which resizes the preview and the program view (patch 0014, ORDER
+    61, milestone 3, continuation 7).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {os.environ['SOURCE_DATE_RFC2822']}
+
+obs-studio-dmo (1:33.0.1-dmo2+stereo3d2) unstable; urgency=medium
+
+  * Sparky Stereo OS (ORDER 61, milestone 3): a side by side canvas is drawn
+    once per eye, in one eye's space; OBS's preview, studio mode's views and
+    the projectors can be declared 3D areas (patches 0008 and 0009); Render
+    Delay keeps each eye's frames apart (0010); media playback hands on a
+    stream's own stereo mark and pairs frames in turn and the two views of an
+    MV-HEVC stream through the stereo layer's libstereo-av (0011, which adds
+    libstereo-av-dev to Build-Depends).
+  * A hotkey triggered by name through obs-websocket runs on the UI thread, as
+    a key press does (0012); the custom FFmpeg output's raw callbacks and its
+    stop share a lock on the encoder's data (0013, the race upstream's issue
+    14153 sees from its other side).
+  * libobs exports four new functions (obs_get_video_eye_size,
+    obs_get_render_eye, obs_display_set_views, obs_display_get_views), so its
+    shlibs name this version as the minimum.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 23 Nov 2026 07:17:42 +0000
+
+obs-studio-dmo (1:33.0.1-dmo2+stereo3d1) unstable; urgency=medium
 
   * Sparky Stereo OS (ORDER 61, milestone 2): libobs carries the main canvas's
     stereo layout, and while they work x264, VA-API (through the edition's
@@ -38,7 +76,7 @@ entry = f"""obs-studio-dmo ({version}) unstable; urgency=medium
     obs_get_video_stereo3d, obs_encoder_get_stereo3d), so its shlibs name
     this version as the minimum.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {os.environ['SOURCE_DATE_RFC2822']}
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 21 Nov 2026 01:51:21 +0000
 
 """
 open('debian/changelog', 'w').write(entry + open('debian/changelog').read())

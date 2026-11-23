@@ -2,15 +2,23 @@
 // copied from its own place (image.Load), never filtered or resized; the rule of the stereo layer's storedView() and
 // stereo_gtk_unpack() (Sparky-OS/stereo-layer, src/picture/render.cpp, src/gtk/stereo-gtk-unpack.c).
 // mode: 0 side by side (and side by side quincunx), 1 top and bottom, 2 rows, 3 columns, 4 checkerboard, 5 one picture
-// in both eyes, 6 anaglyph. phase: the part of the source that holds the left eye (0 the first, 1 the second).
+// in both eyes (from region_offset: the picture part of a frame with its depth map), 6 anaglyph. phase: the part of the
+// source that holds the left eye (0 the first, 1 the second).
+// Region and Gray cut one part of a frame (region_offset, region_size) for the stereo layer's depth library: the
+// picture as it is, the depth map as the layer reads its gray (qGray: 11, 16 and 5 parts of 32, as QImage's
+// Grayscale8 conversion and libstereo-gtk's gray_from()).
 
 uniform float4x4 ViewProj;
 uniform texture2d image;
 
 uniform int mode;
 uniform int phase;
+// -1: both views side by side; 0 or 1: that eye's view alone, for an eye pass of a 3D canvas
+uniform int only_eye;
 uniform int2 view_size;
 uniform int2 source_size;
+uniform int2 region_offset;
+uniform int2 region_size;
 // anaglyph: for each output eye, the weights of R, G and B for each channel and the channel's divisor
 uniform float4 left_r;
 uniform float4 left_g;
@@ -35,21 +43,25 @@ VertData VSDefault(VertData v_in)
 float channel(float4 weights, float3 rgb)
 {
 	float3 stored = floor(rgb * 255.0 + 0.5);
-	float value = floor(dot(weights.xyz, stored) / weights.w);
+	// the integer quotient of whole numbers: half a step added before the division, so a float division that lands
+	// just below an exact multiple (300 / 3 as 99.99999) still floors to it, as the layer's integer division does
+	float value = floor((dot(weights.xyz, stored) + 0.5) / weights.w);
 	return min(value, 255.0) / 255.0;
 }
 
 float4 PSUnpack(VertData v_in) : TARGET
 {
-	int2 out_size = int2(view_size.x * 2, view_size.y);
+	int2 out_size = only_eye >= 0 ? view_size : int2(view_size.x * 2, view_size.y);
 	int2 p = int2(min(v_in.uv * float2(out_size), float2(out_size) - 0.5));
-	int eye = p.x >= view_size.x ? 1 : 0;
-	int x = p.x - eye * view_size.x;
+	int eye = only_eye >= 0 ? only_eye : (p.x >= view_size.x ? 1 : 0);
+	int x = only_eye >= 0 ? p.x : p.x - eye * view_size.x;
 	int y = p.y;
 	int part = eye == 0 ? phase : 1 - phase;
 	int2 at = int2(x, y);
 
-	if (mode == 0) {
+	if (mode == 5) {
+		at = int2(x, y) + region_offset;
+	} else if (mode == 0) {
 		at = int2(x + part * view_size.x, y);
 	} else if (mode == 1) {
 		at = int2(x, y + part * view_size.y);
@@ -69,6 +81,42 @@ float4 PSUnpack(VertData v_in) : TARGET
 		return float4(channel(right_r, sample.rgb), channel(right_g, sample.rgb), channel(right_b, sample.rgb), 1.0);
 	}
 	return sample;
+}
+
+int2 RegionPoint(VertData v_in)
+{
+	int2 p = int2(min(v_in.uv * float2(region_size), float2(region_size) - 0.5));
+	return region_offset + p;
+}
+
+float4 PSRegion(VertData v_in) : TARGET
+{
+	return image.Load(int3(RegionPoint(v_in), 0));
+}
+
+float4 PSGray(VertData v_in) : TARGET
+{
+	float3 c = floor(image.Load(int3(RegionPoint(v_in), 0)).rgb * 255.0 + 0.5);
+	float g = floor((c.r * 11.0 + c.g * 16.0 + c.b * 5.0) / 32.0) / 255.0;
+	return float4(g, g, g, 1.0);
+}
+
+technique Region
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSRegion(v_in);
+	}
+}
+
+technique Gray
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSGray(v_in);
+	}
 }
 
 technique Draw

@@ -1,0 +1,450 @@
+Description: media playback: a stream's stereo mark handed on, and its views paired at the Stereo input filter's request
+ OBS's media source decodes with FFmpeg (shared/media-playback). The mark FFmpeg reads is kept where the frames are
+ decoded: the frame's AV_FRAME_DATA_STEREO3D (the frame packing arrangement SEI, H.264 D.2.26 and H.265 D.3.16, before
+ the container's), the stream's AV_PKT_DATA_STEREO3D (Matroska StereoMode, RFC 9559 5.1.4.1.28.3; MP4 st3d) for frames
+ that carry none, and Matroska's StereoMode stream tag for the two anaglyph values AVStereo3D has no type for. The
+ media source hands it on through two procedures of its own proc handler, get_stereo3d and set_stereo3d_pairing, so
+ libobs's exported API does not change.
+ When the person's Stereo input filter asks, the decoder makes one side by side picture, left eye first, each view at
+ its own size, of frames in turn (frame packing arrangement type 5, by the frames' current_frame_is_frame0_flag while
+ they alternate, else two frames from the first; Matroska StereoMode 13 and 14) and of the two views of one time of an
+ MV-HEVC stream (the stereo layer's libstereo-av, which hands on the base view alone while nothing is asked, so a
+ source without the filter shows what it did). A pair is dated as its frame 0; the scaler follows the frame's size.
+ A file decoded whole at its start (a stinger) is not paired and says no mark.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 3)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-23
+---
+diff --git a/plugins/obs-ffmpeg/obs-ffmpeg-source.c b/plugins/obs-ffmpeg/obs-ffmpeg-source.c
+index 2624115..72b38ae 100644
+--- a/plugins/obs-ffmpeg/obs-ffmpeg-source.c
++++ b/plugins/obs-ffmpeg/obs-ffmpeg-source.c
+@@ -64,6 +64,9 @@ struct ffmpeg_source {
+ 	enum obs_media_state state;
+ 	obs_hotkey_pair_id play_pause_hotkey;
+ 	obs_hotkey_id stop_hotkey;
++
++	/* Sparky Stereo OS: what the person's Stereo input filter asks the decoder to pair, kept for every media opened */
++	volatile long stereo_request;
+ };
+ 
+ // Used to safely cancel and join any active reconnect threads
+@@ -312,6 +315,7 @@ static void ffmpeg_source_open(struct ffmpeg_source *s)
+ 		};
+ 
+ 		s->media = media_playback_create(&info);
++		media_playback_set_stereo3d_pairing(s->media, os_atomic_load_long(&s->stereo_request));
+ 	}
+ }
+ 
+@@ -544,6 +548,31 @@ static void get_nb_frames(void *data, calldata_t *cd)
+ 	calldata_set_int(cd, "num_frames", frames);
+ }
+ 
++/* Sparky Stereo OS: the stereo mark of the frames this source hands on, as FFmpeg reads it from the stream (the frame
++ * packing arrangement SEI) and the container (Matroska StereoMode, MP4 st3d): type is the AVStereo3DType, -1 for none,
++ * flags its AVStereo3D flags, paired 1 for frames in turn and 2 for two views made into one side by side picture, left
++ * eye first; stereo_mode Matroska's StereoMode as FFmpeg's stream tag. */
++static void get_stereo3d(void *data, calldata_t *cd)
++{
++	struct ffmpeg_source *s = data;
++	const char *tag = "";
++	long mark = media_playback_get_stereo3d(s->media, &tag);
++	calldata_set_int(cd, "type", (long long)(mark & 0xff) - 1);
++	calldata_set_int(cd, "flags", (mark >> 8) & 0xff);
++	calldata_set_int(cd, "paired", (mark >> 16) & 3);
++	calldata_set_string(cd, "stereo_mode", tag);
++}
++
++/* mode: 0 nothing paired, 1 what the stream marks (frames in turn, two views), 2 frames in turn as the person chose;
++ * right_first: the first frame of a pair is the right eye's */
++static void set_stereo3d_pairing(void *data, calldata_t *cd)
++{
++	struct ffmpeg_source *s = data;
++	long request = (long)(calldata_int(cd, "mode") & 3) | (calldata_bool(cd, "right_first") ? 4 : 0);
++	os_atomic_set_long(&s->stereo_request, request);
++	media_playback_set_stereo3d_pairing(s->media, request);
++}
++
+ static bool ffmpeg_source_play_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
+ {
+ 	UNUSED_PARAMETER(id);
+@@ -627,6 +656,10 @@ static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
+ 	proc_handler_add(ph, "void preload_first_frame()", preload_first_frame_proc, s);
+ 	proc_handler_add(ph, "void get_duration(out int duration)", get_duration, s);
+ 	proc_handler_add(ph, "void get_nb_frames(out int num_frames)", get_nb_frames, s);
++	proc_handler_add(ph,
++			 "void get_stereo3d(out int type, out int flags, out int paired, out string stereo_mode)",
++			 get_stereo3d, s);
++	proc_handler_add(ph, "void set_stereo3d_pairing(in int mode, in bool right_first)", set_stereo3d_pairing, s);
+ 
+ 	ffmpeg_source_update(s, settings);
+ 	return s;
+diff --git a/shared/media-playback/CMakeLists.txt b/shared/media-playback/CMakeLists.txt
+index c57a7bc..2c80be5 100644
+--- a/shared/media-playback/CMakeLists.txt
++++ b/shared/media-playback/CMakeLists.txt
+@@ -1,6 +1,9 @@
+ cmake_minimum_required(VERSION 3.28...3.30)
+ 
+ find_package(FFmpeg 8.0 REQUIRED avcodec avdevice avutil avformat)
++# Sparky Stereo OS: two views of an MV-HEVC stream paired by the stereo layer's libstereo-av
++find_package(PkgConfig REQUIRED)
++pkg_check_modules(STEREO_AV REQUIRED IMPORTED_TARGET stereo-av)
+ 
+ add_library(media-playback INTERFACE)
+ add_library(OBS::media-playback ALIAS media-playback)
+@@ -21,4 +24,7 @@ target_sources(
+ 
+ target_include_directories(media-playback INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+ 
+-target_link_libraries(media-playback INTERFACE FFmpeg::avcodec FFmpeg::avdevice FFmpeg::avutil FFmpeg::avformat)
++target_link_libraries(
++  media-playback
++  INTERFACE FFmpeg::avcodec FFmpeg::avdevice FFmpeg::avutil FFmpeg::avformat PkgConfig::STEREO_AV
++)
+diff --git a/shared/media-playback/media-playback/decode.c b/shared/media-playback/media-playback/decode.c
+index fea698a..d1f5420 100644
+--- a/shared/media-playback/media-playback/decode.c
++++ b/shared/media-playback/media-playback/decode.c
+@@ -18,7 +18,10 @@
+ 
+ #include "media-playback.h"
+ #include "media.h"
++#include <libavutil/imgutils.h>
+ #include <libavutil/mastering_display_metadata.h>
++#include <libavutil/stereo3d.h>
++#include <stereo-av.h>
+ 
+ enum AVHWDeviceType hw_priority[] = {
+ 	AV_HWDEVICE_TYPE_CUDA,  AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2,        AV_HWDEVICE_TYPE_VAAPI,
+@@ -65,6 +68,15 @@ static void init_hw_decoder(struct mp_decode *d, AVCodecContext *c)
+ 	}
+ }
+ 
++/* FFmpeg exports the active VPS's view identities while it asks for the format (libstereo-av) */
++static enum AVPixelFormat mp_stereo_get_format(AVCodecContext *c, const enum AVPixelFormat *formats)
++{
++	struct mp_decode *d = c->opaque;
++	if (d && d->stereo_views)
++		stereo_av_pair_configure(d->stereo_views, c);
++	return avcodec_default_get_format(c, formats);
++}
++
+ static int mp_open_codec(struct mp_decode *d, bool hw)
+ {
+ 	AVCodecContext *c;
+@@ -85,6 +97,19 @@ static int mp_open_codec(struct mp_decode *d, bool hw)
+ 	if (hw)
+ 		init_hw_decoder(d, c);
+ 
++	/* An HEVC stream may carry two views (MV-HEVC): the decoder gives both, libstereo-av hands on the base view alone
++	 * until the person's Stereo input filter asks for the pair, so a source without the filter shows what it did. */
++	if (!d->audio && c->codec_id == AV_CODEC_ID_HEVC) {
++		if (!d->stereo_views)
++			d->stereo_views = stereo_av_pair_alloc();
++		if (d->stereo_views && stereo_av_decoder_views(c) >= 0) {
++			c->opaque = d;
++			c->get_format = mp_stereo_get_format;
++		} else {
++			stereo_av_pair_free(&d->stereo_views);
++		}
++	}
++
+ 	if (c->thread_count == 1 && c->codec_id != AV_CODEC_ID_PNG && c->codec_id != AV_CODEC_ID_TIFF &&
+ 	    c->codec_id != AV_CODEC_ID_JPEG2000 && c->codec_id != AV_CODEC_ID_MPEG4 && c->codec_id != AV_CODEC_ID_WEBP)
+ 		c->thread_count = 0;
+@@ -148,9 +173,22 @@ bool mp_decode_init(mp_media_t *m, enum AVMediaType type, bool hw)
+ 	stream = d->stream = m->fmt->streams[ret];
+ 	id = stream->codecpar->codec_id;
+ 
+-	if (type == AVMEDIA_TYPE_VIDEO)
++	if (type == AVMEDIA_TYPE_VIDEO) {
+ 		d->max_luminance = get_max_luminance(stream);
+ 
++		/* the container's mark (Matroska StereoMode, MP4 st3d), for frames that carry none of their own */
++		const AVPacketSideData *sd = av_packet_side_data_get(stream->codecpar->coded_side_data,
++								     stream->codecpar->nb_coded_side_data, AV_PKT_DATA_STEREO3D);
++		const AVStereo3D *s = sd && sd->size >= sizeof(AVStereo3D) ? (const AVStereo3D *)sd->data : NULL;
++		d->stereo_stream_type = s ? (int)s->type : -1;
++		d->stereo_stream_flags = s ? s->flags : 0;
++		const AVDictionaryEntry *tag = av_dict_get(stream->metadata, "stereo_mode", NULL, 0);
++		snprintf(m->stereo_mode_tag, sizeof(m->stereo_mode_tag), "%s", tag ? tag->value : "");
++		os_atomic_set_long(&m->stereo_mark, 0);
++		d->stereo_first = av_frame_alloc();
++		d->stereo_joined = av_frame_alloc();
++	}
++
+ 	if (id == AV_CODEC_ID_VP8 || id == AV_CODEC_ID_VP9) {
+ 		AVDictionaryEntry *tag = NULL;
+ 		tag = av_dict_get(stream->metadata, "alpha_mode", tag, AV_DICT_IGNORE_SUFFIX);
+@@ -240,9 +278,119 @@ void mp_decode_free(struct mp_decode *d)
+ 		av_buffer_unref(&d->hw_ctx);
+ 	}
+ 
++	stereo_av_pair_free(&d->stereo_views);
++	av_frame_free(&d->stereo_first);
++	av_frame_free(&d->stereo_joined);
++
+ 	memset(d, 0, sizeof(*d));
+ }
+ 
++/* One side by side picture of two frames of the same size and format, each copied as it is, the left eye first, dated
++ * as props (frame 0 of the pair); the copy libstereo-av makes of two views of one time (join_views()). */
++static int mp_stereo_join(AVFrame *out, const AVFrame *left, const AVFrame *right, const AVFrame *props)
++{
++	const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(left->format);
++	if (!desc || (desc->flags & (AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_BITSTREAM)) ||
++	    left->width != right->width || left->height != right->height || left->format != right->format ||
++	    left->width > INT_MAX / 2 || left->width % (1 << desc->log2_chroma_w))
++		return AVERROR(EINVAL);
++	av_frame_unref(out);
++	out->format = left->format;
++	out->width = left->width * 2;
++	out->height = left->height;
++	int ret = av_frame_get_buffer(out, 32);
++	if (ret < 0 || (ret = av_frame_copy_props(out, props)) < 0)
++		return ret;
++	int rowsize[4];
++	ptrdiff_t strides[4];
++	size_t sizes[4];
++	if ((ret = av_image_fill_linesizes(rowsize, left->format, left->width)) < 0)
++		return ret;
++	for (int p = 0; p < 4; p++)
++		strides[p] = rowsize[p];
++	if ((ret = av_image_fill_plane_sizes(sizes, left->format, left->height, strides)) < 0)
++		return ret;
++	for (int p = 0; p < 4 && rowsize[p]; p++) {
++		for (size_t y = 0; y < sizes[p] / rowsize[p]; y++) {
++			memcpy(out->data[p] + y * out->linesize[p], left->data[p] + (ptrdiff_t)y * left->linesize[p],
++			       rowsize[p]);
++			memcpy(out->data[p] + y * out->linesize[p] + rowsize[p],
++			       right->data[p] + (ptrdiff_t)y * right->linesize[p], rowsize[p]);
++		}
++	}
++	return 0;
++}
++
++static void mp_stereo_publish(struct mp_decode *d, int type, int flags, int paired)
++{
++	long mark = ((long)(type >= 0 ? type + 1 : 0) & 0xff) | (((long)flags & 0xff) << 8) | ((long)paired << 16);
++	os_atomic_set_long(&d->m->stereo_mark, mark);
++}
++
++/* The mark of the frame decoded, and its pairing as the person's filter asks. Returns true when d->frame is a picture
++ * to hand on, false when it is kept for its pair or dropped. Frames in turn: frame 0 starts a pair and a frame 1
++ * without its frame 0 is dropped while the frames' marks say which they are (current_frame_is_frame0_flag, H.264
++ * D.2.26, H.265 D.3.16; FFmpeg's AVStereo3D.view, VIEW_LEFT for frame 0 whatever the eye order); without such marks
++ * (Matroska's StereoMode 13 and 14, the person's choice) two frames in turn from the first. */
++static bool mp_stereo_frame(struct mp_decode *d)
++{
++	const long request = os_atomic_load_long(&d->m->stereo_request);
++	const int pairing = (int)(request & 3);
++
++	if (d->stereo_views) {
++		int r = stereo_av_pair_frame(d->stereo_views, d->decoder, d->frame, pairing != 0);
++		if (r == 0)
++			return false;
++		if (r < 0) {
++			blog(LOG_WARNING, "MP: the two views of '%s' could not be paired: %s", d->m->path, av_err2str(r));
++			return false;
++		}
++		if (r == 2) {
++			mp_stereo_publish(d, AV_STEREO3D_SIDEBYSIDE, 0, 2);
++			return true;
++		}
++	}
++
++	const AVFrameSideData *sd = av_frame_get_side_data(d->frame, AV_FRAME_DATA_STEREO3D);
++	const AVStereo3D *s = sd && sd->size >= sizeof(AVStereo3D) ? (const AVStereo3D *)sd->data : NULL;
++	const int type = s ? (int)s->type : d->stereo_stream_type;
++	const int flags = s ? s->flags : d->stereo_stream_flags;
++	const int view = s ? (int)s->view : AV_STEREO3D_VIEW_UNSPEC;
++	const bool sequence = type == AV_STEREO3D_FRAMESEQUENCE;
++
++	if (!(pairing == 2 || (pairing == 1 && sequence))) {
++		av_frame_unref(d->stereo_first);
++		mp_stereo_publish(d, type, flags, 0);
++		return true;
++	}
++
++	const bool by_marks = sequence && (view == AV_STEREO3D_VIEW_LEFT || view == AV_STEREO3D_VIEW_RIGHT);
++	const bool first_right = pairing == 2 ? (request & 4) != 0 : (flags & AV_STEREO3D_FLAG_INVERT) != 0;
++	const bool frame0 = by_marks ? view == AV_STEREO3D_VIEW_LEFT : !d->stereo_first->buf[0];
++	if (frame0) {
++		av_frame_unref(d->stereo_first);
++		av_frame_ref(d->stereo_first, d->frame);
++		return false;
++	}
++	if (!d->stereo_first->buf[0])
++		return false;
++
++	const AVFrame *first = d->stereo_first;
++	int ret = mp_stereo_join(d->stereo_joined, first_right ? d->frame : first, first_right ? first : d->frame, first);
++	if (ret >= 0)
++		d->stereo_joined->duration = first->duration > 0 && d->frame->duration > 0
++						     ? first->duration + d->frame->duration
++						     : 0;
++	av_frame_unref(d->stereo_first);
++	if (ret < 0) {
++		blog(LOG_WARNING, "MP: two frames in turn of '%s' could not be paired: %s", d->m->path, av_err2str(ret));
++		return false;
++	}
++	d->frame = d->stereo_joined;
++	mp_stereo_publish(d, sequence ? AV_STEREO3D_FRAMESEQUENCE : type, flags, 1);
++	return true;
++}
++
+ void mp_decode_push_packet(struct mp_decode *decode, AVPacket *packet)
+ {
+ 	deque_push_back(&decode->packets, &packet, sizeof(packet));
+@@ -368,6 +516,8 @@ bool mp_decode_next(struct mp_decode *d)
+ 		}
+ 
+ 		d->frame_ready = !!got_frame;
++		if (d->frame_ready && !d->audio && d->stereo_first && !mp_stereo_frame(d))
++			d->frame_ready = false;
+ 
+ 		if (d->packet_pending) {
+ 			if (d->pkt->size) {
+@@ -386,13 +536,14 @@ bool mp_decode_next(struct mp_decode *d)
+ 	if (d->frame_ready) {
+ 		int64_t last_pts = d->frame_pts;
+ 
+-		if (d->in_frame->best_effort_timestamp == AV_NOPTS_VALUE)
++		/* d->frame: the frame handed on (a pair of views is dated as its frame 0); its properties are in_frame's */
++		if (d->frame->best_effort_timestamp == AV_NOPTS_VALUE)
+ 			d->frame_pts = d->next_pts;
+ 		else
+-			d->frame_pts = av_rescale_q(d->in_frame->best_effort_timestamp, d->stream->time_base,
++			d->frame_pts = av_rescale_q(d->frame->best_effort_timestamp, d->stream->time_base,
+ 						    (AVRational){1, 1000000000});
+ 
+-		int64_t duration = d->in_frame->duration;
++		int64_t duration = d->frame->duration;
+ 		if (!duration)
+ 			duration = get_estimated_duration(d, last_pts);
+ 		else
+@@ -414,6 +565,10 @@ void mp_decode_flush(struct mp_decode *d)
+ {
+ 	avcodec_flush_buffers(d->decoder);
+ 	mp_decode_clear_packets(d);
++	if (d->stereo_first)
++		av_frame_unref(d->stereo_first);
++	if (d->stereo_views)
++		stereo_av_pair_reset(d->stereo_views);
+ 	d->eof = false;
+ 	d->frame_pts = 0;
+ 	d->frame_ready = false;
+diff --git a/shared/media-playback/media-playback/decode.h b/shared/media-playback/media-playback/decode.h
+index 02b1acb..d62c0ff 100644
+--- a/shared/media-playback/media-playback/decode.h
++++ b/shared/media-playback/media-playback/decode.h
+@@ -65,6 +65,16 @@ struct mp_decode {
+ 	AVPacket *pkt;
+ 	bool packet_pending;
+ 	struct deque packets;
++
++	/* Sparky Stereo OS: the views of a stereo stream made into one side by side picture, the left eye first, each
++	 * view at its own size, when the person's Stereo input filter asks (struct mp_media's stereo_request): frames in
++	 * turn (H.264 and H.265 frame packing arrangement type 5; Matroska StereoMode 13 and 14) here, two views of one
++	 * time (MV-HEVC) by the stereo layer's libstereo-av. */
++	struct StereoAVPair *stereo_views;
++	AVFrame *stereo_first;
++	AVFrame *stereo_joined;
++	int stereo_stream_type;
++	int stereo_stream_flags;
+ };
+ 
+ extern bool mp_decode_init(struct mp_media *media, enum AVMediaType type, bool hw);
+diff --git a/shared/media-playback/media-playback/media-playback.c b/shared/media-playback/media-playback/media-playback.c
+index 41ae9d2..01ced04 100644
+--- a/shared/media-playback/media-playback/media-playback.c
++++ b/shared/media-playback/media-playback/media-playback.c
+@@ -131,6 +131,21 @@ void media_playback_seek(media_playback_t *mp, int64_t pos)
+ 		mp_media_seek(&mp->media, pos);
+ }
+ 
++void media_playback_set_stereo3d_pairing(media_playback_t *mp, long request)
++{
++	if (mp && !mp->is_cached)
++		os_atomic_set_long(&mp->media.stereo_request, request);
++}
++
++long media_playback_get_stereo3d(media_playback_t *mp, const char **stereo_mode_tag)
++{
++	*stereo_mode_tag = "";
++	if (!mp || mp->is_cached)
++		return 0;
++	*stereo_mode_tag = mp->media.stereo_mode_tag;
++	return os_atomic_load_long(&mp->media.stereo_mark);
++}
++
+ int64_t media_playback_get_frames(media_playback_t *mp)
+ {
+ 	if (!mp)
+diff --git a/shared/media-playback/media-playback/media-playback.h b/shared/media-playback/media-playback/media-playback.h
+index 812287b..5c2f9fe 100644
+--- a/shared/media-playback/media-playback/media-playback.h
++++ b/shared/media-playback/media-playback/media-playback.h
+@@ -63,3 +63,9 @@ extern int64_t media_playback_get_frames(media_playback_t *mp);
+ extern int64_t media_playback_get_duration(media_playback_t *mp);
+ extern bool media_playback_has_video(media_playback_t *mp);
+ extern bool media_playback_has_audio(media_playback_t *mp);
++
++/* Sparky Stereo OS: what the decoder pairs (struct mp_media's stereo_request) and the mark of the frames it hands on
++ * (its stereo_mark, and Matroska's StereoMode tag); a file decoded whole at its start (a stinger) is not paired and
++ * says no mark. */
++extern void media_playback_set_stereo3d_pairing(media_playback_t *mp, long request);
++extern long media_playback_get_stereo3d(media_playback_t *mp, const char **stereo_mode_tag);
+diff --git a/shared/media-playback/media-playback/media.c b/shared/media-playback/media-playback/media.c
+index 9211fce..b8d9dae 100644
+--- a/shared/media-playback/media-playback/media.c
++++ b/shared/media-playback/media-playback/media.c
+@@ -258,6 +258,8 @@ static bool mp_media_init_scaling(mp_media_t *m)
+ 		return false;
+ 	}
+ 
++	m->stereo_scale_width = m->v.frame->width;
++	m->stereo_scale_height = m->v.frame->height;
+ 	return true;
+ }
+ 
+@@ -400,6 +402,14 @@ void mp_media_next_video(mp_media_t *m, bool preload)
+ 	}
+ 
+ 	bool flip = false;
++	if (m->swscale && (f->width != m->stereo_scale_width || f->height != m->stereo_scale_height)) {
++		/* a pair of views starts or stops (Sparky Stereo OS): the scaler follows the frame's size */
++		sws_freeContext(m->swscale);
++		m->swscale = NULL;
++		av_freep(&m->scale_pic[0]);
++		if (!mp_media_init_scaling(m))
++			return;
++	}
+ 	if (m->swscale) {
+ 		int ret = sws_scale(m->swscale, (const uint8_t *const *)f->data, f->linesize, 0, f->height,
+ 				    m->scale_pic, m->scale_linesizes);
+diff --git a/shared/media-playback/media-playback/media.h b/shared/media-playback/media-playback/media.h
+index 281d4e0..669f57a 100644
+--- a/shared/media-playback/media-playback/media.h
++++ b/shared/media-playback/media-playback/media.h
+@@ -41,6 +41,17 @@ extern "C" {
+ struct mp_media {
+ 	AVFormatContext *fmt;
+ 
++	/* Sparky Stereo OS. stereo_request: what the person's Stereo input filter asks the decoder to pair (bits 0 and 1:
++	 * 0 nothing, 1 what the stream marks, 2 frames in turn; bit 2: the first frame of a pair is the right eye's).
++	 * stereo_mark: the mark of the frames handed on (bits 0 to 7: AVStereo3DType + 1, 0 for none; 8 to 15: its flags;
++	 * 16 and 17: 1 frames in turn paired, 2 two views paired). stereo_mode_tag: Matroska's StereoMode as FFmpeg's
++	 * stream tag, for the two anaglyph values AVStereo3D has no type for (RFC 9559 5.1.4.1.28.3). */
++	volatile long stereo_request;
++	volatile long stereo_mark;
++	char stereo_mode_tag[32];
++	/* the size the scaler was made for: a pair of views is twice as wide as one frame */
++	int stereo_scale_width, stereo_scale_height;
++
+ 	mp_video_cb v_preload_cb;
+ 	mp_video_cb v_seek_cb;
+ 	mp_stop_cb stop_cb;
