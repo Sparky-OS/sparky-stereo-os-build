@@ -3,3 +3,5 @@ The 3D view draws the preview and the rendered model as a stereo pair: two paral
 The separation is the person's depth limits, read from the desktop through libstereo-declare: the largest under which every pixel of the view stays inside them; no separation setting. Without limits both eyes are the same picture and the console says why, once.
 The 3D options are Enable 3D (on by default, for new windows) and a button to Display Settings; the new sentences in the ten languages (translations/openscad-3d-view-stereo.po.patch).
 Build-Depends on libstereo-declare-dev (>= 1.12.2) and Qt's private GUI headers (the window system's handles).
+Closing a window no longer reads a destroyed rubber band (an upstream fault found by memcheck; the window's own event filter and the find panel's are severed in its destructor, as upstream's #7005 does for the docks).
+Depends on fonts-liberation: upstream's default text font, Liberation Sans, comes bundled upstream, and Debian's rules (kept) remove the bundled copy.

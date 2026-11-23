@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 23 Nov 2026 04:56:43 -0300
+Subject: [PATCH] Fix use-after-free of the rubber band when a MainWindow is
+ destroyed
+
+The window installs itself as an event filter on itself and on the find
+panel. rubberBandManager is a member QObject whose parent is the window, so
+its ~QObject, which runs after its QRubberBand member has been destroyed,
+sends ChildRemoved to the window, and MainWindow::eventFilter() then calls
+rubberBandManager.isVisible() on the destroyed rubber band (memcheck:
+"Invalid read of size 1 ... RubberBandManager::isVisible() ... inside a block
+free'd by ~RubberBandManager", closing the window with Ctrl+Q). The find
+panel is deleted later still, by ~QWidget, with the same filter.
+
+Sever both filters in ~MainWindow, as #7005 does for the docks.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ src/gui/MainWindow.cc | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/gui/MainWindow.cc b/src/gui/MainWindow.cc
+index ed5dbf86f..131ecf061 100644
+--- a/src/gui/MainWindow.cc
++++ b/src/gui/MainWindow.cc
+@@ -629,6 +629,13 @@ MainWindow::~MainWindow()
+     dock->disconnect(this);
+     dock->removeEventFilter(this);
+   }
++  // The window filters its own events and the find panel's too. rubberBandManager
++  // is a child QObject of this window, so its ~QObject, which runs after its own
++  // QRubberBand member is destroyed, sends ChildRemoved here, and eventFilter()
++  // would ask that destroyed rubber band whether it is visible; the find panel
++  // is deleted later still, by ~QWidget.
++  removeEventFilter(this);
++  find_panel->removeEventFilter(this);
+ 
+   delete this->geometryWorker;
+ }
