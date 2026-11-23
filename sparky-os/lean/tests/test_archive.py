@@ -768,3 +768,29 @@ def test_a_candidate_one_policy_locks_is_not_asked_to_install_under_the_policy_t
     user3 = deb(tmp_path, 'fw-user', '3', arch='all', depends='firmware (= 1)')
     with pytest.raises(package.Invalid, match='installable without legacy-lock but not under it'):
         context.qualify(user3, [main, legacy])
+
+
+def test_check_link_cli_reauthenticates_retained_view(repository, tmp_path):
+    retained = archive.Archive(repository, tmp_path / 'retained', 'amd64')
+    consumer = deb(tmp_path, 'consumer', depends='chosen (= 2:1.0-3)')
+    command = ['python3', '-m', 'lean.release', 'check-link', '--archive-config', str(repository),
+               '--archive-view', str(retained.base), '--scratch', str(tmp_path / 'fresh'), str(consumer)]
+    env = {**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[2])}
+    run = subprocess.run(command, env=env, capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout + run.stderr
+    proofs = list((tmp_path / 'fresh').glob('link-*/retained-authentication.json'))
+    assert len(proofs) == 1 and json.loads(proofs[0].read_text())['signatures'] > 0
+    index = next(p for p in (retained.base / 'state/lists').iterdir() if 'Packages' in p.name)
+    original = index.read_bytes()
+    index.unlink()  # A local test archive may expose Packages as a symlink.
+    index.write_bytes(original + b'altered')
+    run = subprocess.run(command, env=env, capture_output=True, text=True)
+    assert run.returncode != 0 and 'retained archive metadata differs' in run.stdout + run.stderr
+
+
+def test_retained_view_does_not_allow_candidate_regression(repository, tmp_path):
+    retained = archive.Archive(repository, tmp_path / 'retained', 'amd64')
+    consumer = deb(tmp_path, 'consumer', depends='missing-provider')
+    with pytest.raises(package.Invalid, match='solve failed'):
+        release.check_link([consumer], archive_config=repository, scratch=tmp_path / 'fresh',
+                           archive_view=retained.base)

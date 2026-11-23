@@ -63,9 +63,12 @@ check_inst_remv() {
 # nothing was unpacked, or when something unlisted was removed.
 check_real_log() {
 	local f=$1 allow=$2 what=$3 n_unp n_rem
-	n_unp=$(grep -c '^Unpacking ' "$f"); n_rem=$(grep -c '^Removing ' "$f")
+	n_unp=$(grep -c '^Unpacking ' "$f")
 	[ "$n_unp" -gt 0 ] || fail "$what: no 'Unpacking' line in $f: nothing was installed, so the run proves nothing"
-	awk '/^Removing /{print $2}' "$f" | sed 's/:[a-z0-9]*$//' | sort -u >$O/.removals
+	# dpkg-divert prints a removal of a diversion, not a package. Keep every
+	# other Removing line subject to the package allow-list.
+	awk '/^Removing \047diversion of \/.* to \/.* by [a-z0-9][a-z0-9+.-]*\047$/{next} /^Removing /{print $2}' "$f" | sed 's/:[a-z0-9]*$//' | sort -u >$O/.removals
+	n_rem=$(wc -l <$O/.removals)
 	_removals $O/.removals "$allow" "$what" || fail "$what: apt removed packages that are not in the allowed list"
 	pass "$what: $n_unp unpacked, $n_rem removed (all allowed)"
 }

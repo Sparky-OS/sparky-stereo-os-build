@@ -1,0 +1,39 @@
+--- a/debian/control
++++ b/debian/control
+@@ -3 +3,2 @@
+-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
++Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++XSBC-Original-Maintainer: Debian Qt/KDE Maintainers
+@@ -42,7 +43,7 @@
+                qt6-base-private-dev (>= 6.10.0~),
+                qt6-tools-dev (>= 6.5.0~),
+ Standards-Version: 4.7.4
+-Homepage: https://invent.kde.org/frameworks/kio
++Homepage: https://sparkylinux.org
+ Vcs-Browser: https://salsa.debian.org/qt-kde-team/kde/kf6-kio
+ Vcs-Git: https://salsa.debian.org/qt-kde-team/kde/kf6-kio.git
+ 
+@@ -131,6 +132,7 @@
+ 
+ Package: libkf6kiogui6
+ Architecture: any
++Breaks: sparky-stereo-graphics (<< 0.2.9~)
+ Depends: ${misc:Depends},
+          ${shlibs:Depends},
+ Multi-Arch: same
+--- a/debian/copyright
++++ b/debian/copyright
+@@ -859,3 +859,13 @@
+  WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  General Public License for more details.
++
++Files: debian/*
++Comment: Sparky Stereo OS packaging. Sparky Stereo OS, an edition of
++ SparkyLinux (https://sparkylinux.org), created by Paweł "pavroo" Pijanowski
++ and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>.
++Copyright: 2026 Paweł "pavroo" Pijanowski
++           2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
++License: GPL-2+
++ On Debian systems the full text of the GNU General Public License version 2
++ is in /usr/share/common-licenses/GPL-2.

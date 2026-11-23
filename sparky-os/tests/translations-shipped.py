@@ -64,6 +64,7 @@ SOURCES = {
     'kf6-kfilemetadata-stereo3d.po.patch': ('kf6-kfilemetadata', None),
     'kf6-kfilemetadata-order46b.po.patch': ('kf6-kfilemetadata', None),
     'kf6-kio-gpu-launch.po.patch': ('kf6-kio', None),
+    'kf6-kio-order46b.po.patch': ('kf6-kio', None),
     'kicad-3d-viewer-stereo.po.patch': ('kicad', 'kicad'),
     'openscad-3d-view-stereo.po.patch': ('openscad', 'openscad', 'usr/share/openscad/locale'),
     'kinfocenter-stereo3d.po.patch': ('kinfocenter', None),

@@ -1,0 +1,150 @@
+Description: Guard local generation against partial downloads and changing files
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, partner/kio-thumbnails-safe
+ Audited net production changes through d640934; inherited fixes consolidated.
+Forwarded: no
+Last-Update: 2026-10-07
+
+--- a/src/gui/filepreviewjob.cpp
++++ b/src/gui/filepreviewjob.cpp
+@@ -43,6 +43,7 @@
+ 
+ #include <QCoreApplication>
+ #include <QCryptographicHash>
++#include <QFileInfo>
+ #include <QFutureWatcher>
+ #include <QJsonArray>
+ #include <QMimeDatabase>
+@@ -106,6 +107,21 @@
+     , m_cacheSize(0)
+     , m_preview(QImage())
+ {
++}
++
++bool FilePreviewJob::isPartialFile(const QFileInfo &file)
++{
++    const QStringList patterns = QMimeDatabase().mimeTypeForName(u"application/x-partial-download"_s).globPatterns();
++    for (const QString &pattern : patterns) {
++        if (!pattern.startsWith(QLatin1Char('*'))) {
++            continue;
++        }
++        const QString suffix = pattern.mid(1);
++        if (!suffix.isEmpty() && (file.fileName().endsWith(suffix) || QFileInfo::exists(file.absoluteFilePath() + suffix))) {
++            return true;
++        }
++    }
++    return false;
+ }
+ 
+ FilePreviewJob::~FilePreviewJob()
+@@ -349,7 +365,29 @@
+         }
+     }
+ 
+-    bool pluginHandlesSequences = m_plugin.value(QStringLiteral("HandleSequences"), false);
++    const QString localPath = m_fileItem.localPath();
++    const QFileInfo localFileInfo(localPath);
++    if (!localPath.isEmpty() && localFileInfo.isFile()) {
++        if (isPartialFile(localFileInfo)) {
++            emitResult();
++            return;
++        }
++        m_partialFileSize = localFileInfo.size();
++        m_partialFileMTime = localFileInfo.lastModified();
++        m_partialFileStabilityTimer = new QTimer(this);
++        m_partialFileStabilityTimer->setSingleShot(true);
++        connect(m_partialFileStabilityTimer, &QTimer::timeout, this, &FilePreviewJob::slotPartialFileStabilityTimeout);
++        connect(this, &KJob::finished, m_partialFileStabilityTimer, &QTimer::stop);
++        m_partialFileStabilityTimer->start(m_partialFileStabilityInterval);
++        return;
++    }
++
++    finishStatFile();
++}
++
++void FilePreviewJob::finishStatFile()
++{
++    const bool pluginHandlesSequences = m_plugin.value(QStringLiteral("HandleSequences"), false);
+     if (!m_plugin.value(QStringLiteral("CacheThumbnail"), true) || (m_options.sequenceIndex && pluginHandlesSequences) || m_thumbPath.isEmpty()) {
+         // This preview will not be cached, no need to look for a saved thumbnail
+         // Just create it, and be done
+@@ -357,6 +395,11 @@
+         return;
+     }
+ 
++    lookupCachedThumbnail();
++}
++
++void FilePreviewJob::lookupCachedThumbnail()
++{
+     auto watcher = new QFutureWatcher<QImage>(this);
+     connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher]() {
+         watcher->deleteLater();
+@@ -403,6 +446,19 @@
+         }
+     }
+     return true;
++}
++
++void FilePreviewJob::slotPartialFileStabilityTimeout()
++{
++    const QFileInfo info(m_fileItem.localPath());
++    const qulonglong size = static_cast<qulonglong>(info.size());
++    const QDateTime mtime = info.lastModified();
++    if (!info.isFile() || isPartialFile(info) || m_partialFileSize != size || m_partialFileMTime != mtime) {
++        emitResult();
++        return;
++    }
++
++    finishStatFile();
+ }
+ 
+ void FilePreviewJob::getOrCreateThumbnail()
+--- a/src/gui/filepreviewjob.h
++++ b/src/gui/filepreviewjob.h
+@@ -119,6 +119,7 @@
+ 
+ private Q_SLOTS:
+     void slotStatFile(KJob *job);
++    void slotPartialFileStabilityTimeout();
+     void slotGetOrCreateThumbnail(KJob *job);
+     void slotTimeout();
+ 
+@@ -168,6 +169,11 @@
+     // The preview image. If when emitting return this is empty, job can be considered as failed.
+     QImage m_preview;
+ 
++    QTimer *m_partialFileStabilityTimer = nullptr;
++    int m_partialFileStabilityInterval = 100;
++    qulonglong m_partialFileSize = 0;
++    QDateTime m_partialFileMTime;
++
+     bool m_standardThumbnailer = false;
+     KPluginMetaData m_plugin;
+ 
+@@ -178,10 +184,13 @@
+     QPointer<KIO::StandardThumbnailJob> m_standardThumbnailJob = nullptr;
+ 
+     void getOrCreateThumbnail();
++    static bool isPartialFile(const QFileInfo &file);
+     bool isCacheValid(const QImage &thumb);
+     void createThumbnail(const QString &);
+     void createThumbnailViaFuse(const QUrl &, const QUrl &);
+     void createThumbnailViaLocalCopy(const QUrl &);
++    void finishStatFile();
++    void lookupCachedThumbnail();
+ 
+     void emitPreview(const QImage &thumb);
+     void slotThumbData(KIO::Job *, const QByteArray &);
+@@ -193,10 +202,7 @@
+     static void saveThumbnailToCache(const QImage &thumb, const QString &path);
+ };
+ 
+-inline FilePreviewJob *filePreviewJob(const KFileItem &fileItem,
+-                                      int parentDirDeviceId,
+-                                      const PreviewOptions &options,
+-                                      const PreviewSetupData &setupData)
++inline FilePreviewJob *filePreviewJob(const KFileItem &fileItem, int parentDirDeviceId, const PreviewOptions &options, const PreviewSetupData &setupData)
+ {
+     auto job = new FilePreviewJob(fileItem, parentDirDeviceId, options, setupData);
+     return job;

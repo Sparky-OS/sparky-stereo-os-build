@@ -1,0 +1,99 @@
+{
+  "source": "kf6-kio",
+  "version": "6.32.0-1+stereo3d1",
+  "debian_descriptor": "kf6-kio_6.32.0-1.dsc",
+  "debian_descriptor_sha256": "33deb378cf88fd0012d9e5da9f2d87c83deab6e9d272132c41a8e85bf97eabab",
+  "published_descriptor": "kf6-kio_6.30.0-1+stereo3d11+lc1.dsc",
+  "published_descriptor_sha256": "6e93b24cd42cae77eff14fe26bb89bf35a19fe8187039239a149bc80c4d9ad90",
+  "patches": [
+    {
+      "name": "report_error_removing_dirs",
+      "published_sha256": "cd0c1b64d958a93c5e60d4742f7b58d69ca81e09f272571a4b84f96bc8868a60",
+      "fate": "rebased: completion moved from setNextDirAttribute to deleteNextDir after upstream flush; new upstream edited-source test expects the preserved rmdir error and still checks flush, retained file, warning and undo",
+      "replacement": "report_error_removing_dirs.patch",
+      "replacement_sha256": "79ee1336d02ca1d06475f34e83849304ae45fbdd2fa1640cb97632ec656f3950"
+    },
+    {
+      "name": "hurd_disable_unimplemented.diff",
+      "published_sha256": "0d76578b046a01a8565f8cd2b0d7bfb6255ef67cf06fc91a4c2415832a50b1dc",
+      "fate": "Debian retained"
+    },
+    {
+      "name": "Use-CXX_FLAGS-for-moc_predefs.h.patch",
+      "published_sha256": "7841bdc282d939fa410958d554d9836bdcac3032ee531aa32879dea931088a84",
+      "fate": "Debian retained"
+    },
+    {
+      "name": "download-safe-generation.patch",
+      "published_sha256": "59c2944c542424730c5c851ff5c24d7c204b2638480eeb955887ea4b8cf2eef6",
+      "fate": "rebased: keep upstream destructor download cancellation beside partial-file helper",
+      "replacement": "download-safe-generation.patch",
+      "replacement_sha256": "e2a0ab7efa146df4d49f40f806746df1264162fac7c2cdf680e41c874a4f882b"
+    },
+    {
+      "name": "download-safe-preview-tests.patch",
+      "published_sha256": "704fb17462b996677a621a73e1d44e085e02a1e9dd021d8fac8a08b747710905",
+      "fate": "rebased: retain new upstream download/cache tests and merge test fixture registration",
+      "replacement": "download-safe-preview-tests.patch",
+      "replacement_sha256": "267a7329331365137a0a4631a482ebc43aaa095f993f9f0c2b576765301a56b6"
+    },
+    {
+      "name": "recent-thumbnail-sources.patch",
+      "published_sha256": "19c75dbf6d8d363ebe6adb67761ae86e6b9e55898cdacdf7c7aab792f3ab84f0",
+      "fate": "rebased: retain upstream cleanup helpers after the unchanged five-second constant",
+      "replacement": "recent-thumbnail-sources.patch",
+      "replacement_sha256": "13e98eea815641c9e86e4b2a01836128768fa295629d28c4f39d49766fb734c5"
+    },
+    {
+      "name": "stereo-thumbnails.patch",
+      "published_sha256": "13de706c3b0d21ea5918b7e5580d4b9ab7120e69972559029aa004178c486b55",
+      "fate": "carried unchanged"
+    },
+    {
+      "name": "thumbnailer-precedence.patch",
+      "published_sha256": "e6a220ab72f21e2e97c02d113c4e3074ae297ea3706c76d44a09aaa091a1bdbf",
+      "fate": "rebased tests only: preserve upstream cache test declarations and existing JSON include",
+      "replacement": "thumbnailer-precedence.patch",
+      "replacement_sha256": "ef3d0598530a97d533b473b3b23e59cd48ab7bb2748cdfb5dc6712da266fe471"
+    },
+    {
+      "name": "EDITION-ONLY-run-applications-on-the-GPU-of-the-graphics-settings.patch",
+      "published_sha256": "cd69f120a1b90c8d771daa8de2a92db4067fa441339b36a31c62ae6ed2c06817",
+      "fate": "carried unchanged"
+    },
+    {
+      "name": "EDITION-ONLY-start-activatable-applications-on-their-GPU.patch",
+      "published_sha256": "4e02304a1c3cc6f42abea4a028ae3888d300897cd5271ed208b9f3b6c52a97de",
+      "fate": "rebased: preserve upstream knownMimeType argument beside GPU environment initialization",
+      "replacement": "EDITION-ONLY-start-activatable-applications-on-their-GPU.patch",
+      "replacement_sha256": "cee35682b5f81b6e29ff45870eed46b8adf7281e15e50c07fd45384c0ecd3262"
+    },
+    {
+      "name": "EDITION-ONLY-start-no-application-whose-GPU-cannot-be-applied.patch",
+      "published_sha256": "295613f7bf8676c6580f32f837c36ffdd6adfb8a37fda16ece313d9f289c3cfe",
+      "fate": "carried unchanged"
+    },
+    {
+      "name": "kf6-kio-gpu-launch.po.patch",
+      "published_sha256": "808024af32c66338e61ccbd381700f63a6b139c695a2626f7b60e28b434676ad",
+      "fate": "rebased catalogue anchors only; all published message bytes retained",
+      "replacement": "kf6-kio-gpu-launch.po.patch",
+      "replacement_sha256": "ac0165c7b45715d67d9aaddcb2e64c2b7f4eb6c539ce399f3472ad664bbb688b"
+    },
+    {
+      "name": "EDITION-ONLY-resolve-painting-for-entries-with-a-GPU-key.patch",
+      "published_sha256": "a9acd85829f289f623176fe2057b95d48ad162878c3c6ebeea320de87d46b943",
+      "fate": "carried unchanged"
+    }
+  ],
+  "packaging_patch": "packaging.patch",
+  "carry_debian_paths": [
+    "debian/sparky-lean-preserve.json"
+  ],
+  "additional_catalogues": [
+    {
+      "path": "translations/kf6-kio-order46b.po.patch",
+      "sha256": "49cbbcae5d2d2c14991be10b7238f648c7b8a529547988ccf4a8072a277ce99a"
+    }
+  ]
+}

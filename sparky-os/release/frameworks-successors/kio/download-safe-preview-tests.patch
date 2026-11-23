@@ -1,0 +1,423 @@
+Description: Exercise public preview signals, real thumbnail generation and completion
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, partner/kio-thumbnails-safe
+ Audited net test changes through 94433c7; inherited weak fixtures replaced.
+Forwarded: no
+Last-Update: 2026-10-07
+
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -138,6 +138,13 @@
+     ${CMAKE_SOURCE_DIR}/src/gui/standardthumbnailjob.cpp
+     ${CMAKE_SOURCE_DIR}/src/gui/standardthumbnailjob_p.h
+   )
++
++  add_executable(filepreviewjobtestthumbnailer filepreviewjobtestthumbnailer.cpp)
++  target_link_libraries(filepreviewjobtestthumbnailer Qt6::Gui)
++  target_compile_definitions(filepreviewjobtest PRIVATE TEST_THUMBNAILER_PATH="$<TARGET_FILE:filepreviewjobtestthumbnailer>")
++  add_dependencies(filepreviewjobtest filepreviewjobtestthumbnailer)
++  set_tests_properties(kiogui-filepreviewjobtest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
++
+ 
+   # disable some tests that fail on Windows ATM
+   if (NOT WIN32)
+--- a/autotests/filepreviewjobtest.cpp
++++ b/autotests/filepreviewjobtest.cpp
+@@ -23,6 +23,8 @@
+ #include <QFile>
+ #include <QFileInfo>
+ #include <QImage>
++#include <QMimeDatabase>
++#include <QPixmap>
+ #include <QJsonObject>
+ #include <QProcess>
+ #include <QScopeGuard>
+@@ -34,13 +36,14 @@
+ #include <QTest>
+ #include <QThread>
+ #include <QTimer>
++#include <functional>
+ 
+ #include <sys/stat.h>
+ #ifndef Q_OS_WIN
+ #include <unistd.h>
+ #endif
+ 
+-QTEST_GUILESS_MAIN(FilePreviewJobTest)
++QTEST_MAIN(FilePreviewJobTest)
+ 
+ using namespace KIO;
+ 
+@@ -136,6 +139,15 @@
+ void FilePreviewJobTest::initTestCase()
+ {
+     QStandardPaths::setTestModeEnabled(true);
++    const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/thumbnailers");
++    QVERIFY(QDir().mkpath(dataDir));
++    m_thumbnailerPath = dataDir + QStringLiteral("/kiotest.thumbnailer");
++    QFile thumbnailer(m_thumbnailerPath);
++    QVERIFY(thumbnailer.open(QIODevice::WriteOnly));
++    const QByteArray contents =
++        QByteArray("[Thumbnailer Entry]\nExec=\"") + TEST_THUMBNAILER_PATH + "\" %i %o\nMimeType=image/png;application/x-partial-download;\n";
++    QCOMPARE(thumbnailer.write(contents), contents.size());
++
+     // The worker keeps only a weak pointer to its factory.
+     static const auto factory = std::make_shared<DownloadWorkerFactory>();
+     KIO::Worker::setTestWorkerFactory(factory);
+@@ -900,3 +912,312 @@
+     QVERIFY(QFileInfo::exists(otherFolder + QStringLiteral("/leftover.mp4.part")));
+ }
+ #endif
++
++
++void FilePreviewJobTest::cleanupTestCase()
++{
++    QVERIFY(QFile::remove(m_thumbnailerPath));
++}
++
++namespace
++{
++class TestPreviewJob : public PreviewJob
++{
++public:
++    TestPreviewJob(const KFileItem &item, const std::function<void(FilePreviewJob *)> &configure = {})
++        : PreviewJob({item}, QSize(256, 256), &plugins)
++        , m_configure(configure)
++    {
++        setAutoDelete(false);
++    }
++
++    QPointer<FilePreviewJob> fileJob;
++
++protected:
++    bool addSubjob(KJob *job) override
++    {
++        if (auto *preview = qobject_cast<FilePreviewJob *>(job)) {
++            fileJob = preview;
++            if (m_configure) {
++                m_configure(preview);
++            }
++        }
++        return PreviewJob::addSubjob(job);
++    }
++
++private:
++    static inline const QStringList plugins{QStringLiteral("kiotest")};
++    const std::function<void(FilePreviewJob *)> m_configure;
++};
++
++KFileItem previewItem(const QString &path)
++{
++    KFileItem item(QUrl::fromLocalFile(path));
++    item.determineMimeType();
++    return item;
++}
++
++QString thumbnailPath(const KFileItem &item)
++{
++    return ThumbnailCache::filePath(cacheUri(item), ThumbnailCache::rootPath(), QSize(256, 256), 1.0);
++}
++
++bool writeImage(const QString &path, Qt::GlobalColor color)
++{
++    QImage image(16, 16, QImage::Format_ARGB32);
++    image.fill(color);
++    return image.save(path, "PNG");
++}
++}
++
++void FilePreviewJobTest::testPartialFileSidecar_data()
++{
++    QTest::addColumn<QString>("suffix");
++    QTest::addColumn<bool>("self");
++    const QStringList patterns = QMimeDatabase().mimeTypeForName(QStringLiteral("application/x-partial-download")).globPatterns();
++    QVERIFY(!patterns.isEmpty());
++    for (const QString &pattern : patterns) {
++        QVERIFY(pattern.startsWith(QLatin1Char('*')));
++        QTest::newRow(qPrintable(pattern)) << pattern.mid(1) << false;
++        QTest::newRow(qPrintable(pattern + QStringLiteral("-self"))) << pattern.mid(1) << true;
++    }
++}
++
++void FilePreviewJobTest::testPartialFileSidecar()
++{
++    QFETCH(QString, suffix);
++    QFETCH(bool, self);
++    QTemporaryDir dir;
++    QVERIFY(dir.isValid());
++    const QString finalPath = dir.filePath(QStringLiteral("image.png"));
++    const QString path = self ? finalPath + suffix : finalPath;
++    QVERIFY(writeImage(path, Qt::red));
++    QFile sidecar(path + suffix);
++    if (!self) {
++        QVERIFY(sidecar.open(QIODevice::WriteOnly));
++        sidecar.close();
++    }
++    const KFileItem item = previewItem(path);
++    TestPreviewJob job(item);
++    QSignalSpy failed(&job, &PreviewJob::failed);
++    QSignalSpy preview(&job, &PreviewJob::gotPreview);
++    QSignalSpy result(&job, &KJob::result);
++    QTRY_COMPARE(result.count(), 1);
++    QCOMPARE(failed.count(), 1);
++    QCOMPARE(qvariant_cast<KFileItem>(failed.at(0).at(0)).url(), item.url());
++    QCOMPARE(preview.count(), 0);
++    QVERIFY(!QFileInfo::exists(thumbnailPath(item)));
++    QVERIFY(!QDir(ThumbnailCache::rootPath() + QStringLiteral("/fail")).exists());
++
++    if (self) {
++        QVERIFY(QFile::rename(path, finalPath));
++    } else {
++        QVERIFY(sidecar.remove());
++    }
++    QVERIFY(writeImage(finalPath, Qt::green));
++    const KFileItem complete = previewItem(finalPath);
++    TestPreviewJob retry(complete);
++    QSignalSpy retryFailed(&retry, &PreviewJob::failed);
++    QSignalSpy retryPreview(&retry, &PreviewJob::gotPreview);
++    QSignalSpy retryResult(&retry, &KJob::result);
++    QTRY_COMPARE(retryResult.count(), 1);
++    QCOMPARE(retryFailed.count(), 0);
++    QCOMPARE(retryPreview.count(), 1);
++    QCOMPARE(qvariant_cast<QPixmap>(retryPreview.at(0).at(1)).toImage().pixelColor(0, 0), QColor(Qt::green));
++    QTRY_VERIFY(!cachedThumbnailFor(complete, QSize(256, 256)).isNull());
++    const QImage cached(thumbnailPath(complete));
++    QCOMPARE(cached.pixelColor(0, 0), QColor(Qt::green));
++    QCOMPARE(cached.text(QStringLiteral("Thumb::URI")), QString::fromUtf8(cacheUri(complete)));
++    QCOMPARE(cached.text(QStringLiteral("Thumb::Size")), QString::number(complete.size()));
++    QCOMPARE(cached.text(QStringLiteral("Thumb::MTime")), QString::number(complete.time(KFileItem::ModificationTime).toSecsSinceEpoch()));
++}
++
++void FilePreviewJobTest::testGenerationPaths_data()
++{
++    QTest::addColumn<bool>("cache");
++    QTest::addColumn<int>("sequence");
++    QTest::addColumn<int>("scaleType");
++    QTest::newRow("cached") << true << 0 << int(PreviewJob::ScaledAndCached);
++    QTest::newRow("uncached-plugin") << false << 0 << int(PreviewJob::ScaledAndCached);
++    QTest::newRow("sequence") << true << 1 << int(PreviewJob::ScaledAndCached);
++    QTest::newRow("scaled-only") << true << 0 << int(PreviewJob::Scaled);
++}
++
++void FilePreviewJobTest::testGenerationPaths()
++{
++    QFETCH(bool, cache);
++    QFETCH(int, sequence);
++    QFETCH(int, scaleType);
++    QTemporaryDir dir;
++    QVERIFY(dir.isValid());
++    const QString path = dir.filePath(QStringLiteral("image.png"));
++    QVERIFY(writeImage(path, Qt::red));
++    const KFileItem item = previewItem(path);
++    const auto plugins = FilePreviewJob::standardThumbnailers();
++    const auto it = std::find_if(plugins.cbegin(), plugins.cend(), [](const KPluginMetaData &plugin) {
++        return plugin.pluginId() == QStringLiteral("kiotest");
++    });
++    QVERIFY(it != plugins.cend());
++    QJsonObject metadata = it->rawData();
++    metadata.insert(QStringLiteral("CacheThumbnail"), cache);
++    metadata.insert(QStringLiteral("HandleSequences"), true);
++    PreviewSetupData setup;
++    setup.thumbRoot = ThumbnailCache::rootPath();
++    struct stat sourceStat;
++    QVERIFY(::stat(QFile::encodeName(path).constData(), &sourceStat) == 0);
++    setup.thumbRootDeviceId = sourceStat.st_dev;
++    setup.pluginByMimeTable.insert(item.mimetype(), KPluginMetaData(metadata, it->fileName()));
++    PreviewOptions options;
++    options.size = QSize(256, 256);
++    options.sequenceIndex = sequence;
++    options.scaleType = static_cast<PreviewJob::ScaleType>(scaleType);
++    writeCachedThumbnail(item.url(), options.size, 1.0, 0, item.size());
++    QFile cacheFile(thumbnailPath(item));
++    QVERIFY(cacheFile.open(QIODevice::ReadOnly));
++    const QByteArray oldCache = cacheFile.readAll();
++    cacheFile.close();
++    FilePreviewJob blocked(item, sourceStat.st_dev, options, setup);
++    blocked.setAutoDelete(false);
++    blocked.m_currentDeviceCachePolicy = FilePreviewJob::Allow;
++    QFile sidecar(path + QStringLiteral(".part"));
++    QVERIFY(sidecar.open(QIODevice::WriteOnly));
++    sidecar.close();
++    QSignalSpy blockedResult(&blocked, &KJob::result);
++    blocked.start();
++    QTRY_COMPARE(blockedResult.count(), 1);
++    QVERIFY(blocked.previewImage().isNull());
++    QVERIFY(cacheFile.open(QIODevice::ReadOnly));
++    QCOMPARE(cacheFile.readAll(), oldCache);
++    cacheFile.close();
++
++    QVERIFY(sidecar.remove());
++    FilePreviewJob stable(item, sourceStat.st_dev, options, setup);
++    stable.setAutoDelete(false);
++    stable.m_currentDeviceCachePolicy = FilePreviewJob::Allow;
++    stable.m_partialFileStabilityInterval = 0;
++    QSignalSpy stableResult(&stable, &KJob::result);
++    stable.start();
++    QTRY_COMPARE(stableResult.count(), 1);
++    QVERIFY(!stable.previewImage().isNull());
++    QCOMPARE(stable.previewImage().pixelColor(0, 0), QColor(Qt::red));
++}
++
++void FilePreviewJobTest::testChangingSource_data()
++{
++    QTest::addColumn<QString>("change");
++    QTest::newRow("size") << QStringLiteral("size");
++    QTest::newRow("mtime-only") << QStringLiteral("mtime");
++    QTest::newRow("sidecar-appears") << QStringLiteral("sidecar");
++    QTest::newRow("removed") << QStringLiteral("removed");
++}
++
++void FilePreviewJobTest::testChangingSource()
++{
++    QFETCH(QString, change);
++    QTemporaryDir dir;
++    QVERIFY(dir.isValid());
++    const QString path = dir.filePath(QStringLiteral("image.png"));
++    QVERIFY(writeImage(path, Qt::red));
++    const KFileItem item = previewItem(path);
++    TestPreviewJob job(item, [](FilePreviewJob *fileJob) {
++        fileJob->m_partialFileStabilityInterval = 1000;
++    });
++    QSignalSpy failed(&job, &PreviewJob::failed);
++    QSignalSpy preview(&job, &PreviewJob::gotPreview);
++    QSignalSpy result(&job, &KJob::result);
++    QTRY_VERIFY(job.fileJob && job.fileJob->m_partialFileStabilityTimer && job.fileJob->m_partialFileStabilityTimer->isActive());
++    if (change == QStringLiteral("removed")) {
++        QVERIFY(QFile::remove(path));
++    } else if (change == QStringLiteral("sidecar")) {
++        QFile sidecar(path + QStringLiteral(".part"));
++        QVERIFY(sidecar.open(QIODevice::WriteOnly));
++    } else {
++        QFile file(path);
++        QVERIFY(file.open(QIODevice::ReadWrite));
++        if (change == QStringLiteral("size")) {
++            QVERIFY(file.seek(file.size()));
++            QCOMPARE(file.write("more"), 4);
++            QVERIFY(file.flush());
++        } else {
++            QVERIFY(file.setFileTime(QFileInfo(path).lastModified().addSecs(2), QFileDevice::FileModificationTime));
++        }
++    }
++    job.fileJob->m_partialFileStabilityTimer->start(0);
++    QTRY_COMPARE(result.count(), 1);
++    QCOMPARE(failed.count(), 1);
++    QCOMPARE(preview.count(), 0);
++    QVERIFY(!QFileInfo::exists(thumbnailPath(item)));
++    if (change == QStringLiteral("sidecar")) {
++        QVERIFY(QFile::remove(path + QStringLiteral(".part")));
++    }
++    QVERIFY(writeImage(path, Qt::green));
++    const KFileItem complete = previewItem(path);
++    TestPreviewJob retry(complete);
++    QSignalSpy retryPreview(&retry, &PreviewJob::gotPreview);
++    QSignalSpy retryFailed(&retry, &PreviewJob::failed);
++    QSignalSpy retryResult(&retry, &KJob::result);
++    QTRY_COMPARE(retryResult.count(), 1);
++    QCOMPARE(retryFailed.count(), 0);
++    QCOMPARE(retryPreview.count(), 1);
++    QTRY_VERIFY(!cachedThumbnailFor(complete, QSize(256, 256)).isNull());
++    QCOMPARE(QImage(thumbnailPath(complete)).pixelColor(0, 0), QColor(Qt::green));
++}
++
++void FilePreviewJobTest::testUnrelatedPreview()
++{
++    QTemporaryDir dir;
++    QVERIFY(dir.isValid());
++    const QString growingPath = dir.filePath(QStringLiteral("growing.png"));
++    const QString stablePath = dir.filePath(QStringLiteral("stable.png"));
++    QVERIFY(writeImage(growingPath, Qt::red));
++    QVERIFY(writeImage(stablePath, Qt::blue));
++    TestPreviewJob waiting(previewItem(growingPath), [](FilePreviewJob *fileJob) {
++        fileJob->m_partialFileStabilityInterval = 4000;
++    });
++    QSignalSpy waitingResult(&waiting, &KJob::result);
++    QTRY_VERIFY(waiting.fileJob && waiting.fileJob->m_partialFileStabilityTimer && waiting.fileJob->m_partialFileStabilityTimer->isActive());
++    TestPreviewJob unrelated(previewItem(stablePath), [](FilePreviewJob *fileJob) {
++        fileJob->m_partialFileStabilityInterval = 0;
++    });
++    QSignalSpy preview(&unrelated, &PreviewJob::gotPreview);
++    QSignalSpy result(&unrelated, &KJob::result);
++    QTRY_COMPARE(result.count(), 1);
++    QCOMPARE(preview.count(), 1);
++    QCOMPARE(waitingResult.count(), 0);
++    QVERIFY(waiting.fileJob->m_partialFileStabilityTimer->isActive());
++    QFile file(growingPath);
++    QVERIFY(file.open(QIODevice::Append));
++    QCOMPARE(file.write("more"), 4);
++    file.close();
++    QSignalSpy failed(&waiting, &PreviewJob::failed);
++    waiting.fileJob->m_partialFileStabilityTimer->start(0);
++    QTRY_COMPARE(waitingResult.count(), 1);
++    QCOMPARE(failed.count(), 1);
++}
++
++void FilePreviewJobTest::testCacheHitWithSidecar()
++{
++    QTemporaryDir dir;
++    QVERIFY(dir.isValid());
++    const QString path = dir.filePath(QStringLiteral("image.png"));
++    QVERIFY(writeImage(path, Qt::red));
++    const KFileItem item = previewItem(path);
++    writeCachedThumbnail(item.url(), QSize(256, 256), 1.0, item.time(KFileItem::ModificationTime).toSecsSinceEpoch(), item.size());
++    QFile cache(thumbnailPath(item));
++    QVERIFY(cache.open(QIODevice::ReadOnly));
++    const QByteArray contents = cache.readAll();
++    cache.close();
++    QFile sidecar(path + QStringLiteral(".part"));
++    QVERIFY(sidecar.open(QIODevice::WriteOnly));
++    TestPreviewJob job(item);
++    QSignalSpy preview(&job, &PreviewJob::gotPreview);
++    QSignalSpy failed(&job, &PreviewJob::failed);
++    QSignalSpy result(&job, &KJob::result);
++    QTRY_COMPARE(result.count(), 1);
++    QCOMPARE(preview.count(), 1);
++    QCOMPARE(failed.count(), 0);
++    QVERIFY(!job.fileJob);
++    QCOMPARE(qvariant_cast<QPixmap>(preview.at(0).at(1)).toImage().pixelColor(0, 0), QColor(Qt::blue));
++    QVERIFY(cache.open(QIODevice::ReadOnly));
++    QCOMPARE(cache.readAll(), contents);
++}
+--- a/autotests/filepreviewjobtest.h
++++ b/autotests/filepreviewjobtest.h
+@@ -14,8 +14,20 @@
+ {
+     Q_OBJECT
+ 
++private:
++    QString m_thumbnailerPath;
++
+ private Q_SLOTS:
+     void initTestCase();
++    void cleanupTestCase();
++    void testPartialFileSidecar_data();
++    void testPartialFileSidecar();
++    void testGenerationPaths_data();
++    void testGenerationPaths();
++    void testChangingSource_data();
++    void testChangingSource();
++    void testUnrelatedPreview();
++    void testCacheHitWithSidecar();
+     void testTimeoutTimerStoppedOnFinish();
+     void testCacheSizeValidation_data();
+     void testCacheSizeValidation();
+--- /dev/null
++++ b/autotests/filepreviewjobtestthumbnailer.cpp
+@@ -0,0 +1,18 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++    SPDX-License-Identifier: LGPL-2.0-or-later
++*/
++
++#include <QCoreApplication>
++#include <QImage>
++
++int main(int argc, char **argv)
++{
++    QCoreApplication app(argc, argv);
++    const QStringList args = app.arguments();
++    if (args.size() != 3) {
++        return 1;
++    }
++    const QImage image(args.at(1));
++    return !image.isNull() && image.save(args.at(2), "PNG") ? 0 : 1;
++}

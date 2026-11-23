@@ -304,3 +304,13 @@ Symptom: a proof rerun meets archive movement rather than a candidate regression
 Cause: some publication-time third-party indexes were never retained, and a changed gate rule invalidates unconditional reuse of old results.
 Fix: record the unavailable baseline explicitly, require every candidate check, then certify bound reuse with the full toolkit suite and a reproducible fresh sample.
 Found by: reading every predecessor solver attempt, attributing its packages to signed archives and comparing complete comparison inputs.
+
+### Rerun a complete gate on retained signed views
+
+`check-link --archive-view CONTEXT --previous-archive-view DATED_CONTEXT` exposes the same authenticated retained-index loader used by bound reuse for an entirely fresh run.
+Each context has metadata.json and its state/lists files; source configuration, archive keys, file hashes and sizes, InRelease signatures and signed Packages hashes are rechecked.
+The dated option still requires the explicit predecessor configuration, publication instant and applicable mixed-view policy.
+Neither option changes candidate solving, linking, starts or predecessor eligibility.
+Do not combine them with --reuse-manifest, which already binds both views.
+This prevents a fresh whole-pool run from refreshing third-party archives after the preparation froze them.
+An altered retained index and a candidate with an unavailable dependency both remain refusals.
