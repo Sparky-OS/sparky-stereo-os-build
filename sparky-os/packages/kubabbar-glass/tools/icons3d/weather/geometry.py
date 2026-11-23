@@ -188,7 +188,7 @@ def status(phase, sign):
     return [plate,prism('status-glyph',mark,0,0,.0002,.002,'203447',bevel=0)]
 
 
-def parameters(name):
+def _parameters(name):
     key = name.removeprefix('weather-').removesuffix('-symbolic')
     night = 'night' in key
     timed = 'day' in key or night
@@ -227,7 +227,7 @@ def parameters(name):
                 storm_precip=('snow' if 'snow' in key else 'ice' if 'freezing' in key else 'rain'))
 
 
-def model(params, phase, disc_back):
+def _model(params, phase, disc_back):
     phase %= 1
     family = params['family']
     if family in ('sun','moon'):
@@ -264,3 +264,22 @@ def model(params, phase, disc_back):
         light = moon(phase) if params['luminary']=='moon' else sun(phase,disc_back)
         shapes += scaled(light,.52,x=-.38,y=.45 if family=='cloud' else .43,z=-.34)
     return shapes
+
+
+def parameters(name):
+    settings = _parameters(name)
+    if name.endswith('-symbolic'):
+        settings['symbolic'] = True
+    return settings
+
+
+def model(params, phase, disc_back):
+    shapes = _model(params, phase, disc_back)
+    if not params.get('symbolic'):
+        return shapes
+    # Keep the authored depth and silhouette while using a neutral palette.
+    def neutral(shape):
+        red, green, blue = (int(shape.colour[i:i+2],16) for i in (0,2,4))
+        grey = round(38 + .55*(.2126*red + .7152*green + .0722*blue))
+        return replace(shape,colour=f'{grey:02x}'*3)
+    return [neutral(shape) for shape in shapes]
