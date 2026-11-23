@@ -52,8 +52,9 @@ mkdir "$BUILD_ROOT/authored"
 tar -C "$BUILD_ROOT/authored" --strip-components=1 -xf "$BUILD_ROOT/plasma-integration-qt5_6.7.4.orig.tar.xz"
 cp -a "$BUILD_ROOT/debian-plasma-integration/debian" "$BUILD_ROOT/authored/debian"
 cd "$BUILD_ROOT/authored"
+# one binary package: debhelper installs straight into debian/plasma5-integration (no debian/tmp, so no .install file), and
+# the Qt 5 block installs the plugin alone; the check after the build holds the package to that
 rm debian/plasma-integration.install
-cp "$HERE"/debian-qt5/plasma5-integration.install debian/
 python3 - "$HERE" <<'PY'
 import sys
 from pathlib import Path
@@ -100,6 +101,10 @@ PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-sour
 cd "$BUILD_ROOT/lean-source"
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -j"${JOBS:-4}"
+deb=$(ls "$BUILD_ROOT"/plasma5-integration_*+lc1_amd64.deb)
+files=$(dpkg-deb -c "$deb" | awk '$1 !~ /^d/ {sub(/^([^ ]+ +){5}/, ""); print}' | sort | tr '\n' ' ')
+[ "$files" = "./usr/lib/x86_64-linux-gnu/qt5/plugins/platformthemes/KDEPlasmaPlatformTheme5.so ./usr/share/doc/plasma5-integration/changelog.Debian.gz ./usr/share/doc/plasma5-integration/copyright ./usr/share/dpkg-stereo/lc/plasma5-integration/amd64.json " ] ||
+	{ echo "plasma5-integration holds more or less than the Qt 5 plugin: $files" >&2; exit 1; }
 # the stage is the source closure, in one folder: the archives, the .dsc and every file it names, the buildinfo and the changes
 cp "$BUILD_ROOT"/*+lc1_*.deb "$BUILD_ROOT"/*+lc1.dsc "$BUILD_ROOT"/*+lc1.debian.tar.* "$BUILD_ROOT"/plasma-integration-qt5_6.7.4.orig.tar.* \
 	"$BUILD_ROOT"/*+lc1_*.buildinfo "$BUILD_ROOT"/*+lc1_*.changes "$OUT/"
