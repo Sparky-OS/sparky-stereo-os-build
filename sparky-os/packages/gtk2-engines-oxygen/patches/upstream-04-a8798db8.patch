@@ -1,0 +1,21 @@
+Description: Raise minimum CMake version to 3.16
+ As discussed in https://mail.kde.org/pipermail/plasma-devel/2021-February/119329.html
+ .
+ GIT_SILENT
+Origin: upstream, https://invent.kde.org/plasma/oxygen-gtk/-/commit/a8798db80390ddf2a89e55773864e222a9c41e37
+Author: Nicolas Fella
+Applied-Upstream: master, a8798db80390ddf2a89e55773864e222a9c41e37 (after v1.4.6; no release since)
+Last-Update: 2026-11-23
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 96bf5e6a..e0fa9fc6 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ project( oxygen-gtk )
+ 
+-cmake_minimum_required(VERSION 2.6)
++cmake_minimum_required(VERSION 3.16)
+ 
+ ###########################
+ # Define package generation
