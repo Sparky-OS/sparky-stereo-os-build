@@ -1,0 +1,882 @@
+From 2ef16a183cfe39fd7ecb5685ccb8bab785d30368 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 23 Nov 2026 06:27:18 -0300
+Subject: [PATCH] Fit the stereo drawing area to the person's depth limits;
+ Enable 3D
+
+The drawing area is drawn for each eye whenever the desktop offers a
+stereo visual: "Enable 3D" (stereo3d.enable in ng.opt, on by default,
+saved at once when it is ticked) asks Togl for a quad-buffer widget at
+the start, and a desktop without one gets the single picture, as
+before, with nothing said.  The -stereo option still asks for it.
+Togl 2.0 ends the program when it is asked for a stereo visual the
+display does not offer (an X error on a window it never made, from
+Tk's input context), so the widget asks for one only where the display
+offers it.
+
+The separation was a constant 3 % of the distance looked at.  It is now
+the largest under which every pixel of the drawing area stays inside
+the person's depth limits, read through libstereo-declare on Togl's
+window: before the two eyes the scene is drawn once from the camera
+between them, its depth read back, and the nearest and farthest pixels
+give the separation.  A change of the limits redraws the view (a
+quarter-second poll).  Netgen has no separation setting.
+
+The view options dialog gains "Enable 3D" and a button that opens the
+desktop's 3D display settings.  When the limits are not offered, do not
+arrive within two seconds, or cannot be read, the status bar says so
+once; the sentences are in ten languages (Tcl's msgcat).
+
+Assisted-by: Claude Opus 5.5 (Anthropic)
+---
+ ng/CMakeLists.txt |   9 ++-
+ ng/dialog.tcl     |   6 ++
+ ng/drawing.tcl    |  23 +++++-
+ ng/ng.tcl         |   1 +
+ ng/ngpkg.cpp      | 140 ++++++++++++++++++++++++++++++++-
+ ng/onetcl.cpp     | 196 +++++++++++++++++++++++++++++++++++++++++++++-
+ ng/stereo3d.cpp   |  47 +++++++++++
+ ng/stereo3d.hpp   |  19 +++++
+ ng/stereo3d.tcl   | 186 +++++++++++++++++++++++++++++++++++++++++++
+ ng/variables.tcl  |   2 +
+ 10 files changed, 619 insertions(+), 10 deletions(-)
+ create mode 100644 ng/stereo3d.cpp
+ create mode 100644 ng/stereo3d.hpp
+ create mode 100644 ng/stereo3d.tcl
+
+diff --git a/ng/CMakeLists.txt b/ng/CMakeLists.txt
+index 0994369..d85785f 100644
+--- a/ng/CMakeLists.txt
++++ b/ng/CMakeLists.txt
+@@ -15,9 +15,14 @@ target_sources(nglib PRIVATE onetcl.cpp)
+ 
+ if(USE_GUI)
+     target_sources(nggui PRIVATE
+-        gui.cpp ngpkg.cpp demoview.cpp parallelfunc.cpp ngtcl.cpp
++        gui.cpp ngpkg.cpp demoview.cpp parallelfunc.cpp ngtcl.cpp stereo3d.cpp
+     )
+ 
++    # the drawing area's depth limits on the edition's desktop (Sparky Stereo OS)
++    find_package(PkgConfig REQUIRED)
++    pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.12.2)
++    target_link_libraries(nggui PRIVATE PkgConfig::STEREO_DECLARE)
++
+     if(NOT BUILD_FOR_CONDA)
+       add_executable(netgen ngappinit.cpp)
+       set_source_files_properties(ngappinit.cpp PROPERTIES COMPILE_FLAGS "-UPARALLEL")
+@@ -71,7 +76,7 @@ if(USE_GUI)
+         dialog.tcl menustat.tcl ngicon.tcl ng.tcl
+         ngvisual.tcl sockets.tcl nghelp.tcl ngshell.tcl
+         ngtesting.tcl parameters.tcl variables.tcl csgeom.tcl stlgeom.tcl
+-        occgeom.tcl acisgeom.tcl netgen.ocf drawing.tcl
++        occgeom.tcl acisgeom.tcl netgen.ocf drawing.tcl stereo3d.tcl
+         DESTINATION ${NG_INSTALL_DIR_BIN} COMPONENT netgen)
+   endif()
+ 
+diff --git a/ng/dialog.tcl b/ng/dialog.tcl
+index 482e333..6404b17 100644
+--- a/ng/dialog.tcl
++++ b/ng/dialog.tcl
+@@ -891,6 +891,12 @@ proc viewingoptionsdialog { } {
+ # 	-variable viewoptions.stereo \
+ # 	-command { Ng_SetVisParameters; redraw }
+ # 	pack $f.stereo
++        ttk::checkbutton $f.stereo3d -text [stereo3d_mc "Enable 3D (applies the next time Netgen starts)"] \
++            -variable stereo3d.enable -command { stereo3d_toggled }
++        ttk::button $f.stereo3dsettings -text [stereo3d_mc "3D display settings..."] \
++            -command { stereo3d_display_settings }
++        grid $f.stereo3d -sticky nw
++        grid $f.stereo3dsettings -sticky nw
+ 
+ 
+         menu $f.stylemenu
+diff --git a/ng/drawing.tcl b/ng/drawing.tcl
+index 778e22e..c33beae 100644
+--- a/ng/drawing.tcl
++++ b/ng/drawing.tcl
+@@ -19,18 +19,32 @@ set toglversion [Ng_GetToglVersion]
+ puts "togl-version : $toglversion"
+ 
+ set toglstereo false
+-if { [Ng_GetCommandLineParameter stereo] == "defined" } {
+-    set toglstereo native
++if { ${stereo3d.enable} == 1 || [Ng_GetCommandLineParameter stereo] == "defined" } {
++    # Togl 2.0 ends the program when it is asked for a stereo visual that the display does not
++    # offer (an X error on a window it never made), so ask only where one is offered: a 2D
++    # desktop keeps the single picture, with nothing said
++    if { [Ng_Stereo3DVisual] } {
++        set toglstereo native
++    }
+ }
+ 
+ set toglok 0
+ if { [Ng_GetToglVersion] == 2 } {
+     # Togl 2.x
+     if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  -create init  -display draw -reshape reshape }] } {    
+-        puts "no OpenGL" 
++        # Togl refused the stereo widget although the display offers a stereo visual: one
++        # picture, and the person is told
++        catch { destroy .ndraw }
++        if { $toglstereo == "native" && ![catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo false -indirect false  -create init  -display draw -reshape reshape }] } {
++            set toglok 1
++            if { [Ng_Stereo3DVisual] } { stereo3d_tell nostereobuffers }
++        } {
++            puts "no OpenGL" 
++        }
+     } {
+         # puts "have Togl 2.1"        
+         set toglok 1
++        set stereo3d.drawing $toglstereo
+     }
+ }
+ 
+@@ -38,6 +52,9 @@ if { $toglok == 1} {
+     
+     #
+     pack .ndraw -expand true -fill both -padx 0 -pady 0
++    if { ${stereo3d.drawing} == "native" } {
++        bind .ndraw <Map> { if { ${stereo3d.polls} == 0 } { stereo3d_poll } }
++    }
+     catch { tkdnd::drop_target register .ndraw DND_Files }
+     #
+     bind .ndraw <Button-1> {
+diff --git a/ng/ng.tcl b/ng/ng.tcl
+index b460b5e..3cc119d 100644
+--- a/ng/ng.tcl
++++ b/ng/ng.tcl
+@@ -89,6 +89,7 @@ if { $batchmode != "defined" } {
+ 
+ 
+ source ${ngdir}/variables.tcl
++source ${ngdir}/stereo3d.tcl
+ source ${ngdir}/parameters.tcl
+ 
+ if { $batchmode != "defined" } {
+diff --git a/ng/ngpkg.cpp b/ng/ngpkg.cpp
+index 21ca1b0..3a06110 100644
+--- a/ng/ngpkg.cpp
++++ b/ng/ngpkg.cpp
+@@ -30,6 +30,7 @@ The interface between the GUI and the netgen library
+ #include <togl.h>
+ 
+ #include "fonts.hpp"
++#include "stereo3d.hpp"
+ 
+ extern bool nodisplay;
+ 
+@@ -2023,6 +2024,116 @@ namespace netgen
+   }
+ 
+ 
++  // Enable 3D (Sparky Stereo OS): the scene from two parallel cameras,
++  // fitted to the person's depth limits.
++  namespace stereo3d
++  {
++    // the camera looks at the centre of the scene from 6 units
++    // (gluLookAt in VisualScene::CalcTransformationMatrices): the plane
++    // where both eyes meet, at the screen
++    constexpr double look_distance = 6.0;
++    Stereo3DLimits state = Stereo3DLimits::not_delivered;
++    double sunk = 0, popped = 0;
++    bool depth_readable = true;
++    const bool trace = getenv("NETGEN_STEREO3D_TRACE") != nullptr;
++  }
++
++  // The separation, as a fraction of the distance looked at, under which
++  // every pixel of the drawing area stays inside the limits: the nearest
++  // pixel at most `popped` pixels in front of the screen, the farthest at
++  // most `sunk` behind it.  The depth is the one of the view just drawn from
++  // the camera between the eyes; the cleared depth is the background.
++  static double Stereo3DFit (const GLdouble * projection, const GLint * viewport,
++                             double sunk, double popped)
++  {
++    const int w = viewport[2], h = viewport[3];
++    if (w <= 0 || h <= 0)
++      return 0;
++
++    std::vector<float> depth(size_t(w) * size_t(h));
++    for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; i++)
++      ;
++    glReadBuffer(GL_BACK_LEFT);
++    glPixelStorei(GL_PACK_ALIGNMENT, 1);
++    glReadPixels(viewport[0], viewport[1], w, h, GL_DEPTH_COMPONENT, GL_FLOAT, depth.data());
++    stereo3d::depth_readable = glGetError() == GL_NO_ERROR;
++    if (!stereo3d::depth_readable)
++      return 0;
++
++    float dmin = 1, dmax = 0;
++    for (float d : depth)
++      if (d < 1.0f)
++        {
++          dmin = min2(dmin, d);
++          dmax = max2(dmax, d);
++        }
++
++    // window depth to distance from the camera, by the projection drawn with
++    auto distance = [projection] (double d)
++      { return projection[14] / ((2 * d - 1) + projection[10]); };
++    const double C = stereo3d::look_distance;
++    const double k = 0.5 * w * projection[0];
++    double dnear = 0, dfar = 0;
++    double t = HUGE_VAL;
++    if (dmin <= dmax)
++      {
++        dnear = distance(dmin);
++        dfar = distance(dmax);
++        if (dnear < C)
++          t = min2(t, popped / (k * (C / dnear - 1)));
++        if (dfar > C)
++          t = min2(t, sunk / (k * (1 - C / dfar)));
++      }
++    if (t == HUGE_VAL)
++      t = sunk / k;   // nothing off the plane looked at: infinity at the sunk limit
++
++    if (stereo3d::trace)
++      fprintf(stderr, "netgen stereo3d: limits sunk %g popped %g view %dx%d k %.6f C %g "
++              "near %.6f far %.6f separation %.8f predicted near %.4f far %.4f\n",
++              sunk, popped, w, h, k, C, dnear, dfar, t,
++              dmin <= dmax ? k * t * (1 - C / dnear) : 0.0,
++              dmin <= dmax ? k * t * (1 - C / dfar) : 0.0);
++    return t;
++  }
++
++  // Tcl: Ng_Stereo3DPoll -- the drawing area's state of the limits (ok,
++  // notoffered, notdelivered, unreadable, depthunreadable, or mono for a
++  // drawing area without two eyes); asks for a new frame when the limits
++  // changed since the last one was drawn.
++  static int
++  Ng_Stereo3DPoll(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const *objv)
++  {
++    if (!togl || Togl_NumEyes(togl) != 2)
++      {
++        Tcl_SetResult(interp, (char*)"mono", TCL_STATIC);
++        return TCL_OK;
++      }
++    Togl_MakeCurrent(togl);
++    GLint viewport[4];
++    glGetIntegerv(GL_VIEWPORT, viewport);
++    double sunk = 0, popped = 0;
++    Stereo3DLimits state = Stereo3DReadLimits(viewport[2], sunk, popped);
++    if (state != stereo3d::state || sunk != stereo3d::sunk || popped != stereo3d::popped)
++      Togl_PostRedisplay(togl);
++    const char * answer =
++      state == Stereo3DLimits::not_offered ? "notoffered" :
++      state == Stereo3DLimits::not_delivered ? "notdelivered" :
++      state == Stereo3DLimits::unreadable ? "unreadable" :
++      !stereo3d::depth_readable ? "depthunreadable" : "ok";
++    Tcl_SetResult(interp, (char*)answer, TCL_STATIC);
++    return TCL_OK;
++  }
++
++  // Tcl: Ng_Stereo3DVisual -- whether this display offers a stereo visual
++  static int
++  Ng_Stereo3DVisual(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const *objv)
++  {
++    Tk_Window main = Tk_MainWindow(interp);
++    bool available = main && Stereo3DVisualAvailable(Tk_Display(main));
++    Tcl_SetObjResult(interp, Tcl_NewBooleanObj(available));
++    return TCL_OK;
++  }
++
+   static int
+   draw(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const *objv)
+   {
+@@ -2035,16 +2146,34 @@ namespace netgen
+       {
+         // Stereo: one world, two cameras.  The view of each eye is the
+         // projection moved sideways by half the eye separation and sheared
+-        // back so both views meet at the centre of the scene, which sits
+-        // at the distance of the camera (see CalcTransformationMatrices).
+-        constexpr double distance = 6.0;
+-        constexpr double half_separation = 0.03 * distance;
++        // back so both views meet at the point the camera looks at, which
++        // stands at the screen.  The separation is fitted to the person's
++        // depth limits (Stereo3DFit).
++        const double distance = stereo3d::look_distance;
+ 
+         GLdouble mono[16];
+         glMatrixMode(GL_PROJECTION);
+         glGetDoublev(GL_PROJECTION_MATRIX, mono);
+         VisualScene::mono_projection = mono;
+ 
++        GLint viewport[4];
++        glGetIntegerv(GL_VIEWPORT, viewport);
++
++        double sunk = 0, popped = 0, separation = 0;
++        stereo3d::state = Stereo3DReadLimits(viewport[2], sunk, popped);
++        stereo3d::sunk = sunk;
++        stereo3d::popped = popped;
++        if (stereo3d::state == Stereo3DLimits::ok)
++          {
++            // measure: the whole view from the camera between the eyes
++            glDrawBuffer(GL_BACK_LEFT);
++            glMatrixMode(GL_MODELVIEW);
++            visual_scene->DrawScene();
++            separation = Stereo3DFit(mono, viewport, sunk, popped);
++            glMatrixMode(GL_PROJECTION);
++          }
++        const double half_separation = 0.5 * separation * distance;
++
+         for (int eye = 0; eye < 2; eye++)
+           {
+             double shift = (eye == 0) ? -half_separation : half_separation;
+@@ -2059,6 +2188,7 @@ namespace netgen
+             glMatrixMode(GL_PROJECTION);
+           }
+ 
++        glDrawBuffer(GL_BACK);
+         glLoadMatrixd(mono);
+         glMatrixMode(GL_MODELVIEW);
+         VisualScene::mono_projection = nullptr;
+@@ -3167,6 +3297,8 @@ void PlayAnimFile(const char* name, int speed, int maxcnt)
+ 	Tcl_CreateObjCommand(interp, "zap", zap, NULL, NULL);
+ 	Tcl_CreateObjCommand(interp, "draw", draw, NULL, NULL);
+ 	Tcl_CreateObjCommand(interp, "reshape", reshape, NULL, NULL);
++	Tcl_CreateObjCommand(interp, "Ng_Stereo3DPoll", Ng_Stereo3DPoll, NULL, NULL);
++	Tcl_CreateObjCommand(interp, "Ng_Stereo3DVisual", Ng_Stereo3DVisual, NULL, NULL);
+ 	
+ 	//   Togl_TimerFunc(  idle );
+ 	Tcl_CreateObjCommand(interp, "Ng_SnapShot", Ng_SnapShot, NULL, NULL);
+diff --git a/ng/onetcl.cpp b/ng/onetcl.cpp
+index f2993b2..0c86f1a 100644
+--- a/ng/onetcl.cpp
++++ b/ng/onetcl.cpp
+@@ -130,6 +130,7 @@ DLL_HEADER const char * ngscript[] = {""
+ ,"set viewoptions.drawcolorbar 1\n"
+ ,"set viewoptions.drawnetgenlogo 1\n"
+ ,"set viewoptions.stereo 0\n"
++,"set stereo3d.enable 1\n"
+ ,"set viewoptions.shrink 1\n"
+ ,"set viewoptions.drawfilledtrigs 1\n"
+ ,"set viewoptions.drawedges 0\n"
+@@ -436,6 +437,7 @@ DLL_HEADER const char * ngscript[] = {""
+ ,"puts $datei \"viewoptions.drawcoordinatecross  ${viewoptions.drawcoordinatecross}\"\n"
+ ,"puts $datei \"viewoptions.drawnetgenlogo  ${viewoptions.drawnetgenlogo}\"\n"
+ ,"puts $datei \"viewoptions.stereo  ${viewoptions.stereo}\"\n"
++,"puts $datei \"stereo3d.enable  ${stereo3d.enable}\"\n"
+ ,"puts $datei \"viewoptions.drawfilledtrigs  ${viewoptions.drawfilledtrigs}\"\n"
+ ,"puts $datei \"viewoptions.drawedges  ${viewoptions.drawedges}\"\n"
+ ,"puts $datei \"viewoptions.drawbadels  ${viewoptions.drawbadels}\"\n"
+@@ -664,6 +666,180 @@ DLL_HEADER const char * ngscript[] = {""
+ ,"set cmdindex {}\n"
+ ,"set hlpindex {}\n"
+ ,"set secindex {}\n"
++,"set stereo3d.drawing false\n"
++,"set stereo3d.status \"\"\n"
++,"set stereo3d.told {}\n"
++,"set stereo3d.polls 0\n"
++,"if { [catch { package require msgcat }] } {\n"
++,"proc stereo3d_mc { s } { return $s }\n"
++,"} {\n"
++,"proc stereo3d_mc { s } { return [::msgcat::mc $s] }\n"
++,"::msgcat::mcset pl \"Enable 3D (applies the next time Netgen starts)\" \"Włącz 3D (działa od następnego uruchomienia Netgen)\"\n"
++,"::msgcat::mcset pl \"The 3D choice could not be saved.\" \"Nie udało się zapisać wyboru 3D.\"\n"
++,"::msgcat::mcset pl \"3D display settings...\" \"Ustawienia wyświetlacza 3D...\"\n"
++,"::msgcat::mcset pl \"Display Settings could not be opened.\" \"Nie udało się otworzyć ustawień wyświetlacza.\"\n"
++,"::msgcat::mcset pl \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"Głębia 3D: ten pulpit nie podaje limitów głębi, więc oba oczy widzą ten sam obraz\"\n"
++,"::msgcat::mcset pl \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"Głębia 3D: pulpit nie przekazał jeszcze limitów głębi, na razie oba oczy widzą ten sam obraz\"\n"
++,"::msgcat::mcset pl \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"Głębia 3D: to okno nie może odczytać limitów głębi pulpitu, więc oba oczy widzą ten sam obraz\"\n"
++,"::msgcat::mcset pl \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"Ten pulpit nie udostępnia buforów stereo, więc widok 3D pozostaje w 2D.\"\n"
++,"::msgcat::mcset pl \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D: ten widok nie otrzymał buforów stereo, więc jest wyświetlany w 2D\"\n"
++,"::msgcat::mcset pl \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"Głębia 3D: nie udało się odczytać głębi tego widoku, więc oba oczy widzą ten sam obraz\"\n"
++,"::msgcat::mcset pt_br \"Enable 3D (applies the next time Netgen starts)\" \"Ativar 3D (vale a partir da próxima vez que o Netgen abrir)\"\n"
++,"::msgcat::mcset pt_br \"The 3D choice could not be saved.\" \"Não foi possível salvar a escolha de 3D.\"\n"
++,"::msgcat::mcset pt_br \"3D display settings...\" \"Configurações da tela 3D...\"\n"
++,"::msgcat::mcset pt_br \"Display Settings could not be opened.\" \"Não foi possível abrir as Configurações de tela.\"\n"
++,"::msgcat::mcset pt_br \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"Profundidade 3D: este desktop não oferece limites de profundidade, então os dois olhos veem a mesma imagem\"\n"
++,"::msgcat::mcset pt_br \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"Profundidade 3D: o desktop ainda não entregou os limites de profundidade, por enquanto os dois olhos veem a mesma imagem\"\n"
++,"::msgcat::mcset pt_br \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"Profundidade 3D: esta janela não consegue ler os limites de profundidade do desktop, então os dois olhos veem a mesma imagem\"\n"
++,"::msgcat::mcset pt_br \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"Este desktop não oferece buffers estéreo, então a visão 3D fica em 2D.\"\n"
++,"::msgcat::mcset pt_br \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D: esta visão não recebeu buffers estéreo, então é mostrada em 2D\"\n"
++,"::msgcat::mcset pt_br \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"Profundidade 3D: não foi possível ler a profundidade desta visão, então os dois olhos veem a mesma imagem\"\n"
++,"::msgcat::mcset fr \"Enable 3D (applies the next time Netgen starts)\" \"Activer la 3D (effective au prochain démarrage de Netgen)\"\n"
++,"::msgcat::mcset fr \"The 3D choice could not be saved.\" \"Le choix de la 3D n’a pas pu être enregistré.\"\n"
++,"::msgcat::mcset fr \"3D display settings...\" \"Réglages de l'écran 3D...\"\n"
++,"::msgcat::mcset fr \"Display Settings could not be opened.\" \"Impossible d'ouvrir les Réglages de l'écran.\"\n"
++,"::msgcat::mcset fr \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"Profondeur 3D : ce bureau n’offre pas de limites de profondeur, les deux yeux voient donc la même image\"\n"
++,"::msgcat::mcset fr \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"Profondeur 3D : le bureau n’a pas encore transmis les limites de profondeur, les deux yeux voient la même image pour l’instant\"\n"
++,"::msgcat::mcset fr \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"Profondeur 3D : cette fenêtre ne peut pas lire les limites de profondeur du bureau, les deux yeux voient donc la même image\"\n"
++,"::msgcat::mcset fr \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"Ce bureau n’offre pas de tampons stéréo : la vue 3D reste donc en 2D.\"\n"
++,"::msgcat::mcset fr \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D : cette vue n’a pas reçu de tampons stéréo, elle est donc affichée en 2D\"\n"
++,"::msgcat::mcset fr \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"Profondeur 3D : la profondeur de cette vue n’a pas pu être lue, les deux yeux voient donc la même image\"\n"
++,"::msgcat::mcset de \"Enable 3D (applies the next time Netgen starts)\" \"3D einschalten (gilt ab dem nächsten Start von Netgen)\"\n"
++,"::msgcat::mcset de \"The 3D choice could not be saved.\" \"Die 3D-Auswahl konnte nicht gespeichert werden.\"\n"
++,"::msgcat::mcset de \"3D display settings...\" \"3D-Anzeigeeinstellungen ...\"\n"
++,"::msgcat::mcset de \"Display Settings could not be opened.\" \"Die Anzeigeeinstellungen konnten nicht geöffnet werden.\"\n"
++,"::msgcat::mcset de \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"3D-Tiefe: Dieser Desktop bietet keine Tiefengrenzen, deshalb sehen beide Augen dasselbe Bild\"\n"
++,"::msgcat::mcset de \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"3D-Tiefe: Der Desktop hat die Tiefengrenzen noch nicht geliefert, beide Augen sehen vorerst dasselbe Bild\"\n"
++,"::msgcat::mcset de \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"3D-Tiefe: Dieses Fenster kann die Tiefengrenzen des Desktops nicht lesen, deshalb sehen beide Augen dasselbe Bild\"\n"
++,"::msgcat::mcset de \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"Dieser Desktop bietet keine Stereo-Puffer, deshalb bleibt die 3D-Ansicht 2D.\"\n"
++,"::msgcat::mcset de \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D: Diese Ansicht hat keine Stereo-Puffer erhalten, deshalb wird sie in 2D gezeigt\"\n"
++,"::msgcat::mcset de \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"3D-Tiefe: Die Tiefe dieser Ansicht konnte nicht gelesen werden, deshalb sehen beide Augen dasselbe Bild\"\n"
++,"::msgcat::mcset es \"Enable 3D (applies the next time Netgen starts)\" \"Activar 3D (se aplica la próxima vez que se inicie Netgen)\"\n"
++,"::msgcat::mcset es \"The 3D choice could not be saved.\" \"No se pudo guardar la elección de 3D.\"\n"
++,"::msgcat::mcset es \"3D display settings...\" \"Ajustes de la pantalla 3D...\"\n"
++,"::msgcat::mcset es \"Display Settings could not be opened.\" \"No se pudieron abrir los Ajustes de pantalla.\"\n"
++,"::msgcat::mcset es \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"Profundidad 3D: este escritorio no ofrece límites de profundidad, así que los dos ojos ven la misma imagen\"\n"
++,"::msgcat::mcset es \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"Profundidad 3D: el escritorio aún no ha entregado los límites de profundidad, por ahora los dos ojos ven la misma imagen\"\n"
++,"::msgcat::mcset es \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"Profundidad 3D: esta ventana no puede leer los límites de profundidad del escritorio, así que los dos ojos ven la misma imagen\"\n"
++,"::msgcat::mcset es \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"Este escritorio no ofrece búferes estéreo, así que la vista 3D sigue en 2D.\"\n"
++,"::msgcat::mcset es \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D: esta vista no recibió búferes estéreo, así que se muestra en 2D\"\n"
++,"::msgcat::mcset es \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"Profundidad 3D: no se pudo leer la profundidad de esta vista, así que los dos ojos ven la misma imagen\"\n"
++,"::msgcat::mcset ja \"Enable 3D (applies the next time Netgen starts)\" \"3D を有効にする (次に Netgen を起動したときに反映)\"\n"
++,"::msgcat::mcset ja \"The 3D choice could not be saved.\" \"3D の選択を保存できませんでした。\"\n"
++,"::msgcat::mcset ja \"3D display settings...\" \"3D ディスプレイの設定...\"\n"
++,"::msgcat::mcset ja \"Display Settings could not be opened.\" \"ディスプレイ設定を開けませんでした。\"\n"
++,"::msgcat::mcset ja \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"3D奥行き: このデスクトップは奥行きの上限を提供しないため、両目に同じ画像を表示します\"\n"
++,"::msgcat::mcset ja \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"3D奥行き: デスクトップがまだ奥行きの上限を渡していないため、今は両目に同じ画像を表示します\"\n"
++,"::msgcat::mcset ja \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"3D奥行き: このウィンドウはデスクトップの奥行きの上限を読み取れないため、両目に同じ画像を表示します\"\n"
++,"::msgcat::mcset ja \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"このデスクトップはステレオバッファーを提供しないため、3D ビューは 2D のままです。\"\n"
++,"::msgcat::mcset ja \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D: このビューはステレオバッファーを得られなかったため、2D で表示します\"\n"
++,"::msgcat::mcset ja \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"3D奥行き: このビューの奥行きを読み取れなかったため、両目に同じ画像を表示します\"\n"
++,"::msgcat::mcset ko \"Enable 3D (applies the next time Netgen starts)\" \"3D 켜기 (다음에 Netgen을 시작할 때 적용)\"\n"
++,"::msgcat::mcset ko \"The 3D choice could not be saved.\" \"3D 선택을 저장할 수 없습니다.\"\n"
++,"::msgcat::mcset ko \"3D display settings...\" \"3D 디스플레이 설정...\"\n"
++,"::msgcat::mcset ko \"Display Settings could not be opened.\" \"디스플레이 설정을 열 수 없습니다.\"\n"
++,"::msgcat::mcset ko \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"3D 깊이: 이 데스크톱은 깊이 한계를 제공하지 않아 두 눈에 같은 화면을 보여 줍니다\"\n"
++,"::msgcat::mcset ko \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"3D 깊이: 데스크톱이 아직 깊이 한계를 전달하지 않아 지금은 두 눈에 같은 화면을 보여 줍니다\"\n"
++,"::msgcat::mcset ko \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"3D 깊이: 이 창은 데스크톱의 깊이 한계를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다\"\n"
++,"::msgcat::mcset ko \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"이 데스크톱은 스테레오 버퍼를 제공하지 않아 3D 보기는 2D로 유지됩니다.\"\n"
++,"::msgcat::mcset ko \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D: 이 보기는 스테레오 버퍼를 받지 못해 2D로 표시됩니다\"\n"
++,"::msgcat::mcset ko \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"3D 깊이: 이 보기의 깊이를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다\"\n"
++,"::msgcat::mcset zh_cn \"Enable 3D (applies the next time Netgen starts)\" \"启用 3D（下次启动 Netgen 时生效）\"\n"
++,"::msgcat::mcset zh_cn \"The 3D choice could not be saved.\" \"无法保存 3D 选择。\"\n"
++,"::msgcat::mcset zh_cn \"3D display settings...\" \"3D 显示设置...\"\n"
++,"::msgcat::mcset zh_cn \"Display Settings could not be opened.\" \"无法打开显示设置。\"\n"
++,"::msgcat::mcset zh_cn \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"3D 深度：此桌面未提供深度限制，因此两眼显示相同的画面\"\n"
++,"::msgcat::mcset zh_cn \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"3D 深度：桌面尚未提供深度限制，暂时两眼显示相同的画面\"\n"
++,"::msgcat::mcset zh_cn \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"3D 深度：此窗口无法读取桌面的深度限制，因此两眼显示相同的画面\"\n"
++,"::msgcat::mcset zh_cn \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"此桌面不提供立体缓冲区，因此 3D 视图保持 2D。\"\n"
++,"::msgcat::mcset zh_cn \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D：此视图未获得立体缓冲区，因此以 2D 显示\"\n"
++,"::msgcat::mcset zh_cn \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"3D 深度：无法读取此视图的深度，因此两眼显示相同的画面\"\n"
++,"::msgcat::mcset zh_tw \"Enable 3D (applies the next time Netgen starts)\" \"啟用 3D（下次啟動 Netgen 時生效）\"\n"
++,"::msgcat::mcset zh_tw \"The 3D choice could not be saved.\" \"無法儲存 3D 選擇。\"\n"
++,"::msgcat::mcset zh_tw \"3D display settings...\" \"3D 顯示設定...\"\n"
++,"::msgcat::mcset zh_tw \"Display Settings could not be opened.\" \"無法開啟顯示設定。\"\n"
++,"::msgcat::mcset zh_tw \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\" \"3D 深度：此桌面未提供深度限制，因此兩眼顯示相同的畫面\"\n"
++,"::msgcat::mcset zh_tw \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\" \"3D 深度：桌面尚未提供深度限制，暫時兩眼顯示相同的畫面\"\n"
++,"::msgcat::mcset zh_tw \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\" \"3D 深度：此視窗無法讀取桌面的深度限制，因此兩眼顯示相同的畫面\"\n"
++,"::msgcat::mcset zh_tw \"This desktop offers no stereo buffers, so the 3D view stays 2D.\" \"此桌面不提供立體緩衝區，因此 3D 檢視維持 2D。\"\n"
++,"::msgcat::mcset zh_tw \"3D: this view got no stereo buffers, so it is shown in 2D\" \"3D：此檢視未取得立體緩衝區，因此以 2D 顯示\"\n"
++,"::msgcat::mcset zh_tw \"3D depth: the depth of this view could not be read, so both eyes show the same picture\" \"3D 深度：無法讀取此檢視的深度，因此兩眼顯示相同的畫面\"\n"
++,"}\n"
++,"proc stereo3d_save { } {\n"
++,"global optfilename\n"
++,"set lines {}\n"
++,"if { [file exists $optfilename] } {\n"
++,"if { [catch {\n"
++,"set datei [open $optfilename r]\n"
++,"while { [gets $datei line] >= 0 } {\n"
++,"if { [catch { lindex $line 0 } first] || $first != \"stereo3d.enable\" } {\n"
++,"lappend lines $line\n"
++,"}\n"
++,"}\n"
++,"close $datei\n"
++,"}] } {\n"
++,"tk_messageBox -icon warning -type ok -title Netgen -message [stereo3d_mc \"The 3D choice could not be saved.\"]\n"
++,"return\n"
++,"}\n"
++,"}\n"
++,"lappend lines \"stereo3d.enable  [set ::stereo3d.enable]\"\n"
++,"if { [catch {\n"
++,"set datei [open $optfilename w]\n"
++,"foreach line $lines { puts $datei $line }\n"
++,"close $datei\n"
++,"}] } {\n"
++,"tk_messageBox -icon warning -type ok -title Netgen -message [stereo3d_mc \"The 3D choice could not be saved.\"]\n"
++,"}\n"
++,"}\n"
++,"proc stereo3d_toggled { } {\n"
++,"stereo3d_save\n"
++,"if { [set ::stereo3d.enable] == 1 && [set ::stereo3d.drawing] != \"native\" && ![Ng_Stereo3DVisual] } {\n"
++,"tk_messageBox -icon info -type ok -title Netgen -message [stereo3d_mc \"This desktop offers no stereo buffers, so the 3D view stays 2D.\"]\n"
++,"}\n"
++,"}\n"
++,"proc stereo3d_display_settings { } {\n"
++,"if { [catch { exec systemsettings kcm_kscreen & }] && [catch { exec kcmshell6 kcm_kscreen & }] } {\n"
++,"tk_messageBox -icon warning -type ok -title Netgen -message [stereo3d_mc \"Display Settings could not be opened.\"]\n"
++,"}\n"
++,"}\n"
++,"proc stereo3d_tell { key } {\n"
++,"switch -- $key {\n"
++,"notoffered { set message [stereo3d_mc \"3D depth: this desktop offers no depth limits, so both eyes show the same picture\"] }\n"
++,"notdelivered { set message [stereo3d_mc \"3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now\"] }\n"
++,"unreadable { set message [stereo3d_mc \"3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture\"] }\n"
++,"depthunreadable { set message [stereo3d_mc \"3D depth: the depth of this view could not be read, so both eyes show the same picture\"] }\n"
++,"nostereobuffers { set message [stereo3d_mc \"3D: this view got no stereo buffers, so it is shown in 2D\"] }\n"
++,"default { set message \"\" }\n"
++,"}\n"
++,"if { $message == \"\" } {\n"
++,"if { [set ::stereo3d.status] != \"\" } {\n"
++,"set ::stereo3d.status \"\"\n"
++,"catch { pack forget .statbar.stereo3d }\n"
++,"}\n"
++,"return\n"
++,"}\n"
++,"if { [lsearch -exact [set ::stereo3d.told] $key] >= 0 } { return }\n"
++,"lappend ::stereo3d.told $key\n"
++,"puts stderr $message\n"
++,"set ::stereo3d.status $message\n"
++,"catch {\n"
++,"if { ![winfo exists .statbar.stereo3d] } {\n"
++,"ttk::label .statbar.stereo3d -textvariable stereo3d.status\n"
++,"}\n"
++,"pack .statbar.stereo3d -side right -ipady 3p -padx 3p\n"
++,"}\n"
++,"}\n"
++,"proc stereo3d_poll { } {\n"
++,"set state [Ng_Stereo3DPoll]\n"
++,"if { $state == \"mono\" } { return }\n"
++,"incr ::stereo3d.polls\n"
++,"switch -- $state {\n"
++,"ok { stereo3d_tell clear }\n"
++,"notdelivered { if { [set ::stereo3d.polls] > 8 } { stereo3d_tell notdelivered } }\n"
++,"default { stereo3d_tell $state }\n"
++,"}\n"
++,"after 250 stereo3d_poll\n"
++,"}\n"
+ ,"proc setgranularity { gran } {\n"
+ ,"if {$gran == 6} { return }\n"
+ ,"set gran [expr $gran - 1]\n"
+@@ -1980,6 +2156,12 @@ DLL_HEADER const char * ngscript[] = {""
+ ,"grid $f.cross -stick nw\n"
+ ,"grid $f.color  -sticky nw\n"
+ ,"grid $f.netgen -sticky nw\n"
++,"ttk::checkbutton $f.stereo3d -text [stereo3d_mc \"Enable 3D (applies the next time Netgen starts)\"] \\\n"
++,"-variable stereo3d.enable -command { stereo3d_toggled }\n"
++,"ttk::button $f.stereo3dsettings -text [stereo3d_mc \"3D display settings...\"] \\\n"
++,"-command { stereo3d_display_settings }\n"
++,"grid $f.stereo3d -sticky nw\n"
++,"grid $f.stereo3dsettings -sticky nw\n"
+ ,"menu $f.stylemenu\n"
+ ,"ttk::menubutton $f.style -menu $f.stylemenu -width 10 -text [ttk::style theme use]\n"
+ ,"grid $f.style -sticky nw\n"
+@@ -3360,15 +3542,24 @@ DLL_HEADER const char * ngscript[] = {""
+ ,"set toglversion [Ng_GetToglVersion]\n"
+ ,"puts \"togl-version : $toglversion\"\n"
+ ,"set toglstereo false\n"
+-,"if { [Ng_GetCommandLineParameter stereo] == \"defined\" } {\n"
++,"if { ${stereo3d.enable} == 1 || [Ng_GetCommandLineParameter stereo] == \"defined\" } {\n"
++,"if { [Ng_Stereo3DVisual] } {\n"
+ ,"set toglstereo native\n"
+ ,"}\n"
++,"}\n"
+ ,"set toglok 0\n"
+ ,"if { [Ng_GetToglVersion] == 2 } {\n"
+ ,"if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  -create init  -display draw -reshape reshape }] } {\n"
++,"catch { destroy .ndraw }\n"
++,"if { $toglstereo == \"native\" && ![catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo false -indirect false  -create init  -display draw -reshape reshape }] } {\n"
++,"set toglok 1\n"
++,"if { [Ng_Stereo3DVisual] } { stereo3d_tell nostereobuffers }\n"
++,"} {\n"
+ ,"puts \"no OpenGL\"\n"
++,"}\n"
+ ,"} {\n"
+ ,"set toglok 1\n"
++,"set stereo3d.drawing $toglstereo\n"
+ ,"}\n"
+ ,"} {\n"
+ ,"if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  }] } {\n"
+@@ -3379,6 +3570,9 @@ DLL_HEADER const char * ngscript[] = {""
+ ,"}\n"
+ ,"if { $toglok == 1} {\n"
+ ,"pack .ndraw -expand true -fill both -padx 0 -pady 0\n"
++,"if { ${stereo3d.drawing} == \"native\" } {\n"
++,"bind .ndraw <Map> { if { ${stereo3d.polls} == 0 } { stereo3d_poll } }\n"
++,"}\n"
+ ,"catch { tkdnd::drop_target register .ndraw DND_Files }\n"
+ ,"bind .ndraw <Button-1> {\n"
+ ,"set oldmousex %x; set oldmousey %y;\n"
+diff --git a/ng/stereo3d.cpp b/ng/stereo3d.cpp
+new file mode 100644
+index 0000000..20b19bc
+--- /dev/null
++++ b/ng/stereo3d.cpp
+@@ -0,0 +1,47 @@
++// Sparky Stereo OS: the person's depth limits for the drawing area and the stereo visual, read through Xlib, GLX and
++// libstereo-declare.  Kept in a file of its own: Xlib's headers define names (Status, Bool, None) that clash with
++// Netgen's own.
++
++#include <cerrno>
++#include <GL/glx.h>
++#include <stereo-declare.h>
++
++#include "stereo3d.hpp"
++
++namespace netgen
++{
++  Stereo3DLimits Stereo3DReadLimits (double width, double & sunk, double & popped)
++  {
++    Display * display = glXGetCurrentDisplay ();
++    GLXDrawable drawable = glXGetCurrentDrawable ();
++    if (!display || !drawable || width <= 0)
++      return Stereo3DLimits::unreadable;
++
++    struct stereo_depth_limits limits;
++    int r = stereo_depth_x11_get_buffer_limits (display, drawable, width, width, &limits);
++    if (r == -ENOTSUP)
++      return Stereo3DLimits::not_offered;
++    if (r == -ENODATA)
++      return Stereo3DLimits::not_delivered;
++    if (r != 0)
++      return Stereo3DLimits::unreadable;
++
++    sunk = limits.sunk;
++    popped = limits.popped;
++    return Stereo3DLimits::ok;
++  }
++
++  bool Stereo3DVisualAvailable (void * xdisplay)
++  {
++    Display * display = static_cast<Display *> (xdisplay);
++    if (!display)
++      return false;
++
++    int attributes[] = { GLX_RGBA, GLX_DOUBLEBUFFER, GLX_DEPTH_SIZE, 1, GLX_STEREO, None };
++    XVisualInfo * info = glXChooseVisual (display, DefaultScreen (display), attributes);
++    if (!info)
++      return false;
++    XFree (info);
++    return true;
++  }
++}
+diff --git a/ng/stereo3d.hpp b/ng/stereo3d.hpp
+new file mode 100644
+index 0000000..7f66fc4
+--- /dev/null
++++ b/ng/stereo3d.hpp
+@@ -0,0 +1,19 @@
++#ifndef NG_STEREO3D_HPP
++#define NG_STEREO3D_HPP
++
++// Sparky Stereo OS: what the drawing area needs from the desktop to be drawn as a stereo pair.
++
++namespace netgen
++{
++  enum class Stereo3DLimits { ok, not_offered, not_delivered, unreadable };
++
++  // The person's depth limits for the drawing area, in the pixels of its own buffer (width pixels wide and shown at
++  // that width), read through libstereo-declare on the GL drawable that is current: Togl's window, which the
++  // edition's Mesa declares as the window's 3D area.
++  Stereo3DLimits Stereo3DReadLimits (double width, double & sunk, double & popped);
++
++  // Whether the X display (an Xlib Display *) offers a double-buffered stereo visual with a depth buffer.
++  bool Stereo3DVisualAvailable (void * xdisplay);
++}
++
++#endif
+diff --git a/ng/stereo3d.tcl b/ng/stereo3d.tcl
+new file mode 100644
+index 0000000..2c9e1b4
+--- /dev/null
++++ b/ng/stereo3d.tcl
+@@ -0,0 +1,186 @@
++#
++#  Enable 3D (Sparky Stereo OS): on a desktop that offers stereo pictures
++#  the drawing area is drawn for each eye, fitted to the person's depth
++#  limits.  The choice is kept in ng.opt as stereo3d.enable and is read
++#  when the drawing area is made, at the start.
++#
++set stereo3d.drawing false
++set stereo3d.status ""
++set stereo3d.told {}
++set stereo3d.polls 0
++
++if { [catch { package require msgcat }] } {
++    proc stereo3d_mc { s } { return $s }
++} {
++    proc stereo3d_mc { s } { return [::msgcat::mc $s] }
++    ::msgcat::mcset pl "Enable 3D (applies the next time Netgen starts)" "Włącz 3D (działa od następnego uruchomienia Netgen)"
++    ::msgcat::mcset pl "The 3D choice could not be saved." "Nie udało się zapisać wyboru 3D."
++    ::msgcat::mcset pl "3D display settings..." "Ustawienia wyświetlacza 3D..."
++    ::msgcat::mcset pl "Display Settings could not be opened." "Nie udało się otworzyć ustawień wyświetlacza."
++    ::msgcat::mcset pl "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "Głębia 3D: ten pulpit nie podaje limitów głębi, więc oba oczy widzą ten sam obraz"
++    ::msgcat::mcset pl "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "Głębia 3D: pulpit nie przekazał jeszcze limitów głębi, na razie oba oczy widzą ten sam obraz"
++    ::msgcat::mcset pl "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "Głębia 3D: to okno nie może odczytać limitów głębi pulpitu, więc oba oczy widzą ten sam obraz"
++    ::msgcat::mcset pl "This desktop offers no stereo buffers, so the 3D view stays 2D." "Ten pulpit nie udostępnia buforów stereo, więc widok 3D pozostaje w 2D."
++    ::msgcat::mcset pl "3D: this view got no stereo buffers, so it is shown in 2D" "3D: ten widok nie otrzymał buforów stereo, więc jest wyświetlany w 2D"
++    ::msgcat::mcset pl "3D depth: the depth of this view could not be read, so both eyes show the same picture" "Głębia 3D: nie udało się odczytać głębi tego widoku, więc oba oczy widzą ten sam obraz"
++    ::msgcat::mcset pt_br "Enable 3D (applies the next time Netgen starts)" "Ativar 3D (vale a partir da próxima vez que o Netgen abrir)"
++    ::msgcat::mcset pt_br "The 3D choice could not be saved." "Não foi possível salvar a escolha de 3D."
++    ::msgcat::mcset pt_br "3D display settings..." "Configurações da tela 3D..."
++    ::msgcat::mcset pt_br "Display Settings could not be opened." "Não foi possível abrir as Configurações de tela."
++    ::msgcat::mcset pt_br "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "Profundidade 3D: este desktop não oferece limites de profundidade, então os dois olhos veem a mesma imagem"
++    ::msgcat::mcset pt_br "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "Profundidade 3D: o desktop ainda não entregou os limites de profundidade, por enquanto os dois olhos veem a mesma imagem"
++    ::msgcat::mcset pt_br "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "Profundidade 3D: esta janela não consegue ler os limites de profundidade do desktop, então os dois olhos veem a mesma imagem"
++    ::msgcat::mcset pt_br "This desktop offers no stereo buffers, so the 3D view stays 2D." "Este desktop não oferece buffers estéreo, então a visão 3D fica em 2D."
++    ::msgcat::mcset pt_br "3D: this view got no stereo buffers, so it is shown in 2D" "3D: esta visão não recebeu buffers estéreo, então é mostrada em 2D"
++    ::msgcat::mcset pt_br "3D depth: the depth of this view could not be read, so both eyes show the same picture" "Profundidade 3D: não foi possível ler a profundidade desta visão, então os dois olhos veem a mesma imagem"
++    ::msgcat::mcset fr "Enable 3D (applies the next time Netgen starts)" "Activer la 3D (effective au prochain démarrage de Netgen)"
++    ::msgcat::mcset fr "The 3D choice could not be saved." "Le choix de la 3D n’a pas pu être enregistré."
++    ::msgcat::mcset fr "3D display settings..." "Réglages de l'écran 3D..."
++    ::msgcat::mcset fr "Display Settings could not be opened." "Impossible d'ouvrir les Réglages de l'écran."
++    ::msgcat::mcset fr "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "Profondeur 3D : ce bureau n’offre pas de limites de profondeur, les deux yeux voient donc la même image"
++    ::msgcat::mcset fr "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "Profondeur 3D : le bureau n’a pas encore transmis les limites de profondeur, les deux yeux voient la même image pour l’instant"
++    ::msgcat::mcset fr "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "Profondeur 3D : cette fenêtre ne peut pas lire les limites de profondeur du bureau, les deux yeux voient donc la même image"
++    ::msgcat::mcset fr "This desktop offers no stereo buffers, so the 3D view stays 2D." "Ce bureau n’offre pas de tampons stéréo : la vue 3D reste donc en 2D."
++    ::msgcat::mcset fr "3D: this view got no stereo buffers, so it is shown in 2D" "3D : cette vue n’a pas reçu de tampons stéréo, elle est donc affichée en 2D"
++    ::msgcat::mcset fr "3D depth: the depth of this view could not be read, so both eyes show the same picture" "Profondeur 3D : la profondeur de cette vue n’a pas pu être lue, les deux yeux voient donc la même image"
++    ::msgcat::mcset de "Enable 3D (applies the next time Netgen starts)" "3D einschalten (gilt ab dem nächsten Start von Netgen)"
++    ::msgcat::mcset de "The 3D choice could not be saved." "Die 3D-Auswahl konnte nicht gespeichert werden."
++    ::msgcat::mcset de "3D display settings..." "3D-Anzeigeeinstellungen ..."
++    ::msgcat::mcset de "Display Settings could not be opened." "Die Anzeigeeinstellungen konnten nicht geöffnet werden."
++    ::msgcat::mcset de "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "3D-Tiefe: Dieser Desktop bietet keine Tiefengrenzen, deshalb sehen beide Augen dasselbe Bild"
++    ::msgcat::mcset de "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "3D-Tiefe: Der Desktop hat die Tiefengrenzen noch nicht geliefert, beide Augen sehen vorerst dasselbe Bild"
++    ::msgcat::mcset de "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "3D-Tiefe: Dieses Fenster kann die Tiefengrenzen des Desktops nicht lesen, deshalb sehen beide Augen dasselbe Bild"
++    ::msgcat::mcset de "This desktop offers no stereo buffers, so the 3D view stays 2D." "Dieser Desktop bietet keine Stereo-Puffer, deshalb bleibt die 3D-Ansicht 2D."
++    ::msgcat::mcset de "3D: this view got no stereo buffers, so it is shown in 2D" "3D: Diese Ansicht hat keine Stereo-Puffer erhalten, deshalb wird sie in 2D gezeigt"
++    ::msgcat::mcset de "3D depth: the depth of this view could not be read, so both eyes show the same picture" "3D-Tiefe: Die Tiefe dieser Ansicht konnte nicht gelesen werden, deshalb sehen beide Augen dasselbe Bild"
++    ::msgcat::mcset es "Enable 3D (applies the next time Netgen starts)" "Activar 3D (se aplica la próxima vez que se inicie Netgen)"
++    ::msgcat::mcset es "The 3D choice could not be saved." "No se pudo guardar la elección de 3D."
++    ::msgcat::mcset es "3D display settings..." "Ajustes de la pantalla 3D..."
++    ::msgcat::mcset es "Display Settings could not be opened." "No se pudieron abrir los Ajustes de pantalla."
++    ::msgcat::mcset es "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "Profundidad 3D: este escritorio no ofrece límites de profundidad, así que los dos ojos ven la misma imagen"
++    ::msgcat::mcset es "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "Profundidad 3D: el escritorio aún no ha entregado los límites de profundidad, por ahora los dos ojos ven la misma imagen"
++    ::msgcat::mcset es "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "Profundidad 3D: esta ventana no puede leer los límites de profundidad del escritorio, así que los dos ojos ven la misma imagen"
++    ::msgcat::mcset es "This desktop offers no stereo buffers, so the 3D view stays 2D." "Este escritorio no ofrece búferes estéreo, así que la vista 3D sigue en 2D."
++    ::msgcat::mcset es "3D: this view got no stereo buffers, so it is shown in 2D" "3D: esta vista no recibió búferes estéreo, así que se muestra en 2D"
++    ::msgcat::mcset es "3D depth: the depth of this view could not be read, so both eyes show the same picture" "Profundidad 3D: no se pudo leer la profundidad de esta vista, así que los dos ojos ven la misma imagen"
++    ::msgcat::mcset ja "Enable 3D (applies the next time Netgen starts)" "3D を有効にする (次に Netgen を起動したときに反映)"
++    ::msgcat::mcset ja "The 3D choice could not be saved." "3D の選択を保存できませんでした。"
++    ::msgcat::mcset ja "3D display settings..." "3D ディスプレイの設定..."
++    ::msgcat::mcset ja "Display Settings could not be opened." "ディスプレイ設定を開けませんでした。"
++    ::msgcat::mcset ja "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "3D奥行き: このデスクトップは奥行きの上限を提供しないため、両目に同じ画像を表示します"
++    ::msgcat::mcset ja "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "3D奥行き: デスクトップがまだ奥行きの上限を渡していないため、今は両目に同じ画像を表示します"
++    ::msgcat::mcset ja "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "3D奥行き: このウィンドウはデスクトップの奥行きの上限を読み取れないため、両目に同じ画像を表示します"
++    ::msgcat::mcset ja "This desktop offers no stereo buffers, so the 3D view stays 2D." "このデスクトップはステレオバッファーを提供しないため、3D ビューは 2D のままです。"
++    ::msgcat::mcset ja "3D: this view got no stereo buffers, so it is shown in 2D" "3D: このビューはステレオバッファーを得られなかったため、2D で表示します"
++    ::msgcat::mcset ja "3D depth: the depth of this view could not be read, so both eyes show the same picture" "3D奥行き: このビューの奥行きを読み取れなかったため、両目に同じ画像を表示します"
++    ::msgcat::mcset ko "Enable 3D (applies the next time Netgen starts)" "3D 켜기 (다음에 Netgen을 시작할 때 적용)"
++    ::msgcat::mcset ko "The 3D choice could not be saved." "3D 선택을 저장할 수 없습니다."
++    ::msgcat::mcset ko "3D display settings..." "3D 디스플레이 설정..."
++    ::msgcat::mcset ko "Display Settings could not be opened." "디스플레이 설정을 열 수 없습니다."
++    ::msgcat::mcset ko "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "3D 깊이: 이 데스크톱은 깊이 한계를 제공하지 않아 두 눈에 같은 화면을 보여 줍니다"
++    ::msgcat::mcset ko "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "3D 깊이: 데스크톱이 아직 깊이 한계를 전달하지 않아 지금은 두 눈에 같은 화면을 보여 줍니다"
++    ::msgcat::mcset ko "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "3D 깊이: 이 창은 데스크톱의 깊이 한계를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다"
++    ::msgcat::mcset ko "This desktop offers no stereo buffers, so the 3D view stays 2D." "이 데스크톱은 스테레오 버퍼를 제공하지 않아 3D 보기는 2D로 유지됩니다."
++    ::msgcat::mcset ko "3D: this view got no stereo buffers, so it is shown in 2D" "3D: 이 보기는 스테레오 버퍼를 받지 못해 2D로 표시됩니다"
++    ::msgcat::mcset ko "3D depth: the depth of this view could not be read, so both eyes show the same picture" "3D 깊이: 이 보기의 깊이를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다"
++    ::msgcat::mcset zh_cn "Enable 3D (applies the next time Netgen starts)" "启用 3D（下次启动 Netgen 时生效）"
++    ::msgcat::mcset zh_cn "The 3D choice could not be saved." "无法保存 3D 选择。"
++    ::msgcat::mcset zh_cn "3D display settings..." "3D 显示设置..."
++    ::msgcat::mcset zh_cn "Display Settings could not be opened." "无法打开显示设置。"
++    ::msgcat::mcset zh_cn "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "3D 深度：此桌面未提供深度限制，因此两眼显示相同的画面"
++    ::msgcat::mcset zh_cn "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "3D 深度：桌面尚未提供深度限制，暂时两眼显示相同的画面"
++    ::msgcat::mcset zh_cn "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "3D 深度：此窗口无法读取桌面的深度限制，因此两眼显示相同的画面"
++    ::msgcat::mcset zh_cn "This desktop offers no stereo buffers, so the 3D view stays 2D." "此桌面不提供立体缓冲区，因此 3D 视图保持 2D。"
++    ::msgcat::mcset zh_cn "3D: this view got no stereo buffers, so it is shown in 2D" "3D：此视图未获得立体缓冲区，因此以 2D 显示"
++    ::msgcat::mcset zh_cn "3D depth: the depth of this view could not be read, so both eyes show the same picture" "3D 深度：无法读取此视图的深度，因此两眼显示相同的画面"
++    ::msgcat::mcset zh_tw "Enable 3D (applies the next time Netgen starts)" "啟用 3D（下次啟動 Netgen 時生效）"
++    ::msgcat::mcset zh_tw "The 3D choice could not be saved." "無法儲存 3D 選擇。"
++    ::msgcat::mcset zh_tw "3D display settings..." "3D 顯示設定..."
++    ::msgcat::mcset zh_tw "Display Settings could not be opened." "無法開啟顯示設定。"
++    ::msgcat::mcset zh_tw "3D depth: this desktop offers no depth limits, so both eyes show the same picture" "3D 深度：此桌面未提供深度限制，因此兩眼顯示相同的畫面"
++    ::msgcat::mcset zh_tw "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now" "3D 深度：桌面尚未提供深度限制，暫時兩眼顯示相同的畫面"
++    ::msgcat::mcset zh_tw "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" "3D 深度：此視窗無法讀取桌面的深度限制，因此兩眼顯示相同的畫面"
++    ::msgcat::mcset zh_tw "This desktop offers no stereo buffers, so the 3D view stays 2D." "此桌面不提供立體緩衝區，因此 3D 檢視維持 2D。"
++    ::msgcat::mcset zh_tw "3D: this view got no stereo buffers, so it is shown in 2D" "3D：此檢視未取得立體緩衝區，因此以 2D 顯示"
++    ::msgcat::mcset zh_tw "3D depth: the depth of this view could not be read, so both eyes show the same picture" "3D 深度：無法讀取此檢視的深度，因此兩眼顯示相同的畫面"
++}
++
++proc stereo3d_save { } {
++    global optfilename
++    set lines {}
++    if { [file exists $optfilename] } {
++        if { [catch {
++            set datei [open $optfilename r]
++            while { [gets $datei line] >= 0 } {
++                if { [catch { lindex $line 0 } first] || $first != "stereo3d.enable" } {
++                    lappend lines $line
++                }
++            }
++            close $datei
++        }] } {
++            tk_messageBox -icon warning -type ok -title Netgen -message [stereo3d_mc "The 3D choice could not be saved."]
++            return
++        }
++    }
++    lappend lines "stereo3d.enable  [set ::stereo3d.enable]"
++    if { [catch {
++        set datei [open $optfilename w]
++        foreach line $lines { puts $datei $line }
++        close $datei
++    }] } {
++        tk_messageBox -icon warning -type ok -title Netgen -message [stereo3d_mc "The 3D choice could not be saved."]
++    }
++}
++
++proc stereo3d_toggled { } {
++    stereo3d_save
++    if { [set ::stereo3d.enable] == 1 && [set ::stereo3d.drawing] != "native" && ![Ng_Stereo3DVisual] } {
++        tk_messageBox -icon info -type ok -title Netgen -message [stereo3d_mc "This desktop offers no stereo buffers, so the 3D view stays 2D."]
++    }
++}
++
++proc stereo3d_display_settings { } {
++    if { [catch { exec systemsettings kcm_kscreen & }] && [catch { exec kcmshell6 kcm_kscreen & }] } {
++        tk_messageBox -icon warning -type ok -title Netgen -message [stereo3d_mc "Display Settings could not be opened."]
++    }
++}
++
++proc stereo3d_tell { key } {
++    switch -- $key {
++        notoffered { set message [stereo3d_mc "3D depth: this desktop offers no depth limits, so both eyes show the same picture"] }
++        notdelivered { set message [stereo3d_mc "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"] }
++        unreadable { set message [stereo3d_mc "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"] }
++        depthunreadable { set message [stereo3d_mc "3D depth: the depth of this view could not be read, so both eyes show the same picture"] }
++        nostereobuffers { set message [stereo3d_mc "3D: this view got no stereo buffers, so it is shown in 2D"] }
++        default { set message "" }
++    }
++    if { $message == "" } {
++        if { [set ::stereo3d.status] != "" } {
++            set ::stereo3d.status ""
++            catch { pack forget .statbar.stereo3d }
++        }
++        return
++    }
++    if { [lsearch -exact [set ::stereo3d.told] $key] >= 0 } { return }
++    lappend ::stereo3d.told $key
++    puts stderr $message
++    set ::stereo3d.status $message
++    catch {
++        if { ![winfo exists .statbar.stereo3d] } {
++            ttk::label .statbar.stereo3d -textvariable stereo3d.status
++        }
++        pack .statbar.stereo3d -side right -ipady 3p -padx 3p
++    }
++}
++
++proc stereo3d_poll { } {
++    set state [Ng_Stereo3DPoll]
++    if { $state == "mono" } { return }
++    incr ::stereo3d.polls
++    switch -- $state {
++        ok { stereo3d_tell clear }
++        notdelivered { if { [set ::stereo3d.polls] > 8 } { stereo3d_tell notdelivered } }
++        default { stereo3d_tell $state }
++    }
++    after 250 stereo3d_poll
++}
+diff --git a/ng/variables.tcl b/ng/variables.tcl
+index 0ef9bdb..6d9fe11 100644
+--- a/ng/variables.tcl
++++ b/ng/variables.tcl
+@@ -94,6 +94,7 @@ set viewoptions.drawcoordinatecross 1
+ set viewoptions.drawcolorbar 1
+ set viewoptions.drawnetgenlogo 1
+ set viewoptions.stereo 0
++set stereo3d.enable 1
+ set viewoptions.shrink 1
+ 
+ set viewoptions.drawfilledtrigs 1
+@@ -458,6 +459,7 @@ proc saveoptions { } {
+ 	    puts $datei "viewoptions.drawcoordinatecross  ${viewoptions.drawcoordinatecross}" 
+ 	    puts $datei "viewoptions.drawnetgenlogo  ${viewoptions.drawnetgenlogo}" 
+ 	    puts $datei "viewoptions.stereo  ${viewoptions.stereo}" 
++	    puts $datei "stereo3d.enable  ${stereo3d.enable}" 
+ 	    puts $datei "viewoptions.drawfilledtrigs  ${viewoptions.drawfilledtrigs}" 
+ 	    puts $datei "viewoptions.drawedges  ${viewoptions.drawedges}" 
+ 	    puts $datei "viewoptions.drawbadels  ${viewoptions.drawbadels}" 
+-- 
+2.53.0
+
