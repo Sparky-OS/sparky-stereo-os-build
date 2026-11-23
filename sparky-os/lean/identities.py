@@ -70,6 +70,10 @@ RELEASED = {
     # shell by their name, as /etc/skel/.bashrc was by its path.
     '0.1.31': {'7c590f9475843d26831db3753dd954d9a450b92d8a7f25c7fb4d7a4f16159f42':
                'lean 0.1.31 (collapse-blank,pointer,c-drop-lines) code 7c590f9475843d26'},
+    # Row 825 (found by row 77): a .qml file's check reads QML's '@' (T_AT, an annotation) as a token of its own; the
+    # render is unchanged, and so is a JavaScript file's check.
+    '0.1.32': {'ae496e74be2b97cc82e68fb1a1349dc4d0f4361f4396fe8f716d5b5fc017044f':
+               'lean 0.1.32 (collapse-blank,pointer,c-drop-lines) code ae496e74be2b97cc'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.

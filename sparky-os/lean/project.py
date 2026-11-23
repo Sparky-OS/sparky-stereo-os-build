@@ -81,7 +81,10 @@ def _keep_empty(key, mod, variant):
     return getattr(mod, 'keep_empty_after', None)
 
 
-def _verify(key, mod, original, lean, variant):
+def _verify(key, mod, original, lean, variant, path=''):
+    if key == 'js':
+        # a .qml file is read as QML, whose lexer has one more token than ECMAScript ('@', an annotation)
+        return mod.verify(original, lean, 'qml' if (path or '').lower().endswith('.qml') else 'js')
     if key == 'ini':
         return mod.verify(original, lean, variant)
     if key == 'shell':
@@ -184,7 +187,7 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
         res.status, res.reason = 'unchanged', 'the pointer line outweighs the comments it would replace'
         return res
     if check:
-        ok, detail = _verify(key, mod, text, lean, variant)
+        ok, detail = _verify(key, mod, text, lean, variant, path)
         res.check = detail
         if not ok:
             res.reason = f'check failed: {detail}'

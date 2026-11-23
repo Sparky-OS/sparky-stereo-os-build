@@ -1,0 +1,138 @@
+Description: Say once per screen when its mode cannot be read
+ Stereo::ScreenMode reads each screen's mode through KScreen and keeps a screen whose mode it cannot
+ read as unknown, so a window there that shows an icon the theme has in stereo is drawn once, with
+ the plain icon. When KScreen's read fails, the platform theme now says so once per screen in the
+ log, naming the screen and KScreen's reason, instead of leaving the plain icons unexplained.
+ The read is made once per program, when the first window that drew such an icon meets a screen.
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-22
+---
+diff --git a/qt6/CMakeLists.txt b/qt6/CMakeLists.txt
+index a6a5227..5993063 100644
+--- a/qt6/CMakeLists.txt
++++ b/qt6/CMakeLists.txt
+@@ -28,6 +28,7 @@ find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS
+ 
+ find_package(KF6ColorScheme ${KF6_MIN_VERSION} REQUIRED CONFIG)
+ find_package(StereoLayer 1.22 REQUIRED CONFIG)
++find_package(KF6Screen REQUIRED CONFIG)
+ 
+ ecm_set_disabled_deprecation_versions(QT 5.15.2
+     KF 5.101
+diff --git a/qt6/src/platformtheme/CMakeLists.txt b/qt6/src/platformtheme/CMakeLists.txt
+index 6831fe5..c5da7d0 100644
+--- a/qt6/src/platformtheme/CMakeLists.txt
++++ b/qt6/src/platformtheme/CMakeLists.txt
+@@ -66,6 +66,7 @@ target_link_libraries(KDEPlasmaPlatformTheme6
+         KF6::WindowSystem
+         KF6::GuiAddons
+         Stereo::Layer
++        KF6::Screen
+         XCB::XCB
+         Qt6::WaylandClient
+         Qt6::GuiPrivate
+diff --git a/qt6/src/platformtheme/stereoicons.cpp b/qt6/src/platformtheme/stereoicons.cpp
+index d9707e9..1595b08 100644
+--- a/qt6/src/platformtheme/stereoicons.cpp
++++ b/qt6/src/platformtheme/stereoicons.cpp
+@@ -14,6 +14,8 @@
+ 
+ #include <stereo-layer/screenmode.h>
+ 
++#include <KScreen/GetConfigOperation>
++
+ static constexpr char IconsDrawnProperty[] = "_q_stereo_icons_drawn";
+ static constexpr char IconProperty[] = "_q_stereo_icon";
+ static constexpr char DepthProperty[] = "_q_stereo_depth";
+@@ -102,10 +104,50 @@ Stereo::ScreenMode *StereoIcons::screenMode(QScreen *screen)
+         connect(screen, &QObject::destroyed, this, [this, screen] {
+             delete m_screenModes.take(screen);
+         });
++        if (m_screensRead == ScreensRead::Failed) {
++            tellUnread(screen);
++        } else {
++            readScreens();
++        }
+     }
+     return mode;
+ }
+ 
++void StereoIcons::readScreens()
++{
++    // Stereo::ScreenMode leaves a screen whose mode KScreen cannot give as unknown, and its windows are drawn once;
++    // the same read here says so, once per screen, instead of leaving the plain icons unexplained
++    if (m_screensRead != ScreensRead::NotYet) {
++        return;
++    }
++    m_screensRead = ScreensRead::Reading;
++    auto *operation = new KScreen::GetConfigOperation(KScreen::ConfigOperation::NoEDID, this);
++    connect(operation, &KScreen::ConfigOperation::finished, this, [this, operation] {
++        if (!operation->hasError()) {
++            m_screensRead = ScreensRead::Read;
++            return;
++        }
++        m_screensRead = ScreensRead::Failed;
++        m_screensError = operation->errorString();
++        const auto screens = m_screenModes.keys();
++        for (QScreen *screen : screens) {
++            tellUnread(screen);
++        }
++    });
++}
++
++void StereoIcons::tellUnread(QScreen *screen)
++{
++    if (!screen || m_toldScreens.contains(screen->name())) {
++        return;
++    }
++    m_toldScreens.insert(screen->name());
++    qWarning().noquote() << QStringLiteral(
++                                "The mode of screen %1 cannot be read (KScreen: %2), so a window on it that shows an icon the icon theme has in stereo is "
++                                "drawn once, with the plain icon, even if the screen shows two eyes.")
++                                .arg(screen->name(), m_screensError.isEmpty() ? QStringLiteral("no reason given") : m_screensError);
++}
++
+ void StereoIcons::update(QWindow *window)
+ {
+     QScreen *screen = window->screen();
+diff --git a/qt6/src/platformtheme/stereoicons.h b/qt6/src/platformtheme/stereoicons.h
+index 01a0698..cb7fb11 100644
+--- a/qt6/src/platformtheme/stereoicons.h
++++ b/qt6/src/platformtheme/stereoicons.h
+@@ -8,6 +8,8 @@
+ 
+ #include <QHash>
+ #include <QObject>
++#include <QSet>
++#include <QString>
+ 
+ class QScreen;
+ class QWindow;
+@@ -28,6 +30,9 @@ class ScreenMode;
+  * Kirigami's Icon, marks its own window. A marked window gets _q_stereo_depth, which makes the
+  * edition's Qt draw it once per eye, while Stereo::ScreenMode says its screen shows two eyes; the
+  * property is taken away again when it does not, unless something else set it.
++ *
++ * Stereo::ScreenMode reads the modes through KScreen and keeps a screen it cannot read as unknown, so
++ * a window there is drawn once; when that read fails, it is said once per screen in the log.
+  */
+ class StereoIcons : public QObject
+ {
+@@ -44,8 +49,15 @@ private:
+     void watch(QWindow *window);
+     void update(QWindow *window);
+     Stereo::ScreenMode *screenMode(QScreen *screen);
++    void readScreens();
++    void tellUnread(QScreen *screen);
+ 
+     // The windows that drew a stereo icon, and whether their _q_stereo_depth is ours
+     QHash<QWindow *, bool> m_windows;
+     QHash<QScreen *, Stereo::ScreenMode *> m_screenModes;
++
++    enum class ScreensRead { NotYet, Reading, Read, Failed };
++    ScreensRead m_screensRead = ScreensRead::NotYet;
++    QString m_screensError;
++    QSet<QString> m_toldScreens;
+ };
