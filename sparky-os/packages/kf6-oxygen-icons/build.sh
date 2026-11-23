@@ -64,8 +64,9 @@ for f in 'simbolicActions/22x22/actions/go-first copy.svg' 'simbolicActions/24x2
 		'simbolicActions/48x48/actions/go-first copy.svg'; do
 	[ ! -e "$f" ] && [ ! -L "$f" ] || { echo "the patch left $f" >&2; exit 1; }
 done
-# no other name with a space is left in the theme
-[ -z "$(find . -path ./debian -prune -o -name '* *' -print)" ]
+# no other name with a space is left in the theme (quilt keeps its backups of the removed files in .pc)
+spaced=$(find . \( -path ./debian -o -path ./.pc \) -prune -o -name '* *' -print)
+[ -z "$spaced" ] || { printf 'a name with a space is left, gtk-update-icon-cache would reject the cache: %s\n' "$spaced" >&2; exit 1; }
 dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
 	'Carried by Sparky Stereo OS (queue row 850b): upstream 5bfe4322 (Nuno Pinheiro), which removes the three "go-first copy.svg" entries that left the theme without its icon cache (KDE bug 528955, Debian bug 1154120). Retired when Debian'"'"'s fix reaches testing.'
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
