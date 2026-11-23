@@ -1,0 +1,162 @@
+Description: Read Plasma's configuration folders and Qt 6 font strings
+ oxygen-gtk reads kdeglobals and oxygenrc in the folders "kde4-config --path config"
+ lists, and finds icon themes in the folders "kde4-config --path icon" lists. Without
+ KDE 4 neither command exists, so in a Plasma session the engine merges only its own
+ light kdeglobals: GTK 2 programs wear Oxygen's light palette whatever colour scheme,
+ font and icon theme the person chose. KDE bug 364693 is the lead: the maintainer,
+ Hugo Pereira Da Costa, wrote that the engine "looks for kde4 configuration files in
+ the directory list returned by kde4-config --path config" and that "we should
+ probably update it to also use the output of kf5-config --path config".
+ .
+ The technique is openSUSE's qt-config-path.patch (2015, carried by Gentoo since
+ 2017): the folders Qt lists for QStandardPaths::ConfigLocation, the person's
+ XDG_CONFIG_HOME, then XDG_CONFIG_DIRS (where Plasma puts the look and feel's
+ kdedefaults before /etc/xdg), come before the engine's own folders. Here the same
+ list comes from GLib (g_get_user_config_dir, g_get_system_config_dirs), which every
+ GTK 2 program already links, instead of running qtpaths, which Debian ships only as
+ qtpaths6; kde4-config is no longer run. The first folder wins, as in KConfig: the
+ person's kdeglobals, then kdedefaults, then /etc/xdg, then the engine's own.
+ Icon themes are looked for where GTK 2's own icon theme looks: ~/.icons,
+ XDG_DATA_HOME/icons, then each XDG_DATA_DIRS/icons.
+ .
+ Plasma 6 writes fonts as Qt 6's QFont::toString does: 16 fields or more, the weight
+ on the OpenType scale (Normal is 400). The engine read that field on Qt 4's scale
+ (Normal is 50), so a regular font would be drawn Black once the engine reads
+ Plasma's settings. Qt 6's QFont::fromString tells the two forms apart by the number
+ of fields; the engine now does the same and brings an OpenType weight to the legacy
+ scale with the table of Qt 6's qt_openTypeToLegacyWeight.
+Author: Daniel Campos Ramos
+Origin: vendor, Sparky Stereo OS (queue row 59)
+Bug: https://bugs.kde.org/show_bug.cgi?id=364693
+Forwarded: no
+Last-Update: 2026-11-23
+---
+--- a/src/oxygenfontinfo.cpp
++++ b/src/oxygenfontinfo.cpp
+@@ -20,6 +20,8 @@
+ 
+ #include "oxygenfontinfo.h"
+ 
++#include <algorithm>
++#include <cstdlib>
+ #include <sstream>
+ #include <vector>
+ 
+@@ -27,6 +29,26 @@
+ {
+ 
+     //_____________________________________________
++    // an OpenType weight (Qt 6, Normal is 400) on Qt's legacy scale (Qt 4 and 5, Normal is 50): the closest
++    // of Qt 6's weights, with the table and the search of Qt 6's qt_openTypeToLegacyWeight (qfont.cpp)
++    static int legacyWeight( int openTypeWeight )
++    {
++        static const int map[][2] = {
++            { 100, 0 }, { 200, 12 }, { 300, 25 }, { 400, 50 }, { 500, 57 },
++            { 600, 63 }, { 700, 75 }, { 800, 81 }, { 900, 87 } };
++        int closest( map[0][1] );
++        int distance( std::abs( openTypeWeight - map[0][0] ) );
++        for( unsigned int index = 1; index < sizeof( map )/sizeof( map[0] ); ++index )
++        {
++            const int local( std::abs( openTypeWeight - map[index][0] ) );
++            if( local >= distance ) break;
++            closest = map[index][1];
++            distance = local;
++        }
++        return closest;
++    }
++
++    //_____________________________________________
+     std::string FontInfo::toString( bool addQuotes ) const
+     {
+         std::ostringstream out;
+@@ -49,6 +71,11 @@
+         FontInfo out;
+         if( value.empty() ) return out;
+ 
++        // Plasma 6 writes Qt 6 font strings (QFont::toString): 16 fields or more, the weight on the OpenType
++        // scale. Qt 4 and Qt 5 wrote 10 or 11 fields, the weight on Qt's legacy scale. Qt 6's QFont::fromString
++        // tells the two forms apart by the same count
++        const bool openTypeWeight( std::count( value.begin(), value.end(), ',' ) + 1 >= 16 );
++
+         // split strings using "," as a separator
+         size_t position = 0;
+         std::vector<std::string> values;
+@@ -82,6 +109,7 @@
+                 int weight;
+                 if( in >> weight )
+                 {
++                    if( openTypeWeight ) weight = legacyWeight( weight );
+                     if( weight < Normal ) out._weight = Light;
+                     else if( weight < DemiBold ) out._weight = Normal;
+                     else if( weight < Bold ) out._weight = DemiBold;
+--- a/src/oxygenqtsettings.cpp
++++ b/src/oxygenqtsettings.cpp
+@@ -270,25 +270,33 @@
+     }
+ 
+     //_________________________________________________________
++    // add an XDG base directory, or a folder in it, to a path list, most important first: the base
++    // directory specification ignores relative paths, and a folder already listed is not listed again
++    static void addXdgDirectory( PathList& out, const char* base, const char* folder = "" )
++    {
++        if( !base || base[0] != '/' ) return;
++        std::string path( base );
++        while( !path.empty() && path[path.size()-1] == '/' ) path.erase( path.size()-1 );
++        path += folder;
++        path += '/';
++        if( std::find( out.begin(), out.end(), path ) == out.end() ) out.push_back( path );
++    }
++
++    //_________________________________________________________
+     PathList QtSettings::kdeConfigPathList( void ) const
+     {
+ 
++        // the folders KConfig reads kdeglobals and oxygenrc from in a Plasma session, most important
++        // first: the person's own ($XDG_CONFIG_HOME, else ~/.config), then $XDG_CONFIG_DIRS (else
++        // /etc/xdg), where Plasma puts the look and feel's kdedefaults before /etc/xdg.
++        // This is the list Qt gives for QStandardPaths::ConfigLocation; KDE 4's kde4-config is gone
+         PathList out;
++        addXdgDirectory( out, g_get_user_config_dir() );
++        for( const gchar* const* dirs = g_get_system_config_dirs(); dirs && *dirs; ++dirs )
++        { addXdgDirectory( out, *dirs ); }
+ 
+-        // load icon install prefix
+-        gchar* path = 0L;
+-        if( runCommand( "kde4-config --path config", path ) && path )
+-        {
+-
+-            out.split( path );
+-            g_free( path );
+-
+-        } else {
+-
+-            out.push_back( userConfigDir() );
+-
+-        }
+-
++        // the engine's own folders come last: the person's ~/.config/oxygen-gtk, then the theme's defaults
++        out.push_back( userConfigDir() );
+         out.push_back( GTK_THEME_DIR );
+ 
+         #if OXYGEN_DEBUG
+@@ -304,14 +312,13 @@
+     PathList QtSettings::kdeIconPathList( void ) const
+     {
+ 
+-        // load icon install prefix
++        // the folders icon themes are installed in, in the order GTK 2's own icon theme searches them:
++        // ~/.icons, $XDG_DATA_HOME/icons (else ~/.local/share/icons), then each of $XDG_DATA_DIRS/icons
+         PathList out;
+-        char* path = 0L;
+-        if( runCommand( "kde4-config --path icon", path ) && path )
+-        {
+-            out.split( path );
+-            g_free( path );
+-        }
++        addXdgDirectory( out, g_get_home_dir(), "/.icons" );
++        addXdgDirectory( out, g_get_user_data_dir(), "/icons" );
++        for( const gchar* const* dirs = g_get_system_data_dirs(); dirs && *dirs; ++dirs )
++        { addXdgDirectory( out, *dirs, "/icons" ); }
+ 
+         // make sure defaultKdeIconPath is included in the list
+         if( std::find( out.begin(), out.end(), _defaultKdeIconPath ) == out.end() )

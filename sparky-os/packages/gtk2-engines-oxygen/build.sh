@@ -11,6 +11,11 @@
 # Sturmlechner, -Wuninitialized). Left out: d5e91221 (the demo switch; Debian's dont-build-demos.patch does the same),
 # b1ee5fb8 (the Mozilla program names moved to a header: no Mozilla program is a GTK 2 program any more) and the 2021
 # licence-header conversions. Debian's packaging stays as Debian has it but for debhelper compat 10 (below). Lean Code at +lc1.
+# +sparky2 (row 59, continuation 2) adds one patch of ours, sparky-06-plasma-folders-and-qt6-font-weight.patch: the engine
+# reads kdeglobals and oxygenrc in the XDG configuration folders (the person's, then Plasma's kdedefaults, then /etc/xdg)
+# before its own, finds icon themes where GTK 2 looks, and reads Plasma 6's Qt 6 font strings on their own weight scale.
+# KDE bug 364693 is the lead; the technique is openSUSE's qt-config-path.patch (2015, carried by Gentoo since 2017), with
+# GLib's folder list in place of the qtpaths command. Without it GTK 2 programs wear Oxygen's light palette in every scheme.
 # Run inside a clean distribution build container with the source dependencies installed.
 # SOURCE_DSC names Debian's unmodified gtk2-engines-oxygen_1.4.6-1.1.dsc and its adjacent archives.
 # Last update 2026/11/23
@@ -30,7 +35,7 @@ export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export DEB_BUILD_OPTIONS="parallel=${JOBS:-4}"
 export LC_ALL=C.UTF-8
-VERSION=1.4.6-1.1+sparky1
+VERSION=1.4.6-1.1+sparky2
 V=${VERSION#*:}
 printf '%s  %s\n' 912301099eef548582838a50c3a05fd8cec4f2dccfaa07509437ec47dbf1bfcd "$SOURCE_DSC" | sha256sum -c -
 [ ! -e "$BUILD_ROOT/authored" ] && [ ! -e "$OUT/authored" ]
@@ -38,7 +43,8 @@ mkdir -p "$BUILD_ROOT" "$OUT/authored"
 cp "$(dirname "$SOURCE_DSC")"/gtk2-engines-oxygen_1.4.6.orig.tar.* "$BUILD_ROOT/"
 dpkg-source -x "$SOURCE_DSC" "$BUILD_ROOT/authored"
 cd "$BUILD_ROOT/authored"
-for patch in upstream-01-e14fbdc0.patch upstream-02-ef3c0cdf.patch upstream-03-7a5425d8.patch upstream-04-a8798db8.patch upstream-05-e5950db7.patch; do
+for patch in upstream-01-e14fbdc0.patch upstream-02-ef3c0cdf.patch upstream-03-7a5425d8.patch upstream-04-a8798db8.patch upstream-05-e5950db7.patch \
+	sparky-06-plasma-folders-and-qt6-font-weight.patch; do
 	cp "$HERE/patches/$patch" debian/patches/
 	printf '%s\n' "$patch" >> debian/patches/series
 done
@@ -63,8 +69,14 @@ printf '10\n' > debian/compat
 dpkg-source --before-build .
 grep -q 'cmake_minimum_required(VERSION 3.16)' CMakeLists.txt
 grep -q 'DEBIAN_NO_DEMOS' CMakeLists.txt
+# the patch of ours is in: no kde4-config is run, and the Qt 6 weight is read on its own scale ("set -e" ignores a
+# negated command, so each check says what it found)
+if grep -n 'runCommand( "kde4-config' src/oxygenqtsettings.cpp; then echo 'kde4-config is still run: the patch of ours is not applied' >&2; exit 1; fi
+grep -q 'legacyWeight( weight )' src/oxygenfontinfo.cpp || { echo 'the Qt 6 weight is not read: the patch of ours is not applied' >&2; exit 1; }
 dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
 	'Carried by Sparky Stereo OS after Debian removed it (queue row 59): upstream e14fbdc0, ef3c0cdf (crash on invalid tree view columns), 7a5425d8, a8798db8 (CMake 3.16, which CMake 4 needs) and e5950db7; debhelper compat 10, which the Lean Code hooks need.'
+dch --date "$SOURCE_DATE_RFC2822" --append \
+	'Read kdeglobals and oxygenrc in the XDG configuration folders before the engine'\''s own, icon themes where GTK 2 looks, and Plasma 6'\''s Qt 6 font strings on their own weight scale (KDE bug 364693; the technique of openSUSE'\''s qt-config-path.patch, with GLib'\''s folder list), so GTK 2 programs follow the colour scheme, font and icon theme of the Plasma session (row 59, continuation 2).'
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
