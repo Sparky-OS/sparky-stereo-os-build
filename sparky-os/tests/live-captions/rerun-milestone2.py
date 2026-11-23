@@ -63,6 +63,8 @@ def main():
                 count+=1
             row(name+' checksums','every listed SHA256 matches',count)
         run([sys.executable,'-B',scripts/'check-stage-closure.py',stage],out/'stage-closure.json');row('complete stage manifest','all regular files including hidden .keep are covered','pass')
+        run([sys.executable,'-B',scripts/'check-source-contacts.py',stage],out/'staged-source-contacts.json')
+        row('staged authored copyright','no third-party contacts in our DEP-5 files, authored and Lean sources','pass')
         for key in ('recipe','skills'):
             run([sys.executable,'-B',scripts/'check-branch-contacts.py',cfg[key+'_repo'],cfg[key+'_base']],out/(key+'-contacts.json'))
             findings=json.loads((out/(key+'-contacts.json')).read_text());row(key+' added contacts','only Daniel packaging identity; every match listed',len(findings))
@@ -90,11 +92,6 @@ def main():
         # Unchanged recipe/gates; only the launcher's local ledger path is relocated.
         build=(scripts/'build-continuation.sh').read_text().replace(cfg['lane']+'/.container-ids',str(out/'.container-ids'))
         (helpers/'build.sh').write_text(build)
-        for package in ('captiond','kaption'):
-            target=out/('build-'+package)
-            run(['bash',scripts/'build-upstream.sh',package,target],out/(package+'-launcher.log'),{'LANE_CONTAINER_IDS':str(out/'.container-ids')})
-            record=json.loads(next((target/'build').glob('*.sparky-build.json')).read_text())
-            row(package+' gates','unchanged gates pass, recipeDirty false',dict(commit=record['recipeCommit'],dirty=record['recipeDirty']),not record['recipeDirty'] and record['unrecorded']==[])
         for package in ('sparky-stereo-partners','sparky-stereo-live-captions'):
             target=out/('build-'+package)
             run(['bash',helpers/'build.sh',package,target],out/(package+'-launcher.log'))

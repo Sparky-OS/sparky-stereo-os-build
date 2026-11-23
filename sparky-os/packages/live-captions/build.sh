@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Build one unmodified release using the edition's source preparation and gates.
 # All downloads and dependency installation precede this offline build.
-# Usage: build.sh captiond|kaption OUT ORIG IMAGE ARCHIVE REPO SIBLINGS ACCEPTED ROW70 VIBE PREVIOUS STAGE
+# Usage: build.sh captiond|kaption OUT ORIG IMAGE ARCHIVE REPO SIBLINGS ACCEPTED ROW70 VIBE PREVIOUS STAGE PREVIOUS_SIBLINGS
 set -euo pipefail
 name=${1:?captiond or kaption}
 case "$name" in captiond|kaption) ;; *) exit 2;; esac
@@ -18,6 +18,7 @@ row70=$(realpath "${9:?accepted Graphics sibling folder}")
 vibe=$(realpath "${10:?accepted Vibe stage}")
 previous=$(realpath "${11:?predecessor stage}")
 stage=$(realpath "${12:?current sibling stage}")
+previous_siblings=$(realpath "${13:?predecessor sibling list}")
 here=$(cd "$(dirname "$0")" && pwd)
 toolkit=$(realpath "$here/../..")
 source "$toolkit/repo/build-provenance.sh"
@@ -53,7 +54,8 @@ docker run --detach --name "$container" --pull=never --platform linux/amd64 --cp
  --mount type=bind,source="$previous",target=/previous,readonly \
  --mount type=bind,source="$stage",target=/stage,readonly \
  --mount type=bind,source="$siblings",target=/siblings.txt,readonly \
- -e SPARKY_LC_PREVIOUS_DIR=/previous -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/siblings.txt \
+ --mount type=bind,source="$previous_siblings",target=/previous-siblings.txt,readonly \
+ -e SPARKY_LC_PREVIOUS_DIR=/previous -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt \
  -e NAME="$name" -e OWNER="$(id -u):$(id -g)" \
  -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
  -e SPARKY_LC_SIBLINGS_FILE=/siblings.txt -e SPARKY_LC_MIN_FREE_GIB=2 -e SPARKY_LC_ROOT_MIN_FREE_GIB=1 \
