@@ -1,0 +1,25 @@
+Description: Queue anacron jobs without waiting in systemd udev events
+ A synchronous start can keep a mains power event in the udev queue until
+ basic.target. A boot-time consumer of systemd-udev-settle then holds up
+ the targets needed by anacron.service until the settle command times out.
+ Submit both actions asynchronously on systemd. Retain the SysV actions.
+Origin: vendor, Sparky Stereo OS
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-23
+Thanks: Lance Lin for Debian's mains rule and Sam Bull for Debian #1148276.
+
+--- a/debian/anacron.udev
++++ b/debian/anacron.udev
+@@ -4,5 +4,9 @@
+ #
+ # Activate anacron service whenever power supply is online.
+ 
+-SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="1", RUN+="/usr/sbin/invoke-rc.d anacron start"
+-SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="0", RUN+="/usr/sbin/invoke-rc.d anacron stop"
++# Submit systemd jobs without holding the udev event open.
++SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="1", TEST=="/run/systemd/system", RUN+="/usr/bin/systemctl --no-block start anacron.service"
++SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="0", TEST=="/run/systemd/system", RUN+="/usr/bin/systemctl --no-block stop anacron.service"
++
++SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="1", TEST!="/run/systemd/system", RUN+="/usr/sbin/invoke-rc.d anacron start"
++SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="0", TEST!="/run/systemd/system", RUN+="/usr/sbin/invoke-rc.d anacron stop"
