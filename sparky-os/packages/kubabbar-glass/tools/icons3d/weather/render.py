@@ -124,16 +124,7 @@ def render_pair(size, camera, rig, exr, supersample):
     return views
 
 
-def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, static_only):
-    start = time.monotonic()
-    params = parameters(name)
-    phases = [model(params,i/FRAMES,DISC_BACK) for i in range(FRAMES+1)]
-    out.mkdir(parents=True, exist_ok=True)
-    scratch.mkdir(parents=True, exist_ok=True)
-    camera,bounds = cameras_for(params,phases,set(sizes+loop_sizes+(64,256)))
-    join = join_report(params,phases,DISC_BACK)
-    draw_svg(out/'static.svg',phases[:1],camera[64],DISTANCE,studio.HFOV)
-    draw_svg(out/'loop.svg',phases[:-1],camera[64],DISTANCE,studio.HFOV)
+def initialize(samples):
     studio.reset()
     studio.DISTANCE = DISTANCE
     studio.studio()
@@ -145,6 +136,36 @@ def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, sta
     scene.cycles.use_animated_seed = False
     scene.cycles.max_bounces = 4
     scene.render.use_persistent_data = True
+    return cameras,right
+
+
+def rerender_edges(out, scratch, size):
+    recipe_path = out/'geometry.json'
+    recipe = json.loads(recipe_path.read_text())
+    shapes = {shape.name:shape for shape in model(recipe['parameters'],0,DISC_BACK)}
+    cameras,right = initialize(recipe['samples'])
+    scratch.mkdir(parents=True,exist_ok=True)
+    objects, materials = [], {}
+    for label, feature in recipe['features'].items():
+        shape = shapes[feature['name']]
+        objects = set_geometry([shape],cameras['centre'].rotation_euler.to_matrix(),objects,materials)
+        views = render_pair(size,recipe['camera'][str(size)],(cameras,right),scratch/'edge.exr',recipe['supersample'])
+        write_png(out/f'edge-{label}.pns',views,pair_mark=True)
+        feature['size'] = size
+    recipe_path.write_text(json.dumps(recipe,indent=2)+'\n')
+
+
+def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, static_only):
+    start = time.monotonic()
+    params = parameters(name)
+    phases = [model(params,i/FRAMES,DISC_BACK) for i in range(FRAMES+1)]
+    out.mkdir(parents=True, exist_ok=True)
+    scratch.mkdir(parents=True, exist_ok=True)
+    camera,bounds = cameras_for(params,phases,set(sizes+loop_sizes+(64,256)))
+    join = join_report(params,phases,DISC_BACK)
+    draw_svg(out/'static.svg',phases[:1],camera[64],DISTANCE,studio.HFOV)
+    draw_svg(out/'loop.svg',phases[:-1],camera[64],DISTANCE,studio.HFOV)
+    cameras,right = initialize(samples)
     objects, materials = [], {}
     for frame, shapes in enumerate(phases[:-1]):
         selected = sizes if frame==0 else loop_sizes
@@ -192,8 +213,12 @@ def main():
     parser.add_argument('--supersample',type=int,default=2)
     parser.add_argument('--samples',type=int,default=12)
     parser.add_argument('--static-only',action='store_true')
+    parser.add_argument('--edges-only',type=int,choices=LOOP_SIZES)
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     for name in args.names:
+        if args.edges_only:
+            rerender_edges(args.output/name,args.scratch/name,args.edges_only)
+            continue
         render_name(name,args.output/name,args.scratch/name,tuple(args.sizes),tuple(args.loops),
                     args.supersample,args.samples,args.static_only)
 
