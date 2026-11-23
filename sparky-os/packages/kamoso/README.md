@@ -98,3 +98,11 @@ choice, effects and mirroring. The preview retains its mono frame for readiness
 and never publishes it as a pair. Source-filter transitions discard the frame
 that still carries the preceding filter; recording stop follows the recorder
 actually started, independently of the Enable 3D setting.
+
+The compositor fixture under tests/compositor-fixture enumerates the installed
+policy list, checks native samples and child-only declarations, and compares
+both rendered eyes with one output resize. A nested 2D compositor supplies an
+actual output witness; an ordinary ScreenShot2 pair alone cannot do that.
+The ordinary-control fixture fixes Qt's hash seed equally on both builds and
+uses zero differing pixels. Fifty hide/show rounds invoke the shared action and
+wait for the real child lifecycle; they load the repaired Qt GStreamer dependency.
