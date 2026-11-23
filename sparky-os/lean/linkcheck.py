@@ -183,8 +183,24 @@ def control_field(deb, field):
 
 def system_library_dir(rel_dir):
     """A directory the dynamic loader searches by itself (/lib, /usr/lib and the multiarch ones): an object there is a
-    library any program may link, never a plugin of one program."""
-    return rel_dir in ('/usr/lib', '/lib', '/usr/lib64', '/lib64') or rel_dir.endswith('-linux-gnu')
+    library any program may link, never a plugin of one program. Only the multiarch directory itself
+    (/usr/lib/x86_64-linux-gnu), never a program's private directory deeper down whose name ends the same way: Octave
+    keeps its functions in /usr/lib/x86_64-linux-gnu/octave/11.3.0/oct/x86_64-pc-linux-gnu."""
+    return rel_dir in ('/usr/lib', '/lib', '/usr/lib64', '/lib64') or bool(re.fullmatch(r'/(usr/)?lib/[^/]+-linux-gnu', rel_dir))
+
+
+def shared_object(path):
+    """Whether an ELF file is a library or a plugin, never a program: named as a library (`*.so`, `*.so.N`), or, under
+    any other name, of ELF type DYN with no program interpreter and no DF_1_PIE flag. Octave's functions are such files
+    (`*.oct` in Octave's own directory, built without its libraries in NEEDED, as Debian builds them): Octave loads them
+    with dlopen() and they take its symbols from it (dpkg-shlibdeps(1): "The binary is most likely a plugin and the
+    symbol is probably provided by the program that loads this plugin"; Debian Policy 10.2: "Shared object files (often
+    .so files)"). A static-pie program is DYN with DF_1_PIE and stays a program, as loader_command() reads it."""
+    if re.search(r'\.so(\.|$)', Path(path).name):
+        return True
+    out = probe(['readelf', '-h', '-l', '-d', '-W', str(path)], 'ELF type', path, 30)
+    return bool(re.search(r'^\s*Type:\s+DYN\b', out, re.M)) and 'Requesting program interpreter' not in out \
+        and not re.search(r'\(FLAGS_1\)\s+Flags:.*\bPIE\b', out)
 
 
 def program_exports(debs, directory, check_space=None):
@@ -199,7 +215,7 @@ def program_exports(debs, directory, check_space=None):
             extract(deb, root, check_space)
             for path in elf_files(root):
                 rel = '/' + str(path.relative_to(root))
-                library = re.search(r'\.so(\.|$)', path.name)
+                library = shared_object(path)
                 if library and system_library_dir(str(Path(rel).parent)):
                     continue
                 out = probe(['nm', '-D', '--defined-only', str(path)], 'exported symbols', path, 60)
@@ -218,8 +234,10 @@ def supplied_by_programs(name, items, before, programs, plugins):
     Only a shared object outside the system library directories, whose previous build already left symbols to its
     program, counts as a plugin. What a program supplies it is its own exports and those of this build's shared
     objects in the plugin's directory; its programs are the executables that, so counted, supply every symbol the
-    previous build left undefined, and each of them must supply every new one too. Anything else stays a finding."""
-    if not re.search(r'\.so(\.|$)', Path(name).name) or system_library_dir(str(Path(name).parent)):
+    previous build left undefined, and each of them must supply every new one too. Anything else stays a finding.
+    A file whose previous build left symbols undefined is a shared object (compare() stops on a program that did),
+    whatever its name: an Octave function (`*.oct`) counts as a plugin as a `*.so` module does."""
+    if system_library_dir(str(Path(name).parent)):
         return []
     earlier = {item for (rel, kind, item) in before if rel == name and kind == 'undefined'}
     if not earlier:
@@ -495,12 +513,16 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
                         before = with_recommends(previous_deb, old_inputs, old_root, before, previous_qualified.owner, notes,
                                                  'the previous build')
                     old_needed, old_stereo = inventories(old_root, previous_qualified, findings, 'the previous build')
+                    # read while the previous build's files are still on disk
+                    old_shared = {rel for (rel, kind, _) in before
+                                  if kind == 'undefined' and shared_object(Path(old_root) / rel.lstrip('/'))}
             finally:
                 if own_previous:
                     previous_qualified.close()
             # An unusable predecessor cannot establish a successful regression
-            # baseline. Library-only imports supplied by a program remain valid.
-            broken_before = [key for key in before if key[1] != 'undefined' or not re.search(r'\.so(\.|$)', key[0])]
+            # baseline. Library-only imports supplied by a program remain valid (a library or plugin under any name,
+            # shared_object()).
+            broken_before = [key for key in before if key[1] != 'undefined' or key[0] not in old_shared]
             # A library the previous build could not find and this build finds is an improvement, not a regression
             # (qt6-declarative-examples: Qt's attachedstyleproperties plugin had a run path one directory short of its
             # libMyStyle.so, fixed in +stereo3d2). The gate says so and goes on. A library missing in both builds
@@ -558,7 +580,7 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
         else:
             library_only = {}
             for key in sorted(now):
-                is_exec = not re.search(r'\.so(\.|$)', key[0])
+                is_exec = key[1] != 'undefined' or not shared_object(Path(new_root) / key[0].lstrip('/'))
                 # A library alone reports symbols that its program supplies; only a program
                 # or a missing library is a certain failure without a baseline.
                 if key[1] != 'undefined' or is_exec:
