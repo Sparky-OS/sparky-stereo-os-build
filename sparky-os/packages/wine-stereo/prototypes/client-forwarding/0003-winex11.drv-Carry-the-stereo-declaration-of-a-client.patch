@@ -1,0 +1,142 @@
+From 6ec06d9d4e07585bb13694b79dc47b6456ee914d Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 4 Oct 2026 22:14:19 -0300
+Subject: [PATCH 3/3] winex11.drv: Carry the stereo declaration of a client
+ window to the whole window.
+
+Mesa writes _KDE_NET_WM_STEREO_CONTENT on the GLX drawable, which is the
+client window for a Windows OpenGL program that picks a PFD_STEREO pixel
+format, while KWin reads it on the whole window. Copy it after a swap, so the
+whole window follows it and the client window gets the whole window's size.
+
+For version 4 child declarations, KWin reads the client directly and Mesa
+owns its packed pixmap. Leave the ordinary whole window undeclared.
+The content version, not the compositor support version, selects the route.
+
+Assisted-by: Claude Sonnet via Claude Code
+Assisted-by: gpt-6-astra via Codex
+---
+ dlls/winex11.drv/opengl.c |  1 +
+ dlls/winex11.drv/window.c | 60 ++++++++++++++++++++++++++++++++++++++++-----
+ dlls/winex11.drv/x11drv.h |  1 +
+ 3 files changed, 55 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/winex11.drv/opengl.c b/dlls/winex11.drv/opengl.c
+index 01355ea..18bf82f 100644
+--- a/dlls/winex11.drv/opengl.c
++++ b/dlls/winex11.drv/opengl.c
+@@ -2872,6 +2872,7 @@ static BOOL glxdrv_wglSwapBuffers( HDC hdc )
+ 
+     present_gl_drawable( hwnd, ctx ? ctx->hdc : hdc, gl, !pglXWaitForSbcOML, FALSE );
+     update_gl_drawable_size( gl );
++    if (gl->window) sync_stereo_declaration( hwnd, gl->window );
+     release_gl_drawable( gl );
+     return TRUE;
+ }
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index b910b88..fdc813c 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1831,6 +1831,25 @@ static BOOL get_cardinal_property( Window window, Atom atom, long *value )
+ }
+ 
+ 
++/***********************************************************************
++ *		get_stereo_support
++ *
++ * Get the version of stereo declaration that the window manager supports.
++ */
++static int get_stereo_support(void)
++{
++    static int support = -1;
++    long value;
++
++    if (support < 0)
++    {
++        if (!get_cardinal_property( root_window, x11drv_atom(_KDE_NET_WM_STEREO_CONTENT_SUPPORTED), &value )) value = 0;
++        support = value;
++    }
++    return support;
++}
++
++
+ /***********************************************************************
+  *		get_client_window_rect
+  *
+@@ -1840,7 +1859,6 @@ static BOOL get_cardinal_property( Window window, Atom atom, long *value )
+  */
+ void get_client_window_rect( HWND hwnd, RECT *rect )
+ {
+-    static int support = -1;
+     struct x11drv_win_data *data;
+     Window root, whole_window = 0;
+     unsigned int width, height, border, depth;
+@@ -1849,12 +1867,7 @@ void get_client_window_rect( HWND hwnd, RECT *rect )
+ 
+     NtUserGetClientRect( hwnd, rect, NtUserGetDpiForWindow( hwnd ) );
+ 
+-    if (support < 0)
+-    {
+-        if (!get_cardinal_property( root_window, x11drv_atom(_KDE_NET_WM_STEREO_CONTENT_SUPPORTED), &value )) value = 0;
+-        support = value;
+-    }
+-    if (support < 3) return;
++    if (get_stereo_support() < 3) return;
+ 
+     if ((data = get_win_data( hwnd )))
+     {
+@@ -1868,6 +1881,39 @@ void get_client_window_rect( HWND hwnd, RECT *rect )
+ }
+ 
+ 
++/***********************************************************************
++ *		sync_stereo_declaration
++ *
++ * Carry the stereo declaration of a client window, which is where Mesa
++ * writes it, to the whole window for legacy declarations only.
++ */
++void sync_stereo_declaration( HWND hwnd, Window client_window )
++{
++    struct x11drv_win_data *data;
++    Window whole_window = 0;
++    long value, whole_value, version;
++    Atom version_atom;
++
++    if (get_stereo_support() < 3) return;
++    if (!get_cardinal_property( client_window, x11drv_atom(_KDE_NET_WM_STEREO_CONTENT), &value )) return;
++
++    /* Version 4 declares a one-eye client window backed by a packed pixmap. */
++    version_atom = XInternAtom( gdi_display, "_KDE_NET_WM_STEREO_CONTENT_VERSION", True );
++    if (version_atom && get_cardinal_property( client_window, version_atom, &version ) && version == 4)
++        return;
++
++    if ((data = get_win_data( hwnd )))
++    {
++        whole_window = data->whole_window;
++        release_win_data( data );
++    }
++    if (!whole_window) return;
++    if (get_cardinal_property( whole_window, x11drv_atom(_KDE_NET_WM_STEREO_CONTENT), &whole_value ) && whole_value == value) return;
++    XChangeProperty( gdi_display, whole_window, x11drv_atom(_KDE_NET_WM_STEREO_CONTENT), XA_CARDINAL, 32,
++                     PropModeReplace, (unsigned char *)&value, 1 );
++}
++
++
+ /***********************************************************************
+  *		sync_client_position
+  *
+diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+index 344d08e..3600bde 100644
+--- a/dlls/winex11.drv/x11drv.h
++++ b/dlls/winex11.drv/x11drv.h
+@@ -677,6 +677,7 @@ extern UINT get_window_net_wm_state( Display *display, Window window );
+ extern void make_window_embedded( struct x11drv_win_data *data );
+ extern Window create_client_window( HWND hwnd, const XVisualInfo *visual, Colormap colormap );
+ extern void get_client_window_rect( HWND hwnd, RECT *rect );
++extern void sync_stereo_declaration( HWND hwnd, Window client_window );
+ extern void detach_client_window( struct x11drv_win_data *data, Window client_window );
+ extern void attach_client_window( struct x11drv_win_data *data, Window client_window );
+ extern void destroy_client_window( HWND hwnd, Window client_window );
+-- 
+2.53.0
+
