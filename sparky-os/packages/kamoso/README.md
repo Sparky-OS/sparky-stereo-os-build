@@ -91,3 +91,10 @@ Constant-quality x264 still applies a 2,048 kbit/s VBV ceiling by default.
 Set vbv-buf-capacity=0 to disable that ceiling, matching the ordinary Theora
 quality route's absence of a bitrate ceiling. Verify rc=crf, lookahead and the
 absence of vbv_maxrate in the encoder options written inside the actual film.
+
+Enable 3D does not make a mono camera stereo. After a frame identifies the
+source as mono, photos and films keep camerabin's ordinary writers, filename
+choice, effects and mirroring. The preview retains its mono frame for readiness
+and never publishes it as a pair. Source-filter transitions discard the frame
+that still carries the preceding filter; recording stop follows the recorder
+actually started, independently of the Enable 3D setting.

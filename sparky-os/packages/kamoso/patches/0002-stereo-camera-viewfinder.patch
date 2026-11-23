@@ -820,7 +820,7 @@ Last-Update: 2026-11-22
          void photoTaken(const QString &photoUrl);
          void mirroredChanged(bool mirrored);
          void currentDeviceChanged();
-@@ -66,10 +92,22 @@
+@@ -66,10 +92,23 @@
          void updateSourceFilter();
          void setVideoSettings();
  
@@ -832,6 +832,7 @@ Last-Update: 2026-11-22
 +        StereoPreview *m_stereoPreview = nullptr;
 +        QVideoSink *m_stereoSink = nullptr;
 +        bool m_pairActive = false;
++        bool m_nativeStereo = true;
 +        bool m_stereoFrame = false;
 +        QString m_stereoMessage;
 +        QString m_stereoEffectMessage;
@@ -948,7 +949,7 @@ Last-Update: 2026-11-22
      GstPointer<GstElement> m_viewfinder;
  };
  
-@@ -202,6 +239,43 @@
+@@ -202,6 +239,48 @@
  
  WebcamControl::WebcamControl()
  {
@@ -982,6 +983,11 @@ Last-Update: 2026-11-22
 +        m_stereoEffectMessage = message;
 +        Q_EMIT stereoChanged();
 +    });
++    connect(m_stereoPreview, &StereoPreview::sourceStereoChanged, this, [this](bool stereo) {
++        if (m_nativeStereo == stereo) return;
++        m_nativeStereo = stereo;
++        updateSourceFilter();
++    });
 +    connect(m_stereoPreview, &StereoPreview::stereoFrameChanged, this, [this](bool stereo) {
 +        if (!stereo) m_stereoPublisher->reset();
 +        if (m_stereoFrame != stereo) {
@@ -992,7 +998,7 @@ Last-Update: 2026-11-22
      QQmlApplicationEngine* engine = new QQmlApplicationEngine(this);
      engine->rootContext()->setContextObject(new KLocalizedContext(engine));
      m_kamoso = new Kamoso(this);
-@@ -219,6 +293,8 @@
+@@ -219,6 +298,8 @@
  
      engine->load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
      auto rootObject = qobject_cast<QQuickWindow *> (engine->rootObjects().constFirst());
@@ -1001,7 +1007,7 @@ Last-Update: 2026-11-22
      m_surface = rootObject->findChild<QQuickItem *>("sink");
      Q_ASSERT(m_surface);
  
-@@ -231,6 +307,7 @@
+@@ -231,6 +312,7 @@
  
  WebcamControl::~WebcamControl()
  {
@@ -1009,7 +1015,7 @@ Last-Update: 2026-11-22
      DeviceManager::self()->save();
      Settings::self()->save();
      delete m_kamoso;
-@@ -238,9 +315,21 @@
+@@ -238,9 +320,21 @@
  
  void WebcamControl::stop()
  {
@@ -1031,7 +1037,7 @@ Last-Update: 2026-11-22
      }
  }
  
-@@ -264,6 +353,46 @@
+@@ -264,6 +358,46 @@
  
      WebcamControl* wc = static_cast<WebcamControl*>(user_data);
      wc->setReadyForCapture(is_ready);
@@ -1078,7 +1084,7 @@ Last-Update: 2026-11-22
  }
  
  bool WebcamControl::playDevice(Device *device)
-@@ -280,8 +409,31 @@
+@@ -280,8 +414,32 @@
      if (m_pipeline)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -1093,6 +1099,7 @@ Last-Update: 2026-11-22
 +        gst_structure_free(properties);
 +    setStereoMessage(stereoEnabled() && packing.isEmpty()
 +        ? i18n("Choose this camera's packing in Camera Settings to show a pair in 3D.") : QString());
++    m_nativeStereo = true;
 +    m_stereoPreview->setPacking(packing);
 +    m_stereoPreview->setMirrored(m_mirror);
 +    const bool pairActive = stereoEnabled();
@@ -1110,7 +1117,7 @@ Last-Update: 2026-11-22
          g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
          g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
                           G_CALLBACK(captureReadyChanged), this);
-@@ -296,6 +448,13 @@
+@@ -296,6 +454,13 @@
      }
      if (!m_viewfinder) {
          Q_ASSERT(m_surface);
@@ -1124,7 +1131,7 @@ Last-Update: 2026-11-22
          m_viewfinder.reset(gst_bin_new("viewfinder"));
          auto glupload = gst_element_factory_make_full("glupload", nullptr);
          auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
-@@ -309,6 +468,8 @@
+@@ -309,6 +474,8 @@
          GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
          gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
          gst_object_unref(sink_pad);
@@ -1133,7 +1140,7 @@ Last-Update: 2026-11-22
      }
  
      GstElement* source;
-@@ -320,7 +481,9 @@
+@@ -320,7 +487,9 @@
  
      if (!m_pipeline) {
          m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
@@ -1144,12 +1151,12 @@ Last-Update: 2026-11-22
          g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
          g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
      }
-@@ -395,6 +558,58 @@
+@@ -395,6 +564,58 @@
          qWarning() << "couldn't take photo, no pipeline";
          return;
      }
-+    if (m_pairActive && emitTaken && !m_stereoFrame) {
-+        Q_EMIT m_kamoso->error(i18n("Wait for a complete stereo frame before taking a photo."));
++    if (m_pairActive && emitTaken && m_stereoPreview->captureImage().isNull()) {
++        Q_EMIT m_kamoso->error(i18n("Wait for a camera frame before capturing."));
 +        return;
 +    }
 +    if (m_pairActive && m_stereoFrame && emitTaken) {
@@ -1185,7 +1192,7 @@ Last-Update: 2026-11-22
 +        }
 +        return;
 +    }
-+    if (m_pairActive && !emitTaken) {
++    if (m_pairActive && m_stereoFrame && !emitTaken) {
 +        // The effects gallery consumes a flat sample, not an unmarked pair.
 +        const QImage pair = m_stereoPreview->captureImage();
 +        if (pair.isNull() || !url.isLocalFile()) return;
@@ -1203,7 +1210,7 @@ Last-Update: 2026-11-22
      m_emitTaken = emitTaken;
  
      g_object_set(m_pipeline.data(), "mode", 1, nullptr);
-@@ -419,8 +634,14 @@
+@@ -419,8 +640,18 @@
      return QDir::tempPath() + QStringLiteral("/kamoso_%1.mkv").arg(date);
  }
  
@@ -1211,7 +1218,11 @@ Last-Update: 2026-11-22
 -{
 +bool WebcamControl::startRecording(const QUrl &destination)
 +{
-+    if (m_pairActive) {
++    if (m_pairActive && m_stereoPreview->captureImage().isNull()) {
++        Q_EMIT m_kamoso->error(i18n("Wait for a camera frame before capturing."));
++        return false;
++    }
++    if (m_pairActive && m_stereoFrame) {
 +        const QString error = m_stereoRecorder->start(destination, m_stereoPreview->captureImage().size(), Settings::stereoEncoder(), Settings::stereoVideoContainer());
 +        if (!error.isEmpty()) { qWarning() << error; Q_EMIT m_kamoso->error(error); return false; }
 +        return true;
@@ -1220,7 +1231,7 @@ Last-Update: 2026-11-22
      m_videoDestination = destination;
      m_tmpVideoPath = destination.isLocalFile() ? destination.toLocalFile() : temporaryVideoFile();
  
-@@ -429,10 +650,13 @@
+@@ -429,10 +660,13 @@
                                      nullptr);
  
      g_signal_emit_by_name (m_pipeline.data(), "start-capture", 0);
@@ -1229,31 +1240,32 @@ Last-Update: 2026-11-22
  
  void WebcamControl::stopRecording()
  {
-+    if (m_pairActive || m_stereoRecorder->busy()) { m_stereoRecorder->stop(); return; }
++    if (m_stereoRecorder->busy()) { m_stereoRecorder->stop(); return; }
 +    if (!m_pipeline) return;
      g_signal_emit_by_name(m_pipeline.data(), "stop-capture", 0);
  }
  
-@@ -453,11 +677,13 @@
+@@ -453,11 +687,14 @@
      if (prevstate != GST_STATE_NULL)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
 -    QString filters = QStringLiteral("videoflip video-direction=auto");
 -    if (m_mirror)
-+    m_stereoPreview->setMirrored(m_mirror);
-+    QString filters = m_pairActive ? QString() : QStringLiteral("videoflip video-direction=auto");
-+    if (m_mirror && !m_pairActive)
++    const bool pairFilter = m_pairActive && m_nativeStereo;
++    m_stereoPreview->setMirrored(m_mirror && pairFilter);
++    QString filters = pairFilter ? QString() : QStringLiteral("videoflip video-direction=auto");
++    if (m_mirror && !pairFilter)
          filters += QStringLiteral(" ! videoflip video-direction=horiz");
  
 -    if (!m_extraFilters.isEmpty()) {
-+    m_stereoPreview->setEffect(m_pairActive ? m_extraFilters : QString());
-+    if (!m_extraFilters.isEmpty() && !m_pairActive) {
++    m_stereoPreview->setEffect(pairFilter ? m_extraFilters : QString());
++    if (!m_extraFilters.isEmpty() && !pairFilter) {
          if (!filters.isEmpty())
              filters.prepend(QStringLiteral(" ! "));
          filters.prepend(m_extraFilters);
 --- /dev/null
 +++ b/src/video/stereopreview.h
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,48 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#pragma once
@@ -1285,6 +1297,7 @@ Last-Update: 2026-11-22
 +    void failed(const QString &message);
 +    void effectMessage(const QString &message);
 +    void stereoFrameChanged(bool stereo);
++    void sourceStereoChanged(bool stereo);
 +    void pairReady(const QImage &image);
 +private:
 +    void present(const QImage &image, bool discontinuity, quint64 offset, GstVideoMultiviewMode mode, GstVideoMultiviewFlags flags, const QImage &second = {});
@@ -1295,6 +1308,7 @@ Last-Update: 2026-11-22
 +    QImage m_first;
 +    QImage m_capture;
 +    quint64 m_firstOffset = GST_BUFFER_OFFSET_NONE;
++    int m_sourceKind = -1;
 +    bool m_mirrored = true;
 +    bool m_unknownPacking = false;
 +    std::atomic_uint64_t m_generation = 0;
@@ -1302,7 +1316,7 @@ Last-Update: 2026-11-22
 +};
 --- /dev/null
 +++ b/src/video/stereopreview.cpp
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,266 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereopreview.h"
@@ -1326,6 +1340,7 @@ Last-Update: 2026-11-22
 +}
 +void StereoPreview::setEffect(const QString &filter)
 +{
++    ++m_generation;
 +    m_capture = {};
 +    m_effects.reset();
 +    m_effects.setFilter(filter);
@@ -1344,6 +1359,7 @@ Last-Update: 2026-11-22
 +    m_effects.reset();
 +    m_capture = {};
 +    m_unknownPacking = false;
++    m_sourceKind = -1;
 +    m_format = {};
 +    m_first = {};
 +    for (size_t i = 0; i < stereo_policy_input_format_count(); ++i) {
@@ -1484,6 +1500,14 @@ Last-Update: 2026-11-22
 +    const auto order = Picture::EyeOrder(input.order);
 +    const bool stereo = input.view != STEREO_POLICY_VIEW_MONO
 +        && (input.layout != STEREO_POLICY_LAYOUT_NONE || input.anaglyph != STEREO_POLICY_ANAGLYPH_NONE);
++    if (m_sourceKind != int(stereo)) {
++        m_sourceKind = int(stereo);
++        const auto generation = m_generation.load();
++        Q_EMIT sourceStereoChanged(stereo);
++        // The controller may have changed the source filter. Do not capture
++        // the transition frame, which still carries the preceding filter.
++        if (generation != m_generation.load()) return;
++    }
 +    if (!stereo) {
 +        picture.original = image;
 +    } else if (mode == GST_VIDEO_MULTIVIEW_MODE_SEPARATED) {
@@ -1554,7 +1578,7 @@ Last-Update: 2026-11-22
 +    for (int y = 0; y < packed.height(); ++y)
 +        memcpy(video.bits(0) + y * video.bytesPerLine(0), packed.constScanLine(y), size_t(packed.width()) * 4);
 +    video.unmap();
-+    m_capture = stereo ? packed : QImage();
++    m_capture = packed;
 +    if (stereo) Q_EMIT pairReady(packed);
 +    Q_EMIT stereoFrameChanged(stereo);
 +    m_sink->setVideoFrame(video);
@@ -1991,7 +2015,7 @@ Last-Update: 2026-11-22
  
      if (recording) {
 -        m_webcamControl->startRecording(fileNameSuggestion(Settings::saveVideos(), QStringLiteral("video"), QStringLiteral("mkv")));
-+        if (!m_webcamControl->startRecording(fileNameSuggestion(Settings::saveVideos(), QStringLiteral("video"), m_webcamControl->stereoPreviewActive() ? Settings::stereoVideoContainer() : QStringLiteral("mkv")))) return;
++        if (!m_webcamControl->startRecording(fileNameSuggestion(Settings::saveVideos(), QStringLiteral("video"), m_webcamControl->stereoPreviewActive() && m_webcamControl->stereoFrame() ? Settings::stereoVideoContainer() : QStringLiteral("mkv")))) return;
          m_recordingTime.restart();
          m_recordingTimer.start();
          auto job = KIO::mkpath(Settings::saveVideos());
