@@ -1,0 +1,37 @@
+Package: kde-style-oxygen-qt5
+Architecture: any
+Breaks: plasma-desktop-data (<< 4:5.20),
+Replaces: plasma-desktop-data (<< 4:5.20),
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+Description: Qt 5 decoration for the Oxygen desktop theme
+ The Oxygen desktop theme is used by Plasma and other KDE Software.
+ .
+ This package contains the Qt 5 widget theme.
+
+Package: liboxygenstyle5-6
+Architecture: any
+Section: libs
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+Multi-Arch: same
+Description: style library for the Oxygen desktop theme (Qt 5)
+ The Oxygen desktop theme is used by Plasma and other KDE Software.
+ .
+ This package contains the private library used by the widget theme
+ and KWin style.
+
+Package: liboxygenstyleconfig5-6
+Architecture: any
+Section: libs
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+Breaks: liboxygenstyleconfig5-5,
+Replaces: liboxygenstyleconfig5-5,
+Multi-Arch: same
+Description: style library configuration for the Oxygen desktop theme (Qt 5)
+ The Oxygen desktop theme is used by Plasma and other KDE Software.
+ .
+ This package contains the private library used to configure the widget theme
+ and KWin style.
+

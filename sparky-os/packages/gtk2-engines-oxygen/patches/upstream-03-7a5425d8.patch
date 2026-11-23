@@ -1,0 +1,19 @@
+Description: fixed compiler warning
+Origin: upstream, https://invent.kde.org/plasma/oxygen-gtk/-/commit/7a5425d86e8fd5327091ce736a9680317a0c3747
+Author: Hugo Pereira Da Costa
+Applied-Upstream: master, 7a5425d86e8fd5327091ce736a9680317a0c3747 (after v1.4.6; no release since)
+Last-Update: 2026-11-23
+---
+diff --git a/src/oxygenstyle.cpp b/src/oxygenstyle.cpp
+index 75e0fcc0..374810f6 100644
+--- a/src/oxygenstyle.cpp
++++ b/src/oxygenstyle.cpp
+@@ -2171,7 +2171,7 @@ namespace Oxygen
+     {
+ 
+         // do nothing if not selected nor hovered
+-        if( !options & (Hover|Selected ) ) return;
++        if( !(options & (Hover|Selected )) ) return;
+ 
+         Palette::Group group( (options & Focus) ? Palette::Active : Palette::Inactive );
+         ColorUtils::Rgba base( _settings.palette().color( group, Palette::Selected ) );

@@ -1,0 +1,19 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Description: Require CMake 3.16, so CMake 4 configures the tree
+ CMake 4 removed compatibility with versions older than 3.5 and stops at
+ cmake_minimum_required(VERSION 2.8.12) with "Compatibility with CMake < 3.5 has
+ been removed from CMake". The same change KDE made in oxygen-gtk (a8798db8,
+ Nicolas Fella, "Raise minimum CMake version to 3.16").
+Forwarded: not-needed, the tree is in KDE's unmaintained group
+Last-Update: 2026-11-23
+---
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ project(OxygenFont)
+ set(PROJECT_VERSION "5.4.3")
+-cmake_minimum_required(VERSION 2.8.12)
++cmake_minimum_required(VERSION 3.16)
+ 
+ find_package(ECM 1.2.0 REQUIRED NO_MODULE)
+ 
