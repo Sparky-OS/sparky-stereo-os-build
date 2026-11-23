@@ -30,3 +30,10 @@ the eight languages still owed to the translations lane.
 This is the installed portion of the milestone, not the complete milestone rerun
 or the real-model A10 kit. The wrapper assumes the prepared image and fixture;
 its prerequisite package installation and source gates must also be retained.
+
+For full-page text geometry, build the test-only viewport observer and set
+LC73_PROBE_TOOLS to its directory and LC73_LOCALES to verified locale data.
+The observer is preloaded only into the KCM. LC73_VIEWPORT_ONLY=1 limits a run
+to the page checks and stereo capture. Discover installed catalogues with
+page-languages.py and run each at both scales on both cards. The complete
+milestone command includes this matrix and refuses unrecorded locale bytes.

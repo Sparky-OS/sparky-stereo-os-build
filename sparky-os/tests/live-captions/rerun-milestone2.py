@@ -54,7 +54,7 @@ def main():
     print('row\texpected\tfound',flush=True)
     try:
         for image,want in cfg['images'].items():row('input '+image,'recorded immutable image',text(['docker','image','inspect','-f','{{.Id}}',image]),text(['docker','image','inspect','-f','{{.Id}}',image])==want)
-        row('source','clean order73 source',text(['git','-C',repo,'rev-parse','HEAD']),not text(['git','-C',repo,'status','--porcelain']))
+        row('source','clean order73b source',text(['git','-C',repo,'rev-parse','HEAD']),not text(['git','-C',repo,'status','--porcelain']))
         for name,folder in [('stage',stage),('scripts',scripts)]:
             count=0
             for line in (folder/'SHA256SUMS').read_text().splitlines():
@@ -62,35 +62,51 @@ def main():
                 if not p.is_relative_to(folder.resolve()) or digest(p)!=expected:raise RuntimeError(name+' checksum '+relative)
                 count+=1
             row(name+' checksums','every listed SHA256 matches',count)
+        run([sys.executable,'-B',scripts/'check-stage-closure.py',stage],out/'stage-closure.json');row('complete stage manifest','all regular files including hidden .keep are covered','pass')
+        for key in ('recipe','skills'):
+            run([sys.executable,'-B',scripts/'check-branch-contacts.py',cfg[key+'_repo'],cfg[key+'_base']],out/(key+'-contacts.json'))
+            findings=json.loads((out/(key+'-contacts.json')).read_text());row(key+' added contacts','only Daniel packaging identity; every match listed',len(findings))
+        locale_manifest=Path(cfg['locale_manifest']);locale_root=Path(cfg['locale_root'])
+        locale_records=json.loads(locale_manifest.read_text())['files']
+        for x in locale_records:
+            p=locale_root/x['path'];assert p.stat().st_size==x['bytes'] and digest(p)==x['sha256'],p
+        (out/'locale-inputs.json').write_bytes(locale_manifest.read_bytes())
+        row('locale inputs','recorded locale bytes for every installed catalogue',len(locale_records))
         records=[]
         for p in stage.glob('*.sparky-build.json'):
             record=json.loads(p.read_text());assert record['recipeDirty'] is False and record['unrecorded']==[]
             records.append(dict(source=record['source'],commit=record['recipeCommit'],version=record['version']))
         row('source closures','four clean build records',records,len(records)==4)
+        checkscript='set -e; mkdir /out/tmp; export TMPDIR=/out/tmp; git -c safe.directory=/source-repo clone --no-hardlinks /source-repo /out/merged-source; git -C /out/merged-source checkout '+shlex.quote(cfg['recipe_base'])+'; git -C /out/merged-source -c user.name="Daniel Campos Ramos" -c user.email=Capitain_Jack@yahoo.com merge --no-commit --no-ff '+shlex.quote(text(['git','-C',repo,'rev-parse','HEAD']))+'; bash /out/merged-source/sparky-os/tests/supply-chain/test-wiring.sh; python3 -B /recipe/tests/test_adapter.py; python3 -B /proof/test-a10-kit.py; cmake -S /proof/fixture-src -B /out/rig-tools -G Ninja; cmake --build /out/rig-tools -j4; chown -R 1000:1000 /out/rig-tools'
+        create('source-and-kit-checks',cfg['build_image'],['bash','-c',checkscript],[(repo/'sparky-os/packages/sparky-stereo-live-captions','/recipe',True),(repo,'/source-repo',True),(out,'/out',False)])
+        log=(out/'source-and-kit-checks.log').read_text();row('merge wiring','unchanged test-wiring on scratch merge with fetched main','ALL PASS','ALL PASS' in log);row('model-free controls','17 adapter and 6 kit negative tests pass','pass','Ran 17 tests' in log and 'Ran 6 tests' in log and 'FAILED' not in log)
         helpers=out/'helpers';helpers.mkdir()
         # Unchanged recipe/gates; only the launcher's local ledger path is relocated.
         build=(scripts/'build-continuation.sh').read_text().replace(cfg['lane']+'/.container-ids',str(out/'.container-ids'))
         (helpers/'build.sh').write_text(build)
+        for package in ('captiond','kaption'):
+            target=out/('build-'+package)
+            run(['bash',scripts/'build-upstream.sh',package,target],out/(package+'-launcher.log'),{'LANE_CONTAINER_IDS':str(out/'.container-ids')})
+            record=json.loads(next((target/'build').glob('*.sparky-build.json')).read_text())
+            row(package+' gates','unchanged gates pass, recipeDirty false',dict(commit=record['recipeCommit'],dirty=record['recipeDirty']),not record['recipeDirty'] and record['unrecorded']==[])
         for package in ('sparky-stereo-partners','sparky-stereo-live-captions'):
             target=out/('build-'+package)
             run(['bash',helpers/'build.sh',package,target],out/(package+'-launcher.log'))
             record=json.loads(next(target.glob('*.sparky-build.json')).read_text())
             row(package+' gates','unchanged gates pass, recipeDirty false',dict(commit=record['recipeCommit'],dirty=record['recipeDirty']),not record['recipeDirty'] and record['unrecorded']==[])
-        checkscript='set -e; python3 -B /recipe/tests/test_adapter.py; python3 -B /proof/test-a10-kit.py; cmake -S /proof/fixture-src -B /out/rig-tools -G Ninja; cmake --build /out/rig-tools -j4; chown -R 1000:1000 /out/rig-tools'
-        create('source-and-kit-checks',cfg['build_image'],['bash','-c',checkscript],[(repo/'sparky-os/packages/sparky-stereo-live-captions','/recipe',True),(out,'/out',False)])
-        log=(out/'source-and-kit-checks.log').read_text();row('model-free controls','17 adapter and 5 kit negative tests pass',log.count('\nOK\n'),log.count('\nOK\n')==2 and 'Ran 17 tests' in log and 'Ran 5 tests' in log)
         lc=out/'lifecycle';lc.mkdir()
-        create('package-lifecycle',cfg['lifecycle_image'],['bash','/proof/package-lifecycle.sh'],[(cfg['archive'],'/archive',True),(cfg['published'],'/published',True),(cfg['row70'],'/row70',True),(cfg['vibe_stage'],'/vibe-stage',True),(stage,'/stage',True),(lc,'/out',False)],['-e','BASELINE_ONLY=0','-e','PLAN_ONLY=0'])
-        for file,prefixword,names in [('upgrade-plan.txt','Inst ',{'sparky-stereo-partners','sparky-stereo-live-captions'}),('remove-plan.txt','Remv ',{'sparky-stereo-partners','sparky-stereo-live-captions'})]:
+        create('package-lifecycle',cfg['lifecycle_image'],['bash','/proof/package-lifecycle.sh'],[(cfg['archive'],'/archive',True),(cfg['published'],'/published',True),(cfg['row70'],'/row70',True),(cfg['vibe_stage'],'/vibe-stage',True),(stage,'/stage',True),(cfg['previous_stage'],'/previous',True),(lc,'/out',False)],['-e','BASELINE_ONLY=0','-e','PLAN_ONLY=0'])
+        for file,prefixword,names in [('upgrade-plan.txt','Inst ',set(json.loads((lc/'expected-upgrade.json').read_text()))),('remove-plan.txt','Remv ',{'sparky-stereo-partners','sparky-stereo-live-captions'})]:
             lines=[x for x in (lc/file).read_text().splitlines() if x.startswith(prefixword)]
-            row(file,'actual apt '+prefixword.strip()+' for both packages',lines,{x.split()[1] for x in lines}==names)
+            row(file,'actual apt '+prefixword.strip()+' for the exact changed package set',lines,{x.split()[1] for x in lines}==names)
         row('removal preserves personal files','five identical hash records',json.loads((lc/'personal-after.json').read_text()),(lc/'personal-before.json').read_bytes()==(lc/'personal-after.json').read_bytes())
-        prep='set -e; dpkg -i /stage/libcaptiond-client0_0.1.0-1+lc1_amd64.deb /stage/captiond_0.1.0-1+lc1_amd64.deb /stage/kaption-common_0.1.0-1+lc1_all.deb /stage/kaption_0.1.0-1+lc1_amd64.deb /stage/sparky-stereo-partners_0.1.3+lc1_amd64.deb /stage/sparky-stereo-live-captions_0.1.0+lc1_all.deb; dpkg-query -W > /out/installed.tsv'
+        prep='set -e; python3 /proof/install-stage.py /stage; dpkg-query -W > /out/installed.tsv; python3 /proof/page-languages.py > /out/page-languages.json'
         name=create('install',cfg['lifecycle_image'],['bash','-c',prep],[(stage,'/stage',True),(out,'/out',False)])
         image=prefix+':installed';text(['docker','commit',name,image]);images.append(image)
         nodes=out/'native-nodes';nodes.mkdir()
         create('native-pipewire',image,['/proof-bin/capture-nodes','/out'],[(out/'rig-tools','/proof-bin',True),(nodes,'/out',False)],['--user','1000:1000'])
         run([sys.executable,'-B',scripts/'check-nodes.py',nodes],out/'native-nodes.json');row('native PipeWire','separate monitor/input; pause closes both','pass')
+        languages=json.loads((out/'page-languages.json').read_text())
         for gpu in ('amd','nvidia'):
             for scale,language in [('1','en'),('1.25','pt_BR')]:
                 label=gpu+'-'+scale;target=out/label
@@ -98,7 +114,13 @@ def main():
                 # Names vary with this output; helper removes exact names in its EXIT trap.
                 helper=helper.replace('name=lc73-installed-${gpu}-${scale//./-}', 'name='+prefix+'-${gpu}-${scale//./-}')
                 (helpers/'installed.sh').write_text(helper)
-                run(['bash',helpers/'installed.sh',gpu,scale,language,target],out/(label+'-launcher.log'),{'LC73_KIT_FIXTURE':'1' if (gpu,scale)==('amd','1') else '0'})
+                run(['bash',helpers/'installed.sh',gpu,scale,language,target],out/(label+'-launcher.log'),{'LC73_PROBE_TOOLS':str(out/'rig-tools'),'LC73_KIT_FIXTURE':'1' if (gpu,scale)==('amd','1') else '0'})
+                for extra_language in languages:
+                    if extra_language==language:continue
+                    extra_target=out/(label+'-page-'+extra_language)
+                    run(['bash',helpers/'installed.sh',gpu,scale,extra_language,extra_target],out/(label+'-page-'+extra_language+'.log'),{'LC73_PROBE_TOOLS':str(out/'rig-tools'),'LC73_KIT_FIXTURE':'0','LC73_VIEWPORT_ONLY':'1'})
+                    for x in json.loads((extra_target/'session/rows.json').read_text()):row(label+'/'+extra_language+'/'+x['row'],x['expected'],x['found'],x['passed'])
+                    stereo(extra_target/'session/page.pns')
                 actual=json.loads((target/'session/rows.json').read_text())
                 for x in actual:row(label+'/'+x['row'],x['expected'],x['found'],x['passed'])
                 if (gpu,scale)==('amd','1'):

@@ -5,6 +5,8 @@ set -euo pipefail
 proof=$(cd -- "$(dirname -- "$0")" && pwd)
 : "${LC73_RIG_IMAGE:?installed proof image}"
 : "${LC73_FIXTURES:?fixture folder with stereo.mkv}"
+: "${LC73_PROBE_TOOLS:?built viewport observer folder}"
+: "${LC73_LOCALES:?verified locale data folder}"
 gpu=${1:?amd or nvidia}; scale=${2:?1 or 1.25}; language=${3:?en or pt_BR}; out=$(realpath -m "${4:?new output directory}")
 [ ! -e "$out" ];mkdir -p "$out"
 case "$gpu" in amd) device=/dev/dri/renderD128;; nvidia) device=nvidia.com/gpu=0;; *) exit 2;; esac
@@ -13,9 +15,11 @@ cleanup() { docker logs "$name" > "$out/boot.log" 2>&1 || true; docker stop -t 1
 docker create --name "$name" --pull=never --platform linux/amd64 --cpus 4 --ulimit core=1 --network none \
  --cgroupns=private --security-opt writable-cgroups=true --tmpfs /run --tmpfs /tmp --cap-add SYS_RESOURCE --cap-add SYS_NICE --device "$device" --group-add 125 \
  --mount type=bind,src="$proof",dst=/proof,readonly \
+ --mount type=bind,src="$LC73_PROBE_TOOLS",dst=/probe,readonly \
+ --mount type=bind,src="$LC73_LOCALES",dst=/usr/lib/locale,readonly \
  --mount type=bind,src="$LC73_FIXTURES",dst=/fixtures,readonly \
  --mount type=bind,src="$out",dst=/out \
- -e LC73_KIT_FIXTURE="${LC73_KIT_FIXTURE:-0}" -e QT_LOGGING_RULES='kwin_*.debug=true' "$LC73_RIG_IMAGE" /sbin/init > "$out/container-id.txt"
+ -e LC73_VIEWPORT_ONLY="${LC73_VIEWPORT_ONLY:-0}" -e LC73_KIT_FIXTURE="${LC73_KIT_FIXTURE:-0}" -e QT_LOGGING_RULES='kwin_*.debug=true' "$LC73_RIG_IMAGE" /sbin/init > "$out/container-id.txt"
 cat "$out/container-id.txt" >> "$out/.container-ids"
 if [ -n "${LC73_CONTAINER_LEDGER:-}" ]; then cat "$out/container-id.txt" >> "$LC73_CONTAINER_LEDGER"; fi
 trap cleanup EXIT

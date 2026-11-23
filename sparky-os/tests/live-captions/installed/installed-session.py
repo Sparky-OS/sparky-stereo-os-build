@@ -5,7 +5,7 @@ import json,os,signal,socket,subprocess,sys,time,traceback
 from pathlib import Path
 from gi.repository import Gio,GLib
 out=Path(sys.argv[1]);scale=sys.argv[2];language=sys.argv[3]
-os.environ.update(HOME='/home/builder',XDG_RUNTIME_DIR='/run/user/1000',DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/1000/bus',XDG_CURRENT_DESKTOP='KDE',KDE_FULL_SESSION='true',KDE_SESSION_VERSION='6',XDG_SESSION_TYPE='wayland',QT_FORCE_STDERR_LOGGING='1',QT_LINUX_ACCESSIBILITY_ALWAYS_ON='1',KWIN_SCREENSHOT_NO_PERMISSION_CHECKS='1',KWIN_WAYLAND_NO_PERMISSION_CHECKS='1',KWIN_VIRTUAL_STEREO_MODES='1',LC73_FIXTURE_OUT=str(out),LANG=('pt_BR.UTF-8' if language=='pt_BR' else 'C.UTF-8'),LANGUAGE=language)
+os.environ.update(HOME='/home/builder',XDG_RUNTIME_DIR='/run/user/1000',DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/1000/bus',XDG_CURRENT_DESKTOP='KDE',KDE_FULL_SESSION='true',KDE_SESSION_VERSION='6',XDG_SESSION_TYPE='wayland',QT_FORCE_STDERR_LOGGING='1',QT_LINUX_ACCESSIBILITY_ALWAYS_ON='1',KWIN_SCREENSHOT_NO_PERMISSION_CHECKS='1',KWIN_WAYLAND_NO_PERMISSION_CHECKS='1',KWIN_VIRTUAL_STEREO_MODES='1',LC73_FIXTURE_OUT=str(out),LANG=({'en':'en_US','pt_BR':'pt_BR','pl':'pl_PL','fr':'fr_FR','de':'de_DE','es':'es_ES','ja':'ja_JP','ko':'ko_KR','zh_CN':'zh_CN','zh_TW':'zh_TW'}[language]+'.UTF-8'),LANGUAGE=language)
 os.environ.pop('LC_ALL',None)
 children=[];rows=[]
 def run(args,check=True):return subprocess.run(args,capture_output=True,text=True,check=check,timeout=150)
@@ -53,9 +53,13 @@ try:
  spawn(['/usr/lib/x86_64-linux-gnu/libexec/kactivitymanagerd'],'activities')
  spawn(['plasmashell','--no-respawn'],'plasma')
  spawn(['python3','/proof/atspi-listen.py',str(out/'atspi.jsonl')],'atspi')
- page=spawn(['kcmshell6','kcm_sparkystereo_partners'],'page')
+ page=spawn(['env','LD_PRELOAD=/probe/libviewport-probe.so','LC73_VIEWPORT_OUT='+str(out/'viewport-live.json'),'kcmshell6','kcm_sparkystereo_partners'],'page')
  run(['systemctl','--user','daemon-reload'])
  words=initial['labels']
+ catalogue=Path('/usr/share/sparky-stereo/live-captions/lang')/(language+'.json')
+ if catalogue.exists():
+  translated=json.loads(catalogue.read_text())
+  row('caption catalogue '+language,'installed catalogue is used',str(catalogue),all(words[k]==v for k,v in translated.items()))
  def tree(name):
   text=json.dumps(json.loads(run(['python3','/proof/atspi-tree.py']).stdout),ensure_ascii=False,indent=2);(out/(name+'.json')).write_text(text);return text
  def click(key):
@@ -65,10 +69,32 @@ try:
   return not any(run(['pgrep','-x',name],False).returncode==0 for name in ('captiond','kaption')) and not list(Path('/run/user/1000/sparky-stereo-live-captions').glob('session-*'))
  def off(name):
   click('off');wait('stopped children/socket',gone);wait('stopped streams',lambda:not pw(name));result=run(['systemctl','--user','show','sparky-stereo-live-captions.service','--property=Result','--value']).stdout.strip();row(name,'no pair/socket/stream; unit Result=success',result,result=='success')
+ def viewport():
+  observed={'stamp':None,'signature':None,'stable':0}
+  def settled_geometry():
+   path=out/'viewport-live.json'
+   if not path.exists():return False
+   stamp=path.stat().st_mtime_ns
+   if stamp==observed['stamp']:return False
+   values=json.loads(path.read_text())
+   if words['privacy'] not in [v['text'] for v in values]:return False
+   signature=json.dumps(values,sort_keys=True)
+   observed['stable']=observed['stable']+1 if signature==observed['signature'] else 1
+   observed.update(stamp=stamp,signature=signature)
+   return values if observed['stable']>=4 else False
+  geometry=wait('four fresh equal full-page geometry snapshots',settled_geometry)
+  (out/'viewport.json').write_text(json.dumps(geometry,indent=2)+'\n')
+  faults=[v for v in geometry if not v['passed']]
+  row('page viewport '+language,'all rendered text fits its width and horizontal viewport; vertical content is reachable by scrolling',dict(texts=len(geometry),faults=faults),not faults)
+ if os.environ.get('LC73_VIEWPORT_ONLY')=='1':
+  viewport()
+  run(['python3','/proof/capture.py',str(out/'page.png')]);run(['python3','/proof/mark_pns.py',str(out/'page.png'),str(out/'page.pns')])
+  sys.exit(0)
  wait('installed page',lambda:words['on'] in tree('page-'+language))
  page_tree=tree('page-'+language)
  row('page '+language,'translated caption switch, privacy and model labels',words['on'],all(words[k] in page_tree for k in ('on','privacy','model','microphone','login')))
  run(['python3','/proof/capture.py',str(out/'page.png')]);run(['python3','/proof/mark_pns.py',str(out/'page.png'),str(out/'page.pns')])
+ viewport()
  run(['systemctl','--user','start','lc73-session.target']);row('login initially off','graphical target does not start captions',status()['on'],not status()['on'])
  player=spawn(['mpv','--no-config','--no-audio','--loop-file=inf','--fullscreen','--input-ipc-server=/run/user/1000/lc73-mpv','--vo=gpu-next','--gpu-context=wayland','/fixtures/stereo.mkv'],'mpv')
  # Actual audio playback into the private null sink; fixture captions are synthetic.
