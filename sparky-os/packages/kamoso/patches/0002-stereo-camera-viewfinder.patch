@@ -948,7 +948,7 @@ Last-Update: 2026-11-22
      GstPointer<GstElement> m_viewfinder;
  };
  
-@@ -202,6 +239,39 @@
+@@ -202,6 +239,43 @@
  
  WebcamControl::WebcamControl()
  {
@@ -964,6 +964,10 @@ Last-Update: 2026-11-22
 +        Q_EMIT stereoChanged();
 +    });
 +    connect(m_stereoPreview, &StereoPreview::pairReady, m_stereoRecorder, &StereoRecorder::push);
++    connect(m_stereoRecorder, &StereoRecorder::warning, this, [this](const QString &message) {
++        qWarning() << message;
++        Q_EMIT m_kamoso->error(message);
++    });
 +    connect(m_stereoRecorder, &StereoRecorder::failed, this, [this](const QString &message) {
 +        qWarning() << message;
 +        Q_EMIT m_kamoso->error(message);
@@ -988,7 +992,7 @@ Last-Update: 2026-11-22
      QQmlApplicationEngine* engine = new QQmlApplicationEngine(this);
      engine->rootContext()->setContextObject(new KLocalizedContext(engine));
      m_kamoso = new Kamoso(this);
-@@ -219,6 +289,8 @@
+@@ -219,6 +293,8 @@
  
      engine->load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
      auto rootObject = qobject_cast<QQuickWindow *> (engine->rootObjects().constFirst());
@@ -997,7 +1001,7 @@ Last-Update: 2026-11-22
      m_surface = rootObject->findChild<QQuickItem *>("sink");
      Q_ASSERT(m_surface);
  
-@@ -231,6 +303,7 @@
+@@ -231,6 +307,7 @@
  
  WebcamControl::~WebcamControl()
  {
@@ -1005,7 +1009,7 @@ Last-Update: 2026-11-22
      DeviceManager::self()->save();
      Settings::self()->save();
      delete m_kamoso;
-@@ -238,9 +311,21 @@
+@@ -238,9 +315,21 @@
  
  void WebcamControl::stop()
  {
@@ -1027,7 +1031,7 @@ Last-Update: 2026-11-22
      }
  }
  
-@@ -264,6 +349,46 @@
+@@ -264,6 +353,46 @@
  
      WebcamControl* wc = static_cast<WebcamControl*>(user_data);
      wc->setReadyForCapture(is_ready);
@@ -1074,7 +1078,7 @@ Last-Update: 2026-11-22
  }
  
  bool WebcamControl::playDevice(Device *device)
-@@ -280,8 +405,31 @@
+@@ -280,8 +409,31 @@
      if (m_pipeline)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -1106,7 +1110,7 @@ Last-Update: 2026-11-22
          g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
          g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
                           G_CALLBACK(captureReadyChanged), this);
-@@ -296,6 +444,13 @@
+@@ -296,6 +448,13 @@
      }
      if (!m_viewfinder) {
          Q_ASSERT(m_surface);
@@ -1120,7 +1124,7 @@ Last-Update: 2026-11-22
          m_viewfinder.reset(gst_bin_new("viewfinder"));
          auto glupload = gst_element_factory_make_full("glupload", nullptr);
          auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
-@@ -309,6 +464,8 @@
+@@ -309,6 +468,8 @@
          GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
          gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
          gst_object_unref(sink_pad);
@@ -1129,7 +1133,7 @@ Last-Update: 2026-11-22
      }
  
      GstElement* source;
-@@ -320,7 +477,9 @@
+@@ -320,7 +481,9 @@
  
      if (!m_pipeline) {
          m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
@@ -1140,7 +1144,7 @@ Last-Update: 2026-11-22
          g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
          g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
      }
-@@ -395,6 +554,58 @@
+@@ -395,6 +558,58 @@
          qWarning() << "couldn't take photo, no pipeline";
          return;
      }
@@ -1199,7 +1203,7 @@ Last-Update: 2026-11-22
      m_emitTaken = emitTaken;
  
      g_object_set(m_pipeline.data(), "mode", 1, nullptr);
-@@ -419,8 +630,14 @@
+@@ -419,8 +634,14 @@
      return QDir::tempPath() + QStringLiteral("/kamoso_%1.mkv").arg(date);
  }
  
@@ -1216,7 +1220,7 @@ Last-Update: 2026-11-22
      m_videoDestination = destination;
      m_tmpVideoPath = destination.isLocalFile() ? destination.toLocalFile() : temporaryVideoFile();
  
-@@ -429,10 +646,13 @@
+@@ -429,10 +650,13 @@
                                      nullptr);
  
      g_signal_emit_by_name (m_pipeline.data(), "start-capture", 0);
@@ -1230,7 +1234,7 @@ Last-Update: 2026-11-22
      g_signal_emit_by_name(m_pipeline.data(), "stop-capture", 0);
  }
  
-@@ -453,11 +673,13 @@
+@@ -453,11 +677,13 @@
      if (prevstate != GST_STATE_NULL)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -2117,7 +2121,7 @@ Last-Update: 2026-11-22
 +#include "stereophoto-test.moc"
 --- /dev/null
 +++ b/src/video/stereorecorder.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,39 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#pragma once
@@ -2130,6 +2134,7 @@ Last-Update: 2026-11-22
 +#include <memory>
 +class StereoRecorder : public QObject {
 +    Q_OBJECT
++    friend class StereoRecorderTest;
 +public:
 +    explicit StereoRecorder(QObject *parent = nullptr);
 +    ~StereoRecorder() override;
@@ -2139,6 +2144,7 @@ Last-Update: 2026-11-22
 +    bool busy() const { return m_pipeline != nullptr; }
 +Q_SIGNALS:
 +    void failed(const QString &message);
++    void warning(const QString &message);
 +    void saved(const QUrl &destination);
 +private:
 +    void poll();
@@ -2149,6 +2155,7 @@ Last-Update: 2026-11-22
 +    QTimer m_timer;
 +    QSize m_size;
 +    bool m_stopping = false;
++    bool m_overloadReported = false;
 +    QUrl m_destination;
 +    std::shared_ptr<QTemporaryDir> m_directory;
 +    QString m_path;
@@ -2156,7 +2163,7 @@ Last-Update: 2026-11-22
 +};
 --- /dev/null
 +++ b/src/video/stereorecorder.cpp
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,139 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereorecorder.h"
@@ -2179,7 +2186,7 @@ Last-Update: 2026-11-22
 +    if(m_bus) gst_object_unref(m_bus);
 +    if(m_pipeline) gst_object_unref(m_pipeline);
 +    m_pipeline=nullptr; m_source=nullptr; m_bus=nullptr;
-+    m_directory.reset(); m_stopping=false; m_frames=0;
++    m_directory.reset(); m_stopping=false; m_frames=0; m_overloadReported=false;
 +}
 +QString StereoRecorder::start(const QUrl &destination, const QSize &size, const QString &encoder, const QString &container) {
 +    qInfo() << "Stereo recording requested" << destination << size << encoder << container;
@@ -2213,7 +2220,17 @@ Last-Update: 2026-11-22
 +    m_path=m_directory->filePath(QStringLiteral("capture.")+container);
 +    m_destination=destination;m_size=size;
 +    qInfo() << "Stereo recording temporary file" << m_path;
-+    const QByteArray description=QByteArray("appsrc name=pair is-live=true do-timestamp=true format=time block=false max-buffers=8 ! queue max-size-buffers=8 max-size-bytes=0 max-size-time=0 ! videoconvert ! video/x-raw,format=")+(size.height()%2?"Y444":"I420")+" ! x264enc tune=zerolatency ! h264parse ! "+muxName+" name=mux ! filesink name=file autoaudiosrc name=audio ! audioconvert ! audioresample quality=10 ! avenc_aac ! aacparse ! queue ! mux.";
++    // Camerabin's 2D profile uses quality-based Theora and Vorbis. H.264 is
++    // necessary for frame-packing SEI; keep its normal quality preset rather
++    // than disabling lookahead with zerolatency. Preserve full chroma here.
++    // Matroska keeps Vorbis; mp4mux cannot mux Vorbis, so MP4 uses AAC.
++    const char *audioCodec=container==QLatin1String("mp4")?"avenc_aac ! aacparse":"vorbisenc ! vorbisparse";
++    const QByteArray description=QByteArray(
++        "appsrc name=pair is-live=true do-timestamp=true format=time block=false max-buffers=8 "
++        "! queue max-size-buffers=8 max-size-bytes=0 max-size-time=0 ! videoconvert "
++        "! video/x-raw,format=Y444 ! x264enc pass=qual ! h264parse ! mq.sink_0 "
++        "autoaudiosrc name=audio ! audioconvert ! ")+audioCodec+" ! mq.sink_1 "
++        "multiqueue name=mq mq.src_0 ! mux.video_0 mq.src_1 ! mux.audio_0 "+muxName+" name=mux ! filesink name=file";
 +    GError *error=nullptr;
 +    m_pipeline=gst_parse_launch(description.constData(),&error);
 +    if(error || !m_pipeline) {
@@ -2236,7 +2253,15 @@ Last-Update: 2026-11-22
 +    if(!m_pipeline || m_stopping) return;
 +    if(image.size()!=m_size) { reset();Q_EMIT failed(i18n("The camera resolution changed during recording. The incomplete recording was not saved."));return; }
 +    guint64 queued=0;g_object_get(m_source,"current-level-buffers",&queued,nullptr);
-+    if(queued>=8) { reset();Q_EMIT failed(i18n("The encoder could not keep up. The incomplete recording was not saved."));return; }
++    if (queued >= 8) {
++        // Drop a whole normalized pair, retaining the timestamps of later pairs.
++        // Back pressure must never erase the recording already in progress.
++        if (!m_overloadReported) {
++            m_overloadReported = true;
++            Q_EMIT warning(i18n("The encoder could not keep up. Some stereo frames were skipped; recording continues."));
++        }
++        return;
++    }
 +    const QImage rgba=image.convertToFormat(QImage::Format_RGBA8888);
 +    auto *buffer=gst_buffer_new_allocate(nullptr,gsize(rgba.width())*rgba.height()*4,nullptr);
 +    for(int y=0;y<rgba.height();++y) gst_buffer_fill(buffer,gsize(y)*rgba.width()*4,rgba.constScanLine(y),gsize(rgba.width())*4);
@@ -2280,15 +2305,43 @@ Last-Update: 2026-11-22
 +}
 --- /dev/null
 +++ b/autotests/stereorecorder-test.cpp
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,104 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereorecorder.h"
 +#include <QtTest>
 +#include <QTemporaryDir>
 +#include <QFileInfo>
++#include <QJsonArray>
++#include <QJsonObject>
++#include <QJsonDocument>
 +class StereoRecorderTest : public QObject {
 +    Q_OBJECT
++    static void snapshot(GstElement *pipeline,const QString &path) {
++        QJsonArray rows;GValue item=G_VALUE_INIT;
++        auto *iterator=gst_bin_iterate_recurse(GST_BIN(pipeline));
++        while(gst_iterator_next(iterator,&item)==GST_ITERATOR_OK) {
++            auto *child=GST_ELEMENT(g_value_get_object(&item));
++            auto *factory=gst_element_get_factory(child);
++            if(!factory){g_value_reset(&item);continue;}
++            QJsonObject row{{QStringLiteral("factory"),QString::fromUtf8(gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)))}};
++            for(const char *prop:{"quality","bitrate","pass","quantizer","tune","speed-preset"}) {
++                auto *spec=g_object_class_find_property(G_OBJECT_GET_CLASS(child),prop);
++                if(!spec || !(spec->flags&G_PARAM_READABLE))continue;
++                GValue value=G_VALUE_INIT;g_value_init(&value,spec->value_type);g_object_get_property(G_OBJECT(child),prop,&value);
++                auto *text=g_strdup_value_contents(&value);row[QString::fromLatin1(prop)]=QString::fromUtf8(text);g_free(text);g_value_unset(&value);
++            }
++            for(const char *name:{"sink","src"}) {
++                auto *pad=gst_element_get_static_pad(child,name);if(!pad)continue;
++                auto *caps=gst_pad_get_current_caps(pad);
++                if(caps){auto *text=gst_caps_to_string(caps);row[QString::fromLatin1(name)]=QString::fromUtf8(text);g_free(text);gst_caps_unref(caps);}
++                gst_object_unref(pad);
++            }
++            rows.append(row);g_value_reset(&item);
++        }
++        g_value_unset(&item);gst_iterator_free(iterator);
++        QFile file(path);if(file.open(QIODevice::WriteOnly))file.write(QJsonDocument(rows).toJson());
++    }
 +private Q_SLOTS:
 +    void initTestCase() { gst_init(nullptr,nullptr); }
 +    void unmarkedEncoders() {
@@ -2298,6 +2351,33 @@ Last-Update: 2026-11-22
 +            auto path=dir.filePath(QStringLiteral("refused.mkv"));
 +            QVERIFY(recorder.start(QUrl::fromLocalFile(path),QSize(128,48),QString::fromLatin1(encoder),QStringLiteral("mkv")).contains(QString::fromLatin1(encoder)));
 +            QVERIFY(!recorder.busy());QVERIFY(!QFileInfo::exists(path));
++        }
++    }
++    void overload() {
++        QTemporaryDir dir;
++        StereoRecorder recorder;
++        QImage image(128,48,QImage::Format_RGBA8888);
++        for(int y=0;y<48;++y) for(int x=0;x<128;++x) image.setPixelColor(x,y,x<64?Qt::red:Qt::blue);
++        // Block the source pad so the real appsrc queue cannot drain. This
++        // brings out overload deterministically without adding machine load.
++        for (int recording=0;recording<2;++recording) {
++            const auto path=dir.filePath(QStringLiteral("overload-%1.mkv").arg(recording));
++            QSignalSpy saved(&recorder,&StereoRecorder::saved),failed(&recorder,&StereoRecorder::failed);
++            QSignalSpy warning(&recorder,SIGNAL(warning(QString)));
++            const auto error=recorder.start(QUrl::fromLocalFile(path),image.size(),QStringLiteral("x264enc"),QStringLiteral("mkv"));
++            QVERIFY2(error.isEmpty(),qPrintable(error));
++            auto *pad=gst_element_get_static_pad(recorder.m_source,"src");
++            const auto probe=gst_pad_add_probe(pad,GST_PAD_PROBE_TYPE_BLOCK_DOWNSTREAM,
++                [](GstPad *,GstPadProbeInfo *,gpointer){return GST_PAD_PROBE_OK;},nullptr,nullptr);
++            for(int n=0;n<32;++n)recorder.push(image);
++            gst_pad_remove_probe(pad,probe);gst_object_unref(pad);
++            QVERIFY2(recorder.busy(),"Overload erased the recording instead of dropping a pair");
++            QCOMPARE(failed.count(),0);QCOMPARE(warning.count(),1);
++            for(int n=0;n<30;++n){recorder.push(image);QTest::qWait(33);}
++            recorder.stop();
++            QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !failed.isEmpty(),60000);
++            QCOMPARE(failed.count(),0);QCOMPARE(saved.count(),1);QCOMPARE(warning.count(),1);
++            QVERIFY(QFileInfo(path).size()>0);
 +        }
 +    }
 +    void containers_data() {
@@ -2320,6 +2400,7 @@ Last-Update: 2026-11-22
 +        QImage image(128,48,QImage::Format_RGBA8888);
 +        for(int y=0;y<48;++y) for(int x=0;x<128;++x) image.setPixelColor(x,y,x<64?Qt::red:Qt::blue);
 +        for(int n=0;n<90 && failed.isEmpty();++n) {recorder.push(image);QTest::qWait(33);}
++        if(!kept.isEmpty())snapshot(recorder.m_pipeline,path+QStringLiteral(".pipeline.json"));
 +        recorder.stop();
 +        QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !failed.isEmpty(),60000);
 +        QVERIFY2(failed.isEmpty(),failed.isEmpty()?"":qPrintable(failed.first().first().toString()));

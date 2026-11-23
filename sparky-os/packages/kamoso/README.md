@@ -67,3 +67,22 @@ The frei0r-stereo-61 recipe owns the immutable-metadata fix; the camera requires
 that successor too. The same 31 effects remain available and the per-eye
 pipelines and algorithms are unchanged. A deterministic overlapping-construction
 control fails before the header fix and passes after it.
+
+Recording retains quality-based encoding: the original camerabin profile is
+Ogg/Theora (quality 48) and Vorbis (quality 0.3), despite its .mkv filename.
+Stereo uses H.264 for frame-packing SEI and Matroska/MP4 for their stereo marks;
+Ogg/Theora cannot supply that mandated combination. H.264 uses constant-quality
+mode with x264enc's own default quantizer and medium preset, without the
+quality-changing zerolatency tune. These codec quality scales are different;
+Theora 48 is not claimed numerically equivalent to x264's quantizer 21.
+The RGB source retains 4:4:4 chroma through encoding. Matroska keeps the ordinary
+Vorbis quality default. MP4's muxer cannot carry Vorbis, so that choice uses
+AAC at the encoder's default; there is no invented cross-codec quality mapping.
+No audio resampler or rate/channel restriction is added. A multiqueue joins the
+branches without disabling x264 lookahead to avoid an audio/video queue stall.
+
+If encoding falls behind, the source queue drops a complete stereo pair and
+reports it once per recording, retaining the original timestamps of later pairs.
+It does not discard the recording. A blocked-source-pad test forces repeated
+drops without artificial CPU load and proves finalization and the notice reset
+for the next recording. This does not explain the earlier missing MP4 reports.
