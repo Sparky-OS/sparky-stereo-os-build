@@ -10,7 +10,7 @@
 # which CMake 4 needs: Debian's source stops at "Compatibility with CMake < 3.5 has been removed"), e5950db7 (Andreas
 # Sturmlechner, -Wuninitialized). Left out: d5e91221 (the demo switch; Debian's dont-build-demos.patch does the same),
 # b1ee5fb8 (the Mozilla program names moved to a header: no Mozilla program is a GTK 2 program any more) and the 2021
-# licence-header conversions. Debian's packaging stays as Debian has it. Lean Code at +lc1.
+# licence-header conversions. Debian's packaging stays as Debian has it but for debhelper compat 10 (below). Lean Code at +lc1.
 # Run inside a clean distribution build container with the source dependencies installed.
 # SOURCE_DSC names Debian's unmodified gtk2-engines-oxygen_1.4.6-1.1.dsc and its adjacent archives.
 # Last update 2026/11/23
@@ -54,11 +54,17 @@ path.write_text(text)
 PY
 # every carried commit stays its author's (provenance-files.py reads the headers)
 python3 "$LEAN_TOOLKIT/repo/provenance-files.py" . 'upstream-*.patch'
+# Lean Code's prepare step adds execute_before_dh_auto_clean and execute_before_dh_auto_configure to debian/rules, which
+# dh accepts from compat 10 ("Hook target ... is only supported in compat 10 or later"); Debian's compat 9 is also
+# deprecated in debhelper 14 ("Compatibility levels before 10 are deprecated"). Compat 10 changes nothing this CMake
+# build uses: --parallel, which Debian's rules already pass, becomes the default.
+grep -qx 9 debian/compat
+printf '10\n' > debian/compat
 dpkg-source --before-build .
 grep -q 'cmake_minimum_required(VERSION 3.16)' CMakeLists.txt
 grep -q 'DEBIAN_NO_DEMOS' CMakeLists.txt
 dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
-	'Carried by Sparky Stereo OS after Debian removed it (queue row 59): upstream e14fbdc0, ef3c0cdf (crash on invalid tree view columns), 7a5425d8, a8798db8 (CMake 3.16, which CMake 4 needs) and e5950db7.'
+	'Carried by Sparky Stereo OS after Debian removed it (queue row 59): upstream e14fbdc0, ef3c0cdf (crash on invalid tree view columns), 7a5425d8, a8798db8 (CMake 3.16, which CMake 4 needs) and e5950db7; debhelper compat 10, which the Lean Code hooks need.'
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
