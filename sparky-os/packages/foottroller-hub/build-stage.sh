@@ -22,7 +22,7 @@ cp "$toolkit/repo/provenance.sh" "$dest/"
 cp "$toolkit/packages/dpkg-stereo/LICENSE" "$dest/"
 
 export SOURCE_DATE_EPOCH
-: "${SOURCE_DATE_EPOCH:?Use the clean committed recipe's source date}"
+: "${SOURCE_DATE_EPOCH:?Use the clean committed recipe source date}"
 python3 "$toolkit/repo/reproducible.py" normalize "$SOURCE_DATE_EPOCH" "$source_tree"
 (
     cd "$source_tree"
