@@ -11,6 +11,7 @@ export DEB_BUILD_OPTIONS=parallel=4
 mkdir -p "$OUT"
 : "${LAYER:?the pinned stereo-layer siblings, installed before the build dependencies}"
 (cd "$LAYER" && sha256sum --check --quiet "$HERE/layer-1.23.2.sha256")
+inherited_siblings=${SPARKY_LC_SIBLINGS_FILE:-}
 export SPARKY_LC_SIBLINGS_FILE="$OUT/layer-siblings.txt"
 : >"$SPARKY_LC_SIBLINGS_FILE"
 while read -r sum filename; do
@@ -21,6 +22,26 @@ done <"$HERE/layer-1.23.2.sha256"
 while read -r sum filename; do
     realpath "$DECLARE/$filename" >>"$SPARKY_LC_SIBLINGS_FILE"
 done <"$HERE/declare-1.12.2.sha256"
+# The round and prior successors remain part of the gate's supplied universe.
+python3 - "$inherited_siblings" "$SPARKY_LC_SIBLINGS_FILE" <<'SIBLINGS'
+from pathlib import Path
+import hashlib, sys
+paths = []
+if sys.argv[1]:
+    paths.extend(Path(sys.argv[1]).read_text().splitlines())
+output = Path(sys.argv[2])
+paths.extend(output.read_text().splitlines())
+selected = {}
+for value in paths:
+    p = Path(value)
+    if p.name in selected:
+        other = selected[p.name]
+        if other != p:
+            assert hashlib.sha256(other.read_bytes()).digest() == hashlib.sha256(p.read_bytes()).digest(), p.name
+    else:
+        selected[p.name] = p
+output.write_text(''.join(str(p) + '\n' for p in selected.values()))
+SIBLINGS
 for package in libstereo-declare1 libstereo-declare-dev; do
     test "$(dpkg-query -W -f='${Version}' "$package")" = 1.12.2-1+lc1
 done
@@ -30,7 +51,11 @@ done
 cd "$OUT"
 HTTPS_ONLY_APT_CONF="$OUT/https-only-apt.conf" sh /run/https-only-apt.sh
 export APT_CONFIG="$OUT/https-only-apt.conf"
-apt-get source --download-only kamoso=26.04.0-1
+if [ -n "${SOURCE_INPUT:-}" ]; then
+    cp "$SOURCE_INPUT"/*.dsc "$SOURCE_INPUT"/*.tar.* "$OUT/"
+else
+    apt-get source --download-only kamoso=26.04.0-1
+fi
 dpkg-source -x kamoso_26.04.0-1.dsc source
 mkdir -p source/debian/patches
 install -m644 "$HERE/patches/0001-follow-the-session-default-camera.patch" source/debian/patches/

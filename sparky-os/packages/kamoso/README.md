@@ -106,3 +106,21 @@ actual output witness; an ordinary ScreenShot2 pair alone cannot do that.
 The ordinary-control fixture fixes Qt's hash seed equally on both builds and
 uses zero differing pixels. Fifty hide/show rounds invoke the shared action and
 wait for the real child lifecycle; they load the repaired Qt GStreamer dependency.
+
+## Building the five-package set
+
+Prepare authenticated source downloads and build dependencies before the isolated
+build. The four upstream-source recipes accept SOURCE_INPUT, a folder containing
+their original descriptor and every archive it names, so the build can consume
+those retained inputs without downloading again. The Camera page is a native
+source recipe. The outer driver supplies build-provenance.sh's facts from a clean
+commit and the signed runtime archive configuration; all ordinary Lean Code,
+link and start checks remain in the recipes.
+
+SPARKY_LC_SIBLINGS_FILE may supply the accepted round and earlier successors in
+this set. Kamoso and Camera retain that universe while adding their checksum-pinned
+layer and declaration inputs. A duplicate filename must have identical bytes.
+Build every frei0r plugin, PipeWire's full source and the good-plugin source before
+Kamoso, whose build dependencies require those repaired binaries. Retain each
+source closure, binary build metadata, clean recipe record and install/path
+comparisons before considering the set packaged.
