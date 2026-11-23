@@ -1,0 +1,149 @@
+Description: obs-ffmpeg: the custom output's raw callbacks and its stop share a lock on the encoder's data
+ ffmpeg_output_full_stop() calls obs_output_end_data_capture(), which disconnects the output's raw video and audio
+ callbacks later, on a thread of libobs's own (end_data_capture_thread), and then ffmpeg_deactivate() at once, which
+ frees the codec contexts, the frames and the muxer (ffmpeg_data_free()). A frame the video thread was still handing to
+ receive_video() then went to a freed encoder: measured on OBS 33.0.1 with FFmpeg's libx264 into Matroska, one stop in
+ about sixty ended in SIGSEGV in av_buffer_unref() under avcodec_send_frame() (receive_video(),
+ obs-ffmpeg-output.c:720, called from libobs's video thread), after x264 had printed its closing statistics.
+ The two callbacks now hold a mutex while they encode, and ffmpeg_deactivate() and the start's ffmpeg_data_init() hold
+ it while the data are freed or made; a callback that comes after the stop finds the data cleared and returns. The
+ lock order is this mutex, then write_mutex, as before.
+ Upstream reports the same race from its other side, not fixed: obs-studio issue 14153 (a frame from the previous
+ recording leaks into the next one).
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 3, continuation 6)
+Bug: https://github.com/obsproject/obs-studio/issues/14153
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-23
+---
+diff --git a/plugins/obs-ffmpeg/obs-ffmpeg-output.c b/plugins/obs-ffmpeg/obs-ffmpeg-output.c
+index 696333b..826c45a 100644
+--- a/plugins/obs-ffmpeg/obs-ffmpeg-output.c
++++ b/plugins/obs-ffmpeg/obs-ffmpeg-output.c
+@@ -617,10 +617,13 @@ static void *ffmpeg_output_create(obs_data_t *settings, obs_output_t *output)
+ {
+ 	struct ffmpeg_output *data = bzalloc(sizeof(struct ffmpeg_output));
+ 	pthread_mutex_init_value(&data->write_mutex);
++	pthread_mutex_init_value(&data->data_mutex);
+ 	data->output = output;
+ 
+ 	if (pthread_mutex_init(&data->write_mutex, NULL) != 0)
+ 		goto fail;
++	if (pthread_mutex_init(&data->data_mutex, NULL) != 0)
++		goto fail;
+ 	if (os_event_init(&data->stop_event, OS_EVENT_TYPE_AUTO) != 0)
+ 		goto fail;
+ 	if (os_sem_init(&data->write_sem, 0) != 0)
+@@ -633,6 +636,7 @@ static void *ffmpeg_output_create(obs_data_t *settings, obs_output_t *output)
+ 
+ fail:
+ 	pthread_mutex_destroy(&data->write_mutex);
++	pthread_mutex_destroy(&data->data_mutex);
+ 	os_event_destroy(data->stop_event);
+ 	bfree(data);
+ 	return NULL;
+@@ -652,6 +656,7 @@ static void ffmpeg_output_destroy(void *data)
+ 		ffmpeg_output_full_stop(output);
+ 
+ 		pthread_mutex_destroy(&output->write_mutex);
++		pthread_mutex_destroy(&output->data_mutex);
+ 		os_sem_destroy(output->write_sem);
+ 		os_event_destroy(output->stop_event);
+ 		bfree(data);
+@@ -680,9 +685,8 @@ static inline void copy_data(AVFrame *pic, const struct video_data *frame, int h
+ 	}
+ }
+ 
+-static void receive_video(void *param, struct video_data *frame)
++static void receive_video_frame(struct ffmpeg_output *output, struct video_data *frame)
+ {
+-	struct ffmpeg_output *output = param;
+ 	struct ffmpeg_data *data = &output->ff_data;
+ 
+ 	// codec doesn't support video or none configured
+@@ -759,6 +763,15 @@ fail:
+ 	av_packet_free(&packet);
+ }
+ 
++static void receive_video(void *param, struct video_data *frame)
++{
++	struct ffmpeg_output *output = param;
++
++	pthread_mutex_lock(&output->data_mutex);
++	receive_video_frame(output, frame);
++	pthread_mutex_unlock(&output->data_mutex);
++}
++
+ static void encode_audio(struct ffmpeg_output *output, int idx, struct AVCodecContext *context, size_t block_size)
+ {
+ 	struct ffmpeg_data *data = &output->ff_data;
+@@ -833,9 +846,8 @@ static int get_track_order(int track_config, size_t mix_index)
+ 	return position;
+ }
+ 
+-static void receive_audio(void *param, size_t mix_idx, struct audio_data *frame)
++static void receive_audio_frame(struct ffmpeg_output *output, size_t mix_idx, struct audio_data *frame)
+ {
+-	struct ffmpeg_output *output = param;
+ 	struct ffmpeg_data *data = &output->ff_data;
+ 	size_t frame_size_bytes;
+ 	struct audio_data in = *frame;
+@@ -874,6 +886,15 @@ static void receive_audio(void *param, size_t mix_idx, struct audio_data *frame)
+ 	}
+ }
+ 
++static void receive_audio(void *param, size_t mix_idx, struct audio_data *frame)
++{
++	struct ffmpeg_output *output = param;
++
++	pthread_mutex_lock(&output->data_mutex);
++	receive_audio_frame(output, mix_idx, frame);
++	pthread_mutex_unlock(&output->data_mutex);
++}
++
+ static uint64_t get_packet_sys_dts(struct ffmpeg_output *output, AVPacket *packet)
+ {
+ 	struct ffmpeg_data *data = &output->ff_data;
+@@ -1076,6 +1097,7 @@ static bool try_connect(struct ffmpeg_output *output)
+ 			config.audio_stream_names[idx] = NULL;
+ 	}
+ 
++	pthread_mutex_lock(&output->data_mutex);
+ 	success = ffmpeg_data_init(&output->ff_data, &config);
+ 	obs_data_release(settings);
+ 
+@@ -1084,8 +1106,10 @@ static bool try_connect(struct ffmpeg_output *output)
+ 			obs_output_set_last_error(output->output, output->ff_data.last_error);
+ 		}
+ 		ffmpeg_data_free(&output->ff_data);
++		pthread_mutex_unlock(&output->data_mutex);
+ 		return false;
+ 	}
++	pthread_mutex_unlock(&output->data_mutex);
+ 
+ 	struct audio_convert_info aci = {.format = output->ff_data.audio_format};
+ 
+@@ -1179,7 +1203,9 @@ static void ffmpeg_deactivate(struct ffmpeg_output *output)
+ 
+ 	pthread_mutex_unlock(&output->write_mutex);
+ 
++	pthread_mutex_lock(&output->data_mutex);
+ 	ffmpeg_data_free(&output->ff_data);
++	pthread_mutex_unlock(&output->data_mutex);
+ }
+ 
+ static uint64_t ffmpeg_output_total_bytes(void *data)
+diff --git a/plugins/obs-ffmpeg/obs-ffmpeg-output.h b/plugins/obs-ffmpeg/obs-ffmpeg-output.h
+index 703a9b9..b428ee3 100644
+--- a/plugins/obs-ffmpeg/obs-ffmpeg-output.h
++++ b/plugins/obs-ffmpeg/obs-ffmpeg-output.h
+@@ -105,6 +105,9 @@ struct ffmpeg_output {
+ 
+ 	bool write_thread_active;
+ 	pthread_mutex_t write_mutex;
++	/* held by the raw video and audio callbacks while they encode, and while ff_data is made or freed: libobs
++	 * disconnects the callbacks on its own thread after the output stops, so one can still run then */
++	pthread_mutex_t data_mutex;
+ 	pthread_t write_thread;
+ 	os_sem_t *write_sem;
+ 	os_event_t *stop_event;

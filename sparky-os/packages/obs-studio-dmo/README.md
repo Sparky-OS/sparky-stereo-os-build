@@ -24,6 +24,7 @@ From `+stereo3d2` (milestone 3) a side by side canvas is drawn once per eye, and
 | 0010 | obs-filters: Render Delay keeps each eye's frames apart |
 | 0011 | media playback: a stream's own stereo mark handed on (`get_stereo3d`), frames in turn and the two views of an MV-HEVC stream paired at the Stereo input filter's request (`set_stereo3d_pairing`). Pairing frames in turn here is a copy of the stereo layer's own rule; queue row 839 moves it (one sequence pairing and one AVStereo3D mapping exported by the layer, used by OBS and Stereo HandBrake) |
 | 0012 | obs-websocket: a hotkey triggered by name (`TriggerHotkeyByName`) runs on the UI thread, as a key press does; it ran on obs-websocket's own request thread, where the preview's hotkeys showed and hid widgets off Qt's main thread and the program died at a show |
+| 0013 | obs-ffmpeg: the custom FFmpeg output's raw callbacks and its stop share a lock on the encoder's data; a frame still being encoded after the stop met a freed encoder (SIGSEGV at the stop; upstream's report of the same race: obs-studio issue 14153) |
 
 OBS's own screenshots of a 3D canvas stay one picture until the stereo layer writes a marked PNG from pixels (queue row 798).
 The module `sparky-stereo-obs` sets the layout (its "Enable 3D", on by itself when the desktop is in 3D).
