@@ -54,8 +54,9 @@ def turn(points, angle):
 def sun(phase, disc_back):
     disc = prism('solar-disc', radial(.43, 56), 0, 0, 0, disc_back, 'ffad34', bevel=0)
     rays = ((.53,-.071),(.78,-.032),(.87,0),(.78,.032),(.53,.071))
-    return [disc, *(prism(f'ray-{i}', turn(rays, tau*(i+phase)/9), 0, 0, .36, .12,
-                          'ffcf68', bevel=0) for i in range(9))]
+    shapes = [disc, *(prism(f'ray-{i}', turn(rays, tau*(i+phase)/9), 0, 0, .36, .12,
+                           'ffcf68', bevel=0) for i in range(9))]
+    return [replace(shape,outline=shape.rings[0]) for shape in shapes]
 
 
 def star():
