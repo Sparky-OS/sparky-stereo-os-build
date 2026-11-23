@@ -47,7 +47,7 @@ cp -a "$BUILD_ROOT/debian-oxygen/debian" "$BUILD_ROOT/authored/debian"
 cd "$BUILD_ROOT/authored"
 rm -f debian/kde-style-oxygen-qt6.* debian/kwin-decoration-oxygen.* debian/liboxygenstyle6-6.* debian/liboxygenstyleconfig6-6.* \
 	debian/liboxygenstyleconfig-data.* debian/oxygen-wallpapers.* debian/plasma-theme-oxygen.*
-cp "$HERE"/debian-qt5/*.install "$HERE"/debian-qt5/*.lintian-overrides debian/
+cp "$HERE"/debian-qt5/*.install "$HERE"/debian-qt5/*.lintian-overrides "$HERE"/debian-qt5/not-installed debian/
 python3 - "$HERE" <<'PY'
 import re, sys
 from pathlib import Path
