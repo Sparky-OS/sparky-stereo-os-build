@@ -24,4 +24,24 @@ Stereo recording feeds normalized native-size pairs to x264 with multiview caps 
 
 The recording is finalized on EOS before moving to the destination. An existing destination is refused. A failed destination transfer retains the completed temporary recording and says its location. Incomplete encoding is not published as a finished recording. Native tests exercise both containers, four hardware refusals and destination preservation.
 
-The effects sample keeps camerabin's asynchronous file lifetime: its temporary placeholder is removed before the fresh flat sample is written. Gallery pipelines create their GL sink on the render thread and remove bus watches before replacing or destroying their owner. Config's sample binding depends on Kamoso's value, not on itself. The Qt GStreamer plugin minimum also carries upstream's recreated-material caps fix; frei0r-plugins supplies the four original gallery effects that otherwise disappear. These lifecycle repairs do not implement the still-required per-eye effects matrix.
+The effects sample keeps camerabin's asynchronous file lifetime: its temporary placeholder is removed before the fresh flat sample is written. Gallery pipelines create their GL sink on the render thread and remove bus watches before replacing or destroying their owner. Config's sample binding depends on Kamoso's value, not on itself. The Qt GStreamer plugin minimum also carries upstream's recreated-material caps fix; frei0r-plugins supplies the four original gallery effects that otherwise disappear. The original 2D gallery and filter route remain available.
+
+For repeated MP4 starts/stops, acknowledge the existing recording action before
+expecting a file. Fixed screen coordinates can stop reaching the toolbar after
+notifications or layout changes. Keep the request, finalization, temporary path,
+destination and filesystem move events together. The diagnostic messages do not
+claim to repair the two earlier uninstrumented missing-recording observations.
+A reproduction uses two pinned CPUs and work in Kamoso's own main thread; no
+additional host load is needed.
+
+The 31 existing effects now run as two independent ordinary GStreamer pipelines,
+one per native eye, with separate filter history and identical input timestamps.
+The application polls complete pairs without blocking its GUI thread or queuing
+unbounded work. Effects feed the declared viewfinder, photos and recordings.
+A missing or failed filter is named in the picker and viewfinder; the camera is
+explicitly shown without that effect. The picker retains failed stereo previews
+as named choices instead of silently removing them. No packing or output-format
+list is added. Native tests enumerate the QML list itself, probe each eye's
+unmodified input samples and dimensions, check history over three frames, and
+compare a spatial effect with independent per-eye controls. Camera sequence
+pairing still belongs to the future shared engine route, row 839.

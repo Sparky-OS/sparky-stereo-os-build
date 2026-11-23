@@ -6,6 +6,324 @@ Author: Daniel Campos Ramos
 Forwarded: no
 Last-Update: 2026-11-22
 
+--- /dev/null
++++ b/src/video/stereoeffects.h
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#pragma once
++#include <QObject>
++#include <QImage>
++#include <QTimer>
++#include <QElapsedTimer>
++#include <gst/gst.h>
++#include <array>
++
++// Each view has its own filter instance and history. The GUI never waits for a
++// streaming thread: one complete pair is in flight, and polling is nonblocking.
++class StereoEffects : public QObject
++{
++    Q_OBJECT
++    friend class StereoEffectsTest;
++public:
++    explicit StereoEffects(QObject *parent = nullptr);
++    ~StereoEffects() override;
++    void setFilter(const QString &filter);
++    void reset();
++    void submit(const QImage &pair);
++Q_SIGNALS:
++    void ready(const QImage &pair);
++    void failed(const QString &message);
++private:
++    bool start(const QSize &size);
++    void poll();
++    void refuse(const QString &reason);
++    struct Eye {
++        GstElement *pipeline = nullptr;
++        GstElement *source = nullptr;
++        GstElement *sink = nullptr;
++        GstBus *bus = nullptr;
++        QImage result;
++    };
++    std::array<Eye, 2> m_eyes;
++    QString m_filter;
++    QImage m_input;
++    QSize m_size;
++    QTimer m_timer;
++    QElapsedTimer m_clock;
++    bool m_pending = false;
++    bool m_refused = false;
++};
+--- /dev/null
++++ b/src/video/stereoeffects.cpp
+@@ -0,0 +1,144 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "stereoeffects.h"
++#include <KLocalizedString>
++#include <gst/app/gstappsrc.h>
++#include <gst/app/gstappsink.h>
++#include <gst/video/video.h>
++#include <cstring>
++
++StereoEffects::StereoEffects(QObject *parent) : QObject(parent)
++{
++    m_timer.setInterval(10);
++    connect(&m_timer, &QTimer::timeout, this, &StereoEffects::poll);
++}
++StereoEffects::~StereoEffects() { reset(); }
++void StereoEffects::reset()
++{
++    m_timer.stop();
++    for (auto &eye : m_eyes) {
++        if (eye.pipeline) gst_element_set_state(eye.pipeline, GST_STATE_NULL);
++        if (eye.source) gst_object_unref(eye.source);
++        if (eye.sink) gst_object_unref(eye.sink);
++        if (eye.bus) gst_object_unref(eye.bus);
++        if (eye.pipeline) gst_object_unref(eye.pipeline);
++        eye = {};
++    }
++    m_pending = false;
++    m_refused = false;
++    m_input = {};
++    m_size = {};
++}
++void StereoEffects::setFilter(const QString &filter)
++{
++    if (filter == m_filter) return;
++    reset();
++    m_filter = filter;
++}
++void StereoEffects::refuse(const QString &reason)
++{
++    const auto input = m_input;
++    reset();
++    m_refused = true;
++    Q_EMIT failed(i18n("The effect %1 could not run separately for each eye: %2. The camera is shown without this effect.", m_filter, reason));
++    if (!input.isNull()) Q_EMIT ready(input);
++}
++bool StereoEffects::start(const QSize &size)
++{
++    m_size = size;
++    for (auto &eye : m_eyes) {
++        const auto description = QStringLiteral("appsrc name=eye is-live=true format=time block=false max-buffers=1 ! videoconvert ! ")
++            + m_filter + QStringLiteral(" ! videoconvert ! video/x-raw,format=RGBA ! appsink name=result sync=false max-buffers=1");
++        GError *error = nullptr;
++        eye.pipeline = gst_parse_launch(description.toUtf8().constData(), &error);
++        if (error || !eye.pipeline) {
++            const auto reason = error ? QString::fromUtf8(error->message) : i18n("The filter could not start");
++            if (error) g_error_free(error);
++            refuse(reason);
++            return false;
++        }
++        eye.source = gst_bin_get_by_name(GST_BIN(eye.pipeline), "eye");
++        eye.sink = gst_bin_get_by_name(GST_BIN(eye.pipeline), "result");
++        eye.bus = gst_element_get_bus(eye.pipeline);
++        auto *caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGBA",
++            "width", G_TYPE_INT, size.width() / 2, "height", G_TYPE_INT, size.height(),
++            "framerate", GST_TYPE_FRACTION, 0, 1, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1,
++            "multiview-mode", G_TYPE_STRING, "mono", nullptr);
++        gst_app_src_set_caps(GST_APP_SRC(eye.source), caps);
++        gst_caps_unref(caps);
++        if (gst_element_set_state(eye.pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
++            refuse(i18n("The filter could not start"));
++            return false;
++        }
++    }
++    m_clock.start();
++    return true;
++}
++void StereoEffects::submit(const QImage &pair)
++{
++    if (m_filter.isEmpty() || m_refused) { Q_EMIT ready(pair); return; }
++    if (m_size.isValid() && m_size != pair.size()) reset();
++    if (m_pending) return;
++    m_input = pair;
++    if (!m_eyes[0].pipeline && !start(pair.size())) return;
++    m_pending = true;
++    const auto timestamp = GstClockTime(m_clock.nsecsElapsed());
++    for (int index = 0; index < 2; ++index) {
++        auto &eye = m_eyes[index];
++        const auto view = pair.copy(index * pair.width() / 2, 0, pair.width() / 2, pair.height()).convertToFormat(QImage::Format_RGBA8888);
++        auto *buffer = gst_buffer_new_allocate(nullptr, gsize(view.width()) * view.height() * 4, nullptr);
++        for (int y = 0; y < view.height(); ++y)
++            gst_buffer_fill(buffer, gsize(y) * view.width() * 4, view.constScanLine(y), gsize(view.width()) * 4);
++        GST_BUFFER_PTS(buffer) = timestamp;
++        if (gst_app_src_push_buffer(GST_APP_SRC(eye.source), buffer) != GST_FLOW_OK) {
++            refuse(i18n("The filter refused a camera frame"));
++            return;
++        }
++    }
++    m_timer.start();
++}
++void StereoEffects::poll()
++{
++    for (auto &eye : m_eyes) {
++        auto *message = gst_bus_pop_filtered(eye.bus, GstMessageType(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
++        if (message) {
++            QString reason = i18n("The filter stopped");
++            if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
++                GError *error = nullptr;
++                gst_message_parse_error(message, &error, nullptr);
++                reason = QString::fromUtf8(error->message);
++                g_error_free(error);
++            }
++            gst_message_unref(message);
++            refuse(reason);
++            return;
++        }
++        if (!eye.result.isNull()) continue;
++        auto *sample = gst_app_sink_try_pull_sample(GST_APP_SINK(eye.sink), 0);
++        if (!sample) continue;
++        GstVideoInfo info;
++        GstVideoFrame frame;
++        const bool valid = gst_video_info_from_caps(&info, gst_sample_get_caps(sample))
++            && GST_VIDEO_INFO_WIDTH(&info) == m_size.width() / 2 && GST_VIDEO_INFO_HEIGHT(&info) == m_size.height()
++            && GST_VIDEO_INFO_FORMAT(&info) == GST_VIDEO_FORMAT_RGBA
++            && gst_video_frame_map(&frame, &info, gst_sample_get_buffer(sample), GST_MAP_READ);
++        if (valid) {
++            eye.result = QImage(static_cast<const uchar *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
++                m_size.width() / 2, m_size.height(), GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0), QImage::Format_RGBA8888).copy();
++            gst_video_frame_unmap(&frame);
++        }
++        gst_sample_unref(sample);
++        if (!valid) { refuse(i18n("The filter changed the eye's sample dimensions")); return; }
++    }
++    if (m_eyes[0].result.isNull() || m_eyes[1].result.isNull()) return;
++    QImage pair(m_size, QImage::Format_RGBA8888);
++    for (int y = 0; y < pair.height(); ++y) {
++        memcpy(pair.scanLine(y), m_eyes[0].result.constScanLine(y), size_t(pair.width()) * 2);
++        memcpy(pair.scanLine(y) + pair.width() * 2, m_eyes[1].result.constScanLine(y), size_t(pair.width()) * 2);
++    }
++    for (auto &eye : m_eyes) eye.result = {};
++    m_pending = false;
++    m_input = {};
++    m_timer.stop();
++    Q_EMIT ready(pair);
++}
+--- /dev/null
++++ b/autotests/stereoeffects-test.cpp
+@@ -0,0 +1,120 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "stereoeffects.h"
++#include <QtTest>
++#include <QFile>
++#include <QRegularExpression>
++#include <QMutex>
++#include <QCryptographicHash>
++#include <gst/app/gstappsrc.h>
++#include <gst/video/video.h>
++
++class StereoEffectsTest : public QObject
++{
++    Q_OBJECT
++    static QImage pattern()
++    {
++        QImage pair(320, 120, QImage::Format_RGBA8888);
++        for (int y=0;y<pair.height();++y) for(int x=0;x<pair.width();++x)
++            pair.setPixelColor(x,y,QColor((x*3+y*7)%256,(x*13+y*2)%256,(x*5+y*11)%256));
++        return pair;
++    }
++private Q_SLOTS:
++    void initTestCase() { gst_init(nullptr,nullptr); }
++    void matrix_data()
++    {
++        QTest::addColumn<QString>("filter");
++        QFile file(QFINDTESTDATA("../src/qml/Config.qml"));
++        QVERIFY(file.open(QIODevice::ReadOnly));
++        const auto text=QString::fromUtf8(file.readAll());
++        const QRegularExpression re(QStringLiteral("^\\s*ListElement \\{ filters: \"([^\"]+)\" \\}"),QRegularExpression::MultilineOption);
++        auto it=re.globalMatch(text);int count=0;
++        while(it.hasNext()) { const auto filter=it.next().captured(1);QTest::newRow(qPrintable(filter))<<filter;++count; }
++        QCOMPARE(count,31);
++    }
++    void matrix()
++    {
++        QFETCH(QString,filter);
++        StereoEffects effects;
++        effects.setFilter(filter);
++        const auto pair=pattern();
++        QSignalSpy frames(&effects,&StereoEffects::ready), errors(&effects,&StereoEffects::failed);
++        QVERIFY(effects.start(pair.size()));
++        QVERIFY(effects.m_eyes[0].pipeline!=effects.m_eyes[1].pipeline);
++        struct Probe { QMutex mutex; QByteArray pixels; QSize size; } probes[2];
++        for(int i=0;i<2;++i) {
++            auto *pad=gst_element_get_static_pad(effects.m_eyes[i].source,"src");
++            gst_pad_add_probe(pad,GST_PAD_PROBE_TYPE_BUFFER,[](GstPad *pad,GstPadProbeInfo *info,gpointer data) {
++                auto &probe=*static_cast<Probe *>(data);
++                auto *caps=gst_pad_get_current_caps(pad);GstVideoInfo video;
++                gst_video_info_from_caps(&video,caps);gst_caps_unref(caps);
++                GstMapInfo map;auto *buffer=GST_PAD_PROBE_INFO_BUFFER(info);
++                if(gst_buffer_map(buffer,&map,GST_MAP_READ)) {
++                    QMutexLocker locker(&probe.mutex);
++                    probe.pixels=QByteArray(reinterpret_cast<const char *>(map.data),map.size);
++                    probe.size=QSize(video.width,video.height);
++                    gst_buffer_unmap(buffer,&map);
++                }
++                return GST_PAD_PROBE_OK;
++            },&probes[i],nullptr);gst_object_unref(pad);
++        }
++        // Multiple frames exercise persistent filter state, not only preroll.
++        for(int frame=0;frame<3;++frame) {
++            effects.submit(pair);
++            QTRY_VERIFY_WITH_TIMEOUT(!errors.empty() || frames.size()==frame+1,120000);
++            QVERIFY2(errors.empty(),errors.empty()?"":qPrintable(errors[0][0].toString()));
++            QCOMPARE(qvariant_cast<QImage>(frames.back()[0]).size(),pair.size());
++            for(int i=0;i<2;++i) {
++                QMutexLocker locker(&probes[i].mutex);
++                QCOMPARE(probes[i].size,QSize(160,120));
++                auto expected=pair.copy(i*160,0,160,120);
++                QCOMPARE(probes[i].pixels,QByteArray(reinterpret_cast<const char *>(expected.constBits()),expected.sizeInBytes()));
++            }
++        }
++        effects.reset(); // Stop threads before stack-owned probe records go away.
++        qInfo().noquote()<<filter<<"expected=two independent 160x120 inputs; found=exact samples, three complete native pairs";
++    }
++    void independentSpatialControl()
++    {
++        const auto pair=pattern();
++        StereoEffects combined,left,right;
++        for(auto *e:{&combined,&left,&right}) e->setFilter(QStringLiteral("bulge"));
++        QImage doubledLeft=pair,doubledRight=pair;
++        for(int y=0;y<120;++y) {
++            memcpy(doubledLeft.scanLine(y)+160*4,pair.constScanLine(y),160*4);
++            memcpy(doubledRight.scanLine(y),pair.constScanLine(y)+160*4,160*4);
++        }
++        QSignalSpy actual(&combined,&StereoEffects::ready), l(&left,&StereoEffects::ready),r(&right,&StereoEffects::ready);
++        combined.submit(pair);left.submit(doubledLeft);right.submit(doubledRight);
++        QTRY_COMPARE_WITH_TIMEOUT(actual.size(),1,120000);
++        QTRY_COMPARE_WITH_TIMEOUT(l.size(),1,120000);QTRY_COMPARE_WITH_TIMEOUT(r.size(),1,120000);
++        const auto image=qvariant_cast<QImage>(actual[0][0]);
++        QCOMPARE(image.copy(0,0,160,120),qvariant_cast<QImage>(l[0][0]).copy(0,0,160,120));
++        QCOMPARE(image.copy(160,0,160,120),qvariant_cast<QImage>(r[0][0]).copy(160,0,160,120));
++        QVERIFY(image!=pair);
++    }
++    void refusalNamesTheEffect()
++    {
++        StereoEffects effects;effects.setFilter(QStringLiteral("kam61_missing_effect"));
++        QSignalSpy errors(&effects,&StereoEffects::failed),frames(&effects,&StereoEffects::ready);
++        const auto pair=pattern();effects.submit(pair);
++        QCOMPARE(errors.size(),1);
++        QVERIFY(errors[0][0].toString().contains(QStringLiteral("kam61_missing_effect")));
++        QCOMPARE(qvariant_cast<QImage>(frames[0][0]),pair);
++        effects.submit(pair);QCOMPARE(errors.size(),1);QCOMPARE(frames.size(),2);
++        effects.setFilter(QStringLiteral("identity"));effects.submit(pair);
++        QTRY_COMPARE_WITH_TIMEOUT(frames.size(),3,120000);
++        QCOMPARE(qvariant_cast<QImage>(frames[2][0]),pair);
++    }
++    void replacePendingEffect()
++    {
++        StereoEffects effects;effects.setFilter(QStringLiteral("videobalance saturation=0"));
++        QSignalSpy frames(&effects,&StereoEffects::ready);
++        const auto pair=pattern();effects.submit(pair);
++        effects.setFilter(QString());effects.submit(pair);
++        QCOMPARE(frames.size(),1);QCOMPARE(qvariant_cast<QImage>(frames[0][0]),pair);
++        QTest::qWait(100);QCOMPARE(frames.size(),1);
++    }
++};
++QTEST_GUILESS_MAIN(StereoEffectsTest)
++#include "stereoeffects-test.moc"
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -26,7 +26,7 @@
@@ -36,17 +354,18 @@ Last-Update: 2026-11-22
 +endif()
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -12,6 +12,9 @@
+@@ -12,6 +12,10 @@
      kamoso.cpp
      previewfetcher.cpp
      video/webcamcontrol.cpp
 +    video/stereopreview.cpp
++    video/stereoeffects.cpp
 +    video/stereophoto.cpp
 +    video/stereorecorder.cpp
  
      resources.qrc
  )
-@@ -20,7 +23,8 @@
+@@ -20,7 +24,8 @@
  target_link_libraries(kamoso
      Qt::Core Qt::Gui Qt::Widgets Qt::Quick
      KF6::KIOFileWidgets KF6::ConfigGui KF6::I18n KF6::Notifications
@@ -212,7 +531,7 @@ Last-Update: 2026-11-22
          Text {
 --- a/src/video/webcamcontrol.h
 +++ b/src/video/webcamcontrol.h
-@@ -19,10 +19,20 @@
+@@ -19,10 +19,21 @@
  
  namespace QGst { namespace Quick { class VideoSurface; } }
  
@@ -229,11 +548,12 @@ Last-Update: 2026-11-22
 +    Q_PROPERTY(bool flatOutput READ flatOutput NOTIFY stereoChanged)
 +    Q_PROPERTY(bool stereoFrame READ stereoFrame NOTIFY stereoChanged)
 +    Q_PROPERTY(QString stereoMessage READ stereoMessage NOTIFY stereoChanged)
++    Q_PROPERTY(QString stereoEffectMessage READ stereoEffectMessage NOTIFY stereoChanged)
 +    Q_PROPERTY(QVideoSink *stereoSink READ stereoSink WRITE setStereoSink NOTIFY stereoChanged)
      Q_PROPERTY(QString currentDevice READ currentDevice NOTIFY currentDeviceChanged)
      Q_PROPERTY(bool readyForCapture READ readyForCapture NOTIFY readyForCaptureChanged)
      public:
-@@ -38,6 +48,17 @@
+@@ -38,6 +49,18 @@
              }
          }
  
@@ -242,7 +562,8 @@ Last-Update: 2026-11-22
 +        bool stereoPreviewActive() const { return m_pairActive; }
 +        bool flatOutput() const;
 +        bool stereoFrame() const { return m_stereoFrame; }
-+        QString stereoMessage() const { return m_stereoMessage; }
++        QString stereoMessage() const { return m_stereoEffectMessage.isEmpty() ? m_stereoMessage : m_stereoEffectMessage; }
++        QString stereoEffectMessage() const { return m_stereoEffectMessage; }
 +        QVideoSink *stereoSink() const { return m_stereoSink; }
 +        void setStereoSink(QVideoSink *sink);
 +        Q_INVOKABLE void openCameraSettings();
@@ -251,7 +572,7 @@ Last-Update: 2026-11-22
          QString currentDevice() const { return m_currentDevice; }
          bool mirrored() const { return m_mirror; }
          bool readyForCapture() const { return m_readyForCapture; }
-@@ -47,13 +68,14 @@
+@@ -47,13 +70,14 @@
          bool playDevice(Device* device);
          void stop();
          void takePhoto(const QUrl& url, bool emitTaken);
@@ -267,7 +588,7 @@ Last-Update: 2026-11-22
          void photoTaken(const QString &photoUrl);
          void mirroredChanged(bool mirrored);
          void currentDeviceChanged();
-@@ -66,10 +88,19 @@
+@@ -66,10 +90,20 @@
          void updateSourceFilter();
          void setVideoSettings();
  
@@ -279,6 +600,7 @@ Last-Update: 2026-11-22
 +        bool m_pairActive = false;
 +        bool m_stereoFrame = false;
 +        QString m_stereoMessage;
++        QString m_stereoEffectMessage;
          QString m_extraFilters;
          QString m_tmpVideoPath;
          QUrl m_videoDestination;
@@ -391,7 +713,7 @@ Last-Update: 2026-11-22
      GstPointer<GstElement> m_viewfinder;
  };
  
-@@ -202,6 +238,27 @@
+@@ -202,6 +238,32 @@
  
  WebcamControl::WebcamControl()
  {
@@ -410,6 +732,11 @@ Last-Update: 2026-11-22
 +        KNotification::event(QStringLiteral("videoSaved"), i18n("Video saved"), i18n("Saved in %1", url.toDisplayString(QUrl::PreferLocalFile)));
 +    });
 +    connect(m_stereoPreview, &StereoPreview::failed, this, &WebcamControl::setStereoMessage);
++    connect(m_stereoPreview, &StereoPreview::effectMessage, this, [this](const QString &message) {
++        if (m_stereoEffectMessage == message) return;
++        m_stereoEffectMessage = message;
++        Q_EMIT stereoChanged();
++    });
 +    connect(m_stereoPreview, &StereoPreview::stereoFrameChanged, this, [this](bool stereo) {
 +        if (m_stereoFrame != stereo) {
 +            m_stereoFrame = stereo;
@@ -419,7 +746,7 @@ Last-Update: 2026-11-22
      QQmlApplicationEngine* engine = new QQmlApplicationEngine(this);
      engine->rootContext()->setContextObject(new KLocalizedContext(engine));
      m_kamoso = new Kamoso(this);
-@@ -219,6 +276,8 @@
+@@ -219,6 +281,8 @@
  
      engine->load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
      auto rootObject = qobject_cast<QQuickWindow *> (engine->rootObjects().constFirst());
@@ -428,7 +755,7 @@ Last-Update: 2026-11-22
      m_surface = rootObject->findChild<QQuickItem *>("sink");
      Q_ASSERT(m_surface);
  
-@@ -231,6 +290,7 @@
+@@ -231,6 +295,7 @@
  
  WebcamControl::~WebcamControl()
  {
@@ -436,7 +763,7 @@ Last-Update: 2026-11-22
      DeviceManager::self()->save();
      Settings::self()->save();
      delete m_kamoso;
-@@ -238,9 +298,20 @@
+@@ -238,9 +303,20 @@
  
  void WebcamControl::stop()
  {
@@ -457,7 +784,7 @@ Last-Update: 2026-11-22
      }
  }
  
-@@ -264,6 +335,46 @@
+@@ -264,6 +340,46 @@
  
      WebcamControl* wc = static_cast<WebcamControl*>(user_data);
      wc->setReadyForCapture(is_ready);
@@ -504,7 +831,7 @@ Last-Update: 2026-11-22
  }
  
  bool WebcamControl::playDevice(Device *device)
-@@ -280,8 +391,26 @@
+@@ -280,8 +396,26 @@
      if (m_pipeline)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -531,7 +858,7 @@ Last-Update: 2026-11-22
          g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
          g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
                           G_CALLBACK(captureReadyChanged), this);
-@@ -296,6 +425,13 @@
+@@ -296,6 +430,13 @@
      }
      if (!m_viewfinder) {
          Q_ASSERT(m_surface);
@@ -545,7 +872,7 @@ Last-Update: 2026-11-22
          m_viewfinder.reset(gst_bin_new("viewfinder"));
          auto glupload = gst_element_factory_make_full("glupload", nullptr);
          auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
-@@ -309,6 +445,8 @@
+@@ -309,6 +450,8 @@
          GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
          gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
          gst_object_unref(sink_pad);
@@ -554,7 +881,7 @@ Last-Update: 2026-11-22
      }
  
      GstElement* source;
-@@ -320,7 +458,9 @@
+@@ -320,7 +463,9 @@
  
      if (!m_pipeline) {
          m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
@@ -565,7 +892,7 @@ Last-Update: 2026-11-22
          g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
          g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
      }
-@@ -395,6 +535,58 @@
+@@ -395,6 +540,58 @@
          qWarning() << "couldn't take photo, no pipeline";
          return;
      }
@@ -624,7 +951,7 @@ Last-Update: 2026-11-22
      m_emitTaken = emitTaken;
  
      g_object_set(m_pipeline.data(), "mode", 1, nullptr);
-@@ -419,8 +611,14 @@
+@@ -419,8 +616,14 @@
      return QDir::tempPath() + QStringLiteral("/kamoso_%1.mkv").arg(date);
  }
  
@@ -641,7 +968,7 @@ Last-Update: 2026-11-22
      m_videoDestination = destination;
      m_tmpVideoPath = destination.isLocalFile() ? destination.toLocalFile() : temporaryVideoFile();
  
-@@ -429,10 +627,13 @@
+@@ -429,10 +632,13 @@
                                      nullptr);
  
      g_signal_emit_by_name (m_pipeline.data(), "start-capture", 0);
@@ -655,7 +982,7 @@ Last-Update: 2026-11-22
      g_signal_emit_by_name(m_pipeline.data(), "stop-capture", 0);
  }
  
-@@ -453,11 +654,14 @@
+@@ -453,11 +659,13 @@
      if (prevstate != GST_STATE_NULL)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -667,19 +994,19 @@ Last-Update: 2026-11-22
          filters += QStringLiteral(" ! videoflip video-direction=horiz");
  
 -    if (!m_extraFilters.isEmpty()) {
-+    if (m_pairActive && !m_extraFilters.isEmpty())
-+        setStereoMessage(i18n("This effect is not available per eye. Choose no effect to use the 3D viewfinder."));
++    m_stereoPreview->setEffect(m_pairActive ? m_extraFilters : QString());
 +    if (!m_extraFilters.isEmpty() && !m_pairActive) {
          if (!filters.isEmpty())
              filters.prepend(QStringLiteral(" ! "));
          filters.prepend(m_extraFilters);
 --- /dev/null
 +++ b/src/video/stereopreview.h
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,46 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#pragma once
 +#include <QObject>
++#include "stereoeffects.h"
 +#include <QImage>
 +#include <QPointer>
 +#include <QVideoSink>
@@ -697,16 +1024,20 @@ Last-Update: 2026-11-22
 +    void setSink(QVideoSink *sink);
 +    void setPacking(const QString &id);
 +    void setMirrored(bool mirrored);
++    void setEffect(const QString &filter);
 +    GstElement *createSink();
 +    bool hasPacking() const;
 +    QImage captureImage() const { return m_capture; }
 +    static QString cameraPacking(GstStructure *properties);
 +Q_SIGNALS:
 +    void failed(const QString &message);
++    void effectMessage(const QString &message);
 +    void stereoFrameChanged(bool stereo);
 +    void pairReady(const QImage &image);
 +private:
 +    void present(const QImage &image, bool discontinuity, quint64 offset, GstVideoMultiviewMode mode, GstVideoMultiviewFlags flags, const QImage &second = {});
++    void deliver(const QImage &packed, bool stereo);
++    StereoEffects m_effects;
 +    QPointer<QVideoSink> m_sink;
 +    stereo_policy_input_format m_format {};
 +    QImage m_first;
@@ -719,7 +1050,7 @@ Last-Update: 2026-11-22
 +};
 --- /dev/null
 +++ b/src/video/stereopreview.cpp
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,256 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereopreview.h"
@@ -736,8 +1067,19 @@ Last-Update: 2026-11-22
 +#include <unistd.h>
 +#include <cstring>
 +
-+StereoPreview::StereoPreview(QObject *parent) : QObject(parent) {}
-+void StereoPreview::setSink(QVideoSink *sink) { m_sink = sink; }
++StereoPreview::StereoPreview(QObject *parent) : QObject(parent)
++{
++    connect(&m_effects, &StereoEffects::ready, this, [this](const QImage &pair) { deliver(pair, true); });
++    connect(&m_effects, &StereoEffects::failed, this, &StereoPreview::effectMessage);
++}
++void StereoPreview::setEffect(const QString &filter)
++{
++    m_capture = {};
++    m_effects.reset();
++    m_effects.setFilter(filter);
++    Q_EMIT effectMessage(QString());
++}
++void StereoPreview::setSink(QVideoSink *sink) { m_effects.reset(); m_capture = {}; m_sink = sink; }
 +void StereoPreview::setMirrored(bool mirrored) { m_mirrored = mirrored; }
 +bool StereoPreview::hasPacking() const
 +{
@@ -747,6 +1089,7 @@ Last-Update: 2026-11-22
 +void StereoPreview::setPacking(const QString &id)
 +{
 +    ++m_generation;
++    m_effects.reset();
 +    m_capture = {};
 +    m_unknownPacking = false;
 +    m_format = {};
@@ -945,6 +1288,12 @@ Last-Update: 2026-11-22
 +        }
 +    }
 +    packed = packed.convertToFormat(QImage::Format_RGBA8888);
++    if (stereo) m_effects.submit(packed);
++    else deliver(packed, false);
++}
++void StereoPreview::deliver(const QImage &packed, bool stereo)
++{
++    if (!m_sink) return;
 +    QVideoFrameFormat format(packed.size(), QVideoFrameFormat::Format_RGBA8888);
 +    format.setStereoMode(stereo ? QVideoFrameFormat::StereoMode::SideBySide : QVideoFrameFormat::StereoMode::None);
 +    QVideoFrame video(format);
@@ -960,9 +1309,9 @@ Last-Update: 2026-11-22
 +}
 --- /dev/null
 +++ b/autotests/CMakeLists.txt
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,19 @@
 +find_package(Qt6 REQUIRED COMPONENTS Test)
-+add_executable(stereopreview-test stereopreview-test.cpp ../src/video/stereopreview.cpp)
++add_executable(stereopreview-test stereopreview-test.cpp ../src/video/stereopreview.cpp ../src/video/stereoeffects.cpp)
 +target_include_directories(stereopreview-test PRIVATE ../src/video)
 +target_link_libraries(stereopreview-test PRIVATE Qt6::Test Qt6::Multimedia KF6::I18n Stereo::Layer Stereo::Policy PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
 +add_test(NAME stereopreview COMMAND stereopreview-test)
@@ -976,9 +1325,13 @@ Last-Update: 2026-11-22
 +target_link_libraries(stereorecorder-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n KF6::KIOCore PkgConfig::GStreamer PkgConfig::GStreamerApp)
 +add_test(NAME stereorecorder COMMAND stereorecorder-test)
 +set_tests_properties(stereorecorder PROPERTIES ENVIRONMENT "GST_PLUGIN_FEATURE_RANK=audiotestsrc:512")
++add_executable(stereoeffects-test stereoeffects-test.cpp ../src/video/stereoeffects.cpp)
++target_include_directories(stereoeffects-test PRIVATE ../src/video)
++target_link_libraries(stereoeffects-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
++add_test(NAME stereoeffects COMMAND stereoeffects-test)
 --- /dev/null
 +++ b/autotests/stereopreview-test.cpp
-@@ -0,0 +1,353 @@
+@@ -0,0 +1,378 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereopreview.h"
@@ -993,6 +1346,31 @@ Last-Update: 2026-11-22
 +    Q_OBJECT
 +private Q_SLOTS:
 +    void initTestCase() { gst_init(nullptr, nullptr); }
++    void effectReachesPreviewAndCapture()
++    {
++        QVideoSink sink; StereoPreview preview;
++        preview.setSink(&sink); preview.setMirrored(false);
++        preview.setPacking(QStringLiteral("sideBySideLeftFirst"));
++        preview.setEffect(QStringLiteral("videobalance saturation=0"));
++        QImage pair(160,60,QImage::Format_RGBA8888);pair.fill(Qt::red);
++        for(int y=0;y<60;++y) for(int x=80;x<160;++x) pair.setPixelColor(x,y,Qt::blue);
++        QSignalSpy frames(&sink,&QVideoSink::videoFrameChanged);
++        preview.present(pair,false,0,GST_VIDEO_MULTIVIEW_MODE_NONE,GST_VIDEO_MULTIVIEW_FLAGS_NONE);
++        QTRY_COMPARE_WITH_TIMEOUT(frames.size(),1,120000);
++        const auto result=sink.videoFrame().toImage();
++        QCOMPARE(result.size(),pair.size());
++        // This checks the preview/capture wiring, not idealized grayscale math:
++        // videoconvert's YUV round trip can differ by a channel value.
++        StereoEffects reference;
++        reference.setFilter(QStringLiteral("videobalance saturation=0"));
++        QSignalSpy expected(&reference,&StereoEffects::ready);
++        reference.submit(pair);
++        QTRY_COMPARE_WITH_TIMEOUT(expected.size(),1,120000);
++        QCOMPARE(result.convertToFormat(QImage::Format_RGBA8888),qvariant_cast<QImage>(expected[0][0]));
++        QVERIFY(result.convertToFormat(QImage::Format_RGBA8888)!=pair);
++        QCOMPARE(preview.captureImage(),result.convertToFormat(QImage::Format_RGBA8888));
++        QVERIFY(result.pixelColor(20,20)!=result.pixelColor(100,20));
++    }
 +    void temporalOrderAndGaps()
 +    {
 +        QVideoSink output;
@@ -1525,7 +1903,7 @@ Last-Update: 2026-11-22
 +};
 --- /dev/null
 +++ b/src/video/stereorecorder.cpp
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,121 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereorecorder.h"
@@ -1581,6 +1959,7 @@ Last-Update: 2026-11-22
 +    if(!m_directory->isValid()) { reset(); return i18n("The recording's temporary folder could not be created."); }
 +    m_path=m_directory->filePath(QStringLiteral("capture.")+container);
 +    m_destination=destination;m_size=size;
++    qInfo() << "Stereo recording temporary file" << m_path;
 +    const QByteArray description=QByteArray("appsrc name=pair is-live=true do-timestamp=true format=time block=false max-buffers=8 ! queue max-size-buffers=8 max-size-bytes=0 max-size-time=0 ! videoconvert ! video/x-raw,format=")+(size.height()%2?"Y444":"I420")+" ! x264enc tune=zerolatency ! h264parse ! "+muxName+" name=mux ! filesink name=file autoaudiosrc name=audio ! audioconvert ! audioresample quality=10 ! avenc_aac ! aacparse ! queue ! mux.";
 +    GError *error=nullptr;
 +    m_pipeline=gst_parse_launch(description.constData(),&error);
@@ -1629,18 +2008,20 @@ Last-Update: 2026-11-22
 +    if(GST_MESSAGE_TYPE(message)==GST_MESSAGE_ERROR) {
 +        GError *error=nullptr;gst_message_parse_error(message,&error,nullptr);
 +        const QString text=QString::fromUtf8(error->message);g_error_free(error);gst_message_unref(message);
++        qWarning() << "Stereo recording encoder failure" << m_path << text;
 +        reset();Q_EMIT failed(i18n("The recording could not be saved: %1",text));return;
 +    }
 +    gst_message_unref(message);
 +    const auto directory=m_directory;const auto path=m_path;const auto destination=m_destination;
 +    reset();
++    qInfo() << "Stereo recording finalized" << path << QFileInfo(path).size() << "bytes; destination" << destination;
 +    if(destination.isLocalFile()) {
 +        if(!QFile::rename(path,destination.toLocalFile())) { directory->setAutoRemove(false); Q_EMIT failed(i18n("The completed recording could not be moved. It is kept at %1.",path)); }
-+        else Q_EMIT saved(destination);
++        else { qInfo() << "Stereo recording saved" << destination; Q_EMIT saved(destination); }
 +    } else {
 +        auto *job=KIO::copy(QUrl::fromLocalFile(path),destination);
 +        connect(job,&KJob::result,this,[this,job,directory,destination,path] {
-+            if(job->error()) { directory->setAutoRemove(false); Q_EMIT failed(i18n("The recording could not be copied. It is kept at %1: %2",path,job->errorString())); } else Q_EMIT saved(destination);
++            if(job->error()) { directory->setAutoRemove(false); Q_EMIT failed(i18n("The recording could not be copied. It is kept at %1: %2",path,job->errorString())); } else { qInfo() << "Stereo recording saved" << destination; Q_EMIT saved(destination); }
 +        });
 +    }
 +}
@@ -1708,7 +2089,63 @@ Last-Update: 2026-11-22
                      anchors.centerIn: parent
 --- a/src/qml/Config.qml
 +++ b/src/qml/Config.qml
-@@ -55,7 +55,7 @@
+@@ -5,6 +5,7 @@
+ */
+ 
+ import QtQuick
++import QtQuick.Controls as QQC2
+ import QtQuick.Layouts
+ import QtQuick.Dialogs
+ import org.kde.kamoso
+@@ -17,6 +18,47 @@
+     cellWidth: Math.floor(width / columnCount)
+     cellHeight: cellWidth * 3/4
+ 
++
++    readonly property var effectNames: ({
++        "identity": i18n("No effect"),
++        "bulge": i18n("Bulge"),
++        "frei0r-filter-cartoon": i18n("Cartoon"),
++        "frei0r-filter-twolay0r": i18n("Twolay0r"),
++        "dicetv": i18n("Dice"),
++        "frei0r-filter-distort0r": i18n("Distort0r"),
++        "edgetv": i18n("Edges"),
++        "coloreffects preset=heat": i18n("Heat"),
++        "videobalance saturation=0 ! agingtv": i18n("Old film"),
++        "videobalance saturation=1.5 hue=-0.5": i18n("Hue −0.5"),
++        "kaleidoscope": i18n("Kaleidoscope"),
++        "videobalance saturation=1.5 hue=+0.5": i18n("Hue +0.5"),
++        "mirror": i18n("Mirror"),
++        "videobalance saturation=0": i18n("Grayscale"),
++        "optv": i18n("Optical art"),
++        "pinch": i18n("Pinch"),
++        "quarktv": i18n("Quark"),
++        "radioactv": i18n("Radioactive"),
++        "revtv": i18n("Waveform"),
++        "rippletv": i18n("Ripples"),
++        "videobalance saturation=2": i18n("Vivid colors"),
++        "coloreffects preset=sepia": i18n("Sepia"),
++        "shagadelictv": i18n("Shagadelic"),
++        "square": i18n("Square"),
++        "streaktv": i18n("Streaks"),
++        "stretch": i18n("Stretch"),
++        "frei0r-filter-delay0r delaytime=1": i18n("Delay"),
++        "twirl": i18n("Twirl"),
++        "vertigotv": i18n("Vertigo"),
++        "warptv": i18n("Warp"),
++        "coloreffects preset=xray": i18n("X-ray")
++    })
++    header: Kirigami.InlineMessage {
++        width: view.width
++        visible: WebcamControl.stereoPreviewActive && WebcamControl.stereoEffectMessage.length > 0
++        height: visible ? implicitHeight : 0
++        text: WebcamControl.stereoEffectMessage
++        type: Kirigami.MessageType.Warning
++    }
+ 
+     model: ListModel {
+         ListElement { filters: "identity" }
+@@ -55,7 +97,7 @@
          ListElement { filters: "coloreffects preset=xray" }
      }
  
@@ -1717,3 +2154,30 @@ Last-Update: 2026-11-22
  
      delegate: Rectangle {
          readonly property int borderWidth: 2
+@@ -79,12 +121,26 @@
+                 PipelineItem {
+                     playing: false
+                     onFailed: {
++                        if (WebcamControl.stereoPreviewActive) {
++                            return
++                        }
+                         delegateItem.visible = false
+                         view.model.remove(index)
+                     }
+ 
+                     description: view.sampleImage.length === 0 ? "" : "filesrc location=\"" + view.sampleImage + "\" ! decodebin ! imagefreeze ! videoconvert ! " + model.filters + " name=last"
+                 }
++            }
++
++            QQC2.Label {
++                anchors.left: parent.left
++                anchors.right: parent.right
++                anchors.bottom: parent.bottom
++                visible: WebcamControl.stereoPreviewActive
++                text: view.effectNames[model.filters] || model.filters
++                wrapMode: Text.WordWrap
++                padding: Kirigami.Units.smallSpacing
++                background: Rectangle { color: Kirigami.Theme.backgroundColor; opacity: 0.9 }
+             }
+ 
+             onClicked: {
