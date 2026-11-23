@@ -2,8 +2,8 @@ Description: obs-ffmpeg: the custom output's raw callbacks and its stop share a 
  ffmpeg_output_full_stop() calls obs_output_end_data_capture(), which disconnects the output's raw video and audio
  callbacks later, on a thread of libobs's own (end_data_capture_thread), and then ffmpeg_deactivate() at once, which
  frees the codec contexts, the frames and the muxer (ffmpeg_data_free()). A frame the video thread was still handing to
- receive_video() then went to a freed encoder: measured on OBS 33.0.1 with FFmpeg's libx264 into Matroska, one stop in
- about sixty ended in SIGSEGV in av_buffer_unref() under avcodec_send_frame() (receive_video(),
+ receive_video() then went to a freed encoder: measured on OBS 33.0.1 with FFmpeg's libx264 into Matroska, 2 stops in
+ 100 ended in SIGSEGV in av_buffer_unref() under avcodec_send_frame() (receive_video(),
  obs-ffmpeg-output.c:720, called from libobs's video thread), after x264 had printed its closing statistics.
  The two callbacks now hold a mutex while they encode, and ffmpeg_deactivate() and the start's ffmpeg_data_init() hold
  it while the data are freed or made; a callback that comes after the stop finds the data cleared and returns. The
