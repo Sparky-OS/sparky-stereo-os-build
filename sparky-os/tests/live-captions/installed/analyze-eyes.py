@@ -12,7 +12,11 @@ for case in ('desktop','video'):
     overlays=[w for w in windows if 'kaption' in w.get('cls','').lower() and not w.get('hidden')]
     if len(overlays)!=1:raise SystemExit(f'{case}: expected one caption surface, found {overlays}')
     window=overlays[0];x,y,w,h=[int(round(v*scale)) for v in window['fg']]
-    x0=max(40,x+3);x1=min(1880,x+w-3);y0=max(0,y+3);y1=min(a.shape[0],y+h-3)
+    # CaptionBox.qml: viewport width = parent.width - 36, bottom margin 14,
+    # implicit height = viewport.height + 28. Sample its text viewport, not
+    # the rounded transparent corners where unrelated windows can show through.
+    hx=int(18*scale);vy=int(14*scale)
+    x0=max(40,x+hx);x1=min(1880,x+w-hx);y0=max(0,y+vy);y1=min(a.shape[0],y+h-vy)
     left=a[y0:y1,x0:x1];right=a[:,1920:]
     def ink(rgb):
         return (rgb.min(axis=-1)>230)&(np.ptp(rgb.astype(np.int16),axis=-1)<10)
@@ -26,6 +30,7 @@ for case in ('desktop','video'):
     shifted=right[y0:y1,x0-disparity:x1-disparity]
     rows.append(dict(case=case,window=window,scale=scale,left_minus_right_px=disparity,
                      glyph_pixels=int(li.sum()),glyph_xor_pixels=error,
+                     sample_roi_physical=[x0,y0,x1,y1],
                      second_best_xor=scores[1][0],raw_unequal_rgb_pixels=int(np.any(left!=right[y0:y1,x0:x1],axis=-1).sum()),
                      shifted_unequal_rgb_pixels=int(np.any(left!=shifted,axis=-1).sum()),
                      note='Default translucent backgrounds may composite different video pixels; glyph-mask matching isolates text geometry.'))

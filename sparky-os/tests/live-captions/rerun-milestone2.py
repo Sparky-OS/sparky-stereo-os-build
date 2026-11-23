@@ -90,6 +90,8 @@ def main():
         checkscript='set -e; mkdir /out/tmp; export TMPDIR=/out/tmp; git clone --branch '+shlex.quote(branch)+' /out/merge-input.bundle /out/merged-source; git -C /out/merged-source checkout '+shlex.quote(cfg['recipe_base'])+'; git -C /out/merged-source -c user.name="Daniel Campos Ramos" -c user.email=Capitain_Jack@yahoo.com merge --no-commit --no-ff '+shlex.quote(text(['git','-C',repo,'rev-parse','HEAD']))+'; bash /out/merged-source/sparky-os/tests/supply-chain/test-wiring.sh; python3 -B /recipe/tests/test_adapter.py; python3 -B /proof/test-a10-kit.py; python3 -B /proof/test-rig-upgrade.py; cmake -S /proof/fixture-src -B /out/rig-tools -G Ninja; cmake --build /out/rig-tools -j4; chown -R 1000:1000 /out/rig-tools'
         create('source-and-kit-checks',cfg['build_image'],['bash','-c',checkscript],[(repo/'sparky-os/packages/sparky-stereo-live-captions','/recipe',True),(repo,'/source-repo',True),(out,'/out',False)])
         log=(out/'source-and-kit-checks.log').read_text();row('merge wiring','unchanged test-wiring on scratch merge with fetched main','ALL PASS','ALL PASS' in log);row('model-free controls','17 adapter and 6 kit negative tests pass','pass','Ran 17 tests' in log and 'Ran 6 tests' in log and 'FAILED' not in log)
+        run([sys.executable,'-B',scripts/'test-caption-region.py',out/'glyph-controls'],out/'glyph-controls.log')
+        row('caption sampling negative controls','background outside text ignored; one changed text pixel still fails','3 cases pass')
         helpers=out/'helpers';helpers.mkdir()
         # Unchanged recipe/gates; only the launcher's local ledger path is relocated.
         build=(scripts/'build-continuation.sh').read_text().replace(cfg['lane']+'/.container-ids',str(out/'.container-ids'))
