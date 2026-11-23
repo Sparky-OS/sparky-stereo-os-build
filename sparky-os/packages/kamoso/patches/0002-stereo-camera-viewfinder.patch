@@ -289,11 +289,13 @@ Last-Update: 2026-11-22
          GstPointer<GstElement> m_viewfinder;
 --- a/src/video/webcamcontrol.cpp
 +++ b/src/video/webcamcontrol.cpp
-@@ -6,6 +6,15 @@
+@@ -6,6 +6,17 @@
  
  
  #include "webcamcontrol.h"
 +#include <QPointer>
++#include <QOpenGLContext>
++#include <QScopeGuard>
 +#include "stereopreview.h"
 +#include "stereophoto.h"
 +#include "stereorecorder.h"
@@ -305,7 +307,7 @@ Last-Update: 2026-11-22
  #include "kamosoSettings.h"
  #include <devicemanager.h>
  #include <kamosodirmodel.h>
-@@ -82,9 +91,16 @@
+@@ -82,9 +93,16 @@
      {
      }
  
@@ -323,7 +325,7 @@ Last-Update: 2026-11-22
      }
  
      void onBusMessage(GstMessage* message)
-@@ -95,9 +111,8 @@
+@@ -95,9 +113,8 @@
              break;
          case GST_MESSAGE_ERROR:  {//Some error occurred.
              qCritical() << "error on:" << m_description << debugMessage(message);
@@ -335,7 +337,7 @@ Last-Update: 2026-11-22
          }   break;
          default:
              break;
-@@ -121,15 +136,26 @@
+@@ -121,15 +138,31 @@
      }
  
      Q_SCRIPTABLE void refresh() {
@@ -349,6 +351,11 @@ Last-Update: 2026-11-22
 +    }
 +
 +    void refreshPipeline() {
++        auto *context = QOpenGLContext::currentContext();
++        auto *surface = context ? context->surface() : nullptr;
++        const auto restoreContext = qScopeGuard([context, surface] {
++            if (context && surface) context->makeCurrent(surface);
++        });
          if (!m_description.isEmpty() && m_complete && parent()) {
 -            if(m_pipeline)
 -                gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
@@ -365,7 +372,7 @@ Last-Update: 2026-11-22
                  return;
              }
              Q_ASSERT(m_pipeline);
-@@ -145,7 +171,9 @@
+@@ -145,7 +178,9 @@
              gst_bin_add_many(GST_BIN(m_pipeline.data()), glupload, sink, nullptr);
              bool correct = gst_element_link_many(lastItem, glupload, sink, nullptr);
              Q_ASSERT(correct);
@@ -376,7 +383,7 @@ Last-Update: 2026-11-22
          }
          setPlaying(m_playing);
      }
-@@ -182,6 +210,7 @@
+@@ -182,6 +217,7 @@
      bool m_complete = false;
      QString m_description;
      GstPointer<GstPipeline> m_pipeline;
@@ -384,7 +391,7 @@ Last-Update: 2026-11-22
      GstPointer<GstElement> m_viewfinder;
  };
  
-@@ -202,6 +231,27 @@
+@@ -202,6 +238,27 @@
  
  WebcamControl::WebcamControl()
  {
@@ -412,7 +419,7 @@ Last-Update: 2026-11-22
      QQmlApplicationEngine* engine = new QQmlApplicationEngine(this);
      engine->rootContext()->setContextObject(new KLocalizedContext(engine));
      m_kamoso = new Kamoso(this);
-@@ -219,6 +269,8 @@
+@@ -219,6 +276,8 @@
  
      engine->load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
      auto rootObject = qobject_cast<QQuickWindow *> (engine->rootObjects().constFirst());
@@ -421,7 +428,7 @@ Last-Update: 2026-11-22
      m_surface = rootObject->findChild<QQuickItem *>("sink");
      Q_ASSERT(m_surface);
  
-@@ -231,6 +283,7 @@
+@@ -231,6 +290,7 @@
  
  WebcamControl::~WebcamControl()
  {
@@ -429,7 +436,7 @@ Last-Update: 2026-11-22
      DeviceManager::self()->save();
      Settings::self()->save();
      delete m_kamoso;
-@@ -238,9 +291,20 @@
+@@ -238,9 +298,20 @@
  
  void WebcamControl::stop()
  {
@@ -450,7 +457,7 @@ Last-Update: 2026-11-22
      }
  }
  
-@@ -264,6 +328,46 @@
+@@ -264,6 +335,46 @@
  
      WebcamControl* wc = static_cast<WebcamControl*>(user_data);
      wc->setReadyForCapture(is_ready);
@@ -497,7 +504,7 @@ Last-Update: 2026-11-22
  }
  
  bool WebcamControl::playDevice(Device *device)
-@@ -280,8 +384,26 @@
+@@ -280,8 +391,26 @@
      if (m_pipeline)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -524,7 +531,7 @@ Last-Update: 2026-11-22
          g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
          g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
                           G_CALLBACK(captureReadyChanged), this);
-@@ -296,6 +418,13 @@
+@@ -296,6 +425,13 @@
      }
      if (!m_viewfinder) {
          Q_ASSERT(m_surface);
@@ -538,7 +545,7 @@ Last-Update: 2026-11-22
          m_viewfinder.reset(gst_bin_new("viewfinder"));
          auto glupload = gst_element_factory_make_full("glupload", nullptr);
          auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
-@@ -309,6 +438,8 @@
+@@ -309,6 +445,8 @@
          GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
          gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
          gst_object_unref(sink_pad);
@@ -547,7 +554,7 @@ Last-Update: 2026-11-22
      }
  
      GstElement* source;
-@@ -320,7 +451,9 @@
+@@ -320,7 +458,9 @@
  
      if (!m_pipeline) {
          m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
@@ -558,7 +565,7 @@ Last-Update: 2026-11-22
          g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
          g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
      }
-@@ -395,6 +528,58 @@
+@@ -395,6 +535,58 @@
          qWarning() << "couldn't take photo, no pipeline";
          return;
      }
@@ -617,7 +624,7 @@ Last-Update: 2026-11-22
      m_emitTaken = emitTaken;
  
      g_object_set(m_pipeline.data(), "mode", 1, nullptr);
-@@ -419,8 +604,14 @@
+@@ -419,8 +611,14 @@
      return QDir::tempPath() + QStringLiteral("/kamoso_%1.mkv").arg(date);
  }
  
@@ -634,7 +641,7 @@ Last-Update: 2026-11-22
      m_videoDestination = destination;
      m_tmpVideoPath = destination.isLocalFile() ? destination.toLocalFile() : temporaryVideoFile();
  
-@@ -429,10 +620,13 @@
+@@ -429,10 +627,13 @@
                                      nullptr);
  
      g_signal_emit_by_name (m_pipeline.data(), "start-capture", 0);
@@ -648,7 +655,7 @@ Last-Update: 2026-11-22
      g_signal_emit_by_name(m_pipeline.data(), "stop-capture", 0);
  }
  
-@@ -453,11 +647,14 @@
+@@ -453,11 +654,14 @@
      if (prevstate != GST_STATE_NULL)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
