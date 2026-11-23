@@ -129,3 +129,24 @@ Round 3 additions: `glx-child-first-pair.c` also takes `PRESENT_TRACE=1` (it sel
 Build with `cc -O2 -Wall -o vk-x11-surface-extent vk-x11-surface-extent.c -lvulkan -lX11 -lX11-xcb -lxcb` (libx11-xcb-dev) and run it on any X server: a plain Xvfb, and Stereo KWin's Xwayland (`kwin_wayland --virtual --xwayland`).
 It prints PASS or FAIL per device and surface kind and exits 1 when one fails.
 Measured (ORDER 39, 2026-11-19): Mesa 26.1.6-1+stereo3d26+lc1 FAIL on RADV (Renoir) and lavapipe, xcb and Xlib, on both servers (320x480 for the 640x480 window); the same source with patch 0047 PASS on all eight.
+
+## egl-declared-pair-lifetime.c and qt-declared-child-hideshow.cpp (row 830)
+
+A declared Wayland surface holding two views, taken down in every order a client may take: `declared`, `surface-first`, `withdraw-first`, `hide-show`, `resize`, `redeclare`, `late-release`, `current-destroy` (the EGL surface destroyed while current, as libobs does) and `never-withdrawn`.
+Two routes: `packed` (the program draws both views into one buffer twice a view wide and declares it with libstereo-declare, as OBS's preview does) and `multiview` (`EGL_MULTIVIEW_VIEW_COUNT_EXT` 2, declared by Mesa), and `mono` as the 2D control; `THREAD=1` keeps a second declared surface drawing on its own thread.
+The child is a desynchronized sub-surface of an xdg toplevel, as Qt's native child window is; between rounds the program reallocates many blocks so that glibc checks its chunks.
+Build in the rig (xdg-shell glue as for `egl-wayland-window.c`):
+
+```sh
+cc -O1 -g -Wall -Wextra -I. egl-declared-pair-lifetime.c xdg-shell-protocol.c -o egl-declared-pair-lifetime \
+  $(pkg-config --cflags --libs wayland-client wayland-egl egl gl stereo-declare) -lpthread
+egl-declared-pair-lifetime packed|multiview|mono ORDER ROUNDS
+```
+
+It exits 0 with `DONE rounds=N`; a damaged heap ends it in glibc, a protocol error with libwayland's message (`never-withdrawn` must end with `wl_surface was destroyed before a set_content request`: libstereo-declare keys its declarations by the surface's address).
+Run it under Valgrind's memcheck (`--error-exitcode=99 --undef-value-errors=no`) and against a sanitizer build of this tree; on +stereo3d29 every order was clean on radeonsi, on zink over the NVIDIA card, on llvmpipe and on NVIDIA's own EGL (row 830, 2026-11-23), so it is a regression test, not a red one.
+
+`qt-declared-child-hideshow.cpp` is OBS's preview without OBS: a native child widget whose display (a heap block with a mutex, like libobs's `obs_display`) is made when its window is shown and freed at `visibleChanged(false)`, drawn on a graphics thread through an EGL display on Qt's own `wl_display` into a window surface twice a view wide, declared with libstereo-declare.
+`old` repeats the stereo module's write into the freed display before its repair, `late` withdraws the declaration after Qt dropped the child's sub-surface without that write, `fixed` withdraws on the child window's own Hide event.
+Build with `c++ -fPIC -std=c++17 qt-declared-child-hideshow.cpp $(pkg-config --cflags --libs Qt6Widgets wayland-client wayland-egl egl gl stereo-declare) -lpthread` and run `qt-declared-child-hideshow old|late|fixed CYCLES` with `QT_QPA_PLATFORM=wayland`; it prints `DONE cycles=N declarations=N withdrawals=N freed-writes=N`.
+Qt 6.11 keeps a hidden child's `wl_surface` and destroys only its `wl_subsurface`: read `WAYLAND_DEBUG=client` before saying the surface was destroyed.
