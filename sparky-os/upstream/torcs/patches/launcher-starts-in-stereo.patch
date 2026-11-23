@@ -1,0 +1,21 @@
+Description: Start in stereo unless the person chose otherwise
+ The launcher sets PLIB_SSG_STEREO=ON when the environment does not set it,
+ so the edition's build starts in stereo; PLIB_SSG_STEREO=OFF starts it in 2D.
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+Last-Update: 2026-11-23
+
+--- torcs-1.3.7+dfsg.orig/src/linux/torcs.in
++++ torcs-1.3.7+dfsg/src/linux/torcs.in
+@@ -29,6 +29,11 @@
+ 
+ LOCAL_CONF=$HOME/.torcs
+ 
++# Sparky Stereo OS: the game starts in stereo. PLIB_SSG_STEREO=OFF in the
++# environment starts it in 2D; a value the person set is kept.
++: "${PLIB_SSG_STEREO:=ON}"
++export PLIB_SSG_STEREO
++
+ if [ -d $DATADIR ]
+ then
+     if [ ! -d $LOCAL_CONF ]
