@@ -37,3 +37,6 @@ The observer is preloaded only into the KCM. LC73_VIEWPORT_ONLY=1 limits a run
 to the page checks and stereo capture. Discover installed catalogues with
 page-languages.py and run each at both scales on both cards. The complete
 milestone command includes this matrix and refuses unrecorded locale bytes.
+
+Set LC73_FONTS to verified CJK font files. Missing-glyph boxes do not qualify
+translated text geometry; the observer rejects any zero glyph index.

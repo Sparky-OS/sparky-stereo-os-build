@@ -7,6 +7,8 @@
 #include <QTimer>
 #include <QFontMetricsF>
 #include <QFont>
+#include <QTextLayout>
+#include <QGlyphRun>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -33,14 +35,18 @@ static void inspect(QQuickItem *item, QJsonArray &rows, int depth=0) {
         // combo-box menu entry. It is not the glyph width of the current text.
         const bool native=QString(item->metaObject()->className())=="KQuickStyleItem";
         auto *control=item->parentItem();
-        const QFont font=qvariant_cast<QFont>(control->property("font"));
+        const QFont font=qvariant_cast<QFont>((native ? control : item)->property("font"));
         QString display=text;display.remove('&');
+        QTextLayout layout(display,font);layout.beginLayout();
+        while(true){auto line=layout.createLine();if(!line.isValid())break;line.setLineWidth(100000);}
+        layout.endLayout();bool glyphsAvailable=true;
+        for(const auto &run:layout.glyphRuns())for(auto glyph:run.glyphIndexes())glyphsAvailable &= glyph!=0;
         const double content=native ? QFontMetricsF(font).horizontalAdvance(display) : item->property("contentWidth").toDouble();
         const double contentHeight=native ? QFontMetricsF(font).height() : item->property("contentHeight").toDouble();
         const double available=native && control->property("availableWidth").isValid() ? control->property("availableWidth").toDouble() : item->width();
         // Item and rendered text must both fit; scrollable vertical content is allowed.
-        bool ok=verticallyReachable && pos.x()>=left-1 && pos.x()+item->width()<=right+1 && content<=available+1 && contentHeight<=item->height()+1 && !item->property("truncated").toBool();
-        rows.append(QJsonObject{{"text",text},{"class",item->metaObject()->className()},{"x",pos.x()},{"y",pos.y()},{"width",item->width()},{"height",item->height()},{"contentWidth",content},{"availableWidth",available},{"nativeStyle",native},{"contentHeight",contentHeight},{"left",left},{"right",right},{"verticallyReachable",verticallyReachable},{"truncated",item->property("truncated").toBool()},{"passed",ok},{"ancestors",ancestors}});
+        bool ok=glyphsAvailable && verticallyReachable && pos.x()>=left-1 && pos.x()+item->width()<=right+1 && content<=available+1 && contentHeight<=item->height()+1 && !item->property("truncated").toBool();
+        rows.append(QJsonObject{{"text",text},{"class",item->metaObject()->className()},{"x",pos.x()},{"y",pos.y()},{"width",item->width()},{"height",item->height()},{"contentWidth",content},{"availableWidth",available},{"nativeStyle",native},{"contentHeight",contentHeight},{"left",left},{"right",right},{"verticallyReachable",verticallyReachable},{"glyphsAvailable",glyphsAvailable},{"truncated",item->property("truncated").toBool()},{"passed",ok},{"ancestors",ancestors}});
     }
     for(auto *child:item->childItems())inspect(child,rows,depth+1);
 }

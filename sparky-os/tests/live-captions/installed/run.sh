@@ -7,6 +7,7 @@ proof=$(cd -- "$(dirname -- "$0")" && pwd)
 : "${LC73_FIXTURES:?fixture folder with stereo.mkv}"
 : "${LC73_PROBE_TOOLS:?built viewport observer folder}"
 : "${LC73_LOCALES:?verified locale data folder}"
+: "${LC73_FONTS:?verified CJK font folder}"
 gpu=${1:?amd or nvidia}; scale=${2:?1 or 1.25}; language=${3:?en or pt_BR}; out=$(realpath -m "${4:?new output directory}")
 [ ! -e "$out" ];mkdir -p "$out"
 case "$gpu" in amd) device=/dev/dri/renderD128;; nvidia) device=nvidia.com/gpu=0;; *) exit 2;; esac
@@ -17,6 +18,7 @@ docker create --name "$name" --pull=never --platform linux/amd64 --cpus 4 --ulim
  --mount type=bind,src="$proof",dst=/proof,readonly \
  --mount type=bind,src="$LC73_PROBE_TOOLS",dst=/probe,readonly \
  --mount type=bind,src="$LC73_LOCALES",dst=/usr/lib/locale,readonly \
+ --mount type=bind,src="$LC73_FONTS",dst=/usr/local/share/fonts/lc73,readonly \
  --mount type=bind,src="$LC73_FIXTURES",dst=/fixtures,readonly \
  --mount type=bind,src="$out",dst=/out \
  -e LC73_VIEWPORT_ONLY="${LC73_VIEWPORT_ONLY:-0}" -e LC73_KIT_FIXTURE="${LC73_KIT_FIXTURE:-0}" -e QT_LOGGING_RULES='kwin_*.debug=true' "$LC73_RIG_IMAGE" /sbin/init > "$out/container-id.txt"

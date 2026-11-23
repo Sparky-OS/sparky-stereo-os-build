@@ -72,6 +72,12 @@ def main():
             p=locale_root/x['path'];assert p.stat().st_size==x['bytes'] and digest(p)==x['sha256'],p
         (out/'locale-inputs.json').write_bytes(locale_manifest.read_bytes())
         row('locale inputs','recorded locale bytes for every installed catalogue',len(locale_records))
+        font_manifest=Path(cfg['font_manifest']);font_root=Path(cfg['font_root'])
+        font_records=json.loads(font_manifest.read_text())['files']
+        for x in font_records:
+            p=font_root/x['path'];assert p.stat().st_size==x['bytes'] and digest(p)==x['sha256'],p
+        (out/'font-inputs.json').write_bytes(font_manifest.read_bytes())
+        row('font inputs','recorded CJK glyph files, no missing-glyph substitutions',len(font_records))
         records=[]
         for p in stage.glob('*.sparky-build.json'):
             record=json.loads(p.read_text());assert record['recipeDirty'] is False and record['unrecorded']==[]
