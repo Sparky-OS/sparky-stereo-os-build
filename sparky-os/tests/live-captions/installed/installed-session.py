@@ -8,7 +8,12 @@ out=Path(sys.argv[1]);scale=sys.argv[2];language=sys.argv[3]
 os.environ.update(HOME='/home/builder',XDG_RUNTIME_DIR='/run/user/1000',DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/1000/bus',XDG_CURRENT_DESKTOP='KDE',KDE_FULL_SESSION='true',KDE_SESSION_VERSION='6',XDG_SESSION_TYPE='wayland',QT_FORCE_STDERR_LOGGING='1',QT_LINUX_ACCESSIBILITY_ALWAYS_ON='1',KWIN_SCREENSHOT_NO_PERMISSION_CHECKS='1',KWIN_WAYLAND_NO_PERMISSION_CHECKS='1',KWIN_VIRTUAL_STEREO_MODES='1',LC73_FIXTURE_OUT=str(out),LANG=({'en':'en_US','pt_BR':'pt_BR','pl':'pl_PL','fr':'fr_FR','de':'de_DE','es':'es_ES','ja':'ja_JP','ko':'ko_KR','zh_CN':'zh_CN','zh_TW':'zh_TW'}[language]+'.UTF-8'),LANGUAGE=language)
 os.environ.pop('LC_ALL',None)
 children=[];rows=[]
-def run(args,check=True):return subprocess.run(args,capture_output=True,text=True,check=check,timeout=150)
+def run(args,check=True):
+ result=subprocess.run(args,capture_output=True,text=True,timeout=150)
+ if result.returncode:
+  (out/'command-failures.jsonl').open('a').write(json.dumps(dict(args=args,returncode=result.returncode,stdout=result.stdout,stderr=result.stderr))+'\n')
+ if check:result.check_returncode()
+ return result
 def spawn(args,name):
  f=(out/(name+'.log')).open('w');p=subprocess.Popen(args,stdout=f,stderr=subprocess.STDOUT,start_new_session=True);children.append(p);return p
 
