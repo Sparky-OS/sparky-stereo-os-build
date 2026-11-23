@@ -1,4 +1,9 @@
-# stereo-declare 1.10
+# stereo-declare 1.12.2
+
+Version 1.12.2 (row 835) binds no `wl_output` on the program's connection: the outputs' widths come from a connection of the library's own to the same compositor, because the compositor names every output a client holds in `wl_surface.enter` and mpv 0.41 died of one it never bound. It also recognises a surface made at the address of one destroyed without being withdrawn, by its protocol id.
+Its release commit is `c83f03b9dd98abe42e27b54c02c48859590b64d5` in [Sparky-OS/libstereo-declare](https://github.com/Sparky-OS/libstereo-declare); the sections below are the history of 1.10.
+
+## 1.10
 
 Version 1.10 hands a program the person's depth limits: `kde_stereo_depth_v1.depth_limits` (protocol 5) on Wayland and `_KDE_NET_WM_STEREO_DEPTH_LIMITS` (support version 10) on a declared X11 window, in C and Python.
 A compositor that does not offer them is told apart (`-ENOTSUP`), never answered with zeros; the library binds at most the protocol version it knows.

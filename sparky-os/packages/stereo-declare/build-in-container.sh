@@ -22,7 +22,7 @@ export TMPDIR="$out/tmp" SPARKY_LC_SCRATCH="$out/link-scratch"
 cd "$out"
 dpkg-source -x "$dsc" source
 cd source
-test "$(dpkg-parsechangelog -S Version)" = 1.12.1-1+lc1
+test "$(dpkg-parsechangelog -S Version)" = 1.12.2-1+lc1
 # dpkg derives SOURCE_DATE_EPOCH from this one descriptor's changelog.
 dpkg-buildpackage -us -uc "$kind" -j4
 PYTHONPATH="$PWD/debian/sparky-lean-toolkit" python3 -m lean.release check-debs "$out"/*.deb
