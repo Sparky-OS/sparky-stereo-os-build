@@ -1,4 +1,4 @@
-From eeea1fdb89ffbbe900617dab012204b30a2c8d53 Mon Sep 17 00:00:00 2001
+From 2ef16a183cfe39fd7ecb5685ccb8bab785d30368 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Mon, 23 Nov 2026 06:27:18 -0300
 Subject: [PATCH] Fit the stereo drawing area to the person's depth limits;
@@ -9,6 +9,10 @@ stereo visual: "Enable 3D" (stereo3d.enable in ng.opt, on by default,
 saved at once when it is ticked) asks Togl for a quad-buffer widget at
 the start, and a desktop without one gets the single picture, as
 before, with nothing said.  The -stereo option still asks for it.
+Togl 2.0 ends the program when it is asked for a stereo visual the
+display does not offer (an X error on a window it never made, from
+Tk's input context), so the widget asks for one only where the display
+offers it.
 
 The separation was a constant 3 % of the distance looked at.  It is now
 the largest under which every pixel of the drawing area stays inside
@@ -27,15 +31,15 @@ Assisted-by: Claude Opus 5.5 (Anthropic)
 ---
  ng/CMakeLists.txt |   9 ++-
  ng/dialog.tcl     |   6 ++
- ng/drawing.tcl    |  15 +++-
+ ng/drawing.tcl    |  23 +++++-
  ng/ng.tcl         |   1 +
  ng/ngpkg.cpp      | 140 ++++++++++++++++++++++++++++++++-
- ng/onetcl.cpp     | 194 +++++++++++++++++++++++++++++++++++++++++++++-
+ ng/onetcl.cpp     | 196 +++++++++++++++++++++++++++++++++++++++++++++-
  ng/stereo3d.cpp   |  47 +++++++++++
  ng/stereo3d.hpp   |  19 +++++
- ng/stereo3d.tcl   | 186 ++++++++++++++++++++++++++++++++++++++++++++
+ ng/stereo3d.tcl   | 186 +++++++++++++++++++++++++++++++++++++++++++
  ng/variables.tcl  |   2 +
- 10 files changed, 610 insertions(+), 9 deletions(-)
+ 10 files changed, 619 insertions(+), 10 deletions(-)
  create mode 100644 ng/stereo3d.cpp
  create mode 100644 ng/stereo3d.hpp
  create mode 100644 ng/stereo3d.tcl
@@ -87,24 +91,31 @@ index 482e333..6404b17 100644
  
          menu $f.stylemenu
 diff --git a/ng/drawing.tcl b/ng/drawing.tcl
-index 778e22e..686522f 100644
+index 778e22e..c33beae 100644
 --- a/ng/drawing.tcl
 +++ b/ng/drawing.tcl
-@@ -19,7 +19,7 @@ set toglversion [Ng_GetToglVersion]
+@@ -19,18 +19,32 @@ set toglversion [Ng_GetToglVersion]
  puts "togl-version : $toglversion"
  
  set toglstereo false
 -if { [Ng_GetCommandLineParameter stereo] == "defined" } {
+-    set toglstereo native
 +if { ${stereo3d.enable} == 1 || [Ng_GetCommandLineParameter stereo] == "defined" } {
-     set toglstereo native
++    # Togl 2.0 ends the program when it is asked for a stereo visual that the display does not
++    # offer (an X error on a window it never made), so ask only where one is offered: a 2D
++    # desktop keeps the single picture, with nothing said
++    if { [Ng_Stereo3DVisual] } {
++        set toglstereo native
++    }
  }
  
-@@ -27,10 +27,18 @@ set toglok 0
+ set toglok 0
  if { [Ng_GetToglVersion] == 2 } {
      # Togl 2.x
      if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  -create init  -display draw -reshape reshape }] } {    
 -        puts "no OpenGL" 
-+        # no stereo visual (a 2D desktop): one picture, nothing said
++        # Togl refused the stereo widget although the display offers a stereo visual: one
++        # picture, and the person is told
 +        catch { destroy .ndraw }
 +        if { $toglstereo == "native" && ![catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo false -indirect false  -create init  -display draw -reshape reshape }] } {
 +            set toglok 1
@@ -119,7 +130,7 @@ index 778e22e..686522f 100644
      }
  }
  
-@@ -38,6 +46,9 @@ if { $toglok == 1} {
+@@ -38,6 +52,9 @@ if { $toglok == 1} {
      
      #
      pack .ndraw -expand true -fill both -padx 0 -pady 0
@@ -327,7 +338,7 @@ index 21ca1b0..3a06110 100644
  	//   Togl_TimerFunc(  idle );
  	Tcl_CreateObjCommand(interp, "Ng_SnapShot", Ng_SnapShot, NULL, NULL);
 diff --git a/ng/onetcl.cpp b/ng/onetcl.cpp
-index f2993b2..01badd0 100644
+index f2993b2..0c86f1a 100644
 --- a/ng/onetcl.cpp
 +++ b/ng/onetcl.cpp
 @@ -130,6 +130,7 @@ DLL_HEADER const char * ngscript[] = {""
@@ -540,14 +551,16 @@ index f2993b2..01badd0 100644
  ,"menu $f.stylemenu\n"
  ,"ttk::menubutton $f.style -menu $f.stylemenu -width 10 -text [ttk::style theme use]\n"
  ,"grid $f.style -sticky nw\n"
-@@ -3360,15 +3542,22 @@ DLL_HEADER const char * ngscript[] = {""
+@@ -3360,15 +3542,24 @@ DLL_HEADER const char * ngscript[] = {""
  ,"set toglversion [Ng_GetToglVersion]\n"
  ,"puts \"togl-version : $toglversion\"\n"
  ,"set toglstereo false\n"
 -,"if { [Ng_GetCommandLineParameter stereo] == \"defined\" } {\n"
 +,"if { ${stereo3d.enable} == 1 || [Ng_GetCommandLineParameter stereo] == \"defined\" } {\n"
++,"if { [Ng_Stereo3DVisual] } {\n"
  ,"set toglstereo native\n"
  ,"}\n"
++,"}\n"
  ,"set toglok 0\n"
  ,"if { [Ng_GetToglVersion] == 2 } {\n"
  ,"if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  -create init  -display draw -reshape reshape }] } {\n"
@@ -564,7 +577,7 @@ index f2993b2..01badd0 100644
  ,"}\n"
  ,"} {\n"
  ,"if {[catch {togl .ndraw -width 400 -height 300  -rgba true -double true -depth true -privatecmap false -stereo $toglstereo -indirect false  }] } {\n"
-@@ -3379,6 +3568,9 @@ DLL_HEADER const char * ngscript[] = {""
+@@ -3379,6 +3570,9 @@ DLL_HEADER const char * ngscript[] = {""
  ,"}\n"
  ,"if { $toglok == 1} {\n"
  ,"pack .ndraw -expand true -fill both -padx 0 -pady 0\n"
