@@ -59,6 +59,29 @@ def sun(phase, disc_back):
     return [replace(shape,outline=shape.rings[0]) for shape in shapes]
 
 
+def horizon(phase, disc_back, event):
+    """Half a sun on the horizon line and a solid arrow below it, up at sunrise, down at sunset.
+
+    At 22 px the arrow is about six pixels wide, so the two names differ in one colour too.
+    """
+    rising = event == 'sunrise'
+    sun_colour = 'ffb845' if rising else 'ed774d'
+    line = -.10
+    half = tuple((.40*cos(pi*i/28), line+.40*sin(pi*i/28)) for i in range(29))
+    shapes = [prism('solar-disc', half, 0, 0, 0, disc_back, sun_colour, bevel=0)]
+    # The rays lengthen and shorten once a loop, the longest in the still.
+    reach = .76+.04*cos(tau*phase)
+    ray = ((.50,-.06),(reach-.08,-.028),(reach,0),(reach-.08,.028),(.50,.06))
+    shapes += [prism(f'ray-{i}', turn(ray, pi*(i+.5)/5), 0, line, .36, .12, sun_colour, bevel=0)
+               for i in range(5)]
+    shapes.append(prism('horizon', ((-.70,-.04),(.70,-.04),(.70,.04),(-.70,.04)),
+                        0, line-.07, -.27, .06, '67748f', bevel=0))
+    arrow = ((0,.23),(.28,-.01),(.09,-.01),(.09,-.23),(-.09,-.23),(-.09,-.01),(-.28,-.01))
+    shapes.append(prism('horizon-direction', arrow, 0, line-.41, .15, .08,
+                        '79a6ba' if rising else 'a884b5', angle=0 if rising else pi, bevel=0))
+    return front(shapes)
+
+
 def star():
     return tuple((x*(1 if i%2==0 else .36), y*(1 if i%2==0 else .36)) for i,(x,y) in enumerate(radial(1,8)))
 
@@ -172,21 +195,48 @@ def wind(phase, overlay=False):
             for i,z in enumerate((-.35,.03,.42))]
 
 
-def status(phase, sign):
+def status_rim(name, exterior, interior, colour, thickness=.008):
+    # Two overlapping open contours form a closed outline without covering its glyph.
+    count = len(exterior)
+    if count == 3:
+        return [prism(f'{name}-{i}', (exterior[i], exterior[(i+1)%count],
+                       interior[(i+1)%count], interior[i]), 0, 0, 0, thickness, colour, bevel=0)
+                for i in range(count)]
+    contours = []
+    for start in (0, count//2):
+        indices = [(start+i)%count for i in range(-1, count//2+2)]
+        points = [exterior[i] for i in indices]+[interior[i] for i in reversed(indices)]
+        contours.append(prism(f'{name}-{start}',points,0,0,0,thickness,colour,bevel=0))
+    return contours
+
+
+def front(shapes):
+    # The visible contour of a solid seen face on is its front ring.
+    return [replace(shape,outline=shape.rings[0]) for shape in shapes]
+
+
+def status(phase, sign, symbolic=False, disc_back=.008):
     del phase
     if sign == 'alert':
+        # The triangle's face is the icon's plane and the mark stands in front of it, at the
+        # nearest depth the sun's ray tips have. The triangle's depth puts the camera's
+        # convergence on its face, as the sun's disc depth does.
         plate = ((0,.61),(-.65,-.48),(.65,-.48))
-        return [prism('warning',plate,0,0,0,.008,'e7a248',bevel=0),
-                prism('stroke',((-.042,-.16),(.042,-.16),(.062,.25),(-.062,.25)),0,0,.0002,.002,'372515',bevel=0),
-                prism('dot',radial(.047),0,-.275,.0002,.002,'372515',bevel=0)]
-    plate = prism('status',radial(.58),0,0,0,.008,'91abc1',bevel=0)
+        rim = status_rim('warning',plate,((0,.39),(-.48,-.37),(.48,-.37)),'e7a248',disc_back) if symbolic else [
+            prism('warning',plate,0,0,0,disc_back,'e7a248',bevel=0)]
+        return front([*rim,
+                      prism('stroke',((-.042,-.16),(.042,-.16),(.062,.25),(-.062,.25)),0,0,.36,.12,'372515',bevel=0),
+                      prism('dot',radial(.047),0,-.275,.36,.12,'372515',bevel=0)])
+    plate = radial(.58)
+    rim = status_rim('status',plate,radial(.46),'91abc1') if symbolic else [
+        prism('status',plate,0,0,0,.008,'91abc1',bevel=0)]
     if sign == 'humidity':
         mark = ((0,.33),(-.22,-.10),(-.16,-.26),(0,-.34),(.16,-.26),(.22,-.10))
     elif sign == 'pressure':
         mark = ((-.20,-.18),(-.09,-.24),(.28,.28),(.13,.23))
     else:
         mark = ((-.29,-.053),(.29,-.053),(.29,.053),(-.29,.053))
-    return [plate,prism('status-glyph',mark,0,0,.0002,.002,'203447',bevel=0)]
+    return [*rim,prism('status-glyph',mark,0,0,.0002,.002,'203447',bevel=0)]
 
 
 def _parameters(name):
@@ -231,6 +281,8 @@ def _parameters(name):
 def _model(params, phase, disc_back):
     phase %= 1
     family = params['family']
+    if family == 'sun' and params.get('horizon'):
+        return horizon(phase,disc_back,params['horizon'])
     if family in ('sun','moon'):
         shapes = sun(phase,disc_back) if family=='sun' else moon(phase)
         if params.get('inset',1)<1:
@@ -238,24 +290,12 @@ def _model(params, phase, disc_back):
             def inset(ring):
                 return tuple((x*factor,y*factor,z) for x,y,z in ring)
             shapes=[replace(shape,outline=inset(shape.outline),rings=tuple(map(inset,shape.rings))) for shape in shapes]
-        if params.get('horizon') or params.get('windy'):
-            shapes = scaled(shapes,.70,y=.16)
-        if params.get('horizon'):
-            rising = params['horizon'] == 'sunrise'
-            sun_colour = 'ffb845' if rising else 'ed774d'
-            shapes = [replace(shape, colour=sun_colour) for shape in shapes]
-            shapes.append(prism('horizon', ((-.65,-.047),(.65,-.047),(.65,.047),(-.65,.047)),
-                                0,-.38,-.27,.06,'67748f',bevel=0))
-            # The arrow remains legible in a monochrome 22 px view.
-            arrow = ((-.07,-.19),(.07,-.19),(.07,-.02),(.20,-.02),(0,.17),(-.20,-.02),(-.07,-.02))
-            shapes.append(prism('horizon-direction',arrow,.55,.29 if rising else .00,.15,.08,
-                                '79a6ba' if rising else 'a884b5',
-                                angle=0 if rising else pi,bevel=0))
         if params.get('windy'):
+            shapes = scaled(shapes,.70,y=.16)
             shapes += wind(phase, overlay=True)
         return shapes
     if family == 'status':
-        return status(phase,params['sign'])
+        return status(phase,params['sign'],params.get('symbolic',False),disc_back)
     if family in ('fog','wind'):
         return fog(phase) if family=='fog' else wind(phase)
     if family == 'cloud':

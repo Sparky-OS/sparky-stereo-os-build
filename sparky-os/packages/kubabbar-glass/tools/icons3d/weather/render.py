@@ -89,7 +89,7 @@ def cameras_for(parameters, phases, sizes):
     popped, sunk = studio.CANDIDATES[os.environ.get('ICON_RANGE', 'a')]
     camera = {size: studio.separation(DISTANCE-zmax, DISTANCE-zmin, size, popped, sunk)
               for size in sizes}
-    if parameters['family'] == 'status':
+    if parameters['family'] == 'status' and parameters['sign'] != 'alert':
         camera = {size: (0,DISTANCE) for size in sizes}
     return camera,(zmin,zmax)
 
