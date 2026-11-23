@@ -448,7 +448,7 @@ Last-Update: 2026-11-22
 +    void failed(const QString &message);
 +    void stereoFrameChanged(bool stereo);
 +private:
-+    void present(const QImage &image, bool discontinuity, quint64 offset, GstVideoMultiviewMode mode, GstVideoMultiviewFlags flags);
++    void present(const QImage &image, bool discontinuity, quint64 offset, GstVideoMultiviewMode mode, GstVideoMultiviewFlags flags, const QImage &second = {});
 +    QPointer<QVideoSink> m_sink;
 +    stereo_policy_input_format m_format {};
 +    QImage m_first;
@@ -460,11 +460,12 @@ Last-Update: 2026-11-22
 +};
 --- /dev/null
 +++ b/src/video/stereopreview.cpp
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,235 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereopreview.h"
 +#include <stereo-layer/picture.h>
++#include <stereo-layer/render.h>
 +#include <KLocalizedString>
 +#include <QSettings>
 +#include <QVideoFrame>
@@ -552,24 +553,40 @@ Last-Update: 2026-11-22
 +        GstVideoInfo info;
 +        GstVideoFrame frame;
 +        GstBuffer *buffer = gst_sample_get_buffer(sample);
-+        if (!gst_video_info_from_caps(&info, gst_sample_get_caps(sample)) || !gst_video_frame_map(&frame, &info, buffer, GST_MAP_READ)) {
-+            self->m_pending = false;
++        const bool validInfo = gst_video_info_from_caps(&info, gst_sample_get_caps(sample));
++        const bool separated = validInfo && GST_VIDEO_INFO_MULTIVIEW_MODE(&info) == GST_VIDEO_MULTIVIEW_MODE_SEPARATED;
++        if (!validInfo || (separated && GST_VIDEO_INFO_VIEWS(&info) != 2)
++            || !gst_video_frame_map_id(&frame, &info, buffer, separated ? 0 : -1, GST_MAP_READ)) {
++            QMetaObject::invokeMethod(self, [self] {
++                Q_EMIT self->failed(i18n("This camera did not provide two readable views. Check its format in Camera Settings."));
++                self->m_pending = false;
++            }, Qt::QueuedConnection);
 +            gst_sample_unref(sample);
-+            return GST_FLOW_ERROR;
++            return GST_FLOW_OK;
 +        }
 +        QImage image(static_cast<const uchar *>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
 +                     GST_VIDEO_FRAME_WIDTH(&frame), GST_VIDEO_FRAME_HEIGHT(&frame),
 +                     GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0), QImage::Format_RGBA8888);
 +        const QImage copy = image.copy();
++        QImage second;
++        if (separated) {
++            GstVideoFrame other;
++            if (gst_video_frame_map_id(&other, &info, buffer, 1, GST_MAP_READ)) {
++                second = QImage(static_cast<const uchar *>(GST_VIDEO_FRAME_PLANE_DATA(&other, 0)),
++                    GST_VIDEO_FRAME_WIDTH(&other), GST_VIDEO_FRAME_HEIGHT(&other),
++                    GST_VIDEO_FRAME_PLANE_STRIDE(&other, 0), QImage::Format_RGBA8888).copy();
++                gst_video_frame_unmap(&other);
++            }
++        }
 +        const bool discontinuity = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT);
 +        const quint64 offset = GST_BUFFER_OFFSET(buffer);
 +        const auto mode = GST_VIDEO_INFO_MULTIVIEW_MODE(&info);
 +        const auto flags = GST_VIDEO_INFO_MULTIVIEW_FLAGS(&info);
 +        gst_video_frame_unmap(&frame);
 +        gst_sample_unref(sample);
-+        QMetaObject::invokeMethod(self, [self, copy, discontinuity, offset, mode, flags, generation] {
++        QMetaObject::invokeMethod(self, [self, copy, second, discontinuity, offset, mode, flags, generation] {
 +            if (generation == self->m_generation.load())
-+                self->present(copy, discontinuity, offset, mode, flags);
++                self->present(copy, discontinuity, offset, mode, flags, second);
 +            self->m_pending = false;
 +        }, Qt::QueuedConnection);
 +        return GST_FLOW_OK;
@@ -578,9 +595,9 @@ Last-Update: 2026-11-22
 +    gst_object_unref(sink);
 +    return bin;
 +}
-+void StereoPreview::present(const QImage &image, bool discontinuity, quint64 offset, GstVideoMultiviewMode mode, GstVideoMultiviewFlags flags)
++void StereoPreview::present(const QImage &image, bool discontinuity, quint64 offset, GstVideoMultiviewMode mode, GstVideoMultiviewFlags flags, const QImage &second)
 +{
-+    if (!m_sink || m_unknownPacking)
++    if (!m_sink)
 +        return;
 +    auto input = m_format;
 +    int declaredLayout = STEREO_POLICY_LAYOUT_NONE;
@@ -591,8 +608,15 @@ Last-Update: 2026-11-22
 +    case GST_VIDEO_MULTIVIEW_MODE_ROW_INTERLEAVED: declaredLayout = STEREO_POLICY_LAYOUT_ROWS; break;
 +    case GST_VIDEO_MULTIVIEW_MODE_COLUMN_INTERLEAVED: declaredLayout = STEREO_POLICY_LAYOUT_COLUMNS; break;
 +    case GST_VIDEO_MULTIVIEW_MODE_CHECKERBOARD: declaredLayout = STEREO_POLICY_LAYOUT_CHECKERBOARD; break;
++    case GST_VIDEO_MULTIVIEW_MODE_SEPARATED: declaredLayout = STEREO_POLICY_LAYOUT_MULTI_VIEW; break;
 +    case GST_VIDEO_MULTIVIEW_MODE_FRAME_BY_FRAME: declaredLayout = STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL; break;
 +    default: break;
++    }
++    if (declaredLayout == STEREO_POLICY_LAYOUT_NONE && m_unknownPacking)
++        return;
++    if (mode == GST_VIDEO_MULTIVIEW_MODE_MULTIVIEW_FRAME_BY_FRAME) {
++        Q_EMIT failed(i18n("This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."));
++        return;
 +    }
 +    if (declaredLayout != STEREO_POLICY_LAYOUT_NONE) {
 +        input.layout = declaredLayout;
@@ -607,6 +631,8 @@ Last-Update: 2026-11-22
 +        && (input.layout != STEREO_POLICY_LAYOUT_NONE || input.anaglyph != STEREO_POLICY_ANAGLYPH_NONE);
 +    if (!stereo) {
 +        picture.original = image;
++    } else if (mode == GST_VIDEO_MULTIVIEW_MODE_SEPARATED) {
++        picture = Picture::fromViewsInTurn(image, second, order);
 +    } else if (input.layout == STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL) {
 +        if (discontinuity)
 +            m_first = {};
@@ -635,12 +661,30 @@ Last-Update: 2026-11-22
 +        Q_EMIT failed(i18n("This camera frame cannot provide the selected pair. Check its packing in Camera Settings."));
 +        return;
 +    }
-+    if (m_mirrored) {
-+        picture.left = picture.left.mirrored(true, false);
-+        picture.right = picture.right.mirrored(true, false);
-+        picture.original = picture.original.mirrored(true, false);
++    // cropEyes selects the stored samples of interleaved pictures; sideBySide
++    // alone would retain Picture's reconstructed intermediate views.
++    if (stereo && (picture.left.width() > 8192 || picture.left.height() > 16384
++        || qint64(picture.left.width()) * picture.left.height() > 64 * 1024 * 1024
++        || (input.layout == STEREO_POLICY_LAYOUT_ROWS && image.height() % 2)
++        || ((input.layout == STEREO_POLICY_LAYOUT_COLUMNS || input.layout == STEREO_POLICY_LAYOUT_CHECKERBOARD) && image.width() % 2))) {
++        Q_EMIT failed(i18n("This camera frame cannot be shown as two native views. Choose another camera resolution or packing."));
++        return;
 +    }
-+    const QImage packed = (stereo ? picture.sideBySide() : picture.original).convertToFormat(QImage::Format_RGBA8888);
++    QImage packed = (stereo ? Stereo::cropEyes(picture, picture.left.size()).packed : picture.original).convertToFormat(QImage::Format_RGBA8888);
++    if (packed.isNull()) {
++        Q_EMIT failed(i18n("This camera frame cannot provide the selected pair. Check its packing in Camera Settings."));
++        return;
++    }
++    if (m_mirrored) {
++        if (stereo) {
++            const int width = packed.width() / 2;
++            packed = Picture::fromViewsInTurn(packed.copy(0, 0, width, packed.height()).mirrored(true, false),
++                packed.copy(width, 0, width, packed.height()).mirrored(true, false), Picture::EyeOrder::LeftFirst).sideBySide();
++        } else {
++            packed = packed.mirrored(true, false);
++        }
++    }
++    packed = packed.convertToFormat(QImage::Format_RGBA8888);
 +    QVideoFrameFormat format(packed.size(), QVideoFrameFormat::Format_RGBA8888);
 +    format.setStereoMode(stereo ? QVideoFrameFormat::StereoMode::SideBySide : QVideoFrameFormat::StereoMode::None);
 +    QVideoFrame video(format);
@@ -663,7 +707,7 @@ Last-Update: 2026-11-22
 +set_tests_properties(stereopreview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 --- /dev/null
 +++ b/autotests/stereopreview-test.cpp
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,353 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereopreview.h"
@@ -671,6 +715,7 @@ Last-Update: 2026-11-22
 +#include <QVideoFrame>
 +#include <gst/app/gstappsrc.h>
 +#include <cstring>
++#include <stereo-layer/picture.h>
 +
 +class StereoPreviewTest : public QObject
 +{
@@ -713,6 +758,229 @@ Last-Update: 2026-11-22
 +        QCOMPARE(frames.size(), 2);
 +        QCOMPARE(output.videoFrame().toImage().pixelColor(0, 0), QColor(Qt::red));
 +        QCOMPARE(output.videoFrame().toImage().pixelColor(4, 0), QColor(Qt::blue));
++    }
++    void policyRows_data()
++    {
++        QTest::addColumn<int>("index");
++        QTest::addColumn<bool>("mirror");
++        QTest::addColumn<bool>("temporalCaps");
++        for (size_t i = 0; i < stereo_policy_input_format_count(); ++i) {
++            const auto *entry = stereo_policy_input_format_at(i);
++            QTest::newRow(entry->id) << int(i) << false << false;
++            QTest::newRow(qPrintable(QString::fromLatin1(entry->id) + QStringLiteral("-mirror"))) << int(i) << true << false;
++            if (entry->layout == STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL)
++                QTest::newRow(qPrintable(QString::fromLatin1(entry->id) + QStringLiteral("-caps"))) << int(i) << false << true;
++        }
++    }
++    void policyRows()
++    {
++        QFETCH(int, index);
++        QFETCH(bool, mirror);
++        QFETCH(bool, temporalCaps);
++        const auto &entry = *stereo_policy_input_format_at(index);
++        const int w = 8, h = 6;
++        QImage left(w, h, QImage::Format_RGBA8888), right(w, h, left.format());
++        for (int y = 0; y < h; ++y) {
++            for (int x = 0; x < w; ++x) {
++                left.setPixelColor(x, y, QColor(220, x * 17, y * 29));
++                right.setPixelColor(x, y, QColor(x * 17, y * 29, 220));
++            }
++        }
++        QImage first = entry.order ? right : left, second = entry.order ? left : right;
++        QImage input;
++        const int layout = entry.layout;
++        const bool rows = layout == STEREO_POLICY_LAYOUT_ROWS;
++        const bool columns = layout == STEREO_POLICY_LAYOUT_COLUMNS;
++        const bool checker = layout == STEREO_POLICY_LAYOUT_CHECKERBOARD;
++        const bool vertical = layout == STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM || rows;
++        if (layout >= STEREO_POLICY_LAYOUT_SIDE_BY_SIDE && layout <= STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX) {
++            input = QImage(vertical ? QSize(w, 2*h) : QSize(2*w, h), left.format());
++            for (int y = 0; y < input.height(); ++y) {
++                for (int x = 0; x < input.width(); ++x) {
++                    const bool odd = rows ? y % 2 : columns ? x % 2 : checker ? (x+y) % 2 : vertical ? y >= h : x >= w;
++                    const int sx = columns || checker ? x/2 : x%w;
++                    const int sy = rows ? y/2 : y%h;
++                    input.setPixelColor(x, y, (odd ? second : first).pixelColor(sx, sy));
++                }
++            }
++        } else if (stereo_policy_is_depth_layout(layout)) {
++            // A constant depth map avoids assumptions about the DIBR default; the
++            // independent shared depth call below is the conversion authority.
++            QImage depth(w, h, left.format()); depth.fill(QColor(128, 128, 128));
++            first = entry.order ? depth : left;
++            second = entry.order ? left : depth;
++            const bool side = layout == STEREO_POLICY_LAYOUT_DEPTH_SIDE_BY_SIDE;
++            const bool background = layout == STEREO_POLICY_LAYOUT_DEPTH_BACKGROUND;
++            const bool graphics = layout == STEREO_POLICY_LAYOUT_DEPTH_GRAPHICS;
++            input = QImage(side || background ? 2*w : w, side ? h : graphics ? 4*h : 2*h, left.format());
++            input.fill(Qt::black);
++            for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
++                input.setPixelColor(x, y, first.pixelColor(x, y));
++                input.setPixelColor(x + (side || background ? w : 0), y + (side || background ? 0 : h), second.pixelColor(x, y));
++            }
++            const auto expected = Stereo::Picture::fromPackedImage(input, Stereo::Picture::Layout(layout), Stereo::Picture::EyeOrder(entry.order));
++            QVERIFY(expected.isStereo()); left = expected.left; right = expected.right;
++        } else {
++            input = first;
++            if (entry.anaglyph) {
++                const auto expected = Stereo::Picture::fromAnaglyph(input, Stereo::Picture::AnaglyphColorPair(entry.anaglyph));
++                QVERIFY(expected.isStereo()); left = expected.left; right = expected.right;
++            }
++        }
++        QVideoSink output;
++        StereoPreview preview;
++        preview.setSink(&output);
++        preview.setMirrored(mirror);
++        preview.setPacking(temporalCaps ? QStringLiteral("topBottomRightFirst") : QString::fromLatin1(entry.id));
++        QSignalSpy errors(&preview, &StereoPreview::failed);
++        auto *pipeline = gst_pipeline_new(nullptr);
++        auto *source = gst_element_factory_make("appsrc", nullptr);
++        auto *sink = preview.createSink();
++        QVERIFY(source && sink);
++        auto *caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGBA", "width", G_TYPE_INT, input.width(), "height", G_TYPE_INT, input.height(), "framerate", GST_TYPE_FRACTION, 30, 1, nullptr);
++        if (temporalCaps)
++            gst_caps_set_simple(caps, "multiview-mode", G_TYPE_STRING, "frame-by-frame", "views", G_TYPE_INT, 2,
++                "multiview-flags", GST_TYPE_VIDEO_MULTIVIEW_FLAGSET, entry.order ? GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST : GST_VIDEO_MULTIVIEW_FLAGS_NONE,
++                GST_FLAG_SET_MASK_EXACT, nullptr);
++        g_object_set(source, "caps", caps, "format", GST_FORMAT_TIME, nullptr);
++        gst_caps_unref(caps);
++        gst_bin_add_many(GST_BIN(pipeline), source, sink, nullptr);
++        QVERIFY(gst_element_link(source, sink));
++        const auto cleanup = qScopeGuard([pipeline] { gst_element_set_state(pipeline, GST_STATE_NULL); gst_object_unref(pipeline); });
++        QVERIFY(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE);
++        const auto push = [source](const QImage &image, quint64 ordinal, bool discontinuity = false) {
++            auto *buffer = gst_buffer_new_allocate(nullptr, image.sizeInBytes(), nullptr);
++            gst_buffer_fill(buffer, 0, image.constBits(), image.sizeInBytes());
++            GST_BUFFER_PTS(buffer) = ordinal * GST_SECOND / 30;
++            GST_BUFFER_DURATION(buffer) = GST_SECOND / 30;
++            GST_BUFFER_OFFSET(buffer) = ordinal;
++            if (discontinuity) GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DISCONT);
++            return gst_app_src_push_buffer(GST_APP_SRC(source), buffer);
++        };
++        QCOMPARE(push(input, 0), GST_FLOW_OK);
++        if (layout == STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL) {
++            QTRY_VERIFY_WITH_TIMEOUT(!preview.m_first.isNull(), 60000);
++            QCOMPARE(push(second, 3), GST_FLOW_OK);
++            QTRY_VERIFY_WITH_TIMEOUT(preview.m_first.isNull(), 60000);
++            QVERIFY(!output.videoFrame().isValid());
++            QCOMPARE(push(first, 4), GST_FLOW_OK);
++            QTRY_VERIFY_WITH_TIMEOUT(!preview.m_first.isNull(), 60000);
++            QCOMPARE(push(second, 5, true), GST_FLOW_OK);
++            QTRY_VERIFY_WITH_TIMEOUT(preview.m_first.isNull(), 60000);
++            QVERIFY(!output.videoFrame().isValid());
++            QCOMPARE(push(first, GST_BUFFER_OFFSET_NONE), GST_FLOW_OK);
++            QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 60000);
++            QVERIFY(errors.first().first().toString().contains(QStringLiteral("order of alternating frames")));
++            QVERIFY(!output.videoFrame().isValid());
++            errors.clear();
++            QCOMPARE(push(first, 6), GST_FLOW_OK);
++            QTRY_VERIFY_WITH_TIMEOUT(!preview.m_first.isNull(), 60000);
++            QCOMPARE(push(second, 7), GST_FLOW_OK);
++        }
++        QTRY_VERIFY_WITH_TIMEOUT(output.videoFrame().isValid() || !errors.isEmpty(), 60000);
++        if (layout == STEREO_POLICY_LAYOUT_BLOCK_LACED) {
++            QCOMPARE(errors.size(), 1);
++            QVERIFY(errors.first().first().toString().contains(QStringLiteral("cannot provide")));
++            QVERIFY(!output.videoFrame().isValid());
++            return;
++        }
++        QCOMPARE(errors.size(), 0);
++        const bool stereo = layout != STEREO_POLICY_LAYOUT_NONE || entry.anaglyph;
++        const auto frame = output.videoFrame();
++        if (!stereo) {
++            QCOMPARE(frame.surfaceFormat().stereoMode(), QVideoFrameFormat::StereoMode::None);
++            QCOMPARE(frame.toImage().convertToFormat(input.format()), mirror ? input.mirrored(true, false) : input);
++            return;
++        }
++        QCOMPARE(frame.surfaceFormat().stereoMode(), QVideoFrameFormat::StereoMode::SideBySide);
++        QCOMPARE(frame.size(), QSize(left.width()*2, left.height()));
++        const auto result = frame.toImage().convertToFormat(left.format());
++        QCOMPARE(result.copy(0, 0, left.width(), left.height()), mirror ? left.mirrored(true, false) : left);
++        QCOMPARE(result.copy(left.width(), 0, left.width(), left.height()), mirror ? right.mirrored(true, false) : right);
++    }
++    void separated_data()
++    {
++        QTest::addColumn<bool>("reverse");
++        QTest::addColumn<bool>("missing");
++        QTest::newRow("two-views-left-first") << false << false;
++        QTest::newRow("two-views-right-first") << true << false;
++        QTest::newRow("second-view-missing") << false << true;
++    }
++    void separated()
++    {
++        QFETCH(bool, reverse);
++        QFETCH(bool, missing);
++        QVideoSink output;
++        StereoPreview preview;
++        preview.setSink(&output);
++        preview.setMirrored(false);
++        preview.setPacking(QStringLiteral("blockLacedRightFirst")); // The native declaration takes precedence.
++        QSignalSpy errors(&preview, &StereoPreview::failed);
++        QImage left(8, 6, QImage::Format_RGBA8888), right(left.size(), left.format());
++        for (int y = 0; y < left.height(); ++y) for (int x = 0; x < left.width(); ++x) {
++            left.setPixelColor(x, y, QColor(240, x*20, y*30));
++            right.setPixelColor(x, y, QColor(x*20, y*30, 240));
++        }
++        auto *pipeline = gst_pipeline_new(nullptr);
++        auto *source = gst_element_factory_make("appsrc", nullptr);
++        auto *sink = preview.createSink();
++        QVERIFY(source && sink);
++        auto *caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGBA", "width", G_TYPE_INT, 8, "height", G_TYPE_INT, 6,
++            "framerate", GST_TYPE_FRACTION, 30, 1, "multiview-mode", G_TYPE_STRING, "separated", "views", G_TYPE_INT, 2,
++            "multiview-flags", GST_TYPE_VIDEO_MULTIVIEW_FLAGSET, reverse ? GST_VIDEO_MULTIVIEW_FLAGS_RIGHT_VIEW_FIRST : GST_VIDEO_MULTIVIEW_FLAGS_NONE,
++            GST_FLAG_SET_MASK_EXACT, nullptr);
++        g_object_set(source, "caps", caps, "format", GST_FORMAT_TIME, nullptr);
++        gst_caps_unref(caps);
++        gst_bin_add_many(GST_BIN(pipeline), source, sink, nullptr);
++        QVERIFY(gst_element_link(source, sink));
++        const auto cleanup = qScopeGuard([pipeline] { gst_element_set_state(pipeline, GST_STATE_NULL); gst_object_unref(pipeline); });
++        QVERIFY(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE);
++        auto *buffer = gst_buffer_new_allocate(nullptr, left.sizeInBytes() * 2, nullptr);
++        const QImage first = reverse ? right : left, second = reverse ? left : right;
++        gst_buffer_fill(buffer, 0, first.constBits(), first.sizeInBytes());
++        gst_buffer_fill(buffer, first.sizeInBytes(), second.constBits(), second.sizeInBytes());
++        for (int id = 0; id < (missing ? 1 : 2); ++id) {
++            gsize offsets[GST_VIDEO_MAX_PLANES] = {gsize(id * first.sizeInBytes())};
++            gint strides[GST_VIDEO_MAX_PLANES] = {int(first.bytesPerLine())};
++            auto *meta = gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_RGBA, 8, 6, 1, offsets, strides);
++            QVERIFY(meta);
++            meta->id = id;
++        }
++        GST_BUFFER_PTS(buffer) = 0;
++        GST_BUFFER_DURATION(buffer) = GST_SECOND / 30;
++        QCOMPARE(gst_app_src_push_buffer(GST_APP_SRC(source), buffer), GST_FLOW_OK);
++        QTRY_VERIFY_WITH_TIMEOUT(output.videoFrame().isValid() || !errors.isEmpty(), 60000);
++        if (missing) {
++            QVERIFY(!output.videoFrame().isValid());
++            QCOMPARE(errors.size(), 1);
++        } else {
++            QCOMPARE(errors.size(), 0);
++            QCOMPARE(output.videoFrame().size(), QSize(16, 6));
++            const auto result = output.videoFrame().toImage().convertToFormat(left.format());
++            QCOMPARE(result.copy(0, 0, 8, 6), left);
++            QCOMPARE(result.copy(8, 0, 8, 6), right);
++        }
++    }
++    void refusalAndUnknown()
++    {
++        QVideoSink output;
++        StereoPreview preview;
++        preview.setSink(&output);
++        preview.setMirrored(false);
++        QSignalSpy errors(&preview, &StereoPreview::failed);
++        QImage input(8, 5, QImage::Format_RGBA8888); input.fill(Qt::red);
++        preview.setPacking(QStringLiteral("unknown-future-id"));
++        QCOMPARE(errors.size(), 1);
++        preview.present(input, false, 0, GST_VIDEO_MULTIVIEW_MODE_NONE, GST_VIDEO_MULTIVIEW_FLAGS_NONE);
++        QVERIFY(!output.videoFrame().isValid());
++        preview.setPacking(QStringLiteral("rowInterleavedLeftFirst"));
++        preview.present(input, false, 0, GST_VIDEO_MULTIVIEW_MODE_NONE, GST_VIDEO_MULTIVIEW_FLAGS_NONE);
++        QCOMPARE(errors.size(), 2);
++        QVERIFY(!output.videoFrame().isValid());
++        preview.setPacking(QStringLiteral("automatic"));
++        preview.present(input, false, 0, GST_VIDEO_MULTIVIEW_MODE_MULTIVIEW_FRAME_BY_FRAME, GST_VIDEO_MULTIVIEW_FLAGS_NONE);
++        QCOMPARE(errors.size(), 3);
++        QVERIFY(!output.videoFrame().isValid());
 +    }
 +    void packed_data()
 +    {
@@ -757,7 +1025,7 @@ Last-Update: 2026-11-22
 +        StereoPreview preview;
 +        preview.setSink(&output);
 +        preview.setMirrored(false);
-+        preview.setPacking(declared ? QStringLiteral("automatic") : packing);
++        preview.setPacking(declared ? (vertical ? QStringLiteral("sideBySideLeftFirst") : QStringLiteral("topBottomRightFirst")) : packing);
 +        QVERIFY(declared || preview.hasPacking());
 +        auto *pipeline = gst_pipeline_new(nullptr);
 +        auto *source = gst_element_factory_make("appsrc", nullptr);
