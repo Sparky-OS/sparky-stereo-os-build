@@ -26,8 +26,11 @@ class Control:
   return True
 class Tests(unittest.TestCase):
  def invoke(self,control):
-  with patch.object(fake.Registry,'getDesktop',return_value=control),patch.object(module.time,'sleep'):
-   return module.main('Refresh')
+  with patch.object(fake.Registry,'getDesktop',return_value=control),patch.object(module.time,'sleep'),patch.object(module.Atspi,'set_timeout') as timeout:
+   result=module.main('Refresh')
+   self.assertTrue(timeout.call_args_list)
+   self.assertTrue(all(0<call.args[0]<=120000 and call.args[1]==0 for call in timeout.call_args_list))
+   return result
  def test_stale_state(self):
   c=Control('state');self.assertEqual(self.invoke(c),0);self.assertEqual(c.activations,1)
  def test_stale_action(self):
