@@ -1,0 +1,15 @@
+[Unit]
+Description=Live captions chosen in Partners
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sparky-stereo-live-captions serve
+KillMode=mixed
+TimeoutStopSec=40
+UMask=0077
+Restart=no
+
+[Install]
+WantedBy=graphical-session.target
