@@ -36,15 +36,16 @@ Last-Update: 2026-11-22
 +endif()
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -12,6 +12,7 @@
+@@ -12,6 +12,8 @@
      kamoso.cpp
      previewfetcher.cpp
      video/webcamcontrol.cpp
 +    video/stereopreview.cpp
++    video/stereophoto.cpp
  
      resources.qrc
  )
-@@ -20,7 +21,8 @@
+@@ -20,7 +22,8 @@
  target_link_libraries(kamoso
      Qt::Core Qt::Gui Qt::Widgets Qt::Quick
      KF6::KIOFileWidgets KF6::ConfigGui KF6::I18n KF6::Notifications
@@ -66,10 +67,11 @@ Last-Update: 2026-11-22
  
 --- a/src/kamosoSettings.kcfg
 +++ b/src/kamosoSettings.kcfg
-@@ -17,6 +17,7 @@
+@@ -17,6 +17,8 @@
  		</entry>
  	</group>
      <group name="WebcamSettings">
++        <entry name="stereoPhotoFormat" type="String"><default>mpo</default></entry>
 +        <entry name="stereoEnabled" type="bool"><default>true</default></entry>
          <entry name="mirrored" type="bool">
              <default>true</default>
@@ -118,18 +120,25 @@ Last-Update: 2026-11-22
                      Kirigami.Heading {
                          id: effectsGalleryHeading
                          level: 1
-@@ -200,6 +212,10 @@
+@@ -200,6 +212,17 @@
                          elide: Text.ElideRight
                          text: i18n("Effects Gallery")
                      }
 +                    QQC2.CheckBox { action: enable3D }
++                    QQC2.Label { visible: WebcamControl.stereoEnabled; text: i18n("Stereo photo format") }
++                    QQC2.ComboBox {
++                        visible: WebcamControl.stereoEnabled
++                        model: ["MPO", "JPS"]
++                        currentIndex: Settings.stereoPhotoFormat === "jps" ? 1 : 0
++                        onActivated: Settings.stereoPhotoFormat = currentIndex === 0 ? "mpo" : "jps"
++                    }
 +                    QQC2.Button { text: i18n("Camera Settings"); onClicked: WebcamControl.openCameraSettings() }
 +                    QQC2.Button { text: i18n("Display Settings"); onClicked: WebcamControl.openDisplaySettings() }
 +                    }
                  }
              }
          }
-@@ -239,9 +255,28 @@
+@@ -239,9 +262,28 @@
          }
  
          GstGLQt6VideoItem {
@@ -227,18 +236,20 @@ Last-Update: 2026-11-22
          GstPointer<GstElement> m_viewfinder;
 --- a/src/video/webcamcontrol.cpp
 +++ b/src/video/webcamcontrol.cpp
-@@ -6,6 +6,10 @@
+@@ -6,6 +6,12 @@
  
  
  #include "webcamcontrol.h"
 +#include "stereopreview.h"
++#include "stereophoto.h"
++#include <QTemporaryDir>
 +#include <stereo-layer/screenmode.h>
 +#include <QVideoSink>
 +#include <QProcess>
  #include "kamosoSettings.h"
  #include <devicemanager.h>
  #include <kamosodirmodel.h>
-@@ -202,6 +206,17 @@
+@@ -202,6 +208,17 @@
  
  WebcamControl::WebcamControl()
  {
@@ -256,7 +267,7 @@ Last-Update: 2026-11-22
      QQmlApplicationEngine* engine = new QQmlApplicationEngine(this);
      engine->rootContext()->setContextObject(new KLocalizedContext(engine));
      m_kamoso = new Kamoso(this);
-@@ -219,6 +234,8 @@
+@@ -219,6 +236,8 @@
  
      engine->load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
      auto rootObject = qobject_cast<QQuickWindow *> (engine->rootObjects().constFirst());
@@ -265,7 +276,7 @@ Last-Update: 2026-11-22
      m_surface = rootObject->findChild<QQuickItem *>("sink");
      Q_ASSERT(m_surface);
  
-@@ -231,6 +248,7 @@
+@@ -231,6 +250,7 @@
  
  WebcamControl::~WebcamControl()
  {
@@ -273,10 +284,12 @@ Last-Update: 2026-11-22
      DeviceManager::self()->save();
      Settings::self()->save();
      delete m_kamoso;
-@@ -238,9 +256,18 @@
+@@ -238,9 +258,20 @@
  
  void WebcamControl::stop()
  {
++    m_stereoPreview->setPacking({});
++    m_stereoFrame = false;
 +    if (m_busWatch && m_pipeline) {
 +        auto *bus = gst_pipeline_get_bus(m_pipeline.data());
 +        gst_bus_remove_watch(bus);
@@ -292,7 +305,7 @@ Last-Update: 2026-11-22
      }
  }
  
-@@ -264,6 +291,45 @@
+@@ -264,6 +295,45 @@
  
      WebcamControl* wc = static_cast<WebcamControl*>(user_data);
      wc->setReadyForCapture(is_ready);
@@ -338,7 +351,7 @@ Last-Update: 2026-11-22
  }
  
  bool WebcamControl::playDevice(Device *device)
-@@ -280,8 +346,26 @@
+@@ -280,8 +350,26 @@
      if (m_pipeline)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -365,7 +378,7 @@ Last-Update: 2026-11-22
          g_object_set(m_cameraSource.data(), "async-handling", true, nullptr);
          g_signal_connect(m_cameraSource.get(), "notify::ready-for-capture",
                           G_CALLBACK(captureReadyChanged), this);
-@@ -296,6 +380,13 @@
+@@ -296,6 +384,13 @@
      }
      if (!m_viewfinder) {
          Q_ASSERT(m_surface);
@@ -379,7 +392,7 @@ Last-Update: 2026-11-22
          m_viewfinder.reset(gst_bin_new("viewfinder"));
          auto glupload = gst_element_factory_make_full("glupload", nullptr);
          auto sink = gst_element_factory_make_full("qml6glsink", "name", "videosink"
-@@ -309,6 +400,8 @@
+@@ -309,6 +404,8 @@
          GstPad *sink_pad = gst_element_get_static_pad(glupload, "sink");
          gst_element_add_pad(m_viewfinder.data(), gst_ghost_pad_new("sink", sink_pad));
          gst_object_unref(sink_pad);
@@ -388,7 +401,7 @@ Last-Update: 2026-11-22
      }
  
      GstElement* source;
-@@ -320,7 +413,9 @@
+@@ -320,7 +417,9 @@
  
      if (!m_pipeline) {
          m_pipeline.reset(GST_PIPELINE(gst_element_factory_make("camerabin", "camerabin")));
@@ -399,7 +412,51 @@ Last-Update: 2026-11-22
          g_object_set(m_pipeline.data(), "camera-source", m_cameraSource.data(), nullptr);
          g_object_set(m_pipeline.data(), "viewfinder-sink", m_viewfinder.data(), nullptr);
      }
-@@ -453,11 +548,14 @@
+@@ -395,6 +494,43 @@
+         qWarning() << "couldn't take photo, no pipeline";
+         return;
+     }
++    if (m_pairActive && emitTaken && !m_stereoFrame) {
++        Q_EMIT m_kamoso->error(i18n("Wait for a complete stereo frame before taking a photo."));
++        return;
++    }
++    if (m_pairActive && m_stereoFrame && emitTaken) {
++        const QImage pair = m_stereoPreview->captureImage();
++        const QByteArray format = Settings::stereoPhotoFormat().toLatin1();
++        auto temporary = std::make_shared<QTemporaryDir>();
++        const QString path = url.isLocalFile() ? url.toLocalFile() : temporary->filePath(QStringLiteral("capture.") + QString::fromLatin1(format));
++        auto *encoder = gst_element_factory_make("jpegenc", nullptr);
++        if (!encoder) {
++            Q_EMIT m_kamoso->error(i18n("The JPEG encoder is unavailable."));
++            return;
++        }
++        gint quality = 0;
++        g_object_get(encoder, "quality", &quality, nullptr);
++        gst_object_unref(encoder);
++        const QString error = saveStereoPhoto(pair, path, format, quality);
++        if (!error.isEmpty()) {
++            Q_EMIT m_kamoso->error(i18n("The stereo photo could not be saved: %1", error));
++            return;
++        }
++        const auto done = [this, url] {
++            Q_EMIT photoTaken(url.isLocalFile() ? url.toLocalFile() : url.toString());
++            KNotification::event(QStringLiteral("photoTaken"), i18n("Photo taken"), i18n("Saved in %1", url.toDisplayString(QUrl::PreferLocalFile)));
++        };
++        if (url.isLocalFile()) {
++            done();
++        } else {
++            auto *job = KIO::copy(QUrl::fromLocalFile(path), url);
++            connect(job, &KJob::result, this, [this, job, temporary, done] {
++                if (job->error()) Q_EMIT m_kamoso->error(job->errorString());
++                else done();
++            });
++        }
++        return;
++    }
+     m_emitTaken = emitTaken;
+ 
+     g_object_set(m_pipeline.data(), "mode", 1, nullptr);
+@@ -453,11 +589,14 @@
      if (prevstate != GST_STATE_NULL)
          gst_element_set_state(GST_ELEMENT(m_pipeline.data()), GST_STATE_NULL);
  
@@ -419,7 +476,7 @@ Last-Update: 2026-11-22
          filters.prepend(m_extraFilters);
 --- /dev/null
 +++ b/src/video/stereopreview.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,40 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#pragma once
@@ -443,6 +500,7 @@ Last-Update: 2026-11-22
 +    void setMirrored(bool mirrored);
 +    GstElement *createSink();
 +    bool hasPacking() const;
++    QImage captureImage() const { return m_capture; }
 +    static QString cameraPacking(GstStructure *properties);
 +Q_SIGNALS:
 +    void failed(const QString &message);
@@ -452,6 +510,7 @@ Last-Update: 2026-11-22
 +    QPointer<QVideoSink> m_sink;
 +    stereo_policy_input_format m_format {};
 +    QImage m_first;
++    QImage m_capture;
 +    quint64 m_firstOffset = GST_BUFFER_OFFSET_NONE;
 +    bool m_mirrored = true;
 +    bool m_unknownPacking = false;
@@ -460,7 +519,7 @@ Last-Update: 2026-11-22
 +};
 --- /dev/null
 +++ b/src/video/stereopreview.cpp
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,237 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +#include "stereopreview.h"
@@ -488,6 +547,7 @@ Last-Update: 2026-11-22
 +void StereoPreview::setPacking(const QString &id)
 +{
 +    ++m_generation;
++    m_capture = {};
 +    m_unknownPacking = false;
 +    m_format = {};
 +    m_first = {};
@@ -693,18 +753,23 @@ Last-Update: 2026-11-22
 +    for (int y = 0; y < packed.height(); ++y)
 +        memcpy(video.bits(0) + y * video.bytesPerLine(0), packed.constScanLine(y), size_t(packed.width()) * 4);
 +    video.unmap();
++    m_capture = stereo ? packed : QImage();
 +    Q_EMIT stereoFrameChanged(stereo);
 +    m_sink->setVideoFrame(video);
 +}
 --- /dev/null
 +++ b/autotests/CMakeLists.txt
-@@ -0,0 +1,6 @@
+@@ -0,0 +1,10 @@
 +find_package(Qt6 REQUIRED COMPONENTS Test)
 +add_executable(stereopreview-test stereopreview-test.cpp ../src/video/stereopreview.cpp)
 +target_include_directories(stereopreview-test PRIVATE ../src/video)
 +target_link_libraries(stereopreview-test PRIVATE Qt6::Test Qt6::Multimedia KF6::I18n Stereo::Layer Stereo::Policy PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
 +add_test(NAME stereopreview COMMAND stereopreview-test)
 +set_tests_properties(stereopreview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
++add_executable(stereophoto-test stereophoto-test.cpp ../src/video/stereophoto.cpp)
++target_include_directories(stereophoto-test PRIVATE ../src/video)
++target_link_libraries(stereophoto-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n Stereo::Layer)
++add_test(NAME stereophoto COMMAND stereophoto-test)
 --- /dev/null
 +++ b/autotests/stereopreview-test.cpp
 @@ -0,0 +1,353 @@
@@ -1061,3 +1126,129 @@ Last-Update: 2026-11-22
 +};
 +QTEST_MAIN(StereoPreviewTest)
 +#include "stereopreview-test.moc"
+--- a/src/kamoso.cpp
++++ b/src/kamoso.cpp
+@@ -62,7 +62,7 @@
+         QDir().mkpath(saveUrl.toLocalFile());
+     }
+ 
+-    const QUrl path = fileNameSuggestion(saveUrl, QStringLiteral("picture"), QStringLiteral("jpg"));
++    const QUrl path = fileNameSuggestion(saveUrl, QStringLiteral("picture"), m_webcamControl->stereoEnabled() && m_webcamControl->stereoFrame() ? Settings::stereoPhotoFormat() : QStringLiteral("jpg"));
+     m_webcamControl->takePhoto(path, true);
+ 
+     if (m_sampleImagePath.isEmpty() && path.isLocalFile()) {
+--- /dev/null
++++ b/src/video/stereophoto.h
+@@ -0,0 +1,8 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#pragma once
++#include <QImage>
++#include <QString>
++
++// A fresh camera picture. The installed format plugin owns both encoding and marks.
++QString saveStereoPhoto(const QImage &pair, const QString &path, const QByteArray &format, int quality);
+--- /dev/null
++++ b/src/video/stereophoto.cpp
+@@ -0,0 +1,27 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "stereophoto.h"
++#include <QFileInfo>
++#include <QImageWriter>
++#include <QSaveFile>
++#include <KLocalizedString>
++
++QString saveStereoPhoto(const QImage &pair, const QString &path, const QByteArray &format, int quality)
++{
++    if (pair.isNull() || pair.width() % 2 || (format != "mpo" && format != "jps"))
++        return i18n("A complete stereo frame and an MPO or JPS format are needed to save this photo.");
++    if (QFileInfo::exists(path))
++        return i18n("The photo already exists. Choose another name.");
++    QImage image = pair;
++    image.setText(QStringLiteral("Stereo3DLayout"), QStringLiteral("sideBySideLeftFirst"));
++    QSaveFile file(path);
++    if (!file.open(QIODevice::WriteOnly))
++        return file.errorString();
++    QImageWriter writer(&file, format);
++    writer.setQuality(quality);
++    if (!writer.write(image))
++        return writer.errorString();
++    if (!file.commit())
++        return file.errorString();
++    return {};
++}
+--- /dev/null
++++ b/autotests/stereophoto-test.cpp
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "stereophoto.h"
++#include <stereo-layer/picture.h>
++#include <QFile>
++#include <QImageReader>
++#include <QImageWriter>
++#include <QTemporaryDir>
++#include <QtTest>
++
++class StereoPhotoTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void formats_data()
++    {
++        QTest::addColumn<QByteArray>("format");
++        QTest::newRow("MPO") << QByteArray("mpo");
++        QTest::newRow("JPS") << QByteArray("jps");
++    }
++    void formats()
++    {
++        QFETCH(QByteArray, format);
++        QTemporaryDir temporary;
++        const QString kept = qEnvironmentVariable("KAMOSO_PHOTO_TEST_OUTPUT");
++        const QString path = (kept.isEmpty() ? temporary.path() : kept) + QStringLiteral("/camera.") + QString::fromLatin1(format);
++        QImage pair(128, 48, QImage::Format_RGB32);
++        for (int y = 0; y < pair.height(); ++y) for (int x = 0; x < pair.width(); ++x) {
++            const bool right = x >= 64;
++            const bool box = (x % 64 >= (right ? 20 : 24)) && x % 64 < (right ? 40 : 44) && y >= 12 && y < 36;
++            pair.setPixelColor(x, y, box ? QColor(Qt::white) : right ? QColor(0, 0, 240) : QColor(240, 0, 0));
++        }
++        const QString error = saveStereoPhoto(pair, path, format, 85);
++        QVERIFY2(error.isEmpty(), qPrintable(error));
++        QFile file(path); QVERIFY(file.open(QIODevice::ReadOnly)); const QByteArray bytes = file.readAll(); file.close();
++        QVERIFY(bytes.contains(format == "mpo" ? QByteArray("MPF\0",4) : QByteArray("_JPSJPS_")));
++        const auto picture = Stereo::Picture::load(path, {}, Stereo::OutputMode::Stereo);
++        QVERIFY(picture.isStereo());
++        QCOMPARE(picture.left.size(), QSize(64,48));
++        QCOMPARE(picture.right.size(), QSize(64,48));
++        QVERIFY(picture.left.pixelColor(3,3).red() > 200);
++        QVERIFY(picture.right.pixelColor(3,3).blue() > 200);
++        // Compare the layer's selected views with the format plugin's decoded
++        // views, not raw source pixels that JPEG is allowed to quantize.
++        QImageReader reader(path, format);
++        const auto decoded = reader.read(); QVERIFY2(!decoded.isNull(), qPrintable(reader.errorString()));
++        if (format == "jps") {
++            QCOMPARE(decoded.text(QStringLiteral("Stereo3DLayout")), QStringLiteral("sideBySideLeftFirst"));
++            QCOMPARE(picture.left.convertToFormat(QImage::Format_RGB32), decoded.copy(0,0,64,48).convertToFormat(QImage::Format_RGB32));
++            QCOMPARE(picture.right.convertToFormat(QImage::Format_RGB32), decoded.copy(64,0,64,48).convertToFormat(QImage::Format_RGB32));
++        } else {
++            QCOMPARE(reader.imageCount(), 2);
++            QCOMPARE(picture.left.convertToFormat(QImage::Format_RGB32), decoded.convertToFormat(QImage::Format_RGB32));
++            QVERIFY(reader.jumpToImage(1));
++            QCOMPARE(picture.right.convertToFormat(QImage::Format_RGB32), reader.read().convertToFormat(QImage::Format_RGB32));
++        }
++        QVERIFY(!saveStereoPhoto(pair, path, format, 85).isEmpty());
++        QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(),bytes);
++    }
++    void failures()
++    {
++        QTemporaryDir temporary;
++        const QString path = temporary.filePath(QStringLiteral("refused.jps"));
++        QVERIFY(!saveStereoPhoto({}, path, "jps", 85).isEmpty());
++        QVERIFY(!saveStereoPhoto(QImage(3,4,QImage::Format_RGB32), path, "jps", 85).isEmpty());
++        QVERIFY(!saveStereoPhoto(QImage(4,4,QImage::Format_RGB32), path, "png", 85).isEmpty());
++        QVERIFY(!QFile::exists(path));
++    }
++};
++QTEST_GUILESS_MAIN(StereoPhotoTest)
++#include "stereophoto-test.moc"

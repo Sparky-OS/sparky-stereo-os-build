@@ -16,6 +16,14 @@ export SPARKY_LC_SIBLINGS_FILE="$OUT/layer-siblings.txt"
 while read -r sum filename; do
     realpath "$LAYER/$filename" >>"$SPARKY_LC_SIBLINGS_FILE"
 done <"$HERE/layer-1.23.2.sha256"
+: "${DECLARE:?the pinned stereo-declare siblings, installed before build dependencies}"
+(cd "$DECLARE" && sha256sum --check --quiet "$HERE/declare-1.12.2.sha256")
+while read -r sum filename; do
+    realpath "$DECLARE/$filename" >>"$SPARKY_LC_SIBLINGS_FILE"
+done <"$HERE/declare-1.12.2.sha256"
+for package in libstereo-declare1 libstereo-declare-dev; do
+    test "$(dpkg-query -W -f='${Version}' "$package")" = 1.12.2-1+lc1
+done
 for package in libstereo-layer1 libstereo-policy1 libstereo-layer-dev libstereo-policy-dev; do
     test "$(dpkg-query -W -f='${Version}' "$package")" = 1.23.2-1+lc1
 done
@@ -33,7 +41,7 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 # Only the binary Depends field; never rewrite Build-Depends.
-s = p.read_text().replace('Build-Depends:', 'Build-Depends: libstereo-layer-dev (>= 1.23.2), libstereo-policy-dev (>= 1.23.2), qt6-multimedia-dev,').replace('\nDepends:', '\nDepends: gstreamer1.0-gl, libstereo-layer1 (>= 1.23.2), libstereo-policy1 (>= 1.23.2),', 1)
+s = p.read_text().replace('Build-Depends:', 'Build-Depends: libstereo-layer-dev (>= 1.23.2), libstereo-policy-dev (>= 1.23.2), qt6-multimedia-dev,').replace('\nDepends:', '\nDepends: kimageformat6-plugins, libstereo-declare1 (>= 1.12.2), gstreamer1.0-gl, libstereo-layer1 (>= 1.23.2), libstereo-policy1 (>= 1.23.2),', 1)
 p.write_text(s)
 CONTROL
 TOOLKIT="$TOOLKIT" python3 - "$OUT/source/debian/changelog" <<'PY'
