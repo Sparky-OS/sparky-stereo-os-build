@@ -1,0 +1,40 @@
+Description: wayland: handle null output in wl_surface.enter event
+ This is seemingly possible: https://wayland.freedesktop.org/docs/book/Message_XML.html#allow-nulltrue--false
+ .
+ Sparky Stereo OS: carried as it is (row 835). A surface's enter event names every wl_output resource the client holds for that output, also one that another library on the same connection bound (libstereo-declare 1.11.0 to 1.12.1 did), and mpv dereferenced the output it did not find: SIGSEGV in surface_handle_enter at the first frame. Pull request 18346.
+Origin: upstream, https://github.com/mpv-player/mpv/commit/f4d13e1c2c91f3a56e589aef9cb44cbc02e26e47
+Author: llyyr
+Applied-Upstream: v0.42.0
+Last-Update: 2026-11-23
+---
+diff --git a/video/out/wayland_common.c b/video/out/wayland_common.c
+index 8092eea..8ac96d6 100644
+--- a/video/out/wayland_common.c
++++ b/video/out/wayland_common.c
+@@ -1687,9 +1687,13 @@ static void surface_handle_enter(void *data, struct wl_surface *wl_surface,
+     if (outputs == 1)
+         update_output_geometry(wl);
+ 
+-    MP_VERBOSE(wl, "Surface entered output %s %s (%s) (0x%x), scale = %f, refresh rate = %f Hz\n",
+-               wl->current_output->make, wl->current_output->model, wl->current_output->name,
+-               wl->current_output->id, wl->scaling_factor, wl->current_output->refresh_rate);
++    if (wl->current_output) {
++        MP_VERBOSE(wl, "Surface entered output %s %s (%s) (0x%x), scale = %f, refresh rate = %f Hz\n",
++                   wl->current_output->make, wl->current_output->model, wl->current_output->name,
++                   wl->current_output->id, wl->scaling_factor, wl->current_output->refresh_rate);
++    } else {
++        MP_VERBOSE(wl, "Surface entered unknown output\n");
++    }
+ 
+     wl->pending_vo_events |= VO_EVENT_WIN_STATE;
+ }
+@@ -4108,7 +4112,8 @@ static void update_output_geometry(struct vo_wayland_state *wl)
+         force_resize = true;
+     }
+ 
+-    if (!mp_rect_equals(&wl->old_output_geometry, &wl->current_output->geometry)) {
++    if (wl->current_output &&
++        !mp_rect_equals(&wl->old_output_geometry, &wl->current_output->geometry)) {
+         set_geometry(wl, false);
+         force_resize = true;
+     }

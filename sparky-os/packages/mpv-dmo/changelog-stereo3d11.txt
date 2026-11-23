@@ -1,0 +1,3 @@
+mpv-dmo (1:0.41.0-dmo9+stereo3d11) unstable; urgency=medium
+
+  * Carry upstream's "wayland: handle null output in wl_surface.enter event" (llyyr, f4d13e1c2c91, in v0.42.0) as patch 0063, on the commit it is built on, "wayland: handle all outputs disappearing without segfaulting" (Dudemanguy, 3847a8157f6e, in v0.42.0) as patch 0062, both as they are: a surface's enter event can name an output mpv did not bind, for example one bound by another library on the same connection, and mpv dereferenced the output it did not find and died of SIGSEGV at its first frame (row 835, with libstereo-declare 1.11.0 to 1.12.1).
