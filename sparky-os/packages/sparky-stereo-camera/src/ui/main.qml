@@ -151,11 +151,21 @@ KCM.SimpleKCM {
             Layout.alignment: Qt.AlignHCenter
             visible: root.hasCameras && kcm.currentNodeId >= 0 && kcm.packing !== "mono"
             enabled: kcm.packingInfo.input.length > 0
+            objectName: "showPair"
             text: i18n("Show the pair in 3D")
             icon.name: "camera-video"
             onClicked: pairWindow.visible = true
             QQC2.ToolTip.text: i18n("This preview cannot show that packing. Other programs can.")
             QQC2.ToolTip.visible: hovered && !enabled
+        }
+
+        QQC2.Label {
+            objectName: "pairRefusal"
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            visible: root.hasCameras && kcm.currentNodeId >= 0 && kcm.packing !== "mono" && kcm.packingInfo.input.length === 0
+            text: i18n("This preview cannot show that packing. Other programs can.")
         }
 
         // The pair is a 3D area of its own: a window whose video output declares the two views to Stereo KWin
