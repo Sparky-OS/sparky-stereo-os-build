@@ -12,10 +12,12 @@ version=${GTK_VERSION:?package-versions.sh must define GTK_VERSION}
 look_version=${GLASS_VERSION:?package-versions.sh must define GLASS_VERSION}
 gtk_min=${GTK_MIN_VERSION:?package-versions.sh must define GTK_MIN_VERSION}
 build_gtk=true
+build_look=true
 case "${1:-}" in
 	--look-only) build_gtk=false ;;
+	--gtk-only) build_look=false ;;   # a GTK successor without remaking an accepted look archive (row 59)
 	'') ;;
-	*) echo "Usage: $0 [--look-only]" >&2; exit 2 ;;
+	*) echo "Usage: $0 [--look-only|--gtk-only]" >&2; exit 2 ;;
 esac
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
@@ -57,10 +59,14 @@ control() { # dir package depends recommends suggests description-lines...
 	} > "$d/DEBIAN/control"
 	(cd "$d" && find . -type f ! -path './DEBIAN/*' -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' md5sum > DEBIAN/md5sums)
 }
-build() { # dir package
+build() { # dir package version
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
 	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$dest" --authoring "$repo" --build-dependency sparky-stereo-problems
+	# the source closure, as sparky-stereo-look's build does: the genuine .buildinfo and .changes from a rebuild of the
+	# retained source, then the gate that writes the build record (the provenance facts come from build-provenance.sh)
+	python3 "$RECIPE/../../repo/rebuild-script-source.py" "$dest/$2_$3.dsc"
+	(cd "$dest" && PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-debs ./"$2"_"$3"_all.deb ./"$2"-lc-hr_"$3"_all.deb)
 }
 doc() { # dir package copyright-body-file
 	mkdir -p "$1/usr/share/doc/$2"
@@ -105,15 +111,17 @@ Free Software Foundation; version 3 of the License.
 On Debian systems, the complete text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
 doc "$g" sparky-stereo-gtk "$work/gtk-copyright"
-control "$g" sparky-stereo-gtk "breeze-gtk-theme, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin, procps, sparky-stereo-problems" "" "" \
-	"GTK 3 and GTK 4 themes that follow the Sparky Stereo OS looks" \
-	"Kubabbar-Glass and Sparky-Stereo-Oxygen: the Breeze GTK shapes in each look's colours." \
+control "$g" sparky-stereo-gtk "breeze-gtk-theme, gtk2-engines-oxygen, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin, procps, sparky-stereo-problems" "" "" \
+	"GTK 2, GTK 3 and GTK 4 themes that follow the Sparky Stereo OS looks" \
+	"Kubabbar-Glass and Sparky-Stereo-Oxygen: the Breeze GTK shapes in each look's colours;" \
+	"Sparky-Stereo-Oxygen's GTK 2 part is KDE's Oxygen engine (gtk2-engines-oxygen)." \
 	"sparky-stereo-gtk-sync picks the theme from the KDE colour scheme at login and whenever kdeglobals changes;" \
 	"kde-config-gtk-style keeps the colours in step."
-build "$g" sparky-stereo-gtk
+build "$g" sparky-stereo-gtk "$version"
 fi
 
 # 2. sparky-stereo-look-kubabbar-glass
+if "$build_look"; then
 k=$work/sparky-stereo-look-kubabbar-glass
 mkdir -p "$k/usr/share" "$k/usr/bin" "$k/usr/share/sparky/kubabbar-glass-style"
 # The optional menubar package owns its layout and launcher. Copying all of share/
@@ -169,8 +177,10 @@ control "$k" sparky-stereo-look-kubabbar-glass "dbus-bin, kde-style-breeze, kwin
 	"Kubabbar Glass is our own name for this look, chosen by Daniel Ramos on 14 October 2026." \
 	"Look and Feel, colours, window decoration, Plasma style, cursors, splash, SDDM theme and the 3D icon pilot (the Trash)." \
 	"The application style is Breeze by default; kubabbar-glass-style chooses Fusion, Kvantum or Oxygen instead."
-build "$k" sparky-stereo-look-kubabbar-glass
+build "$k" sparky-stereo-look-kubabbar-glass "$look_version"
+fi
 
 (cd "$dest" && sha256sum ./*.deb | sed 's|\./||' > SHA256SUMS)
-printf "%s\n" "${SOURCE_COMMIT:-unknown}" > "$dest/SOURCE-COMMIT"
+# the commit the build record names (build-provenance.sh passes it as SPARKY_BUILD_COMMIT)
+printf "%s\n" "${SOURCE_COMMIT:-${SPARKY_BUILD_COMMIT:-unknown}}" > "$dest/SOURCE-COMMIT"
 cat "$dest/SHA256SUMS"
