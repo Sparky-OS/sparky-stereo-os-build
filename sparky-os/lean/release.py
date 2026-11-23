@@ -230,10 +230,14 @@ def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
 def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=(),
                previous_siblings=(), min_free_gib=None, root_min_free_gib=1,
                previous_archive_config=None, previous_published_at=None, previous_archive_policy=None, archive_evidence=None, collect_predecessor_stops=False, allow_unavailable_baseline=False,
-               reuse_manifest=None, reuse_seed=None, suite_record=None):
+               reuse_manifest=None, reuse_seed=None, suite_record=None, archive_view=None, previous_archive_view=None):
     """Qualify edition snapshots, optionally using a checked dated view for an unsolvable predecessor."""
     if reuse_manifest:
+        if archive_view or previous_archive_view:
+            raise package.Invalid('reuse manifest already binds its archive views; separate view options are not allowed')
         options = locals().copy()
+        options.pop('archive_view')
+        options.pop('previous_archive_view')
         from . import reuse
         return reuse.check(**options)
     archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
@@ -243,6 +247,8 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
                               'SPARKY_LC_SCRATCH); see lean/archive.md')
     if bool(previous_archive_config) != bool(previous_published_at):
         raise package.Invalid('dated predecessor needs both --previous-archive-config and --previous-published-at')
+    if previous_archive_view and not previous_archive_config:
+        raise package.Invalid('retained predecessor view needs an explicit dated archive configuration and publication instant')
     debs = list(map(Path, debs))
     previous_inputs = list(map(Path, previous_siblings))
     if previous_dir:
@@ -269,7 +275,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
             if arch != native:
                 raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
             if arch not in contexts:
-                contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib)
+                contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib, archive_view)
                 if archive_evidence:
                     from .historical import retain_view
                     retain_view(contexts[arch], archive_evidence)
@@ -277,7 +283,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
                     from .historical import PreviousView
                     selected = [p for p in debs if controls[p]['Architecture'] in (arch, 'all')]
                     contexts[arch].previous_view = PreviousView(contexts[arch], previous_archive_config,
-                                                              previous_published_at, selected, previous_archive_policy, allow_unavailable_baseline)
+                                                              previous_published_at, selected, previous_archive_policy, allow_unavailable_baseline, previous_archive_view)
             same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
             old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
             contexts[arch].freeze(same_arch + old_arch)
@@ -389,6 +395,8 @@ def main():
     link.add_argument('debs', nargs='+')
     link.add_argument('--previous-dir', help='directory holding the pre-lc1 builds to compare with')
     link.add_argument('--smoke', default=str(Path(__file__).with_name('smoke.tsv')), help='programs to start with LD_BIND_NOW=1')
+    link.add_argument('--archive-view', help='retained candidate Archive context; reauthenticate its signed indexes instead of updating')
+    link.add_argument('--previous-archive-view', help='retained dated Archive context; the publication and mixed-view rules still apply')
     link.add_argument('--archive-config', help='JSON signed public archive sources (SPARKY_LC_ARCHIVE_CONFIG)')
     link.add_argument('--collect-predecessor-stops', action='store_true', help='finish all inputs after recorded predecessor eligibility refusals; any uncovered refusal still exits 1')
     link.add_argument('--allow-unavailable-baseline', action='store_true', help='checked missing publication archive: candidate must pass without any baseline allowance')
@@ -435,7 +443,7 @@ def main():
                        Path(args.previous_siblings_file).read_text().splitlines() if args.previous_siblings_file else (),
                        args.min_free_gib, args.root_min_free_gib,
                        args.previous_archive_config, args.previous_published_at, args.previous_archive_policy, args.archive_evidence, args.collect_predecessor_stops, args.allow_unavailable_baseline,
-                       args.reuse_manifest, args.reuse_seed, args.suite_record)
+                       args.reuse_manifest, args.reuse_seed, args.suite_record, args.archive_view, args.previous_archive_view)
         elif args.command == 'check-selection':
             paths = [line.split('\t')[0] for line in Path(args.tsv).read_text().splitlines()
                      if line.split('\t')[-1] != 'source']
