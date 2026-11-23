@@ -8,7 +8,7 @@ output=$(realpath -m "${1:?Usage: build-stage.sh NEW_OUTPUT_DIRECTORY}")
 mkdir "$output"
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME='Daniel Ramos (Capitain Jack)'
 export PYTHONDONTWRITEBYTECODE=1 LC_ALL=C TZ=UTC
-export ZIG_GLOBAL_CACHE_DIR="$output/zig-cache"
+export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$output/zig-cache}"
 umask 022
 
 artifacts="$output/artifacts"

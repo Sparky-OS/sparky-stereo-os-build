@@ -30,7 +30,7 @@ binary-arch: build-arch
 	gzip -n9c debian/changelog > "$(doc)/changelog.gz"
 	install -d "$(staging)/DEBIAN"
 	printf '%s\n' /etc/foottroller-hub.conf > "$(staging)/DEBIAN/conffiles"
-	dpkg-shlibdeps -e ./foottroller-hub
+	dpkg-shlibdeps -e "$(staging)/usr/bin/foottroller-hub"
 	dpkg-gencontrol -pfoottroller-hub -P"$(staging)"
 	bash "$(toolkit)/provenance.sh" --tree "$(staging)" --source "$(CURDIR)"
 	python3 -m lean.release build-tree "$(staging)" ..
