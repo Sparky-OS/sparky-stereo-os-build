@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22)
+project(photo_reader LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui)
+find_package(KF6FileMetaData REQUIRED)
+find_package(StereoLayer REQUIRED)
+add_executable(photo-reader main.cpp)
+target_link_libraries(photo-reader PRIVATE Qt6::Core Qt6::Gui KF6::FileMetaData Stereo::Layer)
