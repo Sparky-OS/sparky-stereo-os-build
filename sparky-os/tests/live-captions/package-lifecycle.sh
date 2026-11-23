@@ -17,16 +17,16 @@ baseline=(/row70/graphics-0.2.17/sparky-stereo-graphics_0.2.17_amd64.deb /row70/
 apt-get -s --no-install-recommends install "${baseline[@]}" > /out/baseline-plan.txt 2>&1
 apt-get --print-uris -y --no-install-recommends install "${baseline[@]}" > /out/baseline-uris.txt 2>&1
 if [ "${PLAN_ONLY:-0}" = 1 ]; then exit 0; fi
-! grep -q '^Remv ' /out/baseline-plan.txt
+if grep -q '^Remv ' /out/baseline-plan.txt; then exit 1; fi
 apt-get -y --no-install-recommends install "${baseline[@]}" > /out/baseline-install.log 2>&1
 if [ "${BASELINE_ONLY:-0}" = 1 ]; then exit 0; fi
-previous=(/previous/libcaptiond-client0_*.deb /previous/captiond_*.deb /previous/kaption-common_*.deb /previous/kaption_*.deb /previous/sparky-stereo-partners_*.deb /previous/sparky-stereo-live-captions_*.deb)
+previous=(/previous/qaption_*.deb /previous/libcaptiond-client-dev_*.deb /previous/libcaptiond-client-tests-dev_*.deb /previous/libcaptiond-client0_*.deb /previous/captiond_*.deb /previous/kaption-common_*.deb /previous/kaption_*.deb /previous/sparky-stereo-partners_*.deb /previous/sparky-stereo-live-captions_*.deb)
 apt-get -y --no-install-recommends install "${previous[@]}" > /out/predecessor-install.log 2>&1
 python3 - <<'INNER'
 import subprocess,json
 from pathlib import Path
 expected=[];versions={}
-for name in ('libcaptiond-client0','captiond','kaption-common','kaption','sparky-stereo-partners','sparky-stereo-live-captions'):
+for name in ('qaption','libcaptiond-client-dev','libcaptiond-client-tests-dev','libcaptiond-client0','captiond','kaption-common','kaption','sparky-stereo-partners','sparky-stereo-live-captions'):
  p,=Path('/stage').glob(name+'_*.deb')
  wanted=subprocess.check_output(['dpkg-deb','-f',str(p),'Version'],text=True).strip()
  current=subprocess.check_output(['dpkg-query','-W','-f=${Version}',name],text=True).strip()
@@ -47,17 +47,11 @@ for rel in ('.config/kaptionrc','.config/captiond/captiond.conf','.config/sparky
  rows.append(dict(path=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest()))
 Path('/out/personal-before.json').write_text(json.dumps(rows,indent=2)+'\n')
 PY
-upgrade=(/stage/libcaptiond-client0_*.deb /stage/captiond_*.deb /stage/kaption-common_*.deb /stage/kaption_*.deb /stage/sparky-stereo-partners_*.deb /stage/sparky-stereo-live-captions_*.deb)
+upgrade=(/stage/qaption_*.deb /stage/libcaptiond-client-dev_*.deb /stage/libcaptiond-client-tests-dev_*.deb /stage/libcaptiond-client0_*.deb /stage/captiond_*.deb /stage/kaption-common_*.deb /stage/kaption_*.deb /stage/sparky-stereo-partners_*.deb /stage/sparky-stereo-live-captions_*.deb)
 apt-get -s --no-install-recommends install "${upgrade[@]}" > /out/upgrade-plan.txt 2>&1
 apt-get --print-uris -y --no-install-recommends install "${upgrade[@]}" > /out/upgrade-uris.txt 2>&1
-! grep -q '^Remv ' /out/upgrade-plan.txt
-python3 - <<'INNER'
-from pathlib import Path
-import json
-expected=set(json.loads(Path('/out/expected-upgrade.json').read_text()))
-found={line.split()[1] for line in Path('/out/upgrade-plan.txt').read_text().splitlines() if line.startswith('Inst ')}
-assert expected==found,(expected,found)
-INNER
+if grep -q '^Remv ' /out/upgrade-plan.txt; then exit 1; fi
+python3 -B /proof/check-rig-upgrade.py /out/upgrade-plan.txt /out/expected-upgrade.json > /out/checked-upgrade.json
 apt-get -y --no-install-recommends install "${upgrade[@]}" > /out/upgrade-install.log 2>&1
 python3 - <<'INNER'
 import json,subprocess
@@ -70,8 +64,8 @@ Path('/out/installed-versions.json').write_text(json.dumps(versions,indent=2)+'\
 INNER
 systemctl --global is-enabled sparky-stereo-live-captions.service > /out/activation.txt || test "$?" = 1
 grep -x disabled /out/activation.txt
-! pgrep -x captiond
-! pgrep -x kaption
+if pgrep -x captiond; then exit 1; fi
+if pgrep -x kaption; then exit 1; fi
 find /etc/systemd/user /home/builder -type l -name '*live-captions*' -print > /out/activation-links.txt
 test ! -s /out/activation-links.txt
 dpkg-query -L sparky-stereo-partners sparky-stereo-live-captions > /out/package-files.txt

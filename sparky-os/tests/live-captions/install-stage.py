@@ -4,6 +4,7 @@
 import subprocess,sys
 from pathlib import Path
 stage=Path(sys.argv[1]);files=[]
-for name in ('libcaptiond-client0','captiond','kaption-common','kaption','sparky-stereo-partners','sparky-stereo-live-captions'):
+for name in ('qaption','libcaptiond-client-dev','libcaptiond-client-tests-dev','libcaptiond-client0','captiond','kaption-common','kaption','sparky-stereo-partners','sparky-stereo-live-captions'):
     found=list(stage.glob(name+'_*.deb'));assert len(found)==1,(name,found);files.append(str(found[0]))
 subprocess.run(['dpkg','-i']+files,check=True)
+subprocess.run(['apt-get','check'],check=True)

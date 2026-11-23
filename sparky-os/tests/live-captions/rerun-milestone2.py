@@ -87,7 +87,7 @@ def main():
         row('source closures','four clean build records',records,len(records)==4)
         branch=text(['git','-C',repo,'branch','--show-current']);assert branch
         run(['git','-C',repo,'bundle','create',out/'merge-input.bundle',branch],out/'merge-bundle.log')
-        checkscript='set -e; mkdir /out/tmp; export TMPDIR=/out/tmp; git clone --branch '+shlex.quote(branch)+' /out/merge-input.bundle /out/merged-source; git -C /out/merged-source checkout '+shlex.quote(cfg['recipe_base'])+'; git -C /out/merged-source -c user.name="Daniel Campos Ramos" -c user.email=Capitain_Jack@yahoo.com merge --no-commit --no-ff '+shlex.quote(text(['git','-C',repo,'rev-parse','HEAD']))+'; bash /out/merged-source/sparky-os/tests/supply-chain/test-wiring.sh; python3 -B /recipe/tests/test_adapter.py; python3 -B /proof/test-a10-kit.py; cmake -S /proof/fixture-src -B /out/rig-tools -G Ninja; cmake --build /out/rig-tools -j4; chown -R 1000:1000 /out/rig-tools'
+        checkscript='set -e; mkdir /out/tmp; export TMPDIR=/out/tmp; git clone --branch '+shlex.quote(branch)+' /out/merge-input.bundle /out/merged-source; git -C /out/merged-source checkout '+shlex.quote(cfg['recipe_base'])+'; git -C /out/merged-source -c user.name="Daniel Campos Ramos" -c user.email=Capitain_Jack@yahoo.com merge --no-commit --no-ff '+shlex.quote(text(['git','-C',repo,'rev-parse','HEAD']))+'; bash /out/merged-source/sparky-os/tests/supply-chain/test-wiring.sh; python3 -B /recipe/tests/test_adapter.py; python3 -B /proof/test-a10-kit.py; python3 -B /proof/test-rig-upgrade.py; cmake -S /proof/fixture-src -B /out/rig-tools -G Ninja; cmake --build /out/rig-tools -j4; chown -R 1000:1000 /out/rig-tools'
         create('source-and-kit-checks',cfg['build_image'],['bash','-c',checkscript],[(repo/'sparky-os/packages/sparky-stereo-live-captions','/recipe',True),(repo,'/source-repo',True),(out,'/out',False)])
         log=(out/'source-and-kit-checks.log').read_text();row('merge wiring','unchanged test-wiring on scratch merge with fetched main','ALL PASS','ALL PASS' in log);row('model-free controls','17 adapter and 6 kit negative tests pass','pass','Ran 17 tests' in log and 'Ran 6 tests' in log and 'FAILED' not in log)
         helpers=out/'helpers';helpers.mkdir()
@@ -99,11 +99,13 @@ def main():
             run(['bash',helpers/'build.sh',package,target],out/(package+'-launcher.log'))
             record=json.loads(next(target.glob('*.sparky-build.json')).read_text())
             row(package+' gates','unchanged gates pass, recipeDirty false',dict(commit=record['recipeCommit'],dirty=record['recipeDirty']),not record['recipeDirty'] and record['unrecorded']==[])
+        row('apt-plan negative controls','complete cohort accepted; removal and unrelated install refused','3 tests pass','Ran 3 tests' in log)
         lc=out/'lifecycle';lc.mkdir()
         create('package-lifecycle',cfg['lifecycle_image'],['bash','/proof/package-lifecycle.sh'],[(cfg['archive'],'/archive',True),(cfg['published'],'/published',True),(cfg['row70'],'/row70',True),(cfg['vibe_stage'],'/vibe-stage',True),(stage,'/stage',True),(cfg['previous_stage'],'/previous',True),(lc,'/out',False)],['-e','BASELINE_ONLY=0','-e','PLAN_ONLY=0'])
         for file,prefixword,names in [('upgrade-plan.txt','Inst ',set(json.loads((lc/'expected-upgrade.json').read_text()))),('remove-plan.txt','Remv ',{'sparky-stereo-partners','sparky-stereo-live-captions'})]:
             lines=[x for x in (lc/file).read_text().splitlines() if x.startswith(prefixword)]
             row(file,'actual apt '+prefixword.strip()+' for the exact changed package set',lines,{x.split()[1] for x in lines}==names)
+        row('upgrade removals','no Remv lines',json.loads((lc/'checked-upgrade.json').read_text())['Remv'],not json.loads((lc/'checked-upgrade.json').read_text())['Remv'])
         row('removal preserves personal files','five identical hash records',json.loads((lc/'personal-after.json').read_text()),(lc/'personal-before.json').read_bytes()==(lc/'personal-after.json').read_bytes())
         prep='set -e; python3 /proof/install-stage.py /stage; dpkg-query -W > /out/installed.tsv; python3 /proof/page-languages.py > /out/page-languages.json'
         name=create('install',cfg['lifecycle_image'],['bash','-c',prep],[(stage,'/stage',True),(out,'/out',False)])
