@@ -1,0 +1,825 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 23 Nov 2026 02:53:26 -0300
+Subject: [PATCH 4/4] The edition's stereo 3D view: fitted to the person's
+ depth limits
+
+Sparky Stereo OS builds this on the optional stereo preview (pull
+request 7112) for its own package:
+
+- The orthographic eyes are parallel views of one world: the projection
+  is sheared about the point looked at, x' = x + s (d - dist), instead of
+  turning the eye, which is toe-in.
+- The separation is the person's depth limits, set once in the desktop's
+  3D settings and read through libstereo-declare in the pixels of the
+  view's buffer (Wayland: the top-level window's surface; X11: the view's
+  own stereo window), four times a second, so a change redraws an open
+  view.  Before the left eye the view is drawn once from the camera
+  between the eyes and its depth is read after the scene, before the 2D
+  items over it; the separation is the largest for which the nearest and
+  the farthest pixel stay inside the limits.  The eye separation setting
+  is gone.
+- "Enable 3D" is on by default and asks for stereo buffers in the 3D
+  view's own format only, so the rest of the window stays one picture.
+  A button opens the desktop's Display Settings.
+- A double click reads the depth of the view drawn from the camera
+  between the eyes, so it finds the point a single view finds.
+- What cannot be shown in 3D is said once in the console: no limits, the
+  limits not delivered after two seconds or not readable, the depth not
+  readable, or a view without stereo buffers on a desktop that offers
+  them.  A person who enables 3D where the desktop offers no stereo
+  buffers is told in a dialog.
+- QT_LOGGING_RULES="openscad.stereo.debug=true" prints each frame's fit.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ CMakeLists.txt               |   7 ++
+ src/core/Settings.cc         |   4 +-
+ src/core/Settings.h          |   1 -
+ src/glview/GLView.cc         |  19 +++-
+ src/glview/GLView.h          |   2 +
+ src/gui/Preferences.cc       |  31 ++----
+ src/gui/Preferences.h        |   3 +-
+ src/gui/Preferences.ui       |  25 ++---
+ src/gui/QGLView.cc           |   4 +-
+ src/gui/QGLView.h            |   1 +
+ src/gui/Stereo3dView.cc      | 204 ++++++++++++++++++++++++++++++++---
+ src/gui/Stereo3dView.h       |  55 +++++++---
+ src/gui/StereoDepthLimits.cc |  55 ++++++++++
+ src/gui/StereoDepthLimits.h  |  31 ++++++
+ src/openscad_gui.cc          |   2 -
+ 15 files changed, 366 insertions(+), 78 deletions(-)
+ create mode 100644 src/gui/StereoDepthLimits.cc
+ create mode 100644 src/gui/StereoDepthLimits.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 74d7d1d02..2556a621f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1382,6 +1382,7 @@ set(GUI_SOURCES
+   src/gui/ScintillaEditor.cc
+   src/gui/SettingsWriter.cc
+   src/gui/Stereo3dView.cc
++  src/gui/StereoDepthLimits.cc
+   src/gui/TabManager.cc
+   src/gui/UIUtils.cc
+   src/gui/WindowManager.cc
+@@ -1460,6 +1461,7 @@ set(GUI_HEADERS
+     src/gui/ScintillaEditor.h
+     src/gui/SettingsWriter.h
+     src/gui/Stereo3dView.h
++    src/gui/StereoDepthLimits.h
+     src/gui/TabManager.h
+     src/gui/UIUtils.h
+     src/gui/ViewportControl.h
+@@ -1692,6 +1694,11 @@ if (USE_QT6)
+       Qt6::Core Qt6::Core5Compat Qt6::Widgets Qt6::Multimedia Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent Qt6::Network Qt6::Svg
+       ${QT6QSCINTILLA_LIBRARY} ${Qt6DBus_LIBRARIES} ${Qt6Gamepad_LIBRARIES}
+     )
++    # The stereo 3D view: the window system's handles (Qt's native interface) and the person's
++    # depth limits (libstereo-declare)
++    find_package(Qt6 COMPONENTS GuiPrivate REQUIRED QUIET)
++    pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.11)
++    target_link_libraries(OpenSCADLibInternal PUBLIC Qt6::GuiPrivate PkgConfig::STEREO_DECLARE)
+   endif()
+   if(ENABLE_GUI_TESTS)
+     target_link_libraries(OpenSCADLibInternal PUBLIC Qt6::Test)
+diff --git a/src/core/Settings.cc b/src/core/Settings.cc
+index de421054f..579f719ab 100644
+--- a/src/core/Settings.cc
++++ b/src/core/Settings.cc
+@@ -172,9 +172,7 @@ std::istream& operator>>(std::istream& stream, LocalAppParameter& param)
+ 
+ SettingsEntryBool Settings::showWarningsIn3dView("3dview", "showWarningsIn3dView", true);
+ SettingsEntryBool Settings::mouseCentricZoom("3dview", "mouseCentricZoom", true);
+-SettingsEntryBool Settings::stereo3dView("3dview", "stereo3dView", false);
+-SettingsEntryDouble Settings::stereo3dEyeSeparation("3dview", "stereo3dEyeSeparation", 0.0, 0.5, 20.0,
+-                                                    3.0);
++SettingsEntryBool Settings::stereo3dView("3dview", "stereo3dView", true);
+ SettingsEntryInt Settings::indentationWidth("editor", "indentationWidth", 1, 16, 4);
+ SettingsEntryInt Settings::tabWidth("editor", "tabWidth", 1, 16, 4);
+ SettingsEntryEnum<std::string> Settings::lineWrap("editor", "lineWrap",
+diff --git a/src/core/Settings.h b/src/core/Settings.h
+index 9944540d4..dbbb2ebec 100644
+--- a/src/core/Settings.h
++++ b/src/core/Settings.h
+@@ -409,7 +409,6 @@ public:
+   static SettingsEntryBool showWarningsIn3dView;
+   static SettingsEntryBool mouseCentricZoom;
+   static SettingsEntryBool stereo3dView;
+-  static SettingsEntryDouble stereo3dEyeSeparation;
+   static SettingsEntryInt indentationWidth;
+   static SettingsEntryInt tabWidth;
+   static SettingsEntryEnum<std::string> lineWrap;
+diff --git a/src/glview/GLView.cc b/src/glview/GLView.cc
+index d185394da..dc80738f6 100644
+--- a/src/glview/GLView.cc
++++ b/src/glview/GLView.cc
+@@ -203,17 +203,25 @@ void GLView::setupCamera()
+   case Camera::ProjectionType::ORTHOGONAL: {
+     auto height = dist * tan_degrees(cam.fov / 2);
+     glOrtho(-height * aspectratio, height * aspectratio, -height, height, -100 * dist, +100 * dist);
++    if (stereoEyeOffset != 0.0) {
++      // Parallel views of one world: a shear about the point looked at, x' = x + s * (d - dist),
++      // d being the distance in front of the eye, so points at the distance of the point looked at
++      // stay where they are and the two eyes differ by 2 * s * (d - dist)
++      const GLdouble s = stereoEyeOffset / dist;
++      const GLdouble shear[16] = {1, 0, 0, 0, 0, 1, 0, 0, -s, 0, 1, 0, -s * dist, 0, 0, 1};
++      glMultMatrixd(shear);
++    }
+     break;
+   }
+   }
+   glMatrixMode(GL_MODELVIEW);
+   glLoadIdentity();
+   // Perspective: the eye moves sideways and keeps looking straight ahead.
+-  // Orthographic: the eye turns around the point looked at.
+-  const auto centerX = cam.projection == Camera::ProjectionType::PERSPECTIVE ? stereoEyeOffset : 0.0;
+-  local_gluLookAt(stereoEyeOffset, -dist, 0.0,  // eye
+-                  centerX, 0.0, 0.0,            // center
+-                  0.0, 0.0, 1.0);               // up
++  // Orthographic: the eye stays, its projection is sheared (above).
++  const auto eyeX = cam.projection == Camera::ProjectionType::PERSPECTIVE ? stereoEyeOffset : 0.0;
++  local_gluLookAt(eyeX, -dist, 0.0,  // eye
++                  eyeX, 0.0, 0.0,    // center
++                  0.0, 0.0, 1.0);    // up
+ 
+   glRotated(cam.object_rot.x(), 1.0, 0.0, 0.0);
+   glRotated(cam.object_rot.y(), 0.0, 1.0, 0.0);
+@@ -292,6 +300,7 @@ void GLView::paintGL()
+   for (const SelectedObject& obj : this->shown_obj) {
+     showObject(obj, eyedir);
+   }
++  sceneDrawn();
+   glDisable(GL_LIGHTING);
+   if (showaxes) GLView::showSmallaxes(axescolor);
+ 
+diff --git a/src/glview/GLView.h b/src/glview/GLView.h
+index e5bea6e86..829e6e1a7 100644
+--- a/src/glview/GLView.h
++++ b/src/glview/GLView.h
+@@ -45,6 +45,8 @@ public:
+   void initializeGL();
+   void resizeGL(int w, int h);
+   virtual void paintGL();
++  // Called by paintGL() once the scene is drawn, before the 2D items drawn over it
++  virtual void sceneDrawn() {}
+ 
+   void setCamera(const Camera& cam);
+   void setupCamera();
+diff --git a/src/gui/Preferences.cc b/src/gui/Preferences.cc
+index 08a69d54d..790cee662 100644
+--- a/src/gui/Preferences.cc
++++ b/src/gui/Preferences.cc
+@@ -46,6 +46,7 @@
+ #include <QMainWindow>
+ #include <QMenu>
+ #include <QMessageBox>
++#include <QProcess>
+ #include <QObject>
+ #include <QRegularExpression>
+ #include <QRegularExpressionValidator>
+@@ -792,27 +793,18 @@ void Preferences::on_checkBoxStereo3dView_toggled(bool val)
+ {
+   Settings::Settings::stereo3dView.setValue(val);
+   writeSettings();
++  // A desktop without stereo buffers keeps the view in 2D: the person who asks for 3D is told why
++  if (val && !Stereo3dView::isAvailable()) {
++    QMessageBox::information(this, QStringLiteral("OpenSCAD"), Stereo3dView::unavailableReason());
++  }
+ }
+ 
+-void Preferences::on_doubleSpinBoxStereo3dEyeSeparation_valueChanged(double val)
+-{
+-  Settings::Settings::stereo3dEyeSeparation.setValue(val);
+-  writeSettings();
+-  emit requestRedraw();
+-}
+-
+-// Grays out the stereo 3D options when the 3D view cannot draw in stereo. The stored setting stays
+-// as it is.
+-void Preferences::updateStereo3dOptions()
++void Preferences::on_pushButtonStereo3dDisplaySettings_clicked()
+ {
+-  if (Stereo3dView::isAvailable()) return;
+-  const QString reason = Stereo3dView::unavailableReason();
+-  this->checkBoxStereo3dView->setEnabled(false);
+-  this->labelStereo3dEyeSeparation->setEnabled(false);
+-  this->doubleSpinBoxStereo3dEyeSeparation->setEnabled(false);
+-  this->checkBoxStereo3dView->setToolTip(reason);
+-  this->labelStereo3dEyeSeparation->setToolTip(reason);
+-  this->doubleSpinBoxStereo3dEyeSeparation->setToolTip(reason);
++  // The depth limits, the 3D modes and every output format are the desktop's Display Settings
++  if (QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_kscreen")})) return;
++  if (QProcess::startDetached(QStringLiteral("kcmshell6"), {QStringLiteral("kcm_kscreen")})) return;
++  QMessageBox::warning(this, QStringLiteral("OpenSCAD"), _("Display Settings could not be opened."));
+ }
+ 
+ void Preferences::on_spinBoxIndentationWidth_valueChanged(int val)
+@@ -1885,7 +1877,6 @@ void Preferences::showEvent(QShowEvent *e)
+   if (!this->printPageSetupDone) {
+     setup3DPrintPage();
+   }
+-  updateStereo3dOptions();
+   QMainWindow::showEvent(e);
+   hidePasswords();
+ }
+@@ -2060,8 +2051,6 @@ void Preferences::updateGUI()
+   initUpdateCheckBox(this->checkBoxShowWarningsIn3dView, Settings::Settings::showWarningsIn3dView);
+   initUpdateCheckBox(this->checkBoxMouseCentricZoom, Settings::Settings::mouseCentricZoom);
+   initUpdateCheckBox(this->checkBoxStereo3dView, Settings::Settings::stereo3dView);
+-  initUpdateDoubleSpinBox(this->doubleSpinBoxStereo3dEyeSeparation,
+-                          Settings::Settings::stereo3dEyeSeparation);
+   initUpdateCheckBox(this->checkBoxEnableLineNumbers, Settings::Settings::enableLineNumbers);
+ 
+   /* Next Line disables the Indent Spin-Box,for 'Same' and 'Indented' LineWrapStyle selection from
+diff --git a/src/gui/Preferences.h b/src/gui/Preferences.h
+index 7d733693f..a792a19ad 100644
+--- a/src/gui/Preferences.h
++++ b/src/gui/Preferences.h
+@@ -81,7 +81,7 @@ public slots:
+   void on_checkBoxShowWarningsIn3dView_toggled(bool);
+   void on_checkBoxMouseCentricZoom_toggled(bool);
+   void on_checkBoxStereo3dView_toggled(bool);
+-  void on_doubleSpinBoxStereo3dEyeSeparation_valueChanged(double);
++  void on_pushButtonStereo3dDisplaySettings_clicked();
+   void on_timeThresholdOnRenderCompleteSoundEdit_textChanged(const QString&);
+   void on_enableClearConsoleCheckBox_toggled(bool);
+   void on_consoleMaxLinesEdit_textChanged(const QString&);
+@@ -220,7 +220,6 @@ private:
+   void removeDefaultSettings();
+   void setupFeaturesPage();
+   void setup3DPrintPage();
+-  void updateStereo3dOptions();
+   void writeSettings();
+   void hidePasswords();
+   void addPrefPage(QActionGroup *group, QAction *action, QWidget *widget);
+diff --git a/src/gui/Preferences.ui b/src/gui/Preferences.ui
+index 2edb87876..95e351b66 100644
+--- a/src/gui/Preferences.ui
++++ b/src/gui/Preferences.ui
+@@ -109,35 +109,26 @@
+         </item>
+         <item>
+          <widget class="QCheckBox" name="checkBoxStereo3dView">
+-          <property name="toolTip">
+-           <string>Draws the 3D view once for each eye, for a stereo capable display. Takes effect after a restart.</string>
+-          </property>
+           <property name="text">
+-           <string>stereo 3D view (after restart)</string>
++           <string>Enable 3D (applies to new windows)</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+-         <layout class="QHBoxLayout" name="horizontalLayoutStereo3dEyeSeparation">
++         <layout class="QHBoxLayout" name="horizontalLayoutStereo3dDisplaySettings">
+           <item>
+-           <widget class="QLabel" name="labelStereo3dEyeSeparation">
++           <widget class="QPushButton" name="pushButtonStereo3dDisplaySettings">
+             <property name="text">
+-             <string>eye separation</string>
++             <string>3D display settings...</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+-           <widget class="QDoubleSpinBox" name="doubleSpinBoxStereo3dEyeSeparation">
+-            <property name="toolTip">
+-             <string>Distance between the eyes, as a percentage of the distance to the point looked at</string>
+-            </property>
+-            <property name="suffix">
+-             <string> %</string>
+-            </property>
+-            <property name="decimals">
+-             <number>1</number>
++           <spacer name="horizontalSpacerStereo3dDisplaySettings">
++            <property name="orientation">
++             <enum>Qt::Horizontal</enum>
+             </property>
+-           </widget>
++           </spacer>
+           </item>
+          </layout>
+         </item>
+diff --git a/src/gui/QGLView.cc b/src/gui/QGLView.cc
+index a67b46adc..33dc2c005 100644
+--- a/src/gui/QGLView.cc
++++ b/src/gui/QGLView.cc
+@@ -85,7 +85,9 @@ QSurfaceFormat QGLView::compatibleWidgetFormat()
+ 
+ QGLView::QGLView(QWidget *parent) : QOpenGLWidget(parent)
+ {
+-  setFormat(compatibleWidgetFormat());
++  auto format = compatibleWidgetFormat();
++  Stereo3dView::requestStereoBuffers(format);
++  setFormat(format);
+   init();
+ }
+ 
+diff --git a/src/gui/QGLView.h b/src/gui/QGLView.h
+index b3b229f8a..dcb1c40c2 100644
+--- a/src/gui/QGLView.h
++++ b/src/gui/QGLView.h
+@@ -114,6 +114,7 @@ private:
+   void resizeGL(int w, int h) override;
+ 
+   void paintGL() override;
++  void sceneDrawn() override { stereo3d.sceneDrawn(); }
+   void normalizeAngle(GLdouble& angle);
+ 
+ #ifdef ENABLE_OPENCSG
+diff --git a/src/gui/Stereo3dView.cc b/src/gui/Stereo3dView.cc
+index f5c4ee3ab..b2158edf8 100644
+--- a/src/gui/Stereo3dView.cc
++++ b/src/gui/Stereo3dView.cc
+@@ -10,29 +10,48 @@
+ // QGLView.h first: the OpenGL loader must come before the Qt OpenGL headers
+ #include "gui/QGLView.h"
+ #include "core/Settings.h"
++#include "utils/printutils.h"
+ 
++#include <QGuiApplication>
++#include <QLoggingCategory>
+ #include <QOpenGLWidget>
+-#include <QSettings>
+ #include <QSurfaceFormat>
++#include <QWindow>
++#include <qpa/qplatformnativeinterface.h>
++#include <algorithm>
++#include <cmath>
++#include <limits>
+ #include <optional>
++#include <vector>
++
++// The fit of each stereo frame, for a check against a prediction: QT_LOGGING_RULES="openscad.stereo.debug=true"
++Q_LOGGING_CATEGORY(lcStereo, "openscad.stereo", QtWarningMsg)
+ 
+ namespace {
+ 
+ // Whether the 3D view gets stereo buffers, once it is known
+ std::optional<bool> stereoBuffers;
+ 
++// Four times a second the limits are read again: a change in the desktop's 3D settings reaches an
++// open view within a quarter of a second, without reopening it
++constexpr int limitsPollMs = 250;
++// The limits may come a moment after the first frame; the person is told after two seconds
++constexpr int pollsBeforeTelling = 8;
++
+ }  // namespace
+ 
+ Stereo3dView::Stereo3dView(QGLView& view) : view(view), stereo(Settings::Settings::stereo3dView.value())
+ {
++  limitsTimer.setInterval(limitsPollMs);
++  QObject::connect(&limitsTimer, &QTimer::timeout, &view, [this]() { pollLimits(); });
+ }
+ 
+ void Stereo3dView::requestStereoBuffers(QSurfaceFormat& format)
+ {
+-  // QOpenGLWidget draws for each eye only if the default format asks for stereo buffers, and that
+-  // must be known before the window is created, so the preference is read from the settings here.
+-  const QSettings settings("OpenSCAD", "OpenSCAD");
+-  if (settings.value(QString::fromStdString(Settings::Settings::stereo3dView.key()), false).toBool()) {
++  // QOpenGLWidget draws for each eye only if its own format asks for stereo buffers, and that must
++  // be known before its window is created. Only the 3D view asks: the rest of the window stays one
++  // picture, the same in both eyes.
++  if (Settings::Settings::stereo3dView.value()) {
+     format.setOption(QSurfaceFormat::StereoBuffers);
+   }
+ }
+@@ -52,13 +71,22 @@ bool Stereo3dView::isAvailable()
+ 
+ QString Stereo3dView::unavailableReason()
+ {
+-  return _("OpenGL on this system has no stereo buffers, which the stereo 3D view needs.");
++  return _("This desktop offers no stereo buffers, so the 3D view stays 2D.");
+ }
+ 
+ void Stereo3dView::initialize()
+ {
++  if (!stereo) return;
+   // A view that asked for stereo buffers knows from its own format whether it got them
+-  if (stereo) stereoBuffers = view.format().stereo();
++  const bool granted = view.format().stereo();
++  if (!granted && isAvailable()) {
++    tellOnce(_("3D: this view got no stereo buffers, so it is shown in 2D"));
++  }
++  if (!stereoBuffers) stereoBuffers = granted;
++  if (granted) {
++    pollLimits();
++    limitsTimer.start();
++  }
+ }
+ 
+ bool Stereo3dView::drawsEyes() const
+@@ -66,29 +94,172 @@ bool Stereo3dView::drawsEyes() const
+   return stereo && view.format().stereo();
+ }
+ 
++void Stereo3dView::tellOnce(const std::string& sentence)
++{
++  if (told.insert(sentence).second) LOG(message_group::UI_Warning, "%1$s", sentence);
++}
++
++void Stereo3dView::pollLimits()
++{
++  if (!drawsEyes()) return;
++  const double width = std::round(view.width() * view.devicePixelRatioF());
++  if (width <= 0) return;
++  StereoDepthLimits::Result r;
++  auto *native = QGuiApplication::platformNativeInterface();
++  const QString platform = QGuiApplication::platformName();
++  if (platform.startsWith(QLatin1String("wayland"))) {
++    QWindow *top = view.window() ? view.window()->windowHandle() : nullptr;
++    void *display = native ? native->nativeResourceForIntegration("wl_display") : nullptr;
++    void *surface = native && top ? native->nativeResourceForWindow("surface", top) : nullptr;
++    // A stereo desktop gives the limits for the top-level window's surface, not for the view's
++    // own subsurface
++    r = StereoDepthLimits::wayland(display, surface, width, width);
++  } else if (platform == QLatin1String("xcb")) {
++    void *display = native ? native->nativeResourceForIntegration("display") : nullptr;
++    // The view's own window is the declared stereo child window that carries the limits
++    r = StereoDepthLimits::x11(display, view.winId(), width, width);
++  } else {
++    r.status = StereoDepthLimits::State::Unreadable;
++  }
++
++  const bool changed = r.status != limits.status || r.sunk != limits.sunk || r.popped != limits.popped;
++  limits = r;
++  if (changed) {
++    qCDebug(lcStereo).nospace() << "limits platform=" << platform << " status=" << static_cast<int>(r.status)
++                                << " sunk=" << r.sunk << " popped=" << r.popped << " width=" << width;
++  }
++  if (r.status == StereoDepthLimits::State::Ok) {
++    pollsWithoutLimits = 0;
++  } else if (++pollsWithoutLimits == pollsBeforeTelling) {
++    switch (r.status) {
++    case StereoDepthLimits::State::NotOffered:
++      tellOnce(_("3D depth: this desktop offers no depth limits, so both eyes show the same picture"));
++      break;
++    case StereoDepthLimits::State::NotDelivered:
++      tellOnce(
++        _("3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now"));
++      break;
++    default:
++      tellOnce(_("3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture"));
++      break;
++    }
++  }
++  if (changed) view.update();
++}
++
+ void Stereo3dView::beginEye()
+ {
+   // One eye per call: the left buffer first, then the right one
+   if (!drawsEyes()) return;
+-  const auto halfSeparation =
+-    Settings::Settings::stereo3dEyeSeparation.value() / 100.0 * view.cam.zoomValue() / 2.0;
+-  view.stereoEyeOffset =
+-    view.currentTargetBuffer() == QOpenGLWidget::RightBuffer ? halfSeparation : -halfSeparation;
++  if (view.currentTargetBuffer() == QOpenGLWidget::LeftBuffer) {
++    // The measuring pass: the whole view from the camera between the eyes, into the left buffer,
++    // which the left eye then draws over
++    view.stereoEyeOffset = 0.0;
++    measuring = true;
++    depthRead = false;
++    view.GLView::paintGL();
++    measuring = false;
++    halfOffset = depthRead ? fittedHalfOffset() : 0.0;
++    if (depthUnreadable) {
++      tellOnce(_("3D depth: the depth of this view could not be read, so both eyes show the same picture"));
++    }
++  }
++  view.stereoEyeOffset = view.currentTargetBuffer() == QOpenGLWidget::RightBuffer ? halfOffset : -halfOffset;
+ }
+ 
+ void Stereo3dView::endEye()
+ {
+   if (!drawsEyes()) return;
+-  depthEyeOffset = view.stereoEyeOffset;
+   view.stereoEyeOffset = 0.0;
+   view.setupCamera();
+ }
+ 
++void Stereo3dView::sceneDrawn()
++{
++  if (!measuring) return;
++  // The scene is drawn and nothing of the 2D items over it yet: its depth buffer holds the nearest
++  // pixel of the scene everywhere
++  GLint viewport[4];
++  glGetIntegerv(GL_VIEWPORT, viewport);
++  const int w = viewport[2];
++  const int h = viewport[3];
++  if (w <= 0 || h <= 0) return;
++  std::vector<GLfloat> depth(static_cast<size_t>(w) * h);
++  while (glGetError() != GL_NO_ERROR) {
++  }
++  glPixelStorei(GL_PACK_ALIGNMENT, 1);
++  glReadPixels(viewport[0], viewport[1], w, h, GL_DEPTH_COMPONENT, GL_FLOAT, depth.data());
++  if (glGetError() != GL_NO_ERROR) {
++    depthUnreadable = true;
++    return;
++  }
++  GLfloat dmin = 1.0f;
++  GLfloat dmax = 0.0f;
++  for (const GLfloat d : depth) {
++    if (d >= 1.0f) continue;  // the cleared depth: background, no scene there
++    dmin = std::min(dmin, d);
++    dmax = std::max(dmax, d);
++  }
++  depthUnreadable = false;
++  depthRead = true;
++  bufferWidth = w;
++  sceneSeen = dmin <= dmax;
++  std::copy(std::begin(view.projection), std::end(view.projection), projection.begin());
++  if (!sceneSeen) return;
++  // Window depth to the distance in front of the camera, with the projection of this pass
++  const double a = projection[10];
++  const double b = projection[14];
++  const bool perspective = view.cam.projection == Camera::ProjectionType::PERSPECTIVE;
++  auto distance = [&](double d) {
++    const double z = 2.0 * d - 1.0;
++    return perspective ? b / (z + a) : (b - z) / a;
++  };
++  nearest = distance(dmin);
++  farthest = distance(dmax);
++}
++
++double Stereo3dView::fittedHalfOffset() const
++{
++  if (limits.status != StereoDepthLimits::State::Ok) return 0.0;
++  // k: pixels per unit of the image plane, half the buffer's width times the projection's x scale;
++  // c: the distance of the point looked at, where both eyes meet.  With the separation t as a
++  // fraction of c, a point at distance d is shifted between the eyes by k t (1 - c/d) in
++  // perspective and by k t (d - c) in orthographic: the separation is the largest that keeps the
++  // nearest pixel inside the popped limit and the farthest inside the sunk limit.
++  const double k = bufferWidth / 2.0 * projection[0];
++  const double c = view.cam.zoomValue();
++  if (k <= 0 || c <= 0) return 0.0;
++  const bool perspective = view.cam.projection == Camera::ProjectionType::PERSPECTIVE;
++  constexpr double none = std::numeric_limits<double>::infinity();
++  double t = none;
++  if (sceneSeen) {
++    const double front = perspective ? c / nearest - 1.0 : c - nearest;
++    const double behind = perspective ? 1.0 - c / farthest : farthest - c;
++    if (front > 0) t = std::min(t, limits.popped / (k * front));
++    if (behind > 0) t = std::min(t, limits.sunk / (k * behind));
++  }
++  if (t == none) {
++    // Nothing off the plane of the point looked at: in perspective, infinity stands at the sunk
++    // limit; an orthographic view has no depth to show
++    t = perspective ? limits.sunk / k : 0.0;
++  }
++  if (lcStereo().isDebugEnabled()) {
++    const double nearPx = sceneSeen ? (perspective ? k * t * (1.0 - c / nearest) : k * t * (nearest - c)) : 0.0;
++    const double farPx = sceneSeen ? (perspective ? k * t * (1.0 - c / farthest) : k * t * (farthest - c)) : 0.0;
++    qCDebug(lcStereo).nospace() << "fit projection=" << (perspective ? "perspective" : "orthographic")
++                                << " limits sunk=" << limits.sunk << " popped=" << limits.popped
++                                << " width=" << bufferWidth << " k=" << k << " c=" << c << " nearest=" << nearest
++                                << " farthest=" << farthest << " separation=" << t << " offset=" << t * c
++                                << " disparity nearest=" << nearPx << " farthest=" << farPx;
++  }
++  return t * c / 2.0;
++}
++
+ void Stereo3dView::beginDepthRead()
+ {
+-  // The depth buffer holds the eye drawn last
+   if (!drawsEyes()) return;
+-  view.stereoEyeOffset = depthEyeOffset;
++  view.stereoEyeOffset = 0.0;
++  view.GLView::paintGL();
+ }
+ 
+ void Stereo3dView::endDepthRead()
+@@ -96,6 +267,7 @@ void Stereo3dView::endDepthRead()
+   if (!drawsEyes()) return;
+   view.stereoEyeOffset = 0.0;
+   view.setupCamera();
++  view.update();
+ }
+ 
+ #else  // Qt before 6.5: the stereo 3D view is not available
+@@ -130,6 +302,10 @@ void Stereo3dView::endEye()
+ {
+ }
+ 
++void Stereo3dView::sceneDrawn()
++{
++}
++
+ void Stereo3dView::beginDepthRead()
+ {
+ }
+diff --git a/src/gui/Stereo3dView.h b/src/gui/Stereo3dView.h
+index 2a7ae1160..dc75f2cea 100644
+--- a/src/gui/Stereo3dView.h
++++ b/src/gui/Stereo3dView.h
+@@ -1,15 +1,28 @@
+ #pragma once
+ 
+ #include <QString>
++#include <QTimer>
+ #include <QtGlobal>
++#include <array>
++#include <set>
++#include <string>
++
++#include "gui/StereoDepthLimits.h"
+ 
+ class QGLView;
+ class QSurfaceFormat;
+ 
+ /*
+- * The stereo 3D view. With the "stereo 3D view" preference on and an OpenGL context with stereo
+- * buffers, QOpenGLWidget calls QGLView::paintGL() once for the left buffer and once for the right
+- * buffer, and this class sets the camera of each eye through GLView::stereoEyeOffset.
++ * The stereo 3D view. With "Enable 3D" on and an OpenGL context with stereo buffers, QOpenGLWidget
++ * calls QGLView::paintGL() once for the left buffer and once for the right buffer, and this class
++ * sets the camera of each eye through GLView::stereoEyeOffset: two parallel cameras, an off-axis
++ * frustum in perspective and a shear in orthographic, meeting at the point looked at.
++ *
++ * The separation is not a setting.  The person sets the depth limits once, in the desktop's 3D
++ * settings; the view reads them through libstereo-declare and, before the left eye, draws the scene
++ * once from the camera between the eyes and reads its depth.  The separation is then the largest
++ * for which every pixel of the view stays inside the limits.  Without limits both eyes are the same
++ * picture, and the console says why, once.
+  *
+  * It needs QOpenGLWidget::currentTargetBuffer(), which came with Qt 6.5. With older Qt this class
+  * is a stub: it never asks for stereo buffers and never moves the eye, so the eye offset stays 0
+@@ -21,30 +34,48 @@ class Stereo3dView
+ public:
+   explicit Stereo3dView(QGLView& view);
+ 
+-  // Asks for stereo buffers in the default surface format when the preference is on
++  // Asks for stereo buffers in the 3D view's own format when "Enable 3D" is on
+   static void requestStereoBuffers(QSurfaceFormat& format);
+-  // Whether the 3D view can be drawn in stereo on this system, found out once per session
++  // Whether this desktop gives OpenGL contexts stereo buffers, found out once per session
+   static bool isAvailable();
+-  // Why the stereo 3D view is not available, for the tooltip of its preferences
++  // What the person is told when they enable 3D where it is not available
+   static QString unavailableReason();
+ 
+   // From QGLView::initializeGL()
+   void initialize();
+-  // Around GLView::paintGL(): sets the offset of the eye drawn now, then sets up the camera between
++  // Around GLView::paintGL(): before the left eye, the scene is drawn and measured from the camera
++  // between the eyes; then the offset of the eye drawn now is set, and after it the camera between
+   // the eyes again, which picking uses
+   void beginEye();
+   void endEye();
+-  // Around reading the depth buffer: sets the offset of the eye drawn last, whose depth the buffer
+-  // holds, then sets up the camera between the eyes again
++  // From QGLView::sceneDrawn(): the depth of the scene, in the measuring pass only
++  void sceneDrawn();
++  // Around reading the depth buffer for a double click: the view drawn from the camera between the
++  // eyes, so the point found is the one a single view finds
+   void beginDepthRead();
+   void endDepthRead();
+ 
+ private:
+ #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+-  bool drawsEyes() const;
++  [[nodiscard]] bool drawsEyes() const;
++  void pollLimits();
++  void tellOnce(const std::string& sentence);
++  [[nodiscard]] double fittedHalfOffset() const;
+ 
+   QGLView& view;
+-  bool stereo;                  // the preference, as it was when the view was created
+-  double depthEyeOffset = 0.0;  // eye offset of the view the depth buffer holds
++  bool stereo;            // "Enable 3D", as it was when the view was created
++  bool measuring = false;
++  bool depthRead = false;     // the measuring pass read the depth of the scene
++  bool depthUnreadable = false;
++  double nearest = 0.0;   // distances from the camera between the eyes, along its axis
++  double farthest = 0.0;
++  bool sceneSeen = false;  // at least one pixel of the scene in the view
++  std::array<double, 16> projection{};
++  int bufferWidth = 0;
++  double halfOffset = 0.0;  // half the distance between the two cameras
++  StereoDepthLimits::Result limits;
++  int pollsWithoutLimits = 0;
++  QTimer limitsTimer;
++  std::set<std::string> told;
+ #endif
+ };
+diff --git a/src/gui/StereoDepthLimits.cc b/src/gui/StereoDepthLimits.cc
+new file mode 100644
+index 000000000..cfb678934
+--- /dev/null
++++ b/src/gui/StereoDepthLimits.cc
+@@ -0,0 +1,55 @@
++#include "gui/StereoDepthLimits.h"
++
++#include <cerrno>
++
++#include <stereo-declare.h>
++
++namespace StereoDepthLimits {
++
++namespace {
++
++Result result(int r, const stereo_depth_limits& limits)
++{
++  Result res;
++  if (r == 0) {
++    res.status = State::Ok;
++    res.sunk = limits.sunk;
++    res.popped = limits.popped;
++  } else if (r == -ENOTSUP) {
++    res.status = State::NotOffered;
++  } else if (r == -ENODATA) {
++    res.status = State::NotDelivered;
++  } else {
++    res.status = State::Unreadable;
++  }
++  return res;
++}
++
++}  // namespace
++
++Result wayland(void *display, void *surface, double bufferWidth, double shownWidth)
++{
++  static void *initialized = nullptr;
++  if (!display || !surface) return {};
++  if (initialized != display) {
++    // The objects the library makes go on the program's default queue, which Qt dispatches; the
++    // first answer can be "not offered" until the compositor's globals have been dispatched.
++    if (stereo_declare_wayland_init(static_cast<wl_display *>(display), nullptr) != 0) return {};
++    initialized = display;
++  }
++  stereo_depth_limits limits{};
++  const int r = stereo_depth_wayland_get_buffer_limits(static_cast<wl_surface *>(surface), bufferWidth,
++                                                       shownWidth, &limits);
++  return result(r, limits);
++}
++
++Result x11(void *display, unsigned long window, double bufferWidth, double shownWidth)
++{
++  if (!display || !window) return {};
++  stereo_depth_limits limits{};
++  const int r = stereo_depth_x11_get_buffer_limits(static_cast<Display *>(display), static_cast<Window>(window),
++                                                   bufferWidth, shownWidth, &limits);
++  return result(r, limits);
++}
++
++}  // namespace StereoDepthLimits
+diff --git a/src/gui/StereoDepthLimits.h b/src/gui/StereoDepthLimits.h
+new file mode 100644
+index 000000000..daf95904e
+--- /dev/null
++++ b/src/gui/StereoDepthLimits.h
+@@ -0,0 +1,31 @@
++#pragma once
++
++/*
++ * The person's depth limits for the stereo 3D view, read through libstereo-declare.
++ *
++ * A stereo desktop (Sparky Stereo OS's KWin) sets the limits in one place, its 3D depth settings,
++ * and hands them to every window: on Wayland for the top-level window's surface, on X11 as a
++ * property of the declared stereo child window.  The library converts them to the pixels of the
++ * view's buffer.  This file keeps the library's X11 header out of the Qt sources.
++ */
++namespace StereoDepthLimits {
++
++enum class State {
++  Ok,
++  NotOffered,    // this desktop sends no depth limits
++  NotDelivered,  // offered, not received yet
++  Unreadable,    // any other answer of the library
++};
++
++struct Result {
++  State status = State::NotOffered;
++  double sunk = 0.0;    // farthest disparity allowed behind the screen, in buffer pixels
++  double popped = 0.0;  // nearest disparity allowed in front of the screen, in buffer pixels
++};
++
++// display: the program's wl_display; surface: the top-level window's wl_surface
++Result wayland(void *display, void *surface, double bufferWidth, double shownWidth);
++// display: the program's X11 Display; window: the view's declared stereo window
++Result x11(void *display, unsigned long window, double bufferWidth, double shownWidth);
++
++}  // namespace StereoDepthLimits
+diff --git a/src/openscad_gui.cc b/src/openscad_gui.cc
+index bae7f00c7..fe5f8eb30 100644
+--- a/src/openscad_gui.cc
++++ b/src/openscad_gui.cc
+@@ -76,7 +76,6 @@
+ #include "gui/OpenSCADApp.h"
+ #include "gui/Preferences.h"
+ #include "gui/QSettingsCached.h"
+-#include "gui/Stereo3dView.h"
+ #include "openscad.h"
+ #include "platform/CocoaUtils.h"
+ #include "utils/printutils.h"
+@@ -137,7 +136,6 @@ void configureOpenGLContext()
+   format.setProfile(QSurfaceFormat::CompatibilityProfile);
+   if (format.depthBufferSize() < 24) format.setDepthBufferSize(24);
+   if (format.stencilBufferSize() < 8) format.setStencilBufferSize(8);
+-  Stereo3dView::requestStereoBuffers(format);
+   QSurfaceFormat::setDefaultFormat(format);
+ #endif
+ }

@@ -1,0 +1,51 @@
+#!/usr/bin/make -f
+# OpenSCAD 2026.11 with CMake (upstream dropped qmake); Debian's 2021.01-14 rules are the base where they
+# still fit: hardening, the removed bundled fonts and examples licence copy, the GLES-free Depends.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=cmake+ninja
+
+# Debian's libraries where Debian has them (Clipper2, OpenCSG, mimalloc found by its CMake package);
+# Manifold has no Debian package and is built from its submodule (v3.5.4, carried in the source).
+# The test suite is not built: the openscad-testing packages of Debian's 2021 source are not made.
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DENABLE_TESTS=OFF \
+		-DUSE_BUILTIN_CLIPPER2=OFF \
+		-DUSE_BUILTIN_OPENCSG=OFF \
+		-DUSE_BUILTIN_MANIFOLD=ON \
+		-DUSE_MIMALLOC=ON \
+		-DUSE_CCACHE=OFF \
+		-DEXPERIMENTAL=OFF \
+		-DENABLE_PYTHON=OFF \
+		-DENABLE_GAMEPAD=OFF \
+		-DOFFLINE_DOCS=OFF
+
+# The catalogues are compiled into the source tree, where CMake's install rule takes them
+# (upstream does this with scripts/translation-update.sh before a release build).
+execute_before_dh_auto_install:
+	for lang in $$(grep -v '^#' locale/LINGUAS); do \
+		mkdir -p locale/$$lang/LC_MESSAGES && \
+		msgfmt -c -o locale/$$lang/LC_MESSAGES/openscad.mo locale/$$lang.po || exit 1; \
+	done
+
+execute_after_dh_auto_install:
+	# the bundled Liberation fonts: Debian's packages are used through fontconfig
+	rm -rf debian/openscad/usr/share/openscad/fonts
+	# available in debian/copyright instead
+	rm -f debian/openscad/usr/share/openscad/examples/COPYING-CC0.txt
+	# the MCAD library is the openscad-mcad package
+	rm -rf debian/openscad/usr/share/openscad/libraries
+
+override_dh_shlibdeps:
+	dh_shlibdeps
+	# OpenSCAD is not compatible with GLES (Debian bug 982358)
+	sed -i 's/ | libqt6gui6-gles (>= [.0-9]*)//' debian/openscad.substvars
+
+# The view reads the window system's handles through Qt's private QPlatformNativeInterface, so the package needs the
+# Qt it was built with (libqt6core6t64 provides qt6-base-private-abi with Qt's upstream version)
+QT6_ABI := $(shell dpkg-query -W -f='$${Version}' qt6-base-dev | sed -e 's/[+~-].*//')
+override_dh_gencontrol:
+	dh_gencontrol -- "-Vqt6:private-abi=qt6-base-private-abi (= $(QT6_ABI))"

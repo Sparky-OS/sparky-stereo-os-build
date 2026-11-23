@@ -1,0 +1,401 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 06:20:45 -0300
+Subject: [PATCH 2/4] Draw the 3D view for each eye with a stereo preference
+
+With "stereo 3D view" in the 3D view preferences, the default surface
+format asks for stereo buffers, and the view is drawn once into the left
+buffer and once into the right buffer from the same scene data. The eye
+separation is a percentage of the distance to the point looked at and
+changes at once. Picking uses the camera between the eyes. Centering on
+a double click reads the depth of the eye that was drawn last, so it
+unprojects with that eye's camera. Without stereo buffers the view stays
+the single normal view.
+
+All of it is in the new class Stereo3dView. It asks for the stereo
+buffers in configureOpenGLContext(), where the preference is read from
+the settings file because the format must be known before the window is
+created. Around GLView::paintGL() it sets GLView::stereoEyeOffset from
+currentTargetBuffer(), which needs Qt 6.5, and the eye separation is
+read from the settings only there; the preferences ask for a redraw when
+it changes. With older Qt the class is a stub that never asks for
+stereo buffers and never moves the eye, so the offset stays 0. The Qt
+version is checked only in Stereo3dView.h and Stereo3dView.cc.
+
+Assisted-by: glm-5.3:cloud (Ollama) via Codex
+Assisted-by: Claude Sonnet via Claude Code
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit fca8b176ab9882cc331de32a5da113432fc48cc2)
+---
+ CMakeLists.txt          |  2 +
+ src/core/Settings.cc    |  3 ++
+ src/core/Settings.h     |  2 +
+ src/gui/Preferences.cc  | 16 +++++++
+ src/gui/Preferences.h   |  2 +
+ src/gui/Preferences.ui  | 34 +++++++++++++++
+ src/gui/QGLView.cc      |  4 ++
+ src/gui/QGLView.h       |  2 +
+ src/gui/Stereo3dView.cc | 93 +++++++++++++++++++++++++++++++++++++++++
+ src/gui/Stereo3dView.h  | 43 +++++++++++++++++++
+ src/openscad_gui.cc     |  2 +
+ 11 files changed, 203 insertions(+)
+ create mode 100644 src/gui/Stereo3dView.cc
+ create mode 100644 src/gui/Stereo3dView.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 17b5044c0..74d7d1d02 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1381,6 +1381,7 @@ set(GUI_SOURCES
+   src/gui/ScadLexer.cc
+   src/gui/ScintillaEditor.cc
+   src/gui/SettingsWriter.cc
++  src/gui/Stereo3dView.cc
+   src/gui/TabManager.cc
+   src/gui/UIUtils.cc
+   src/gui/WindowManager.cc
+@@ -1458,6 +1459,7 @@ set(GUI_HEADERS
+     src/gui/ScadLexer.h
+     src/gui/ScintillaEditor.h
+     src/gui/SettingsWriter.h
++    src/gui/Stereo3dView.h
+     src/gui/TabManager.h
+     src/gui/UIUtils.h
+     src/gui/ViewportControl.h
+diff --git a/src/core/Settings.cc b/src/core/Settings.cc
+index 8b8cd86a3..de421054f 100644
+--- a/src/core/Settings.cc
++++ b/src/core/Settings.cc
+@@ -172,6 +172,9 @@ std::istream& operator>>(std::istream& stream, LocalAppParameter& param)
+ 
+ SettingsEntryBool Settings::showWarningsIn3dView("3dview", "showWarningsIn3dView", true);
+ SettingsEntryBool Settings::mouseCentricZoom("3dview", "mouseCentricZoom", true);
++SettingsEntryBool Settings::stereo3dView("3dview", "stereo3dView", false);
++SettingsEntryDouble Settings::stereo3dEyeSeparation("3dview", "stereo3dEyeSeparation", 0.0, 0.5, 20.0,
++                                                    3.0);
+ SettingsEntryInt Settings::indentationWidth("editor", "indentationWidth", 1, 16, 4);
+ SettingsEntryInt Settings::tabWidth("editor", "tabWidth", 1, 16, 4);
+ SettingsEntryEnum<std::string> Settings::lineWrap("editor", "lineWrap",
+diff --git a/src/core/Settings.h b/src/core/Settings.h
+index 3597ffbf8..9944540d4 100644
+--- a/src/core/Settings.h
++++ b/src/core/Settings.h
+@@ -408,6 +408,8 @@ class Settings
+ public:
+   static SettingsEntryBool showWarningsIn3dView;
+   static SettingsEntryBool mouseCentricZoom;
++  static SettingsEntryBool stereo3dView;
++  static SettingsEntryDouble stereo3dEyeSeparation;
+   static SettingsEntryInt indentationWidth;
+   static SettingsEntryInt tabWidth;
+   static SettingsEntryEnum<std::string> lineWrap;
+diff --git a/src/gui/Preferences.cc b/src/gui/Preferences.cc
+index da1c5afb1..511dc00ec 100644
+--- a/src/gui/Preferences.cc
++++ b/src/gui/Preferences.cc
+@@ -787,6 +787,19 @@ void Preferences::on_checkBoxMouseCentricZoom_toggled(bool val)
+   emit updateMouseCentricZoom(val);
+ }
+ 
++void Preferences::on_checkBoxStereo3dView_toggled(bool val)
++{
++  Settings::Settings::stereo3dView.setValue(val);
++  writeSettings();
++}
++
++void Preferences::on_doubleSpinBoxStereo3dEyeSeparation_valueChanged(double val)
++{
++  Settings::Settings::stereo3dEyeSeparation.setValue(val);
++  writeSettings();
++  emit requestRedraw();
++}
++
+ void Preferences::on_spinBoxIndentationWidth_valueChanged(int val)
+ {
+   Settings::Settings::indentationWidth.setValue(val);
+@@ -2030,6 +2043,9 @@ void Preferences::updateGUI()
+   initUpdateCheckBox(this->checkBoxEnableNumberScrollWheel, Settings::Settings::enableNumberScrollWheel);
+   initUpdateCheckBox(this->checkBoxShowWarningsIn3dView, Settings::Settings::showWarningsIn3dView);
+   initUpdateCheckBox(this->checkBoxMouseCentricZoom, Settings::Settings::mouseCentricZoom);
++  initUpdateCheckBox(this->checkBoxStereo3dView, Settings::Settings::stereo3dView);
++  initUpdateDoubleSpinBox(this->doubleSpinBoxStereo3dEyeSeparation,
++                          Settings::Settings::stereo3dEyeSeparation);
+   initUpdateCheckBox(this->checkBoxEnableLineNumbers, Settings::Settings::enableLineNumbers);
+ 
+   /* Next Line disables the Indent Spin-Box,for 'Same' and 'Indented' LineWrapStyle selection from
+diff --git a/src/gui/Preferences.h b/src/gui/Preferences.h
+index c6487e117..38ca68caf 100644
+--- a/src/gui/Preferences.h
++++ b/src/gui/Preferences.h
+@@ -80,6 +80,8 @@ public slots:
+   void on_enableHidapiTraceCheckBox_toggled(bool);
+   void on_checkBoxShowWarningsIn3dView_toggled(bool);
+   void on_checkBoxMouseCentricZoom_toggled(bool);
++  void on_checkBoxStereo3dView_toggled(bool);
++  void on_doubleSpinBoxStereo3dEyeSeparation_valueChanged(double);
+   void on_timeThresholdOnRenderCompleteSoundEdit_textChanged(const QString&);
+   void on_enableClearConsoleCheckBox_toggled(bool);
+   void on_consoleMaxLinesEdit_textChanged(const QString&);
+diff --git a/src/gui/Preferences.ui b/src/gui/Preferences.ui
+index 66a6fa819..2edb87876 100644
+--- a/src/gui/Preferences.ui
++++ b/src/gui/Preferences.ui
+@@ -107,6 +107,40 @@
+           </property>
+          </widget>
+         </item>
++        <item>
++         <widget class="QCheckBox" name="checkBoxStereo3dView">
++          <property name="toolTip">
++           <string>Draws the 3D view once for each eye, for a stereo capable display. Takes effect after a restart.</string>
++          </property>
++          <property name="text">
++           <string>stereo 3D view (after restart)</string>
++          </property>
++         </widget>
++        </item>
++        <item>
++         <layout class="QHBoxLayout" name="horizontalLayoutStereo3dEyeSeparation">
++          <item>
++           <widget class="QLabel" name="labelStereo3dEyeSeparation">
++            <property name="text">
++             <string>eye separation</string>
++            </property>
++           </widget>
++          </item>
++          <item>
++           <widget class="QDoubleSpinBox" name="doubleSpinBoxStereo3dEyeSeparation">
++            <property name="toolTip">
++             <string>Distance between the eyes, as a percentage of the distance to the point looked at</string>
++            </property>
++            <property name="suffix">
++             <string> %</string>
++            </property>
++            <property name="decimals">
++             <number>1</number>
++            </property>
++           </widget>
++          </item>
++         </layout>
++        </item>
+        </layout>
+       </widget>
+       <widget class="QWidget" name="pageEditor">
+diff --git a/src/gui/QGLView.cc b/src/gui/QGLView.cc
+index 4d6fa8743..cb7e541e1 100644
+--- a/src/gui/QGLView.cc
++++ b/src/gui/QGLView.cc
+@@ -229,7 +229,9 @@ void QGLView::resizeGL(int w, int h)
+ 
+ void QGLView::paintGL()
+ {
++  stereo3d.beginEye();
+   GLView::paintGL();
++  stereo3d.endEye();
+ 
+   if (statusLabel) {
+     auto status = QString("%1 (%2x%3)")
+@@ -302,6 +304,7 @@ void QGLView::mouseDoubleClickEvent(QMouseEvent *event)
+     setGLContext(oldContext);
+   });
+ 
++  stereo3d.beginDepthRead();
+   setupCamera();
+ 
+   int viewport[4];
+@@ -311,6 +314,7 @@ void QGLView::mouseDoubleClickEvent(QMouseEvent *event)
+   glGetIntegerv(GL_VIEWPORT, viewport);
+   glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
+   glGetDoublev(GL_PROJECTION_MATRIX, projection);
++  stereo3d.endDepthRead();
+ 
+   const double dpi = this->getDPI();
+   const double x = event->pos().x() * dpi;
+diff --git a/src/gui/QGLView.h b/src/gui/QGLView.h
+index eda80784a..7cc28944e 100644
+--- a/src/gui/QGLView.h
++++ b/src/gui/QGLView.h
+@@ -21,6 +21,7 @@
+ #include <Eigen/Core>
+ #include <Eigen/Geometry>
+ #include "glview/GLView.h"
++#include "gui/Stereo3dView.h"
+ #include "../core/MouseConfig.h"
+ 
+ class QGLView : public QOpenGLWidget, public GLView
+@@ -90,6 +91,7 @@ private:
+   bool mouse_drag_active;
+   bool mouse_drag_moved = true;
+   bool mouseCentricZoom = true;
++  Stereo3dView stereo3d{*this};
+   // Information held for each mouse action is a 3x2 rotation matrix, a 3x2 translation matrix, and a
+   // zoom 2-vector.
+   float mouseActions[MouseConfig::MouseAction::NUM_MOUSE_ACTIONS * MouseConfig::ACTION_DIMENSION];
+diff --git a/src/gui/Stereo3dView.cc b/src/gui/Stereo3dView.cc
+new file mode 100644
+index 000000000..ba26af258
+--- /dev/null
++++ b/src/gui/Stereo3dView.cc
+@@ -0,0 +1,93 @@
++#include "gui/Stereo3dView.h"
++
++#include <QString>
++#include <QtGlobal>
++
++#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
++
++// QGLView.h first: the OpenGL loader must come before the Qt OpenGL headers
++#include "gui/QGLView.h"
++#include "core/Settings.h"
++
++#include <QOpenGLWidget>
++#include <QSettings>
++#include <QSurfaceFormat>
++
++Stereo3dView::Stereo3dView(QGLView& view) : view(view), stereo(Settings::Settings::stereo3dView.value())
++{
++}
++
++void Stereo3dView::requestStereoBuffers(QSurfaceFormat& format)
++{
++  // QOpenGLWidget draws for each eye only if the default format asks for stereo buffers, and that
++  // must be known before the window is created, so the preference is read from the settings here.
++  const QSettings settings("OpenSCAD", "OpenSCAD");
++  if (settings.value(QString::fromStdString(Settings::Settings::stereo3dView.key()), false).toBool()) {
++    format.setOption(QSurfaceFormat::StereoBuffers);
++  }
++}
++
++bool Stereo3dView::drawsEyes() const
++{
++  return stereo && view.format().stereo();
++}
++
++void Stereo3dView::beginEye()
++{
++  // One eye per call: the left buffer first, then the right one
++  if (!drawsEyes()) return;
++  const auto halfSeparation =
++    Settings::Settings::stereo3dEyeSeparation.value() / 100.0 * view.cam.zoomValue() / 2.0;
++  view.stereoEyeOffset =
++    view.currentTargetBuffer() == QOpenGLWidget::RightBuffer ? halfSeparation : -halfSeparation;
++}
++
++void Stereo3dView::endEye()
++{
++  if (!drawsEyes()) return;
++  depthEyeOffset = view.stereoEyeOffset;
++  view.stereoEyeOffset = 0.0;
++  view.setupCamera();
++}
++
++void Stereo3dView::beginDepthRead()
++{
++  // The depth buffer holds the eye drawn last
++  if (!drawsEyes()) return;
++  view.stereoEyeOffset = depthEyeOffset;
++}
++
++void Stereo3dView::endDepthRead()
++{
++  if (!drawsEyes()) return;
++  view.stereoEyeOffset = 0.0;
++  view.setupCamera();
++}
++
++#else  // Qt before 6.5: the stereo 3D view is not available
++
++Stereo3dView::Stereo3dView(QGLView& /*view*/)
++{
++}
++
++void Stereo3dView::requestStereoBuffers(QSurfaceFormat& /*format*/)
++{
++}
++
++void Stereo3dView::beginEye()
++{
++}
++
++void Stereo3dView::endEye()
++{
++}
++
++void Stereo3dView::beginDepthRead()
++{
++}
++
++void Stereo3dView::endDepthRead()
++{
++}
++
++#endif  // QT_VERSION
+diff --git a/src/gui/Stereo3dView.h b/src/gui/Stereo3dView.h
+new file mode 100644
+index 000000000..bb78f1036
+--- /dev/null
++++ b/src/gui/Stereo3dView.h
+@@ -0,0 +1,43 @@
++#pragma once
++
++#include <QtGlobal>
++
++class QGLView;
++class QSurfaceFormat;
++
++/*
++ * The stereo 3D view. With the "stereo 3D view" preference on and an OpenGL context with stereo
++ * buffers, QOpenGLWidget calls QGLView::paintGL() once for the left buffer and once for the right
++ * buffer, and this class sets the camera of each eye through GLView::stereoEyeOffset.
++ *
++ * It needs QOpenGLWidget::currentTargetBuffer(), which came with Qt 6.5. With older Qt this class
++ * is a stub: it never asks for stereo buffers and never moves the eye, so the eye offset stays 0
++ * and the 3D view is the normal single view. This class is the only place where the stereo 3D view
++ * depends on the Qt version.
++ */
++class Stereo3dView
++{
++public:
++  explicit Stereo3dView(QGLView& view);
++
++  // Asks for stereo buffers in the default surface format when the preference is on
++  static void requestStereoBuffers(QSurfaceFormat& format);
++
++  // Around GLView::paintGL(): sets the offset of the eye drawn now, then sets up the camera between
++  // the eyes again, which picking uses
++  void beginEye();
++  void endEye();
++  // Around reading the depth buffer: sets the offset of the eye drawn last, whose depth the buffer
++  // holds, then sets up the camera between the eyes again
++  void beginDepthRead();
++  void endDepthRead();
++
++private:
++#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
++  bool drawsEyes() const;
++
++  QGLView& view;
++  bool stereo;                  // the preference, as it was when the view was created
++  double depthEyeOffset = 0.0;  // eye offset of the view the depth buffer holds
++#endif
++};
+diff --git a/src/openscad_gui.cc b/src/openscad_gui.cc
+index fe5f8eb30..bae7f00c7 100644
+--- a/src/openscad_gui.cc
++++ b/src/openscad_gui.cc
+@@ -76,6 +76,7 @@
+ #include "gui/OpenSCADApp.h"
+ #include "gui/Preferences.h"
+ #include "gui/QSettingsCached.h"
++#include "gui/Stereo3dView.h"
+ #include "openscad.h"
+ #include "platform/CocoaUtils.h"
+ #include "utils/printutils.h"
+@@ -136,6 +137,7 @@ void configureOpenGLContext()
+   format.setProfile(QSurfaceFormat::CompatibilityProfile);
+   if (format.depthBufferSize() < 24) format.setDepthBufferSize(24);
+   if (format.stencilBufferSize() < 8) format.setStencilBufferSize(8);
++  Stereo3dView::requestStereoBuffers(format);
+   QSurfaceFormat::setDefaultFormat(format);
+ #endif
+ }
