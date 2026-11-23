@@ -1,6 +1,6 @@
 # obs-studio-dmo, the edition's OBS Studio
 
-deb-multimedia's `obs-studio-dmo` 1:33.0.1-dmo2 (Christian Marillat) rebuilt as `1:33.0.1-dmo2+stereo3d2+lc1` with the patches in `patches/` (`+stereo3d1` carried 0001 to 0007).
+deb-multimedia's `obs-studio-dmo` 1:33.0.1-dmo2 (Christian Marillat) rebuilt as `1:33.0.1-dmo2+stereo3d3+lc1` with the patches in `patches/` (`+stereo3d1` carried 0001 to 0007, `+stereo3d2` 0001 to 0013).
 libobs carries the main canvas's stereo layout (`obs_set_video_stereo3d()`, `obs_get_video_stereo3d()`, `obs_encoder_get_stereo3d()`, new symbols only), and the writers mark what they write while they work:
 
 | Writer | Mark |
@@ -25,6 +25,7 @@ From `+stereo3d2` (milestone 3) a side by side canvas is drawn once per eye, and
 | 0011 | media playback: a stream's own stereo mark handed on (`get_stereo3d`), frames in turn and the two views of an MV-HEVC stream paired at the Stereo input filter's request (`set_stereo3d_pairing`). Pairing frames in turn here is a copy of the stereo layer's own rule; queue row 839 moves it (one sequence pairing and one AVStereo3D mapping exported by the layer, used by OBS and Stereo HandBrake) |
 | 0012 | obs-websocket: a hotkey triggered by name (`TriggerHotkeyByName`) runs on the UI thread, as a key press does; it ran on obs-websocket's own request thread, where the preview's hotkeys showed and hid widgets off Qt's main thread and the program died at a show. Red without it: the preview's show ran on "Thread (pooled)" in 4 of 4 calls under gdb, and OBS died in 6 of 6 runs of 50 hides and shows (two pinned CPUs, a drag over the preview first); green with it: 4 of 4 calls on OBS's main thread, 0 deaths in 6 runs. deb-multimedia's own OBS, with no module, died in 2 of 4 such runs |
 | 0013 | obs-ffmpeg: the custom FFmpeg output's raw callbacks and its stop share a lock on the encoder's data; a frame still being encoded after the stop met a freed encoder (SIGSEGV at the stop). Red without it: 2 crashes in 100 starts and stops with the edition's x264, 6 in 100 with deb-multimedia's; green with it: 0 in 100 with each, every file complete. obs-studio issue 14153 reports the same race seen from its other side (a frame of the previous recording in the next one) |
+| 0014 | obs-websocket: `SetVideoSettings` runs the frontend's video reset (`obs_frontend_reset_video()`, which resizes the preview and the program view) on the UI thread, by 0012's technique. Red without it: each of three requests ran `OBSBasic::ResetVideo` on "Thread (pooled)" under gdb; green with it: 4 of 4 resets on OBS's main thread. Every other request handler of obs-websocket 5.7.6 was read: the frontend or the handler already queues its widget work, or it reaches no widget |
 
 OBS's own screenshots of a 3D canvas stay one picture until the stereo layer writes a marked PNG from pixels (queue row 798).
 The module `sparky-stereo-obs` sets the layout (its "Enable 3D", on by itself when the desktop is in 3D).

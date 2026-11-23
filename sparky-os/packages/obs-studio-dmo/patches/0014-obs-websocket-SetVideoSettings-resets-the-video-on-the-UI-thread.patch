@@ -1,0 +1,41 @@
+Description: obs-websocket: SetVideoSettings resets the video on the UI thread
+ SetVideoSettings called obs_frontend_reset_video() on obs-websocket's own request thread (a Qt thread pool's), and the
+ frontend's reset runs OBSBasic::ResetVideo() where it is called: it resizes the preview and the program view
+ (ResizePreview, ResizeProgram read and set the widgets), updates the multiview projectors and enables a menu action,
+ and Qt allows that only on the main thread ("QWidget and all its subclasses, are not reentrant. They can only be used
+ from the main thread", Qt 6, Threads and QObjects). Measured on OBS 33.0.1 under gdb (a breakpoint on
+ OBSBasic::ResetVideo with "info threads"): each of three SetVideoSettings requests ran the reset on "Thread (pooled)"
+ (QThreadPoolThread::run, WebSocketServer::ProcessMessage, RequestHandler::SetVideoSettings), only the start-up reset on
+ OBS's main thread. With this patch all four resets ran on OBS's main thread (thread 1 "obs"), the three requests
+ answered and their canvases read back, and no Qt warning came off the main thread.
+ The reset is queued inside the UI thread, as obs-websocket's own UI requests queue theirs (SetStudioModeEnabled) and
+ patch 0012 queues a hotkey triggered by name, and waited for unless the request runs on the graphics thread (a
+ SerialFrame batch), which the UI thread may itself be waiting for. The other requests that reach the frontend were read:
+ the frontend queues theirs to the main thread itself (QMetaObject::invokeMethod), the handler queues them
+ (SetCurrentSceneCollection, SetCurrentProfile, SetStudioModeEnabled), or they reach no widget.
+ obs-websocket issue 1344 reports another fault through the same request (an inactive output's stale video pointer
+ after the reset); this patch does not touch it.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 3, continuation 7)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-23
+---
+diff --git a/obs-websocket-5-7-6/src/requesthandler/RequestHandler_Config.cpp b/obs-websocket-5-7-6/src/requesthandler/RequestHandler_Config.cpp
+index c97eb51..584c1a4 100644
+--- a/obs-websocket-5-7-6/src/requesthandler/RequestHandler_Config.cpp
++++ b/obs-websocket-5-7-6/src/requesthandler/RequestHandler_Config.cpp
+@@ -511,7 +511,13 @@ RequestResult RequestHandler::SetVideoSettings(const Request &request)
+ 
+ 	if (changeFps || changeBaseRes || changeOutputRes) {
+ 		config_save_safe(config, "tmp", nullptr);
+-		obs_frontend_reset_video();
++		// The frontend's video reset resizes the preview and the program view, updates the multiview projectors and
++		// enables a menu action, which Qt allows only on the main thread. Queue the task inside of the UI thread to
++		// prevent race conditions, and wait for it unless this request runs on the graphics thread (a SerialFrame
++		// batch), which the UI thread may itself be waiting for.
++		obs_queue_task(
++			OBS_TASK_UI, [](void *) { obs_frontend_reset_video(); }, nullptr,
++			!obs_in_task_thread(OBS_TASK_GRAPHICS));
+ 		return RequestResult::Success();
+ 	}
+ 

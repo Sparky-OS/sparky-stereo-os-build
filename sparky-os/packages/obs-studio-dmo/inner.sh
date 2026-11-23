@@ -6,7 +6,9 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOOLKIT=$(cd "$HERE/../.." && pwd)
 UPSTREAM=1:33.0.1-dmo2
-VERSION=$UPSTREAM+stereo3d2
+VERSION=$UPSTREAM+stereo3d3
+# the last version that added exported functions to libobs (patch 0008): the shlibs minimum (Debian Policy 8.6)
+SHLIBS_MIN=$UPSTREAM+stereo3d2
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the date of the recipe: build-provenance.sh}
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME="Daniel Ramos (Capitain Jack)"
 WORK=$(mktemp -d "$OUT/.obs.XXXXXX")
@@ -22,7 +24,7 @@ done
 # this build: the shlibs minimum moves to it (Debian Policy 8.6, shared library ABI changes); the other packages keep
 # dh_makeshlibs as it was
 printf '\noverride_dh_makeshlibs:\n\tdh_makeshlibs -plibobs0t64 -V"libobs0t64 (>= %s~)"\n\tdh_makeshlibs -Nlibobs0t64\n' \
-	"$VERSION" >> debian/rules
+	"$SHLIBS_MIN" >> debian/rules
 python3 - "$VERSION" <<'PY'
 import os, re, sys
 version = sys.argv[1]
@@ -37,6 +39,14 @@ if n != 1:
     sys.exit('debian/control: no libavdevice-dev in Build-Depends to put libstereo-av-dev beside')
 open('debian/control', 'w').write(control)
 entry = f"""obs-studio-dmo ({version}) unstable; urgency=medium
+
+  * obs-websocket's SetVideoSettings runs the frontend's video reset on the UI
+    thread, which resizes the preview and the program view (patch 0014, ORDER
+    61, milestone 3, continuation 7).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {os.environ['SOURCE_DATE_RFC2822']}
+
+obs-studio-dmo (1:33.0.1-dmo2+stereo3d2) unstable; urgency=medium
 
   * Sparky Stereo OS (ORDER 61, milestone 3): a side by side canvas is drawn
     once per eye, in one eye's space; OBS's preview, studio mode's views and
@@ -53,7 +63,7 @@ entry = f"""obs-studio-dmo ({version}) unstable; urgency=medium
     obs_get_render_eye, obs_display_set_views, obs_display_get_views), so its
     shlibs name this version as the minimum.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {os.environ['SOURCE_DATE_RFC2822']}
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 23 Nov 2026 07:17:42 +0000
 
 obs-studio-dmo (1:33.0.1-dmo2+stereo3d1) unstable; urgency=medium
 
