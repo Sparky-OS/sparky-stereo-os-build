@@ -166,10 +166,15 @@ def failure_names(text):
     return names | set(failure_owners(text))
 
 
+def failure_terminal(text):
+    terminal = re.search(r'^   2\. .*', text, re.M)
+    return text[terminal.start():] if terminal else text
+
+
 def failure_owners(text):
     terminal = re.search(r'^   2\. .*', text, re.M)
     if terminal:
-        owners = re.findall(r'^\s+(?:\d+\.\s+|- )?([a-z0-9][a-z0-9+.-]*)(?::[a-z0-9-]+)? '
+        owners = re.findall(r'^\s+(?:\d+\.\s+|- )?([a-z0-9][a-z0-9+.-]*)(?::[a-z0-9-]+)?(?:=[^\s]+)? '
                             r'(?:PreDepends|Pre-Depends|Depends|Conflicts|Breaks)\b',
                             text[terminal.start():], re.M)
         return owners
@@ -418,7 +423,7 @@ class PreviousView:
                 owners = failure_owners(text)
                 previous_providers = providers((p['control'], 'previous-set') for p in prior)
                 candidate_owned = self.names.intersection(owners)
-                external_relations = set(re.findall(r'(?:PreDepends|Pre-Depends|Depends):?\s+([a-z0-9][a-z0-9+.-]*)', text[text.find('   2. '):] if '   2. ' in text else text))
+                external_relations = set(re.findall(r'(?:PreDepends|Pre-Depends|Depends):?\s+([a-z0-9][a-z0-9+.-]*)', failure_terminal(text)))
                 external_missing = (external_relations and all(n not in self.candidate_providers and n not in previous_providers
                                     and n not in self.current_providers for n in external_relations))
                 if not owners or (candidate_owned and not external_missing):

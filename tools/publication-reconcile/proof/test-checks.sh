@@ -35,6 +35,13 @@ expect green "real log: unpacked, nothing removed" check_real_log $T/real-ok.txt
 expect red   "real log: nothing unpacked" check_real_log $T/real-none.txt $T/allow-none.txt "t"
 expect red   "real log: an unlisted removal" check_real_log $T/real-remv.txt $T/allow-none.txt "t"
 expect green "real log: a listed removal" check_real_log $T/real-remv.txt $T/allow-hello.txt "t"
+{ cat $T/real-ok.txt; echo "Removing 'diversion of /bin/example to /bin/example.usr-is-merged by example-bin'"; } >$T/real-divert.txt
+{ cat $T/real-divert.txt; echo 'Removing hello:i386 (2.10-3) ...'; } >$T/real-divert-remv.txt
+{ cat $T/real-ok.txt; echo 'Removing unexpected-output'; } >$T/real-unknown.txt
+expect green "real log: diversion removal is not a package removal" check_real_log $T/real-divert.txt $T/allow-none.txt "t"
+expect red   "real log: diversion plus unlisted multiarch removal" check_real_log $T/real-divert-remv.txt $T/allow-none.txt "t"
+expect green "real log: diversion plus listed multiarch removal" check_real_log $T/real-divert-remv.txt $T/allow-hello.txt "t"
+expect red   "real log: unknown Removing line still fails" check_real_log $T/real-unknown.txt $T/allow-none.txt "t"
 echo 'Inst dpkg [1.23.11] (1.23.11+stereo3d2+lc1 mashtabba:mashtabba [amd64])' >$T/sim-ed.txt
 echo 'Inst dpkg [1.23.11] (1.23.11 Debian:testing [amd64])' >$T/sim-deb.txt
 expect green "simulation offers the edition's dpkg" check_sim_edition_dpkg $T/sim-ed.txt
