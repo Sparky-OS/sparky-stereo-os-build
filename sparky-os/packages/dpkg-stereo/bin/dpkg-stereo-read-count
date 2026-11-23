@@ -1,0 +1,348 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
+"""dpkg-stereo-read-count: what Lean Code's shortened files saved a program from reading (ORDER 845).
+
+Joins a trace of opens and reads with the records dpkg-stereo keeps of every shortened file.
+  --strace FILE...   output of `strace -f -y -e trace=openat,open,close,read,pread64,readv,preadv,mmap,dup,dup2,dup3`
+                     (one file per run). Two rows per open: the open, and the bytes the program really took
+                     (read, pread, readv, preadv results; an mmap's length is counted apart, as "mapped").
+  --paths FILE...    a plain list of opened paths: `COUNT PATH`, `PATH<TAB>COUNT`, a bare PATH, or fatrace's
+                     `comm(pid): O /path`. No byte counts exist in this form: every open is taken as a whole
+                     read of the installed file, and every row says so ("assumed whole").
+  --root DIR         the system whose records are read (default /): DIR/usr/share/dpkg-stereo/lc/*/*.json
+                     (build-time lc1 manifests: bytes, bytes_hr) and DIR/var/lib/dpkg-stereo/records/*.tsv
+                     (install-time records: bytes_orig, bytes_lean). Trace paths are looked up under DIR.
+  --authored-root D  a tree with the authored forms at the same paths (a system after `dpkg-stereo --restore`);
+                     lines of the authored form come from it, else from DIR/usr/share/doc/PKG/hr/PATH when present.
+  --json FILE        machine-readable copy.
+Saving of one open of a projected file: bytes_hr - bytes when the program read it whole (or mapped it whole);
+when it read a part, bytes_read * (bytes_hr/bytes - 1), a proportional estimate listed in its own column;
+nothing when it read none of it ("opened, not read"). Lines likewise from the two forms.
+Unattributed opens are never dropped: virtual (/proc, /sys, /dev), not owned by any package, owned by a package
+with no record, and stale (the file's size is no longer its record's)."""
+import argparse, collections, glob, json, os, re, sys
+
+VIRTUAL = ('/proc/', '/sys/', '/dev/', '/run/')
+
+
+def kind_of(path, handler):
+    b = os.path.basename(path)
+    if '/systemd/' in path and re.search(r'\.(service|socket|target|timer|mount|path|slice)$|\.conf$', b): return 'systemd unit/setting'
+    if path.endswith('.rules'): return 'udev/polkit rule'
+    if path.endswith('.desktop'): return 'desktop entry'
+    if path.endswith(('.qml', '.js', '.mjs')): return 'QML/JavaScript'
+    if path.endswith(('.h', '.hpp', '.hh', '.hxx', '.c', '.cc', '.cpp', '.inc')) or '/include/' in path: return 'C/C++ header or source'
+    if path.endswith('.py') or handler == 'python': return 'Python'
+    if handler in ('shell', 'sh', 'bash') or handler == 'perl': return 'script (' + (handler or '?') + ')'
+    if path.startswith('/etc/') or handler in ('ini', 'yaml', 'toml'): return 'settings'
+    return handler or 'other'
+
+
+def rroot(root, path):
+    """realpath of PATH inside ROOT, absolute symlinks re-rooted; returns path relative to the root ('/usr/..')."""
+    parts = [p for p in path.split('/') if p]
+    out, hops = [], 0
+    while parts:
+        p = parts.pop(0)
+        if p == '.': continue
+        if p == '..':
+            if out: out.pop()
+            continue
+        cand = os.path.join(root, *out, p)
+        if os.path.islink(cand) and hops < 40:
+            hops += 1
+            t = os.readlink(cand)
+            if t.startswith('/'): out = []
+            parts = [q for q in t.split('/') if q] + parts
+        else:
+            out.append(p)
+    return '/' + '/'.join(out)
+
+
+class Records:
+    def __init__(self, root):
+        self.root = root
+        self.by = collections.defaultdict(list)   # path -> [rec]
+        self.files = 0
+        for f in glob.glob(os.path.join(root, 'usr/share/dpkg-stereo/lc/*/*.json')):
+            try:
+                d = json.load(open(f))
+            except (OSError, ValueError):
+                self.bad = getattr(self, 'bad', 0) + 1
+                continue
+            for x in d.get('files', []):
+                if x.get('kind', 'file') != 'file': continue
+                self.by[x['path']].append(dict(pkg=d.get('package', '?'), src='lc1', status=x['status'], bytes=x['bytes'],
+                                               bytes_hr=x.get('bytes_hr'), handler=x.get('handler', ''), arch=d.get('architecture', '')))
+        for f in glob.glob(os.path.join(root, 'var/lib/dpkg-stereo/records/*.tsv')):
+            try:
+                lines = open(f, encoding='utf-8', errors='replace').read().splitlines()
+            except OSError:
+                continue
+            hdr = lines[0].lstrip('#').split('\t') if lines else []
+            for ln in lines[1:]:
+                r = dict(zip(hdr, ln.split('\t')))
+                try:
+                    self.by[r['path']].append(dict(pkg=r['package'], src='install', status='projected', bytes=int(r['bytes_lean']),
+                                                   bytes_hr=int(r['bytes_orig']), handler=r.get('handler', ''), arch=''))
+                except (KeyError, ValueError):
+                    self.malformed = getattr(self, 'malformed', 0) + 1
+        self.owned = None
+
+    def owner_set(self):
+        if self.owned is None:
+            self.owned = set()
+            for f in glob.glob(os.path.join(self.root, 'var/lib/dpkg/info/*.list')):
+                try:
+                    for ln in open(f, errors='replace'): self.owned.add(ln.rstrip('\n'))
+                except OSError: pass
+        return self.owned
+
+
+def count_lines(p):
+    try:
+        with open(p, 'rb') as fh: return fh.read().count(b'\n')
+    except OSError:
+        return None
+
+
+# ---------------------------------------------------------------- trace parsing
+OPEN = re.compile(r'^(?:open|openat|openat2)\((?:[^,]*,\s*)?"((?:[^"\\]|\\.)*)"[^)]*\)\s*=\s*(\d+)<([^>]*)>')
+CALL = re.compile(r'^(\w+)\((\d+)<([^>]*)>(.*)\)\s*=\s*(-?\d+|\?)(?:\s.*)?$')
+MMAP = re.compile(r'^mmap\(\w+,\s*(\d+),\s*[^,]*,\s*[^,]*,\s*(\d+)<([^>]*)>')
+DUP = re.compile(r'^(dup\d?)\((\d+)<([^>]*)>(?:,\s*\d+)?(?:,\s*\w+)?\)\s*=\s*(\d+)<([^>]*)>')
+PIDRE = re.compile(r'^(?:\[pid\s+(\d+)\]\s+|(\d+)\s+)?(.*)$')
+UNF = re.compile(r'^(.*?)\s*<unfinished \.\.\.>\s*$')
+RES = re.compile(r'^<\.\.\.\s+\w+ resumed>(.*)$')
+
+
+def parse_strace(fn, stats):
+    """yield opens: dict(path, read, mapped). An open lives from its fd's creation to close (or the trace's end)."""
+    live = {}    # (pid, fd) -> open dict
+    pending = {}  # pid -> unfinished prefix
+    done = []
+    fh = open(fn, errors='replace')
+    for raw in fh:
+        m = PIDRE.match(raw.rstrip('\n'))
+        pid = m.group(1) or m.group(2) or '0'
+        line = m.group(3)
+        stats['lines'] += 1
+        if line.startswith(('+++', '---')): continue
+        u = UNF.match(line)
+        if u:
+            pending[pid] = u.group(1); continue
+        r = RES.match(line)
+        if r:
+            pre = pending.pop(pid, None)
+            if pre is None:
+                stats['unparsed'] += 1; continue
+            line = pre + r.group(1)
+        mo = OPEN.match(line)
+        if mo:
+            if mo.group(2) is not None:
+                path = mo.group(3) if mo.group(3).startswith('/') else mo.group(1)
+                o = dict(path=path, read=0, mapped=0, reads=0)
+                live[(pid, mo.group(2))] = o; done.append(o)
+            continue
+        md = DUP.match(line)
+        if md:
+            src = live.get((pid, md.group(2)))
+            if src is not None: live[(pid, md.group(4))] = src
+            continue
+        mm = MMAP.match(line)
+        if mm:
+            o = live.get((pid, mm.group(2)))
+            if o is None and mm.group(3).startswith('/'):
+                o = dict(path=mm.group(3), read=0, mapped=0, reads=0); live[(pid, mm.group(2))] = o; done.append(o)
+                stats['fd_inherited'] += 1
+            if o is not None: o['mapped'] += int(mm.group(1))
+            continue
+        if line.startswith('mmap(') and re.match(r'^mmap\([^)]*,\s*-1,\s*\d+\)', line):
+            continue      # an anonymous mapping: no file
+        mc = CALL.match(line)
+        if not mc:
+            if re.match(r'^(open|openat|read|pread64|readv|preadv|close|mmap)\(', line) and ' = -1 ' not in line + ' ':
+                stats['unparsed'] += 1
+                stats.setdefault('examples', {}).setdefault(line.split('(')[0], line[:160])
+            continue
+        name, fd, ppath, res = mc.group(1), mc.group(2), mc.group(3), mc.group(5)
+        if name == 'close':
+            live.pop((pid, fd), None); continue
+        if name in ('read', 'pread64', 'readv', 'preadv') and res not in ('?',) and int(res) >= 0:
+            o = live.get((pid, fd))
+            if o is None and ppath.startswith('/'):    # fd opened before the trace started
+                o = dict(path=ppath, read=0, mapped=0, reads=0); live[(pid, fd)] = o; done.append(o)
+                stats['fd_inherited'] += 1
+            if o is not None:
+                o['read'] += int(res); o['reads'] += 1
+    return done
+
+
+def parse_paths(fn, stats):
+    out = []
+    for raw in open(fn, errors='replace'):
+        s = raw.rstrip('\n')
+        stats['lines'] += 1
+        if not s.strip(): continue
+        m = re.match(r'^\S+\(\d+\):\s+\w*O\w*\s+(/.*)$', s)
+        if m: out.append((m.group(1), 1)); continue
+        m = re.match(r'^\s*(\d+)\s+(/.*)$', s) or None
+        if m: out.append((m.group(2), int(m.group(1)))); continue
+        m = re.match(r'^(/.*?)\t(\d+)$', s)
+        if m: out.append((m.group(1), int(m.group(2)))); continue
+        if s.startswith('/'): out.append((s, 1)); continue
+        stats['unparsed'] += 1
+    return out
+
+
+# ---------------------------------------------------------------- the join
+def new_acc():
+    return collections.Counter()
+
+
+def add(acc, **kw):
+    for k, v in kw.items(): acc[k] += v
+
+
+def analyse(root, opens, authored_root, assumed_whole, rec):
+    """opens: list of dict(path, read, mapped, count). returns the aggregate dict."""
+    tot = new_acc(); by_pkg = collections.defaultdict(new_acc); by_handler = collections.defaultdict(new_acc)
+    by_path = collections.defaultdict(new_acc)
+    by_kind = collections.defaultdict(new_acc); unatt = collections.defaultdict(new_acc); unatt_paths = collections.defaultdict(collections.Counter)
+    for o in opens:
+        n = o.get('count', 1)
+        real = rroot(root, o['path']); host = os.path.join(root, real.lstrip('/'))
+        try:
+            st_ok = os.path.isfile(host); size = os.path.getsize(host) if st_ok else None
+        except OSError:
+            st_ok, size = False, None
+        if any(real.startswith(v) for v in VIRTUAL) or (not st_ok and size is None and real.startswith('/dev')):
+            cat = 'virtual (/proc /sys /dev /run)'
+        elif not st_ok:
+            cat = 'not a file in the root now (deleted, directory or pipe)'
+        else:
+            cat = None
+        # bytes read by this open
+        rd = o['read'] if not assumed_whole else (size or 0)
+        add(tot, opens=n, bytes_read=rd * n if True else 0, mapped=o.get('mapped', 0) * n)
+        if cat is None and size is not None and not any(real.startswith(v) for v in VIRTUAL): add(tot, file_opens=n)
+        if cat:
+            add(unatt[cat], opens=n, bytes_read=rd * n); unatt_paths[cat][real] += n; continue
+        cands = rec.by.get(real, [])
+        cands = [c for c in cands if c['status'] == 'projected'] or cands
+        if not cands:
+            owned = real in rec.owner_set() or (rec.owner_set() and False)
+            cat = 'owned by a package that has no record for it' if owned else 'not owned by any package (generated, data, home, temp)'
+            add(unatt[cat], opens=n, bytes_read=rd * n); unatt_paths[cat][real] += n; continue
+        c = next((c for c in cands if c['bytes'] == size), None)
+        if c is None:
+            cat = 'stale: the file is not the size its record says (replaced since)'
+            add(unatt[cat], opens=n, bytes_read=rd * n); unatt_paths[cat][real] += n; continue
+        h = c['handler']; kind = kind_of(real, h)
+        if c['status'] != 'projected':
+            add(tot, attributed_opens=n, unchanged_opens=n); add(by_pkg[c['pkg']], opens=n, bytes_read=rd * n); continue
+        lean_b, hr_b = c['bytes'], c['bytes_hr'] or c['bytes']
+        mapped = o.get('mapped', 0)
+        eff = rd
+        mode = 'whole'
+        if assumed_whole: mode = 'assumed whole'
+        elif rd == 0 and mapped == 0: mode = 'opened, not read'; eff = 0
+        elif rd == 0 and mapped > 0: eff = min(mapped, lean_b); mode = 'mapped'
+        elif rd < lean_b: mode = 'partial'
+        if mode in ('whole', 'assumed whole', 'mapped') or eff >= lean_b:
+            sav = hr_b - lean_b; full = 1
+        elif mode == 'opened, not read':
+            sav = 0; full = 0
+        else:
+            sav = int(round(eff * (hr_b / lean_b - 1))); full = 0
+        # lines
+        ll = count_lines(host)
+        hl = None
+        if authored_root:
+            hl = count_lines(os.path.join(authored_root, real.lstrip('/')))
+        if hl is None:
+            hl = count_lines(os.path.join(root, 'usr/share/doc', c['pkg'], 'hr', real.lstrip('/')))
+        lsav = None
+        if ll is not None and hl is not None and hr_b > lean_b:
+            lsav = (hl - ll) if full else int(round((hl - ll) * (sav / max(hr_b - lean_b, 1))))
+        pa = by_path[real]; add(pa, opens=n, bytes_read_lean=eff * n, saved_bytes=sav * n, lean_size=0); pa['lean_size'] = lean_b; pa['hr_size'] = hr_b
+        for acc, isT in ((tot, True), (by_pkg[c['pkg']], False), (by_handler[h or '?'], False), (by_kind[kind], False)):
+            if not isT: add(acc, opens=n, bytes_read=rd * n)
+            add(acc, attributed_opens=n)
+            if c['status'] == 'projected':
+                add(acc, projected_opens=n)
+                add(acc, saved_bytes=sav * n, lean_bytes_read=eff * n)
+                if mode == 'partial': add(acc, saved_bytes_partial_estimate=sav * n, partial_opens=n)
+                if mode == 'opened, not read': add(acc, opened_not_read=n)
+                if mode == 'mapped': add(acc, mapped_opens=n)
+                if lsav is not None: add(acc, saved_lines=lsav * n, lines_counted_opens=n)
+                else: add(acc, lines_unknown_opens=n)
+    return dict(by_path=by_path, totals=tot, by_package=by_pkg, by_handler=by_handler, by_kind=by_kind, unattributed=unatt,
+                unattributed_top={k: v.most_common(5) for k, v in unatt_paths.items()})
+
+
+def tabulate(title, d, first):
+    cols = ['opens', 'projected_opens', 'bytes_read', 'saved_bytes', 'saved_lines', 'opened_not_read']
+    rows = sorted(d.items(), key=lambda kv: -kv[1]['saved_bytes'])
+    out = [f'-- {title}', f'{first:40} ' + ' '.join(f'{c:>15}' for c in cols)]
+    for k, v in rows[:40]:
+        out.append(f'{str(k)[:40]:40} ' + ' '.join(f'{v[c]:>15}' for c in cols))
+    return '\n'.join(out)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap.add_argument('--strace', nargs='*', default=[]); ap.add_argument('--paths', nargs='*', default=[])
+    ap.add_argument('--static', action='store_true', help='no trace: what the disk does not hold (bytes_hr - bytes over every projected record)')
+    ap.add_argument('--root', default='/'); ap.add_argument('--authored-root'); ap.add_argument('--json')
+    a = ap.parse_args(argv)
+    if a.static:
+        rec = Records(a.root); agg = collections.defaultdict(collections.Counter)
+        for path, rs in rec.by.items():
+            for c in rs:
+                if c['status'] == 'projected':
+                    k = c['src'] + '/' + (c['handler'] or '?'); agg[k]['files'] += 1; agg[k]['lean_bytes'] += c['bytes']; agg[k]['authored_bytes'] += c['bytes_hr']; agg[k]['not_held'] += c['bytes_hr'] - c['bytes']
+        tt = collections.Counter()
+        for k, v in sorted(agg.items()):
+            print(f"{k:28} {v['files']:7} files {v['authored_bytes']:11} -> {v['lean_bytes']:11} bytes ({v['not_held']} not held)"); tt.update(v)
+        print(f"static total: {tt['files']} projected files, authored {tt['authored_bytes']} bytes, installed {tt['lean_bytes']} bytes, not held {tt['not_held']}")
+        if a.json: json.dump({k: dict(v) for k, v in agg.items()} | {'total': dict(tt)}, open(a.json, 'w'), indent=1, sort_keys=True)
+        return 0
+    if not a.strace and not a.paths:
+        ap.error('give --strace or --paths')
+    rec = Records(a.root)
+    stats = collections.Counter(); opens = []; assumed = False
+    for f in a.strace:
+        for o in parse_strace(f, stats): opens.append(o)
+    pc = collections.Counter()
+    for f in a.paths:
+        for p, n in parse_paths(f, stats): pc[p] += n
+    # two modes are not mixed in one table
+    if a.strace and a.paths:
+        ap.error('--strace and --paths are two modes: run them separately')
+    if a.paths:
+        assumed = True
+        opens = [dict(path=p, read=0, mapped=0, count=n) for p, n in pc.items()]
+    res = analyse(a.root, opens, a.authored_root, assumed, rec)
+    t = res['totals']
+    print(f"records: {sum(len(v) for v in rec.by.values())} file rows for {len(rec.by)} paths; trace lines {stats['lines']}, unparsed {stats['unparsed']}, "
+          f"fds already open when the trace began {stats['fd_inherited']}; {'ASSUMED WHOLE READS (no byte counts in a path list)' if assumed else 'bytes from the trace'}")
+    print(tabulate('per package', res['by_package'], 'package')); print(tabulate('per handler', res['by_handler'], 'handler'))
+    print(tabulate('per file kind', res['by_kind'], 'kind'))
+    print('-- unattributed (never dropped)')
+    for k, v in res['unattributed'].items(): print(f'{k:70} opens {v["opens"]:8} bytes_read {v["bytes_read"]:12}')
+    print(f"-- totals: opens {t['opens']}, bytes read {t['bytes_read']}, mapped {t['mapped']}; opens of shortened files {t['projected_opens']}, "
+          f"opened not read {t['opened_not_read']}, partial {t['partial_opens']}; bytes not read {t['saved_bytes']} "
+          f"({100.0 * t['saved_bytes'] / max(t['bytes_read'] + t['saved_bytes'], 1):.3f}% of what the authored forms would have cost), "
+          f"of it estimated for partial reads {t['saved_bytes_partial_estimate']}; lines not read {t['saved_lines']} (lines unknown for {t['lines_unknown_opens']} opens)")
+    if a.json:
+        js = {k: ({kk: dict(vv) for kk, vv in v.items()} if isinstance(v, dict) and k not in ('totals', 'unattributed_top', 'by_path') else v) for k, v in res.items()}
+        js['by_path'] = {k: dict(v) for k, v in res['by_path'].items()}; js['totals'] = dict(t); js['unattributed'] = {k: dict(v) for k, v in res['unattributed'].items()}
+        js['trace'] = dict(stats=dict(stats), assumed_whole=assumed, root=a.root)
+        json.dump(js, open(a.json, 'w'), indent=1, sort_keys=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
