@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import shutil
 from pathlib import Path
 import sys
 import time
@@ -150,6 +151,10 @@ def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, sta
         if static_only and frame !=0:
             break
         if not selected:
+            continue
+        if frame>0 and params['family']=='status':
+            for size in selected:
+                shutil.copyfile(scratch/f'{size}-00.png',scratch/f'{size}-{frame:02}.png')
             continue
         objects = set_geometry(shapes,cameras['centre'].rotation_euler.to_matrix(),objects,materials)
         for size in selected:

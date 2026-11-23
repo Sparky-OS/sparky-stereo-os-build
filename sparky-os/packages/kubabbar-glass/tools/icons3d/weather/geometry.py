@@ -138,7 +138,7 @@ def storm(phase):
     points = ((-.09,.25),(.12,.25),(.046,.01),(.18,.02),(-.14,-.42),(-.066,-.12),(-.19,-.13))
     # A baseline remains visible in the still while the second half flashes.
     return [prism('bolt',points,.08,-.17,.59,.11,'ffdc68',bevel=.06,
-                  alpha=.82+.18*(.5+.5*cos(tau*phase))**6)]
+                  alpha=.20+.80*(.5+.5*cos(tau*phase))**6)]
 
 
 def fog(phase):
@@ -220,7 +220,7 @@ def parameters(name):
         darkness = 3 if 'overcast' in key else 2 if 'many' in key or night else 1 if density>4 else 0
         luminary = ('moon' if night else 'sun') if timed or 'few' in key else None
     else:
-        density = 4 if 'scattered' in key else 7 if family in ('rain','snow') else 5
+        density = 4 if 'scattered' in key else 9 if 'heavy' in key else 7 if family in ('rain','snow') else 5
         darkness = 3 if family == 'storm' else 2 if night else 1
         luminary = ('moon' if night else 'sun') if timed else None
     return dict(family=family,density=density,darkness=darkness,luminary=luminary,windy=windy,
