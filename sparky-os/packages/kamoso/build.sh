@@ -56,6 +56,7 @@ if [ -n "${SOURCE_INPUT:-}" ]; then
 else
     apt-get source --download-only kamoso=26.04.0-1
 fi
+sha256sum -c "$HERE/source.sha256"
 dpkg-source -x kamoso_26.04.0-1.dsc source
 mkdir -p source/debian/patches
 install -m644 "$HERE/patches/0001-follow-the-session-default-camera.patch" source/debian/patches/

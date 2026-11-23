@@ -16,6 +16,7 @@ if [ -n "${SOURCE_INPUT:-}" ]; then
 else
     apt-get source --download-only gst-plugins-good1.0-dmo=1.28.9-dmo1
 fi
+sha256sum -c "$HERE/source.sha256"
 dpkg-source -x gst-plugins-good1.0-dmo_1.28.9-dmo1.dsc source
 mkdir -p source/debian/patches
 for patch in 0001-qtmux-st3d-from-multiview-caps.patch 0002-qml-gl-refresh-material-caps.patch; do
