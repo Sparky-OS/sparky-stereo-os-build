@@ -251,7 +251,9 @@ def corona_material(spec):
     if spec['clip'] is not None:
         field = g.math('MULTIPLY', field, g.math('GREATER_THAN', y, spec['clip']/rm.CORONA_REACH))
     volume = g.node('ShaderNodeVolumePrincipled')
-    volume.inputs['Color'].default_value = (*linear('ffc35a'), 1)
+    # Absorption and emission only: scattering would pick up the studio world's cool tint.
+    volume.inputs['Color'].default_value = (0., 0., 0., 1.)
+    volume.inputs['Absorption Color'].default_value = (0., 0., 0., 1.)
     g.put(volume.inputs['Density'], g.math('MULTIPLY', field, 7.))
     volume.inputs['Emission Color'].default_value = (*linear('ffb03c'), 1)
     g.put(volume.inputs['Emission Strength'], g.math('MULTIPLY', field, 9.))
@@ -304,8 +306,11 @@ def moon_material(spec):
     g.put(diffuse.inputs['Color'], texture.outputs['Color'])
     diffuse.inputs['Roughness'].default_value = 1.
     light = WORLD[1] @ Vector(spec['light'])
-    facing = g.vector('DOT_PRODUCT', g.node('ShaderNodeNewGeometry').outputs['Normal'], tuple(light))
-    return g.surface(g.cover(diffuse.outputs[0], g.smooth(facing, -.03, .12)))
+    geometry = g.node('ShaderNodeNewGeometry')
+    facing = g.vector('DOT_PRODUCT', geometry.outputs['Normal'], tuple(light))
+    # A ray through the transparent dark side meets the inside of the far rim: that face is not the Moon's.
+    front = g.math('SUBTRACT', 1., geometry.outputs['Backfacing'])
+    return g.surface(g.cover(diffuse.outputs[0], g.math('MULTIPLY', g.smooth(facing, -.03, .12), front)))
 
 
 def volume_material(spec):
@@ -320,17 +325,21 @@ def volume_material(spec):
     else:
         stretched = local
         edge = g.math('SUBTRACT', 1., g.smooth(distance, .45, 1.))
-        scale, density, anisotropy = 2.4, 24., .3
+        scale, density, anisotropy = 1.7, 15., .2
     seed = spec['seed']
     shift = (1.7*seed+spec['loop'][0], 2.3*seed+spec['loop'][1], .9*seed)
     noise = g.node('ShaderNodeTexNoise', noise_dimensions='3D')
     g.put(noise.inputs['Vector'], g.vector('ADD', stretched, shift))
     noise.inputs['Scale'].default_value = scale
-    noise.inputs['Detail'].default_value = 5.
+    noise.inputs['Detail'].default_value = 2.5
     noise.inputs['Roughness'].default_value = .55
     billow = g.math('ADD', .35, g.math('MULTIPLY', g.smooth(noise.outputs['Fac'], .30, .64), .65))
     volume = g.node('ShaderNodeVolumePrincipled')
-    volume.inputs['Color'].default_value = (*linear(spec['colour']), 1)
+    albedo = linear(spec['colour'])
+    if spec['kind'] == 'cloud' and min(albedo) > .7:
+        # A fair-weather cloud scatters almost all its light: white, not the modelled pigment's grey.
+        albedo = tuple(.5+.5*a for a in albedo)
+    volume.inputs['Color'].default_value = (*albedo, 1)
     volume.inputs['Anisotropy'].default_value = anisotropy
     g.put(volume.inputs['Density'], g.math('MULTIPLY', g.math('MULTIPLY', edge, billow), density))
     return g.volume(volume.outputs[0])
@@ -340,7 +349,7 @@ def bolt_material(kind, strength):
     g = Graph(f'rw-bolt-{kind}')
     if kind == 'core':
         return g.surface(g.emission(linear('f7f3ff'), 6.*strength))
-    return g.surface(g.cover(g.emission(linear('c2b2ff'), 2.), .34*strength))
+    return g.surface(g.cover(g.emission(linear('9d8cff'), 1.6), .46*strength))
 
 
 def curve(name, path, radius, material):
@@ -414,33 +423,38 @@ def lamp(spec):
     return obj
 
 
-def link_lights(receivers, luminary):
-    """The studio lights the kept solids as before; the luminary lights only the Moon and the volumes."""
+def link_lights(receivers, lamps):
+    """The studio lights the kept solids as before; each lamp lights only the kinds it names."""
     studio_set = bpy.data.collections.get('rw-studio-excluded') or bpy.data.collections.new('rw-studio-excluded')
-    lit = bpy.data.collections.get('rw-luminary-lit') or bpy.data.collections.new('rw-luminary-lit')
-    for group in (studio_set, lit):
-        for obj in list(group.objects):
-            group.objects.unlink(obj)
-    for obj in receivers:
-        for group, state in ((studio_set, 'EXCLUDE'), (lit, 'INCLUDE')):
-            group.objects.link(obj)
-            # The link states follow the collection's object order; they take no name lookups.
-            group.collection_objects[list(group.objects).index(obj)].light_linking.link_state = state
+    for obj in list(studio_set.objects):
+        studio_set.objects.unlink(obj)
+    lit = [obj for objs in receivers.values() for obj in objs]
+    for obj in lit:
+        studio_set.objects.link(obj)
+        # The link states follow the collection's object order; they take no name lookups.
+        studio_set.collection_objects[list(studio_set.objects).index(obj)].light_linking.link_state = 'EXCLUDE'
     for name in STUDIO_LIGHTS:
-        bpy.data.objects[name].light_linking.receiver_collection = studio_set if receivers else None
-    if luminary is not None:
-        luminary.light_linking.receiver_collection = lit if receivers else None
+        bpy.data.objects[name].light_linking.receiver_collection = studio_set if lit else None
+    for spec in lamps:
+        targets = [obj for kind in spec['receives'] for obj in receivers.get(kind, [])]
+        if not targets:
+            continue
+        group = bpy.data.collections.new(f'rw-{spec["name"]}-lit')
+        for obj in targets:
+            group.objects.link(obj)
+            group.collection_objects[list(group.objects).index(obj)].light_linking.link_state = 'INCLUDE'
+        lamp(spec).light_linking.receiver_collection = group
 
 
 def build(scene, record, only=None):
     """Make the scene's objects; only names one element (and its lamp) for an isolated feature render."""
     clear()
     shapes = {shape.name: shape for shape in WORLD[2]}
-    receivers, luminary = [], None
+    receivers, lamps = {}, []
     for spec in scene:
         kind, name = spec['kind'], spec['name']
         if kind == 'lamp':
-            luminary = lamp(spec)
+            lamps.append(spec)
             continue
         if only is not None and name != only and not (kind == 'bolt' and only in spec['features']):
             continue
@@ -457,11 +471,11 @@ def build(scene, record, only=None):
             turn = Matrix.Rotation(math.pi if spec['hemisphere'] == 'south' else 0, 4, 'Z')
             obj = add(name, moon_mesh(), ellipsoid_matrix(spec, turn))
             assign(obj, moon_material(spec))
-            receivers.append(obj)
+            receivers.setdefault('moon', []).append(obj)
         elif kind in ('cloud', 'fog'):
             obj = add(name, unit_sphere(), ellipsoid_matrix(spec))
             assign(obj, volume_material(spec))
-            receivers.append(obj)
+            receivers.setdefault(kind, []).append(obj)
         elif kind == 'bolt':
             core, sheath = bolt_material('core', spec['glow']), bolt_material('sheath', spec['glow'])
             if spec['glow'] > 0:
@@ -486,13 +500,13 @@ def build(scene, record, only=None):
                 face.use_smooth = shape.smooth
             mesh.materials.append(base.coating(shape, SOLIDS))
             add(name, mesh)
-    link_lights(receivers, luminary)
+    link_lights(receivers, lamps)
 
 
 def solid_only(shape):
     """The modelled solid alone, as the hard witness of a volume's extent."""
     clear()
-    link_lights([], None)
+    link_lights({}, [])
     mesh = bpy.data.meshes.new(shape.name)
     mesh.from_pydata([tuple(p) for ring in shape.rings for p in ring], [], list(base.mesh_faces(shape)))
     mesh.materials.append(base.coating(shape, SOLIDS))

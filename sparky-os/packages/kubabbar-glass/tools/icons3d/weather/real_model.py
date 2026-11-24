@@ -26,9 +26,10 @@ MOON_CENTRE = (-.09, -.01)
 MOON_PHASE_ANGLE = radians(125)
 MOON_TILT = -.35
 CLOUD_LOOP_RADIUS = .35
-LIGHT = dict(sun=dict(direction=(-.50, .72, -.45), strength=3.2, colour='fff1dc', angle=8),
-             moon=dict(strength=4.6, colour='f1f3ff', angle=1),
-             sky=dict(direction=(.10, 1., .30), strength=2.4, colour='f4f8ff', angle=40))
+LIGHT = dict(sun=dict(direction=(-.30, .90, -.30), strength=5., colour='fff1dc', angle=8, receives=('cloud', 'fog')),
+             moon=dict(strength=10., colour='f1f3ff', angle=1, receives=('moon',)),
+             moonlight=dict(direction=(-.40, .80, -.30), strength=1.6, colour='cdd6ff', angle=4, receives=('cloud', 'fog')),
+             sky=dict(direction=(.10, 1., .30), strength=3.2, colour='f4f8ff', angle=40, receives=('cloud', 'fog')))
 REPLACED = ('solar-disc', 'ray-', 'crescent', 'cloud-', 'bolt', 'fog-', 'aurora-0-', 'aurora-1-', 'aurora-2-')
 
 
@@ -163,14 +164,16 @@ def aurora_specs(phase):
     return specs
 
 
-def lamp_spec(params):
+def lamp_specs(params):
+    """The luminary's light: the Moon's phase from one lamp, the clouds lit by the luminary of the name."""
     family = params['family']
     if family in ('status', 'wind', 'aurora'):
-        return None
+        return []
     luminary = params.get('luminary') or {'sun': 'sun', 'moon': 'moon'}.get(family)
     if luminary == 'moon':
-        return dict(kind='lamp', name='moon-light', direction=moon_light(), **LIGHT['moon'])
-    return dict(kind='lamp', name=f'{luminary or "sky"}-light', **LIGHT[luminary or 'sky'])
+        return [dict(kind='lamp', name='moon-light', direction=moon_light(), **LIGHT['moon']),
+                dict(kind='lamp', name='moonlight', **LIGHT['moonlight'])]
+    return [dict(kind='lamp', name=f'{luminary or "sky"}-light', **LIGHT[luminary or 'sky'])]
 
 
 def specs(params, shapes, phase, disc_back):
@@ -178,9 +181,7 @@ def specs(params, shapes, phase, disc_back):
     phase %= 1
     by = {shape.name: shape for shape in shapes}
     result = []
-    lamp = lamp_spec(params)
-    if lamp:
-        result.append(lamp)
+    result += lamp_specs(params)
     if 'solar-disc' in by:
         result += sun_specs(params, by, phase, disc_back, params.get('streamers', True))
     if 'crescent' in by:
