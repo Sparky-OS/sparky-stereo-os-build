@@ -1,0 +1,282 @@
+Description: Build no effect preview for a removed effect row
+ In 2D, a failed effect preview removes its row from the delegate's own
+ onFailed handler. The removed row's delegate lives on until its deferred
+ deletion, with index -1 and model.filters undefined. When the drawer opens
+ again before that deletion, its description binding builds
+ "... ! undefined name=last" and gst_parse_launch() refuses it with
+ 'no element "undefined"'. A delegate without its row now builds no
+ pipeline and removes nothing. The test loads the real Config.qml with
+ stand-ins for the types Kamoso registers in C++ and fails without the change.
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-24
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-find_package(Qt6 REQUIRED COMPONENTS Test)
++find_package(Qt6 REQUIRED COMPONENTS Test Qml Quick)
+ add_executable(stereopreview-test stereopreview-test.cpp ../src/video/stereopreview.cpp ../src/video/stereoeffects.cpp)
+ target_include_directories(stereopreview-test PRIVATE ../src/video)
+ target_link_libraries(stereopreview-test PRIVATE Qt6::Test Qt6::Multimedia KF6::I18n Stereo::Layer Stereo::Policy PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
+@@ -22,3 +22,9 @@ add_executable(stereopublisher-test stereopublisher-test.cpp ../src/video/stereo
+ target_include_directories(stereopublisher-test PRIVATE ../src/video)
+ target_link_libraries(stereopublisher-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
+ add_test(NAME stereopublisher COMMAND stereopublisher-test)
++
++add_executable(configgrid-test configgrid-test.cpp)
++target_compile_definitions(configgrid-test PRIVATE KAMOSO_CONFIG_QML="${CMAKE_SOURCE_DIR}/src/qml/Config.qml")
++target_link_libraries(configgrid-test PRIVATE Qt6::Test Qt6::Qml Qt6::Quick KF6::I18n)
++add_test(NAME configgrid COMMAND configgrid-test)
++set_tests_properties(configgrid PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+diff --git a/autotests/configgrid-test.cpp b/autotests/configgrid-test.cpp
+new file mode 100644
+--- /dev/null
++++ b/autotests/configgrid-test.cpp
+@@ -0,0 +1,215 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++// Loads the real effects grid (src/qml/Config.qml) with stand-ins for the types Kamoso registers in C++, and checks
++// what a delegate hands to its PipelineItem after its row was removed: the delegate lives on until its deferred
++// deletion, and a new sample image (the drawer opened again) must not make it build a pipeline from "undefined".
++
++#include <KLocalizedContext>
++#include <KLocalizedString>
++#include <QPointer>
++#include <QQmlContext>
++#include <QQmlEngine>
++#include <QQmlParserStatus>
++#include <QQuickItem>
++#include <QQuickView>
++#include <QQuickWindow>
++#include <QSGRendererInterface>
++#include <QTest>
++
++class TestPipelineItem : public QObject, public QQmlParserStatus
++{
++    Q_OBJECT
++    Q_INTERFACES(QQmlParserStatus)
++    Q_PROPERTY(QString description READ description WRITE setDescription NOTIFY descriptionChanged)
++    Q_PROPERTY(bool playing MEMBER m_playing NOTIFY playingChanged)
++public:
++    static inline QList<QPointer<TestPipelineItem>> items;
++    static inline QStringList descriptions;
++
++    TestPipelineItem()
++    {
++        items.append(this);
++    }
++    void classBegin() override
++    {
++    }
++    void componentComplete() override
++    {
++    }
++    QString description() const
++    {
++        return m_description;
++    }
++    void setDescription(const QString &description)
++    {
++        if (m_description == description)
++            return;
++        m_description = description;
++        descriptions.append(description);
++        Q_EMIT descriptionChanged();
++    }
++    // The real item emits failed() when GStreamer refuses its pipeline or reports an error on its bus.
++    void fail()
++    {
++        Q_EMIT failed();
++    }
++
++Q_SIGNALS:
++    void descriptionChanged();
++    void playingChanged();
++    void failed();
++
++private:
++    QString m_description;
++    bool m_playing = true;
++};
++
++class TestVideoItem : public QQuickItem
++{
++    Q_OBJECT
++    Q_PROPERTY(bool acceptEvents MEMBER m_acceptEvents NOTIFY acceptEventsChanged)
++Q_SIGNALS:
++    void acceptEventsChanged();
++
++private:
++    bool m_acceptEvents = true;
++};
++
++class TestWebcamControl : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QString currentDevice READ currentDevice CONSTANT)
++    Q_PROPERTY(bool stereoPreviewActive READ stereoPreviewActive NOTIFY stereoChanged)
++    Q_PROPERTY(QString stereoEffectMessage READ stereoEffectMessage NOTIFY stereoChanged)
++public:
++    QString currentDevice() const
++    {
++        return QStringLiteral("test camera");
++    }
++    bool stereoPreviewActive() const
++    {
++        return false;
++    }
++    QString stereoEffectMessage() const
++    {
++        return {};
++    }
++Q_SIGNALS:
++    void stereoChanged();
++};
++
++class TestKamoso : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QString sampleImage READ sampleImage NOTIFY sampleImageChanged)
++public:
++    QString sampleImage() const
++    {
++        return m_sampleImage;
++    }
++    void setSampleImage(const QString &path)
++    {
++        m_sampleImage = path;
++        Q_EMIT sampleImageChanged();
++    }
++Q_SIGNALS:
++    void sampleImageChanged();
++
++private:
++    QString m_sampleImage = QStringLiteral("/nonexistent/first-sample.jpg");
++};
++
++class TestDevice : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QString filters MEMBER m_filters NOTIFY filtersChanged)
++Q_SIGNALS:
++    void filtersChanged();
++
++private:
++    QString m_filters;
++};
++
++class TestDeviceManager : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QObject *playingDevice READ playingDevice CONSTANT)
++public:
++    QObject *playingDevice()
++    {
++        return &m_device;
++    }
++
++private:
++    TestDevice m_device;
++};
++
++class ConfigGridTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase()
++    {
++        KLocalizedString::setApplicationDomain("kamoso");
++        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
++        qmlRegisterType<TestPipelineItem>("org.kde.kamoso", 3, 0, "PipelineItem");
++        qmlRegisterSingletonInstance<QObject>("org.kde.kamoso", 3, 0, "WebcamControl", &m_webcam);
++        qmlRegisterSingletonInstance<QObject>("org.kde.kamoso", 3, 0, "Kamoso", &m_kamoso);
++        qmlRegisterSingletonInstance<QObject>("org.kde.kamoso", 3, 0, "DeviceManager", &m_devices);
++        qmlRegisterType<TestVideoItem>("org.freedesktop.gstreamer.Qt6GLVideoItem", 1, 0, "GstGLQt6VideoItem");
++    }
++
++    void removedRowBuildsNoPipeline()
++    {
++        QQuickView view;
++        view.rootContext()->setContextObject(new KLocalizedContext(view.engine()));
++        view.setResizeMode(QQuickView::SizeRootObjectToView);
++        view.resize(600, 2400);
++        view.setSource(QUrl::fromLocalFile(QStringLiteral(KAMOSO_CONFIG_QML)));
++        QVERIFY2(view.status() == QQuickView::Ready, qPrintable(QDebug::toString(view.errors())));
++        view.show();
++        QVERIFY(QTest::qWaitForWindowExposed(&view));
++        QQuickItem *grid = view.rootObject();
++        QTRY_COMPARE(grid->property("count").toInt(), 31);
++
++        TestPipelineItem *streaks = nullptr;
++        QTRY_VERIFY([&] {
++            for (const auto &item : std::as_const(TestPipelineItem::items)) {
++                if (item && item->description().contains(QLatin1String(" ! streaktv name=last")))
++                    streaks = item;
++            }
++            return streaks != nullptr;
++        }());
++        QPointer<TestPipelineItem> removed(streaks);
++
++        // In 2D a failed preview removes its row, from the delegate's own onFailed handler.
++        TestPipelineItem::descriptions.clear();
++        removed->fail();
++        QCOMPARE(grid->property("count").toInt(), 30);
++
++        // Before the removed delegate is deleted, the drawer shows a new sample image.
++        m_kamoso.setSampleImage(QStringLiteral("/nonexistent/second-sample.jpg"));
++        for (const QString &description : std::as_const(TestPipelineItem::descriptions))
++            QVERIFY2(!description.contains(QLatin1String("undefined")), qPrintable(description));
++        QVERIFY(TestPipelineItem::descriptions.size() >= 29);
++
++        // A late failure of the removed delegate removes no other effect.
++        if (removed) {
++            removed->fail();
++            QCOMPARE(grid->property("count").toInt(), 30);
++        }
++    }
++
++private:
++    TestWebcamControl m_webcam;
++    TestKamoso m_kamoso;
++    TestDeviceManager m_devices;
++};
++
++QTEST_MAIN(ConfigGridTest)
++
++#include "configgrid-test.moc"
+diff --git a/src/qml/Config.qml b/src/qml/Config.qml
+--- a/src/qml/Config.qml
++++ b/src/qml/Config.qml
+@@ -101,6 +101,9 @@ GridView {
+ 
+     delegate: Rectangle {
+         readonly property int borderWidth: 2
++        // A delegate whose row was removed lives on until its deferred deletion, with index -1 and no filters;
++        // it has no effect to preview, and building one would hand "undefined" to GStreamer's parser.
++        readonly property bool hasEffect: index >= 0 && model.filters !== undefined
+         id: delegateItem
+ 
+         width: Math.floor(view.width / columnCount) - Kirigami.Units.smallSpacing
+@@ -121,14 +124,14 @@ GridView {
+                 PipelineItem {
+                     playing: false
+                     onFailed: {
+-                        if (WebcamControl.stereoPreviewActive) {
++                        if (WebcamControl.stereoPreviewActive || !delegateItem.hasEffect) {
+                             return
+                         }
+                         delegateItem.visible = false
+                         view.model.remove(index)
+                     }
+ 
+-                    description: view.sampleImage.length === 0 ? "" : "filesrc location=\"" + view.sampleImage + "\" ! decodebin ! imagefreeze ! videoconvert ! " + model.filters + " name=last"
++                    description: view.sampleImage.length === 0 || !delegateItem.hasEffect ? "" : "filesrc location=\"" + view.sampleImage + "\" ! decodebin ! imagefreeze ! videoconvert ! " + model.filters + " name=last"
+                 }
+             }
+ 
