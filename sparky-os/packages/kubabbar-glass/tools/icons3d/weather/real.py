@@ -420,10 +420,10 @@ def link_lights(receivers, luminary):
         for obj in list(group.objects):
             group.objects.unlink(obj)
     for obj in receivers:
-        studio_set.objects.link(obj)
-        studio_set.collection_objects[obj.name].light_linking.link_state = 'EXCLUDE'
-        lit.objects.link(obj)
-        lit.collection_objects[obj.name].light_linking.link_state = 'INCLUDE'
+        for group, state in ((studio_set, 'EXCLUDE'), (lit, 'INCLUDE')):
+            group.objects.link(obj)
+            # The link states follow the collection's object order; they take no name lookups.
+            group.collection_objects[list(group.objects).index(obj)].light_linking.link_state = state
     for name in STUDIO_LIGHTS:
         bpy.data.objects[name].light_linking.receiver_collection = studio_set if receivers else None
     if luminary is not None:
