@@ -320,7 +320,7 @@ def volume_material(spec):
     distance = g.vector('LENGTH', local)
     if spec['kind'] == 'fog':
         stretched = g.vector('MULTIPLY', local, (.35, 2.2, 1.6))
-        scale, density, anisotropy, rough = 2.6, 10., .15, (.30, 1., .0)
+        scale, density, anisotropy, rough = 2.6, 26., .15, (.30, 1., .0)
     else:
         stretched = local
         scale, density, anisotropy, rough = 1.9, 12., .2, (.60, .90, .32)
@@ -340,8 +340,8 @@ def volume_material(spec):
     field = g.math('MULTIPLY', g.math('MULTIPLY', body, hull), inner)
     volume = g.node('ShaderNodeVolumePrincipled')
     albedo = linear(spec['colour'])
-    if spec['kind'] == 'cloud' and min(albedo) > .7:
-        # A fair-weather cloud scatters almost all its light: white, not the modelled pigment's grey.
+    if (spec['kind'] == 'cloud' and min(albedo) > .7) or spec['kind'] == 'fog':
+        # A fair-weather cloud or a fog bank scatters almost all its light: white, not the modelled pigment's grey.
         albedo = tuple(.5+.5*a for a in albedo)
     volume.inputs['Color'].default_value = (*albedo, 1)
     volume.inputs['Anisotropy'].default_value = anisotropy
