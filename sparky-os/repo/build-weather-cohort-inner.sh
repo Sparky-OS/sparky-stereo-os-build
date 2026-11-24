@@ -11,7 +11,7 @@ recipe=/toolkit/packages/$COMPONENT
 case "$COMPONENT" in
     kf6-kiconthemes)
         base=kf6-kiconthemes_6.32.0-1+stereo3d1+lc1.dsc
-        digest=bb85a718a9f629c2b7c6b0956a674b7df5c95d2ad7f374ee327794f4514b6bd11f84
+        digest=b7c6b0956a674b7df5c95d2ad7f374ee327794f4514b6bd11f84985e55954a45
         version=6.32.0-1+stereo3d4
         build_depends='libstereo-layer-dev (>= 1.23.3-1+lc1)'
         patches=("$recipe"/patches/{s2-*,s3-*,s4-*,s5-*}.patch)
