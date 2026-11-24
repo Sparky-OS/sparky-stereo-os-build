@@ -14,14 +14,14 @@ case "$COMPONENT" in
         digest=bb85a718a9f629c2b7c6b0956a674b7df5c95d2ad7f374ee327794f4514b6bd11f84
         version=6.32.0-1+stereo3d4
         build_depends='libstereo-layer-dev (>= 1.23.3-1+lc1)'
-        patches=("$recipe"/patches/{s2-*,s3-*,s4-*}.patch)
+        patches=("$recipe"/patches/{s2-*,s3-*,s4-*,s5-*}.patch)
         ;;
     kf6-kirigami)
         base=kf6-kirigami_6.32.0-1.dsc
         digest=304fcf326cc66f1408686817af8b9c355597f3ee66cf69e7294ec4fce40d9ec9
         version=6.32.0-1+stereo3d2
         build_depends='libkf6iconthemes-dev (>= 6.32.0-1+stereo3d4+lc1), libstereo-layer-dev (>= 1.23.3-1+lc1)'
-        patches=("$recipe"/patches/{s1-*,s2-*}.patch)
+        patches=("$recipe"/patches/{s1-*,s2-*,s3-*}.patch)
         preserve=(--preserve-source 'src/*' 'QML type registration and Qt moc use the authored declarations.'
                   --preserve-source 'templates/kirigami6/*' 'KDevelop installs these templates as authored.')
         ;;
