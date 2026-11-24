@@ -509,6 +509,9 @@ def timed_pair(size, camera, rig, exr, supersample, symbolic, costs, label):
 
 
 def initialize(samples):
+    # The studio starts from Blender's factory settings, which frees every cached mesh, image and material.
+    CACHE.clear()
+    SOLIDS.clear()
     cameras, right = base.initialize(samples)
     scene = bpy.context.scene
     scene.cycles.volume_bounces = 2
