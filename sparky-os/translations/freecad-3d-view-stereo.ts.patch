@@ -1,0 +1,731 @@
+From 80c5624e8d76bd347ba0c570d22241ab51102b5e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 24 Nov 2026 07:53:34 -0300
+Subject: [PATCH 2/2] Gui: the stereo 3D view's sentences in ten languages
+
+Sparky Stereo OS: the twelve sentences of the stereo 3D view (Enable 3D and
+3D Display Settings with their tooltips, the seven sentences told in the
+report view, and the Python API's refusal of the program's own stereo
+outputs) in Polish, Brazilian Portuguese, French, German, Spanish (es-ES and
+es-AR), Japanese, Korean and Chinese (Simplified and Traditional).  The seven
+told sentences are the edition's own, as OpenSCAD's catalogue has them.
+A first draft with AI assistance, pending review by native speakers.
+
+Forwarded: not-needed (the edition's build)
+Assisted-by: Claude Opus 5.5 (Anthropic)
+---
+ src/Gui/Language/FreeCAD_de.ts    | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_es-AR.ts | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_es-ES.ts | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_fr.ts    | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_ja.ts    | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_ko.ts    | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_pl.ts    | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_pt-BR.ts | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_zh-CN.ts | 54 +++++++++++++++++++++++++++++++
+ src/Gui/Language/FreeCAD_zh-TW.ts | 54 +++++++++++++++++++++++++++++++
+ 10 files changed, 540 insertions(+)
+
+diff --git a/src/Gui/Language/FreeCAD_de.ts b/src/Gui/Language/FreeCAD_de.ts
+index c0829a2..e723492 100644
+--- a/src/Gui/Language/FreeCAD_de.ts
++++ b/src/Gui/Language/FreeCAD_de.ts
+@@ -13840,6 +13840,14 @@ Fortfahren?</translation>
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>&amp;3D aktivieren</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>Zeigt die 3D-Ansichten stereoskopisch, mit der in den 3D-Einstellungen des Desktops festgelegten Tiefe</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14695,4 +14703,50 @@ Dadurch bleibt das angedockte Fenster jederzeit transparent.</translation>
+       <translation>Alles auswählen</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>3D-&amp;Anzeigeeinstellungen ...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>Öffnet die Anzeigeeinstellungen des Desktops, in denen die 3D-Modi und die Tiefe festgelegt werden</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>Dieser Desktop bietet keine Stereo-Puffer, deshalb bleibt die 3D-Ansicht 2D.</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D: Diese Ansicht hat keine Stereo-Puffer erhalten, deshalb wird sie in 2D gezeigt</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>3D-Tiefe: Dieser Desktop bietet keine Tiefengrenzen, deshalb sehen beide Augen dasselbe Bild</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>3D-Tiefe: Der Desktop hat die Tiefengrenzen noch nicht geliefert, beide Augen sehen vorerst dasselbe Bild</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>3D-Tiefe: Dieses Fenster kann die Tiefengrenzen des Desktops nicht lesen, deshalb sehen beide Augen dasselbe Bild</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>3D-Tiefe: Die Tiefe dieser Ansicht konnte nicht gelesen werden, deshalb sehen beide Augen dasselbe Bild</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>Die Anzeigeeinstellungen konnten nicht geöffnet werden.</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>Diese Ansicht zeichnet ihre beiden Augen; die Anzeigeeinstellungen des Desktops erzeugen daraus Rot/Cyan, verschachtelte und jede andere Stereo-Ausgabe für jeden Bildschirm.</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_es-AR.ts b/src/Gui/Language/FreeCAD_es-AR.ts
+index b5c80fc..74a4b3c 100644
+--- a/src/Gui/Language/FreeCAD_es-AR.ts
++++ b/src/Gui/Language/FreeCAD_es-AR.ts
+@@ -13833,6 +13833,14 @@ Proceed?</translation>
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>Activar &amp;3D</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>Muestra las vistas 3D en estéreo, con la profundidad fijada en los ajustes 3D del escritorio</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14688,4 +14696,50 @@ This makes the docked panel stay transparent at all times.</translation>
+       <translation>Seleccionar Todo</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>&amp;Ajustes de la pantalla 3D...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>Abre los ajustes de pantalla del escritorio, donde se fijan los modos 3D y la profundidad</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>Este escritorio no ofrece búferes estéreo, así que la vista 3D sigue en 2D.</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D: esta vista no recibió búferes estéreo, así que se muestra en 2D</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>Profundidad 3D: este escritorio no ofrece límites de profundidad, así que los dos ojos ven la misma imagen</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>Profundidad 3D: el escritorio aún no ha entregado los límites de profundidad, por ahora los dos ojos ven la misma imagen</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>Profundidad 3D: esta ventana no puede leer los límites de profundidad del escritorio, así que los dos ojos ven la misma imagen</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>Profundidad 3D: no se pudo leer la profundidad de esta vista, así que los dos ojos ven la misma imagen</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>No se pudieron abrir los Ajustes de pantalla.</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>Esta vista dibuja sus dos ojos; los ajustes de pantalla del escritorio hacen el rojo/cian, el entrelazado y cualquier otra salida estéreo para cada pantalla.</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_es-ES.ts b/src/Gui/Language/FreeCAD_es-ES.ts
+index 5a99277..ef69e05 100644
+--- a/src/Gui/Language/FreeCAD_es-ES.ts
++++ b/src/Gui/Language/FreeCAD_es-ES.ts
+@@ -13835,6 +13835,14 @@ Proceed?</translation>
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>Activar &amp;3D</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>Muestra las vistas 3D en estéreo, con la profundidad fijada en los ajustes 3D del escritorio</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14690,4 +14698,50 @@ This makes the docked panel stay transparent at all times.</translation>
+       <translation>Seleccionar todo</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>&amp;Ajustes de la pantalla 3D...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>Abre los ajustes de pantalla del escritorio, donde se fijan los modos 3D y la profundidad</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>Este escritorio no ofrece búferes estéreo, así que la vista 3D sigue en 2D.</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D: esta vista no recibió búferes estéreo, así que se muestra en 2D</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>Profundidad 3D: este escritorio no ofrece límites de profundidad, así que los dos ojos ven la misma imagen</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>Profundidad 3D: el escritorio aún no ha entregado los límites de profundidad, por ahora los dos ojos ven la misma imagen</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>Profundidad 3D: esta ventana no puede leer los límites de profundidad del escritorio, así que los dos ojos ven la misma imagen</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>Profundidad 3D: no se pudo leer la profundidad de esta vista, así que los dos ojos ven la misma imagen</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>No se pudieron abrir los Ajustes de pantalla.</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>Esta vista dibuja sus dos ojos; los ajustes de pantalla del escritorio hacen el rojo/cian, el entrelazado y cualquier otra salida estéreo para cada pantalla.</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_fr.ts b/src/Gui/Language/FreeCAD_fr.ts
+index b86b541..a83bb6b 100644
+--- a/src/Gui/Language/FreeCAD_fr.ts
++++ b/src/Gui/Language/FreeCAD_fr.ts
+@@ -13814,6 +13814,14 @@ d'un simple dossier permettant d'organiser les objets dans un modèle.</translat
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>Activer la &amp;3D</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>Affiche les vues 3D en stéréo, avec la profondeur réglée dans les réglages 3D du bureau</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14670,4 +14678,50 @@ partage de la configuration entre les versions peut causer des problèmes et n'e
+       <translation>Tout sélectionner</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>&amp;Réglages de l'écran 3D...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>Ouvre les réglages de l'écran du bureau, où se règlent les modes 3D et la profondeur</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>Ce bureau n’offre pas de tampons stéréo : la vue 3D reste donc en 2D.</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D : cette vue n’a pas reçu de tampons stéréo, elle est donc affichée en 2D</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>Profondeur 3D : ce bureau n’offre pas de limites de profondeur, les deux yeux voient donc la même image</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>Profondeur 3D : le bureau n’a pas encore transmis les limites de profondeur, les deux yeux voient la même image pour l’instant</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>Profondeur 3D : cette fenêtre ne peut pas lire les limites de profondeur du bureau, les deux yeux voient donc la même image</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>Profondeur 3D : la profondeur de cette vue n’a pas pu être lue, les deux yeux voient donc la même image</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>Impossible d'ouvrir les Réglages de l'écran.</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>Cette vue dessine ses deux yeux ; les réglages de l'écran du bureau en font le rouge/cyan, l'entrelacé et toute autre sortie stéréo pour chaque écran.</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_ja.ts b/src/Gui/Language/FreeCAD_ja.ts
+index 17c85e8..f718368 100644
+--- a/src/Gui/Language/FreeCAD_ja.ts
++++ b/src/Gui/Language/FreeCAD_ja.ts
+@@ -13796,6 +13796,14 @@ Proceed?</source>
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>3D を有効にする(&amp;3)</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>デスクトップの 3D 設定で決めた奥行きで、3D ビューをステレオ表示します</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14651,4 +14659,50 @@ This makes the docked panel stay transparent at all times.</source>
+       <translation>全て選択</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>3D ディスプレイの設定(&amp;D)...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>3D モードと奥行きを設定する、デスクトップのディスプレイ設定を開きます</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>このデスクトップはステレオバッファーを提供しないため、3D ビューは 2D のままです。</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D: このビューはステレオバッファーを得られなかったため、2D で表示します</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>3D奥行き: このデスクトップは奥行きの上限を提供しないため、両目に同じ画像を表示します</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>3D奥行き: デスクトップがまだ奥行きの上限を渡していないため、今は両目に同じ画像を表示します</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>3D奥行き: このウィンドウはデスクトップの奥行きの上限を読み取れないため、両目に同じ画像を表示します</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>3D奥行き: このビューの奥行きを読み取れなかったため、両目に同じ画像を表示します</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>ディスプレイ設定を開けませんでした。</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>このビューは両目の画像を描画します。赤/シアン、インターリーブ、その他すべてのステレオ出力は、画面ごとにデスクトップのディスプレイ設定が作ります。</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_ko.ts b/src/Gui/Language/FreeCAD_ko.ts
+index ffd7cdd..c703305 100644
+--- a/src/Gui/Language/FreeCAD_ko.ts
++++ b/src/Gui/Language/FreeCAD_ko.ts
+@@ -13838,6 +13838,14 @@ Proceed?</translation>
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>3D 사용(&amp;3)</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>데스크톱의 3D 설정에서 정한 깊이로 3D 보기를 스테레오로 보여 줍니다</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14693,4 +14701,50 @@ This makes the docked panel stay transparent at all times.</translation>
+       <translation>모두 선택</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>3D 디스플레이 설정(&amp;D)...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>3D 모드와 깊이를 정하는 데스크톱의 디스플레이 설정을 엽니다</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>이 데스크톱은 스테레오 버퍼를 제공하지 않아 3D 보기는 2D로 유지됩니다.</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D: 이 보기는 스테레오 버퍼를 받지 못해 2D로 표시됩니다</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>3D 깊이: 이 데스크톱은 깊이 한계를 제공하지 않아 두 눈에 같은 화면을 보여 줍니다</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>3D 깊이: 데스크톱이 아직 깊이 한계를 전달하지 않아 지금은 두 눈에 같은 화면을 보여 줍니다</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>3D 깊이: 이 창은 데스크톱의 깊이 한계를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>3D 깊이: 이 보기의 깊이를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>디스플레이 설정을 열 수 없습니다.</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>이 보기는 두 눈의 화면을 그립니다. 빨강/청록, 인터리브 및 그 밖의 모든 스테레오 출력은 화면마다 데스크톱의 디스플레이 설정이 만듭니다.</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_pl.ts b/src/Gui/Language/FreeCAD_pl.ts
+index 406bbc7..19a7dfa 100644
+--- a/src/Gui/Language/FreeCAD_pl.ts
++++ b/src/Gui/Language/FreeCAD_pl.ts
+@@ -13918,6 +13918,14 @@ Przejrzystość może być dopasowana w oknie wyświetlania zadań.</translation
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>Włącz &amp;3D</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>Pokazuje widoki 3D w stereo, z głębią ustawioną w ustawieniach 3D pulpitu</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14777,4 +14785,50 @@ Przenieść konfigurację do nowego katalogu dla tej wersji?</translation>
+       <translation>Zaznacz wszystko</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>&amp;Ustawienia wyświetlacza 3D...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>Otwiera ustawienia wyświetlacza pulpitu, w których ustawia się tryby 3D i głębię</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>Ten pulpit nie udostępnia buforów stereo, więc widok 3D pozostaje w 2D.</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D: ten widok nie otrzymał buforów stereo, więc jest wyświetlany w 2D</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>Głębia 3D: ten pulpit nie podaje limitów głębi, więc oba oczy widzą ten sam obraz</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>Głębia 3D: pulpit nie przekazał jeszcze limitów głębi, na razie oba oczy widzą ten sam obraz</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>Głębia 3D: to okno nie może odczytać limitów głębi pulpitu, więc oba oczy widzą ten sam obraz</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>Głębia 3D: nie udało się odczytać głębi tego widoku, więc oba oczy widzą ten sam obraz</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>Nie udało się otworzyć ustawień wyświetlacza.</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>Ten widok rysuje oba swoje oczy; ustawienia wyświetlacza pulpitu tworzą z nich obraz czerwono-cyjanowy, przeplatany i każdy inny obraz stereo dla każdego ekranu.</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_pt-BR.ts b/src/Gui/Language/FreeCAD_pt-BR.ts
+index a5b9dd0..e4a332e 100644
+--- a/src/Gui/Language/FreeCAD_pt-BR.ts
++++ b/src/Gui/Language/FreeCAD_pt-BR.ts
+@@ -13838,6 +13838,14 @@ Proceed?</translation>
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>Ativar &amp;3D</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>Mostra as visões 3D em estéreo, com a profundidade definida nas configurações 3D do desktop</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14693,4 +14701,50 @@ This makes the docked panel stay transparent at all times.</translation>
+       <translation>Selecionar tudo</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>&amp;Configurações da tela 3D...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>Abre as configurações de tela do desktop, onde se definem os modos 3D e a profundidade</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>Este desktop não oferece buffers estéreo, então a visão 3D fica em 2D.</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D: esta visão não recebeu buffers estéreo, então é mostrada em 2D</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>Profundidade 3D: este desktop não oferece limites de profundidade, então os dois olhos veem a mesma imagem</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>Profundidade 3D: o desktop ainda não entregou os limites de profundidade, por enquanto os dois olhos veem a mesma imagem</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>Profundidade 3D: esta janela não consegue ler os limites de profundidade do desktop, então os dois olhos veem a mesma imagem</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>Profundidade 3D: não foi possível ler a profundidade desta visão, então os dois olhos veem a mesma imagem</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>Não foi possível abrir as Configurações de tela.</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>Esta visão desenha os seus dois olhos; as configurações de tela do desktop fazem o vermelho/ciano, o entrelaçado e qualquer outra saída estéreo para cada tela.</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_zh-CN.ts b/src/Gui/Language/FreeCAD_zh-CN.ts
+index e80eba0..88b51cb 100644
+--- a/src/Gui/Language/FreeCAD_zh-CN.ts
++++ b/src/Gui/Language/FreeCAD_zh-CN.ts
+@@ -13823,6 +13823,14 @@ Proceed?</source>
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>启用 3D(&amp;3)</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>以桌面 3D 设置中设定的深度，立体显示 3D 视图</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14677,4 +14685,50 @@ This makes the docked panel stay transparent at all times.</source>
+       <translation>全选</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>3D 显示设置(&amp;D)...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>打开桌面的显示设置，在那里设定 3D 模式和深度</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>此桌面不提供立体缓冲区，因此 3D 视图保持 2D。</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D：此视图未获得立体缓冲区，因此以 2D 显示</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>3D 深度：此桌面未提供深度限制，因此两眼显示相同的画面</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>3D 深度：桌面尚未提供深度限制，暂时两眼显示相同的画面</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>3D 深度：此窗口无法读取桌面的深度限制，因此两眼显示相同的画面</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>3D 深度：无法读取此视图的深度，因此两眼显示相同的画面</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>无法打开显示设置。</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>此视图绘制双眼的画面；红/青、交错以及其他所有立体输出，均由桌面的显示设置为每个屏幕生成。</translation>
++    </message>
++  </context>
+ </TS>
+diff --git a/src/Gui/Language/FreeCAD_zh-TW.ts b/src/Gui/Language/FreeCAD_zh-TW.ts
+index f4ea09e..ce8b04f 100644
+--- a/src/Gui/Language/FreeCAD_zh-TW.ts
++++ b/src/Gui/Language/FreeCAD_zh-TW.ts
+@@ -13827,6 +13827,14 @@ Proceed?</source>
+   </context>
+   <context>
+     <name>StdCmdViewIvStereoQuadBuff</name>
++    <message>
++      <source>Enable &amp;3D</source>
++      <translation>啟用 3D(&amp;3)</translation>
++    </message>
++    <message>
++      <source>Shows the 3D views in stereo, with the depth set in the desktop's 3D settings</source>
++      <translation>以桌面 3D 設定中設定的深度，立體顯示 3D 檢視</translation>
++    </message>
+     <message>
+       <location filename="../CommandView.cpp" line="2534"/>
+       <source>Stereo &amp;Quad Buffer</source>
+@@ -14681,4 +14689,50 @@ This makes the docked panel stay transparent at all times.</translation>
+       <translation>全選</translation>
+     </message>
+   </context>
++  <context>
++    <name>StdCmdViewIvStereoDisplaySettings</name>
++    <message>
++      <source>3D &amp;Display Settings...</source>
++      <translation>3D 顯示設定(&amp;D)...</translation>
++    </message>
++    <message>
++      <source>Opens the desktop's display settings, where the 3D modes and the depth are set</source>
++      <translation>開啟桌面的顯示設定，在那裡設定 3D 模式和深度</translation>
++    </message>
++  </context>
++  <context>
++    <name>Gui::View3DStereo</name>
++    <message>
++      <source>This desktop offers no stereo buffers, so the 3D view stays 2D.</source>
++      <translation>此桌面不提供立體緩衝區，因此 3D 檢視維持 2D。</translation>
++    </message>
++    <message>
++      <source>3D: this view got no stereo buffers, so it is shown in 2D</source>
++      <translation>3D：此檢視未取得立體緩衝區，因此以 2D 顯示</translation>
++    </message>
++    <message>
++      <source>3D depth: this desktop offers no depth limits, so both eyes show the same picture</source>
++      <translation>3D 深度：此桌面未提供深度限制，因此兩眼顯示相同的畫面</translation>
++    </message>
++    <message>
++      <source>3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now</source>
++      <translation>3D 深度：桌面尚未提供深度限制，暫時兩眼顯示相同的畫面</translation>
++    </message>
++    <message>
++      <source>3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture</source>
++      <translation>3D 深度：此視窗無法讀取桌面的深度限制，因此兩眼顯示相同的畫面</translation>
++    </message>
++    <message>
++      <source>3D depth: the depth of this view could not be read, so both eyes show the same picture</source>
++      <translation>3D 深度：無法讀取此檢視的深度，因此兩眼顯示相同的畫面</translation>
++    </message>
++    <message>
++      <source>Display Settings could not be opened.</source>
++      <translation>無法開啟顯示設定。</translation>
++    </message>
++    <message>
++      <source>This view draws its two eyes; the desktop's display settings make red/cyan, interleaved and every other stereo output for each screen.</source>
++      <translation>此檢視繪製雙眼的畫面；紅/青、交錯以及其他所有立體輸出，皆由桌面的顯示設定為每個螢幕產生。</translation>
++    </message>
++  </context>
+ </TS>
+-- 
+2.53.0
+
