@@ -63,9 +63,10 @@ install -m644 "$HERE/patches/0001-follow-the-session-default-camera.patch" sourc
 install -m644 "$HERE/patches/0002-stereo-camera-viewfinder.patch" source/debian/patches/
 install -m644 "$HERE/patches/0003-effects-grid-removed-row-builds-no-pipeline.patch" source/debian/patches/
 install -m644 "$HERE/patches/0004-effect-previews-convert-before-the-sink.patch" source/debian/patches/
+install -m644 "$HERE/patches/0005-failed-effect-preview-keeps-its-row-and-says-so.patch" source/debian/patches/
 printf '%s\n' 0001-follow-the-session-default-camera.patch 0002-stereo-camera-viewfinder.patch \
     0003-effects-grid-removed-row-builds-no-pipeline.patch 0004-effect-previews-convert-before-the-sink.patch \
-    >>source/debian/patches/series
+    0005-failed-effect-preview-keeps-its-row-and-says-so.patch >>source/debian/patches/series
 python3 - source/debian/control <<'CONTROL'
 from pathlib import Path
 import sys
@@ -94,7 +95,8 @@ date = reproducible.rfc2822(os.environ['SOURCE_DATE_EPOCH'])
 p.write_text('kamoso (26.04.0-1+stereo3d2) unstable; urgency=medium\n\n'
              '  * Add the shared camera packing and declared stereo viewfinder.\n'
              '  * Build no effect preview for a removed effect row.\n'
-             '  * Convert an effect preview\'s format before its sink.\n\n'
+             '  * Convert an effect preview\'s format before its sink.\n'
+             '  * A failed effect preview keeps its row and says so.\n\n'
              ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + date + '\n\n' + p.read_text())
 PY
 cd source
