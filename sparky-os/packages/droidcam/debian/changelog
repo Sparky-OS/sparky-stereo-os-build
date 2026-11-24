@@ -1,3 +1,26 @@
+droidcam (2.1.7-2) unstable; urgency=medium
+
+  * debian/patches/0001-wait-for-the-first-picture-and-say-why-the-stream-ends.patch: the client waits for the phone's first picture, receives whole or fails,
+    and says why a stream ends.
+    The DroidCam app (6.28, Android 10) answers the request at once and opens the phone's camera afterwards: the first frame came 7 to 18 seconds later,
+    and the client's receive timeout (5 seconds and the microseconds select() leaves in the same timeval, about 6) ended its video thread in silence with
+    nothing written to the video device; the same phone then sent frames in bursts with gaps of 5 seconds and more, which that timeout would also take for
+    the end of the stream. The first frame is now waited for up to 60 seconds (it says so after two), a running stream is given 15 seconds between frames,
+    a stream that sends no picture or is lost is said, and droidcam-cli exits with 3 or 4 (1 for the earlier failures) where it used to stay running; the
+    window program (droidcam) does what its Stop button does and shows Connect again.
+  * A receive that a signal interrupts while the program runs goes on (Ctrl+Z and fg: SIGCONT interrupts a receive with a timeout, signal(7)); it used to end
+    the stream in silence. The video header, the frame length and the frame are received whole or the receive fails (recv with MSG_WAITALL returned fewer bytes
+    after a timeout in the middle of a frame, which left the stream out of step), and a frame length of 0 or above the frame buffer ends the stream.
+  * -size is not applied when the loopback device keeps its first size: the client says which size it stays at. When the phone sends another size than the
+    device takes, the client says so once ("the phone sends WxH, shown at WxH").
+  * No upstream commit, issue or pull request covers it (dev47apps/droidcam-linux-client searched on 2026-11-24: no commit after v2.1.7; issues #180 and #94,
+    closed, were Ctrl+C that did nothing).
+  * tests/first-frame: a stand-in for the app (server.py, with the header and framing recorded from the phone), a V4L2 shim, cases.sh (red on 2.1.7-1 and green
+    on this version, without a phone) and gui-cases.sh (the window program in a container with a virtual display).
+  * The Depends are unchanged: the client already decodes the app's JPEG frames with libturbojpeg (Build-Depends libturbojpeg0-dev, shlibs adds the runtime package); no decoder was missing.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 24 Nov 2026 22:00:56 +0000
+
 droidcam (2.1.7-1) unstable; urgency=medium
 
   * Upstream release 2.1.7 of Dev47Apps' Linux client for DroidCam (tag v2.1.7, commit c8a0cc97663d), built from the release tag's source.

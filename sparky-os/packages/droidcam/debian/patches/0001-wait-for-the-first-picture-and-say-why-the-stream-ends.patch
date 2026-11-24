@@ -1,0 +1,346 @@
+Description: wait for the phone's first picture, receive whole or fail, and say why a stream ends
+ The DroidCam app answers the video request with its 9 byte header at once, but opens the phone's camera only after that, and on a busy
+ phone the first frame comes 7 to 18 seconds later (measured with app 6.28 on Android 10, USB through adb and Wi-Fi, the same for the v2 and
+ the v3 request). The client gave a running stream and the first frame the same receive timeout set in Connect() (5 seconds, and the
+ microseconds select() leaves in the same timeval: about 6 seconds), so it gave up before the first picture, ended its video thread without
+ a word and stayed running with nothing written to the video device. The same phone then sent its frames in bursts with gaps of 5 seconds
+ and more, which the same timeout would also count as the end of the stream.
+ .
+ The first frame is now waited for in steps of one second up to 60 seconds, saying once after two seconds that it is waiting. After it
+ a running stream is given 15 seconds between frames. When no picture comes, or the stream is lost, the client says so and droidcam-cli
+ exits with 3 or 4 (1 for the earlier failures that also left it idle), where it used to wait for ever; the window program does what its
+ Stop button does, so it shows Connect again. In -l mode (the phone connects) the client keeps waiting for the next connection as before.
+ .
+ The video receive is RecvExact(): the header, the frame length and the frame are received whole or the receive fails. A receive that a
+ signal interrupts while the program still runs goes on (a stop and continue, Ctrl+Z and fg: SIGCONT interrupts a receive that has a
+ timeout, signal(7)), where it ended the stream in silence; only the program's own stop (SIGINT, which clears v_running) is silent. recv()
+ with MSG_WAITALL returned fewer bytes than asked after a timeout in the middle of an item, which taken for a whole frame left the stream
+ out of step, and a frame length from the stream was never checked against the buffer: it is now (a length of 0 or above the frame buffer
+ ends the stream).
+ .
+ Also: when the v4l2loopback device keeps the size it was first given, -size is not applied (the driver answers the old size to the new
+ one); the client says which size the device stays at. When the size the phone sends differs from the size the device takes, the client
+ says so once: "the phone sends WxH, shown at WxH".
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: no
+Bug: none known upstream (dev47apps/droidcam-linux-client: no commit after v2.1.7; no issue or pull request about the first frame, an interrupted receive or a partial read; searched 2026-11-24)
+Last-Update: 2026-11-24
+
+--- a/src/av.c
++++ b/src/av.c
+@@ -11,6 +11,9 @@
+ #include "connection.h"
+ #include "decoder.h"
+ #include <stdint.h>
++#include <errno.h>
++#include <sys/socket.h>
++#include <sys/time.h>
+ 
+ extern int a_active;
+ extern int v_active;
+@@ -21,6 +24,23 @@
+ 
+ const char *thread_cmd_val_str;
+ 
++/* The app opens the phone's camera only after it has answered the request, and a busy phone takes many seconds to do it
++ * (7 to 18 s measured on Android 10, DroidCam app 6.28). The receive timeout of Connect() (5 s and the microseconds that select()
++ * left in the same timeval, about 6 s) is shorter than that, so until the first frame arrives the client waits in steps of one
++ * second, up to FIRST_FRAME_WAIT_SEC. The same phone then sent its frames in bursts with gaps of 5 s and more, so a running
++ * stream is given STREAM_RECV_TIMEOUT_SEC before it counts as lost. */
++#define FIRST_FRAME_WAIT_SEC 60
++#define FIRST_FRAME_NOTICE_SEC 2
++#define STREAM_RECV_TIMEOUT_SEC 15
++
++static void set_recv_timeout(SOCKET s, int seconds) {
++    struct timeval timeout;
++    timeout.tv_sec = seconds;
++    timeout.tv_usec = 0;
++    if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
++        perror("setsockopt failed");
++}
++
+ SOCKET GetConnection(void) {
+     char *err;
+     SOCKET socket = INVALID_SOCKET;
+@@ -119,6 +139,8 @@
+     SOCKET videoSocket = (SOCKET_PTR) args;
+     int len;
+     int keep_waiting = 0;
++    int fail = 0;
++    int last_errno = 0;
+     dbgprint("Video Thread Started s=%d\n", videoSocket);
+ 
+ server_wait:
+@@ -134,20 +156,25 @@
+     if (Send(buf, len, videoSocket) <= 0){
+         errprint("send error (%d) '%s'\n", errno, strerror(errno));
+         MSG_ERROR("Error sending request, DroidCam might be busy with another client.");
++        fail = 1;
+         goto early_out;
+     }
+ 
+     memset(buf, 0, sizeof(buf));
+-    if (RecvAll(buf, 9, videoSocket) <= 0) {
++    if (RecvExact(buf, 9, videoSocket) <= 0) {
+         errprint("recv error (%d) '%s'\n", errno, strerror(errno));
+         MSG_ERROR("Connection reset!\nIs the app running?");
++        fail = 1;
+         goto early_out;
+     }
+ 
+     if (decoder_prepare_video(buf) == 0) {
++        fail = 1;
+         goto early_out;
+     }
+ 
++    int got_frame = 0;
++    set_recv_timeout(videoSocket, 1);
+     v_active = 1;
+     while (v_running != 0){
+         if (thread_cmd != 0) {
+@@ -165,22 +192,58 @@
+         }
+ 
+         JPGFrame *f = pull_empty_jpg_frame();
+-        if (RecvAll(buf, 4, videoSocket) <= 0)
++        int waited = 0;
++        while ((len = RecvExact(buf, 4, videoSocket)) < 0 && !got_frame && v_running
++                && (errno == EAGAIN || errno == EWOULDBLOCK) && ++waited < FIRST_FRAME_WAIT_SEC) {
++            if (waited == FIRST_FRAME_NOTICE_SEC)
++                errprint("Video: waiting for the phone's camera to start (up to %d s)...\n", FIRST_FRAME_WAIT_SEC);
++        }
++        if (len <= 0) {
++            last_errno = len < 0 ? errno : 0;
+             break;
++        }
++
++        if (!got_frame) {
++            got_frame = 1;
++            set_recv_timeout(videoSocket, STREAM_RECV_TIMEOUT_SEC);
++        }
+ 
+         f->length = le32toh(*(uint32_t*) buf);
+-        if (RecvAll((const char*)f->data, f->length, videoSocket) <= 0)
++        if (f->length == 0 || f->length > (unsigned) decoder_get_frame_buffer_size()) {
++            errprint("Video: a frame of %u bytes cannot be right, the stream is out of step\n", f->length);
++            last_errno = EPROTO;
+             break;
++        }
++        len = RecvExact((const char*)f->data, f->length, videoSocket);
++        if (len <= 0) {
++            last_errno = len < 0 ? errno : 0;
++            break;
++        }
+ 
+         push_jpg_frame(f, false);
+     }
+ 
++    /* a signal that stops the client interrupts the receive, which is the person's stop and not a loss */
++    if (last_errno == EINTR) {
++        /* nothing to say */
++    } else if (v_running && !got_frame) {
++        MSG_ERROR("The phone sent no picture.\nKeep the DroidCam app open on the phone and its screen on,\n"
++                  "and turn off energy saving and background apps there.");
++        fail = 3;
++    } else if (v_running && !keep_waiting) {
++        MSG_ERROR("The connection to the phone was lost.");
++        fail = 4;
++    }
++
+ early_out:
+     v_active = 0;
+     dbgprint("disconnect\n");
+     disconnect(videoSocket);
+     decoder_cleanup();
+ 
++    if (v_running && !keep_waiting && fail)
++        StreamEnded(fail);
++
+     if (v_running && keep_waiting){
+         videoSocket = INVALID_SOCKET;
+         goto server_wait;
+--- a/src/common.h
++++ b/src/common.h
+@@ -15,6 +15,7 @@
+ #define MSG_ERROR(str)     ShowError("Error",str)
+ #define MSG_LASTERROR(str) ShowError(str,strerror(errno))
+ void ShowError(const char*, const char*);
++void StreamEnded(int code);
+ 
+ #define ADB_LOCALHOST_IP "127.0.0.1"
+ 
+--- a/src/connection.c
++++ b/src/connection.c
+@@ -26,7 +26,8 @@
+ #include "connection.h"
+ 
+ SOCKET wifiServerSocket = INVALID_SOCKET;
+-extern int v_running;
++extern volatile int v_running;
++extern volatile int a_running;
+ 
+ char* DROIDCAM_CONNECT_ERROR = \
+     "Connect failed, please try again.\n"
+@@ -113,6 +114,37 @@
+     return recv(s, (char*)buffer, bytes, MSG_WAITALL);
+ }
+ 
++/* Receives exactly `bytes` bytes or fails, never a short count: recv() with MSG_WAITALL returns fewer bytes after a signal or after a timeout that
++ * comes in the middle of an item, and a short header or frame taken for a whole one leaves the stream out of step from then on.
++ * Returns `bytes`; 0 when the peer closed before the first byte; -1 otherwise, errno saying why: EAGAIN only when no byte of the item had
++ * arrived (the caller may ask again), ETIMEDOUT or ECONNRESET in the middle of an item, EINTR when the program is stopping.
++ * A receive interrupted while the program still runs (a stop and continue: SIGCONT interrupts a receive that has a timeout, signal(7)) goes on. */
++int RecvExact(const char* buffer, int bytes, SOCKET s) {
++    int got = 0;
++    while (got < bytes) {
++        ssize_t r = recv(s, (char*)buffer + got, bytes - got, 0);
++        if (r > 0) {
++            got += r;
++            continue;
++        }
++        if (r < 0 && errno == EINTR) {
++            if (v_running || a_running)
++                continue;
++            return -1;
++        }
++        if (r == 0) {
++            if (got == 0)
++                return 0;
++            errno = ECONNRESET;
++            return -1;
++        }
++        if (got > 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
++            errno = ETIMEDOUT;
++        return -1;
++    }
++    return got;
++}
++
+ int RecvNonBlock(char * buffer, int bytes, SOCKET s) {
+     int res = recv(s, buffer, bytes, MSG_DONTWAIT);
+     return (res < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) ? 0 : res;
+--- a/src/connection.h
++++ b/src/connection.h
+@@ -22,6 +22,7 @@
+ int Send(const char * buffer, int bytes, SOCKET s);
+ int Recv(const char * buffer, int bytes, SOCKET s);
+ int RecvAll(const char * buffer, int bytes, SOCKET s);
++int RecvExact(const char * buffer, int bytes, SOCKET s);
+ int RecvNonBlock(char * buffer, int bytes, SOCKET s);
+ int RecvNonBlockUDP(char * buffer, int bytes, SOCKET s);
+ int SendUDPMessage(SOCKET s, const char *message, int length, char *ip, int port);
+--- a/src/decoder.c
++++ b/src/decoder.c
+@@ -220,6 +220,9 @@
+         jpg_decoder.d_height = jpg_decoder.m_height;
+     }
+ 
++    if (jpg_decoder.d_width != (int) WEBCAM_W || jpg_decoder.d_height != (int) WEBCAM_H)
++        errprint("Video: the phone sends %dx%d, shown at %dx%d.\n", jpg_decoder.d_width, jpg_decoder.d_height, WEBCAM_W, WEBCAM_H);
++
+     dbgprint("Stream W=%d H=%d\n", jpg_decoder.m_width, jpg_decoder.m_height);
+     jpg_decoder.subsamp       = 0;
+     jpg_decoder.m_ySize       = jpg_decoder.m_width * jpg_decoder.m_height;
+@@ -426,6 +429,10 @@
+     return (JPGFrame*) queue_next(&decode_queue, jpg_decoder.m_BufferLimit);
+ }
+ 
++int decoder_get_frame_buffer_size() {
++    return jpg_decoder.m_Yuv420Size;
++}
++
+ int decoder_get_video_width() {
+     return WEBCAM_W;
+ }
+--- a/src/decoder.h
++++ b/src/decoder.h
+@@ -42,6 +42,7 @@
+ void push_jpg_frame(JPGFrame*, bool empty);
+ void process_frame(JPGFrame*);
+ int decoder_get_video_width();
++int decoder_get_frame_buffer_size();
+ int decoder_get_video_height();
+ int decoder_horizontal_flip();
+ int decoder_vertical_flip();
+--- a/src/decoder_v4l2.c
++++ b/src/decoder_v4l2.c
+@@ -163,6 +163,10 @@
+         vid_format.fmt.pix.field = V4L2_FIELD_NONE;
+         if (xioctl(fd, VIDIOC_S_FMT, &vid_format) >= 0) {
+             set_control_i(fd, "keep_format", 1);
++            if ((int) vid_format.fmt.pix.width != in_width || (int) vid_format.fmt.pix.height != in_height)
++                errprint("Video: %s stays at %dx%d (asked for %dx%d): the device keeps the size it was first given.\n"
++                         "To change it, close the programs that use it and load the v4l2loopback module again.\n",
++                    v4l2_device, vid_format.fmt.pix.width, vid_format.fmt.pix.height, in_width, in_height);
+             goto early_out;
+         }
+ 
+--- a/src/droidcam.c
++++ b/src/droidcam.c
+@@ -324,6 +324,18 @@
+ 	}
+ }
+ 
++/* The video stream ended on its own: the window does what its Stop button does, so it shows Connect again (the thread that calls this
++ * cannot join itself, so the work is done by the main loop). */
++static gboolean stream_ended_idle(gpointer data) {
++	if (v_running || a_running)
++		the_callback(NULL, (gpointer)(uintptr_t) CB_BUTTON);
++	return FALSE;
++}
++
++void StreamEnded(int code) {
++	gdk_threads_add_idle(stream_ended_idle, NULL);
++}
++
+ static void controls_callback(GtkWidget* widget, gpointer extra) {
+ 	int cb = (uintptr_t) extra;
+ 	dbgprint("controls_callback=%d\n", cb);
+--- a/src/droidcam-cli.c
++++ b/src/droidcam-cli.c
+@@ -31,6 +31,7 @@
+ int no_controls = 0;
+ struct settings g_settings = {0};
+ 
++volatile int v_failed = 0;
+ extern const char *thread_cmd_val_str;
+ extern char snd_device[32];
+ extern char v4l2_device[32];
+@@ -38,6 +39,11 @@
+ void * VideoThreadProc(void * args);
+ void * DecodeThreadProc(void * args);
+ 
++/* The video stream ended for a reason the person was told; the program ends with its code. */
++void StreamEnded(int code) {
++    v_failed = code;
++}
++
+ void sig_handler(__attribute__((__unused__)) int sig) {
+     a_running = 0;
+     v_running = 0;
+@@ -182,7 +188,7 @@
+ 
+     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+ 
+-    while (v_running) {
++    while (v_running && !v_failed) {
+         len = read(STDIN_FILENO, buf, 1);
+         if (len == 0)
+             return;
+@@ -299,7 +305,7 @@
+     if (!no_controls)
+         wait_command();
+ 
+-    while (v_running || a_running)
++    while ((v_running || a_running) && !v_failed)
+         usleep(2000);
+ 
+     dbgprint("joining\n");
+@@ -310,5 +316,5 @@
+ 
+     decoder_fini();
+     dbgprint("exit\n");
+-    return 0;
++    return v_failed;
+ }
