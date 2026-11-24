@@ -56,6 +56,8 @@ class Graph:
         if isinstance(value, bpy.types.NodeSocket):
             self.tree.links.new(value, socket)
         else:
+            if isinstance(value, tuple) and len(value) == 3 and len(socket.default_value) == 4:
+                value = (*value, 1.)
             socket.default_value = value
 
     def math(self, operation, a, b=0., clamp=False):
