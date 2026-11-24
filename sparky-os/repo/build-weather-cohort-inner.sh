@@ -30,7 +30,7 @@ case "$COMPONENT" in
         digest=1eca7ecc1b5b3cf767b9c67a43dbefbd7b764719dcb541ffe03ad38fcc68516f
         version=4:6.7.4-1+stereo3d3
         build_depends='libkirigami-dev (>= 6.32.0-1+stereo3d2+lc1)'
-        patches=("$recipe"/weather-icon-pairs.patch)
+        patches=("$recipe"/weather-icon-pairs.patch "$recipe"/weather-forecast-hover.patch)
         restore=(--build-depends-at-end --edition-entry)
         ;;
     stereo-layer)
