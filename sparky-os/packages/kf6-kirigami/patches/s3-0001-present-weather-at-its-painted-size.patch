@@ -89,7 +89,7 @@
      }
  }
  
-@@ -203,102 +235,253 @@
+@@ -203,102 +235,256 @@
      QQuickItem::hoverLeaveEvent(event);
  }
  
@@ -189,12 +189,12 @@
 +            if (!left.isNull() && !right.isNull()) {
 +                weather.still = Stereo::Picture::fromViewsInTurn(left, right, Stereo::Picture::EyeOrder::LeftFirst);
 +            }
-         }
++        }
 +        if (paths.loop != weather.paths.loop || !paths.animateOnHover) {
 +            weather.animation.reset();
 +            weather.elapsed.invalidate();
 +            weather.nextFrame = 0;
-+        }
+         }
 +        weather.paths = paths;
 +        changed = true;
      }
@@ -243,7 +243,7 @@
 -                };
 -                qCDebug(lcWeatherIcon) << name << elapsed << weather.animation->frameAt(elapsed) << signature(frame.left) << signature(frame.right);
 +        if (changed || (weather.nextFrame >= 0 && elapsed >= weather.nextFrame)) {
-+            frame = weather.animation->pairAt(elapsed, pixels);
++            frame = weather.animation->pairAt(elapsed);
 +            const QString key = weatherProblemKey(QStringLiteral("loop"), weather.paths.loop);
 +            if (frame.isStereo() && weather.animation->reason().isEmpty()) {
 +                if (weather.clearedLoop != key || weather.keptFailure == key) {
@@ -337,6 +337,9 @@
 -        weather.surface.clear();
 +        weather.outputMode = mode;
 +        weather.fullyClipped = fullyClipped;
++        if (fullyClipped) {
++            stopWeatherLoop();
++        }
 +        if (!rect.isEmpty()) {
 +            m_weatherNative = twoEyes ? weather.surface.show(m_window.data(), rect, weather.shown)
 +                                       : weather.surface.showView(m_window.data(), rect, weather.shown.left);
@@ -400,7 +403,7 @@
      return true;
  }
  
-@@ -587,7 +770,10 @@
+@@ -587,7 +773,10 @@
              stopWeatherLoop();
              m_weather->surface.clear();
              m_weather->still = {};
@@ -412,7 +415,7 @@
              m_weatherNative = false;
          }
          setStatus(Ready);
-@@ -700,7 +886,16 @@
+@@ -700,7 +889,16 @@
      // Qt Quick sets the eye before it polishes and synchronizes the window for it: the image for that eye replaces
      // the other eye's, with no animation, and what the item dirties now is drawn by that eye's pass
      const int eye = stereoEye(m_window);
@@ -430,7 +433,7 @@
          return;
      }
      m_eye = eye;
-@@ -931,8 +1126,6 @@
+@@ -931,8 +1129,6 @@
      QSizeF newSize;
      if (!m_icon.width() || !m_icon.height()) {
          newSize = {0, 0};
