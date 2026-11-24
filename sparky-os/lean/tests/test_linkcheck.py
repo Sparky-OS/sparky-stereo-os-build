@@ -594,3 +594,79 @@ def test_a_program_without_so_in_its_name_leaving_symbols_still_blocks(tmp_path)
         linkcheck.check(octave('1+lc1', tool=True), previous_deb=octave('1', tool=True), archive_context=context)
     with pytest.raises(package.Invalid, match='/usr/bin/octave-tool: undefined host_old'):
         linkcheck.check(octave('1+lc1', tool=True), archive_context=context)
+
+
+def _program_symbol_case(tmp_path):
+    """An installed program loads a same-SONAME library without its extension.
+
+    Like PipeWire's JACK examples, it linked successfully against an implementation
+    exporting the extension; its installed search path selects another one.
+    """
+    from lean.tests.archive_fixtures import deb
+    for variant, symbols in [('full', ('old_extension', 'new_extension')),
+                             ('old', ('old_extension',)), ('new', ('new_extension',))]:
+        source = tmp_path / (variant + '.c')
+        source.write_text(''.join('int ' + name + '(void) { return 7; }\n' for name in symbols))
+        subprocess.run(['gcc', '-shared', '-fPIC', '-Wl,-soname,libextension.so',
+                        '-o', str(tmp_path / (variant + '.so')), str(source)], check=True)
+    for symbol in ('old_extension', 'new_extension'):
+        source = tmp_path / (symbol + '.c')
+        source.write_text(f'int {symbol}(void);\nint main(void) {{ return {symbol}() == 7 ? 0 : 1; }}\n')
+        subprocess.run(['gcc', '-o', str(tmp_path / symbol), str(source), str(tmp_path / 'full.so'),
+                        '-Wl,-rpath,$ORIGIN/../lib', '-Wl,-z,now'], check=True)
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+
+    def built(version, library, symbol='old_extension'):
+        files = {'usr/lib/libextension.so': tmp_path / (library + '.so')}
+        if symbol:
+            files['usr/bin/example'] = tmp_path / symbol
+        return deb(tmp_path / ('symbol-' + version), 'demo-extension', version, depends='libc6', files=files)
+    return context, built
+
+
+def test_predecessor_program_undefined_symbol_resolved_is_a_note(tmp_path):
+    context, built = _program_symbol_case(tmp_path)
+    before, after = built('1', 'new'), built('1+lc1', 'full')
+    notes = linkcheck.check(after, previous_deb=before, archive_context=context)
+    assert '/usr/bin/example: the previous build left old_extension undefined; this build resolves it' in notes
+
+
+def test_predecessor_program_symbol_undefined_in_both_still_blocks(tmp_path):
+    context, built = _program_symbol_case(tmp_path)
+    before, after = built('1', 'new'), built('1+lc1', 'new')
+    with pytest.raises(package.Invalid) as caught:
+        linkcheck.check(after, previous_deb=before, archive_context=context)
+    assert str(caught.value) == ('predecessor failed archive-qualified resolution: '
+                                '/usr/bin/example: undefined old_extension')
+
+
+def test_resolved_predecessor_symbol_does_not_excuse_new_undefined_symbol(tmp_path):
+    context, built = _program_symbol_case(tmp_path)
+    before, after = built('1', 'new'), built('1+lc1', 'old', 'new_extension')
+    with pytest.raises(package.Invalid, match='1 new undefined: new_extension'):
+        linkcheck.check(after, previous_deb=before, archive_context=context)
+
+
+def test_predecessor_undefined_symbol_in_removed_program_is_said_so(tmp_path):
+    context, built = _program_symbol_case(tmp_path)
+    before, after = built('1', 'new'), built('1+lc1', 'full', None)
+    notes = linkcheck.check(after, previous_deb=before, archive_context=context)
+    assert ('/usr/bin/example: the previous build left old_extension undefined; '
+            'this build no longer ships the file') in notes
+    assert not any('this build resolves it' in note for note in notes)
+
+
+def test_a_program_whose_old_symbol_is_resolved_is_never_excused_as_a_plugin(tmp_path):
+    """Another program of the package exports both the old and the new symbol (built with -rdynamic): the program that
+    left the old one undefined is still a program, so its new undefined symbol blocks."""
+    from lean.tests.archive_fixtures import deb
+    context, built = _program_symbol_case(tmp_path)
+    (tmp_path / 'host.c').write_text('int old_extension(void) { return 7; }\nint new_extension(void) { return 7; }\n'
+                                     'int main(void) { return 0; }\n')
+    subprocess.run(['gcc', '-rdynamic', '-o', str(tmp_path / 'host'), str(tmp_path / 'host.c')], check=True)
+    before = built('1', 'new')
+    after = deb(tmp_path / 'symbol-host', 'demo-extension', '1+lc1', depends='libc6',
+                files={'usr/lib/libextension.so': tmp_path / 'old.so', 'usr/bin/example': tmp_path / 'new_extension',
+                       'usr/bin/host': tmp_path / 'host'})
+    with pytest.raises(package.Invalid, match='1 new undefined: new_extension'):
+        linkcheck.check(after, previous_deb=before, archive_context=context)
