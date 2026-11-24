@@ -9,7 +9,7 @@
  #include <QHoverEvent>
  #include <QProcess>
  #include <QTimer>
-@@ -79,9 +81,24 @@
+@@ -79,9 +81,25 @@
      std::unique_ptr<Stereo::AnimatedPicture> animation;
      QTimer tick;
      QElapsedTimer elapsed;
@@ -27,6 +27,7 @@
 +    bool shownAnimated = false;
 +    bool fallback = false;
 +    bool measuredEyePass = false;
++    bool fullyClipped = false;
 +    bool surfaceProblemPending = false;
 +    Stereo::OutputMode outputMode = Stereo::OutputMode::Unknown;
 +    QString clearedLoop;
@@ -36,7 +37,7 @@
      QRect nativeRect;
      QMetaObject::Connection screenConnection;
      QMetaObject::Connection activeConnection;
-@@ -102,11 +119,17 @@
+@@ -102,11 +120,17 @@
      if (enabled) {
          m_weather = std::make_unique<Weather>();
          connect(&m_weather->screen, &Stereo::ScreenMode::modeChanged, this, &QQuickItem::polish);
@@ -55,7 +56,7 @@
          disconnect(m_weather->screenConnection);
          disconnect(m_weather->activeConnection);
          disconnect(m_weather->geometryConnection);
-@@ -153,6 +176,9 @@
+@@ -153,6 +177,9 @@
      disconnect(m_weather->geometryConnection);
      stopWeatherLoop();
      m_weather->surface.clear();
@@ -65,16 +66,22 @@
      m_weather->screen.setScreen(m_window ? m_window->screen() : nullptr);
      if (m_window) {
          m_weather->screenConnection = connect(m_window.data(), &QWindow::screenChanged, this, [this](QScreen *screen) {
-@@ -167,7 +193,7 @@
+@@ -167,8 +194,12 @@
              }
          });
          m_weather->geometryConnection = connect(m_window.data(), &QQuickWindow::afterAnimating, this, [this]() {
 -            if (m_weatherNative && weatherRect() != m_weather->nativeRect) {
-+            if (m_weather->shown.isStereo() && weatherRect() != m_weather->nativeRect) {
-                 polish();
+-                polish();
++            if (m_weather->shown.isStereo()) {
++                bool clipped = false;
++                const QRect rect = weatherRect(&clipped);
++                if (rect != m_weather->nativeRect || clipped != m_weather->fullyClipped) {
++                    polish();
++                }
              }
          });
-@@ -182,6 +208,7 @@
+     }
+@@ -182,6 +213,7 @@
          m_weather->tick.stop();
          m_weather->elapsed.invalidate();
          m_weather->animation.reset();
@@ -82,7 +89,39 @@
      }
  }
  
-@@ -215,90 +242,222 @@
+@@ -203,102 +235,253 @@
+     QQuickItem::hoverLeaveEvent(event);
+ }
+ 
+-QRect Icon::weatherRect()
++QRect Icon::weatherRect(bool *fullyClipped)
+ {
+     const QRectF rect = mapRectToScene(calculateNodeRect());
++    const QPointF origin = mapToScene(QPointF());
++    const QPointF xAxis = mapToScene(QPointF(1, 0)) - origin;
++    const QPointF yAxis = mapToScene(QPointF(0, 1)) - origin;
++    bool supported = qFuzzyCompare(xAxis.x(), 1.0) && qFuzzyIsNull(xAxis.y()) && qFuzzyCompare(yAxis.y(), 1.0) && qFuzzyIsNull(yAxis.x());
++    *fullyClipped = false;
+     for (const QQuickItem *item = this; item; item = item->parentItem()) {
+-        if (item->rotation() != 0 || item->scale() != 1 || item->opacity() != 1
+-            || (item->clip() && !item->mapRectToScene(item->boundingRect()).contains(rect))) {
++        if (item->opacity() == 0) {
++            *fullyClipped = true;
+             return {};
+         }
++        if (item->clip()) {
++            const QRectF clip = item->mapRectToScene(item->boundingRect());
++            if (!clip.intersects(rect)) {
++                *fullyClipped = true;
++                return {};
++            }
++            supported &= clip.contains(rect);
++        }
++        supported &= item->opacity() == 1 && item->rotation() == 0 && item->scale() == 1;
++    }
++    if (!supported) {
++        return {};
+     }
      return QRect(QPoint(qRound(rect.x()), qRound(rect.y())), QSize(qRound(rect.width()), qRound(rect.height())));
  }
  
@@ -286,15 +325,18 @@
 -    m_textureChanged = true;
 -    setStatus(Ready);
 -    updatePaintedGeometry();
-+
-     const QRect rect = weatherRect();
+-    const QRect rect = weatherRect();
 -    if (twoEyes && !rect.isEmpty()) {
 -        m_weatherNative = weather.surface.show(m_window.data(), rect, shown);
-+    if (changed || rect != weather.nativeRect || mode != weather.outputMode) {
++
++    bool fullyClipped = false;
++    const QRect rect = weatherRect(&fullyClipped);
++    if (changed || rect != weather.nativeRect || mode != weather.outputMode || fullyClipped != weather.fullyClipped) {
          weather.nativeRect = rect;
 -    } else {
 -        weather.surface.clear();
 +        weather.outputMode = mode;
++        weather.fullyClipped = fullyClipped;
 +        if (!rect.isEmpty()) {
 +            m_weatherNative = twoEyes ? weather.surface.show(m_window.data(), rect, weather.shown)
 +                                       : weather.surface.showView(m_window.data(), rect, weather.shown.left);
@@ -305,7 +347,7 @@
 +        if (!m_weatherNative) {
 +            weather.surface.clear();
 +        }
-+        weather.fallback = twoEyes && !m_weatherNative;
++        weather.fallback = twoEyes && !m_weatherNative && !fullyClipped;
 +        if (weather.fallback) {
 +            m_window->installEventFilter(this);
 +            if (!m_window->property("_q_stereo_icon").toBool()) {
@@ -341,7 +383,7 @@
 +                    }
 +                });
 +            }
-+        } else if (!m_weatherNative) {
++        } else if (!m_weatherNative && !fullyClipped) {
 +            static QSet<QString> logged;
 +            const auto detail = failure.isEmpty() ? QStringLiteral("the icon has a clipped or transformed ancestor") : failure;
 +            if (!logged.contains(detail)) {
@@ -358,7 +400,7 @@
      return true;
  }
  
-@@ -587,7 +746,10 @@
+@@ -587,7 +770,10 @@
              stopWeatherLoop();
              m_weather->surface.clear();
              m_weather->still = {};
@@ -370,7 +412,7 @@
              m_weatherNative = false;
          }
          setStatus(Ready);
-@@ -700,7 +862,16 @@
+@@ -700,7 +886,16 @@
      // Qt Quick sets the eye before it polishes and synchronizes the window for it: the image for that eye replaces
      // the other eye's, with no animation, and what the item dirties now is drawn by that eye's pass
      const int eye = stereoEye(m_window);
@@ -388,7 +430,7 @@
          return;
      }
      m_eye = eye;
-@@ -931,8 +1102,6 @@
+@@ -931,8 +1126,6 @@
      QSizeF newSize;
      if (!m_icon.width() || !m_icon.height()) {
          newSize = {0, 0};
@@ -397,3 +439,14 @@
      } else {
          qreal roundedWidth = m_units ? m_units->iconSizes()->roundedIconSize(std::min(width(), height())) : 32;
          roundedWidth = std::round(roundedWidth * m_devicePixelRatio) / m_devicePixelRatio;
+--- a/src/primitives/icon.h
++++ b/src/primitives/icon.h
+@@ -315,7 +315,7 @@
+     bool updateWeatherIcon(const QSize &size);
+     void stopWeatherLoop();
+     void weatherWindowChanged();
+-    QRect weatherRect();
++    QRect weatherRect(bool *fullyClipped);
+     struct Weather;
+     std::unique_ptr<Weather> m_weather;
+     bool m_weatherNative = false;
