@@ -13,6 +13,6 @@ printf '%s  %s\n' 974723f18fab298a1021a26e8b5b8315608efc6d96efdf3ef2b1fda6285945
 python3 "$toolkit/repo/lc-successor.py" --in-place --next 4:6.7.4-2+stereo3d65 --source-date-epoch "$SOURCE_DATE_EPOCH" \
  --overlay "$HERE/overlay-stereo3d65" \
  --item 'A window that went with Xwayland is never kept: when Xwayland goes away the compositor says that no window is active, and the translucency effect forgets a deleted window and handles the newly selected window first, so the selected window is opaque again (queue row 862).' \
- --item 'When KWin finds Xwayland gone, the person is told once, in ten languages, through sparky-stereo-problems, which X11 programs closed with it, why and what to do; the notice ends at the next start.' \
+ --item 'When KWin finds Xwayland gone, the person is told once, in ten languages, through sparky-stereo-problems, which X11 programs closed with it, why and what to do; the notice stays until dismissed and a later stop replaces it.' \
  --item 'Tests: testTranslucencyXwayland and the Xwayland crash test check the selected window and the compositor signal after Xwayland went away.' \
  "$input/kwin_6.7.4-2+stereo3d64+lc1.dsc" "$out"

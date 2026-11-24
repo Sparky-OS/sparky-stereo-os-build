@@ -21,10 +21,10 @@ index cca5a6f..204fe1d 100644
  endif()
 diff --git a/autotests/integration/effects/translucency_xwayland_test.cpp b/autotests/integration/effects/translucency_xwayland_test.cpp
 new file mode 100644
-index 0000000..92466b1
+index 0000000..751cf46
 --- /dev/null
 +++ b/autotests/integration/effects/translucency_xwayland_test.cpp
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,176 @@
 +/*
 +    KWin - the KDE window manager
 +    This file is part of the KDE project.
@@ -36,8 +36,7 @@ index 0000000..92466b1
 +#include "kwin_wayland_test.h"
 +
 +#include "compositor.h"
-+#include "effect/anidata_p.h"
-+#include "effect/animationeffect.h"
++#include "effect/effect.h"
 +#include "effect/effecthandler.h"
 +#include "effect/effectloader.h"
 +#include "main.h"
@@ -69,22 +68,26 @@ index 0000000..92466b1
 +    void testSelectedWindowAfterXwaylandCrash();
 +
 +private:
-+    AnimationEffect *m_translucencyEffect = nullptr;
++    Effect *m_translucencyEffect = nullptr;
 +};
 +
 +// The opacity, in percent, the effect keeps a window at once its animations have ended: the lowest target of an
-+// opacity animation it still holds for the window, or 100 when it holds none.
-+static int heldOpacity(AnimationEffect *effect, Window *window)
++// opacity animation it still holds for the window, or 100 when it holds none. AnimationEffect::debug() lists each
++// animated window by its caption, then for each animation its attribute, "From:" and "To:".
++static int heldOpacity(Effect *effect, const QString &caption)
 +{
 +    qreal opacity = 1.0;
-+    const auto &state = effect->state();
-+    const auto it = state.find(window->effectWindow());
-+    if (it == state.end()) {
-+        return 100;
-+    }
-+    for (const AniData &animation : it->second.first) {
-+        if (animation.attribute == AnimationEffect::Opacity) {
-+            opacity = std::min<qreal>(opacity, animation.to[0]);
++    const QStringList windows = effect->debug(QString()).split(QStringLiteral("Animating window: "));
++    for (const QString &window : windows) {
++        const QStringList lines = window.split(QLatin1Char('\n'));
++        if (lines.first() != caption) {
++            continue;
++        }
++        for (int i = 0; i + 2 < lines.size(); ++i) {
++            const QString to = lines[i + 2].trimmed();
++            if (lines[i].trimmed() == QLatin1StringView("Animation: Opacity") && to.startsWith(QLatin1StringView("To: "))) {
++                opacity = std::min(opacity, to.mid(4).section(QLatin1Char(','), 0, 0).toDouble());
++            }
 +        }
 +    }
 +    return qRound(opacity * 100);
@@ -125,7 +128,7 @@ index 0000000..92466b1
 +    QSignalSpy effectLoadedSpy(effectloader, &AbstractEffectLoader::effectLoaded);
 +    QVERIFY(effects->loadEffect(QStringLiteral("translucency")));
 +    QCOMPARE(effectLoadedSpy.count(), 1);
-+    m_translucencyEffect = qobject_cast<AnimationEffect *>(effectLoadedSpy.first().first().value<Effect *>());
++    m_translucencyEffect = effectLoadedSpy.first().first().value<Effect *>();
 +    QVERIFY(m_translucencyEffect);
 +}
 +
@@ -147,10 +150,12 @@ index 0000000..92466b1
 +
 +    std::unique_ptr<KWayland::Client::Surface> surfaceA = Test::createSurface();
 +    std::unique_ptr<Test::XdgToplevel> toplevelA = Test::createXdgToplevelSurface(surfaceA.get());
++    toplevelA->set_title(QStringLiteral("translucency-a"));
 +    Window *windowA = Test::renderAndWaitForShown(surfaceA.get(), QSize(100, 50), Qt::white);
 +    QVERIFY(windowA);
 +    std::unique_ptr<KWayland::Client::Surface> surfaceB = Test::createSurface();
 +    std::unique_ptr<Test::XdgToplevel> toplevelB = Test::createXdgToplevelSurface(surfaceB.get());
++    toplevelB->set_title(QStringLiteral("translucency-b"));
 +    Window *windowB = Test::renderAndWaitForShown(surfaceB.get(), QSize(100, 50), Qt::white);
 +    QVERIFY(windowB);
 +
@@ -172,8 +177,8 @@ index 0000000..92466b1
 +    QVERIFY(x11Window);
 +    workspace()->activateWindow(x11Window);
 +    QTRY_COMPARE(workspace()->activeWindow(), x11Window.data());
-+    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA), 91);
-+    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB), 91);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA->caption()), 91);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB->caption()), 91);
 +
 +    // Xwayland goes away with its window selected
 +    QSignalSpy x11ConnectionChangedSpy(kwinApp(), &Application::x11ConnectionChanged);
@@ -185,13 +190,13 @@ index 0000000..92466b1
 +
 +    workspace()->activateWindow(windowA);
 +    QTRY_COMPARE(workspace()->activeWindow(), windowA);
-+    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA), 100);
-+    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB), 91);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA->caption()), 100);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB->caption()), 91);
 +
 +    workspace()->activateWindow(windowB);
 +    QTRY_COMPARE(workspace()->activeWindow(), windowB);
-+    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB), 100);
-+    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA), 91);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB->caption()), 100);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA->caption()), 91);
 +}
 +
 +WAYLANDTEST_MAIN(TranslucencyXwaylandTest)

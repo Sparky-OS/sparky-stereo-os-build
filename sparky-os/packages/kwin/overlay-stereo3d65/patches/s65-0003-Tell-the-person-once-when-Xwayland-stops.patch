@@ -6,16 +6,19 @@ Description: Tell the person once when Xwayland stops and its X11 programs close
  notice in the person's store of the edition's problems engine
  (sparky-stereo-problems, message LOCAL6 of debian/stereo-replica-lang): the
  time, the X11 programs that had a window (their WM_CLASS), why and what to
- do, in the ten languages; it ends the notice at its next start (queue row 862).
+ do, in the ten languages. The notice stays until the person dismisses it; a
+ later stop replaces it. The engine is not called at KWin's start: a call
+ there moved which of Xwayland's death signals KWin read first, and
+ testXwaylandServerRestart failed 4 runs in 5 (queue row 862).
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed, edition integration with sparky-stereo-problems
 Last-Update: 2026-11-24
 
 diff --git a/src/utils/stereoreplicaproblems.cpp b/src/utils/stereoreplicaproblems.cpp
-index 1c457af..eea452a 100644
+index 1c457af..4b926db 100644
 --- a/src/utils/stereoreplicaproblems.cpp
 +++ b/src/utils/stereoreplicaproblems.cpp
-@@ -78,4 +78,47 @@ void setStereoReplicaConfigurationProblem(BackendOutput *output, std::optional<S
+@@ -78,4 +78,33 @@ void setStereoReplicaConfigurationProblem(BackendOutput *output, std::optional<S
      reportProblem(output, failure, QStringLiteral("stereo-configuration-"), identity);
  }
  
@@ -27,8 +30,9 @@ index 1c457af..eea452a 100644
 +    library.setLoadHints(QLibrary::PreventUnloadHint);
 +    using Keep = int (*)(int, const char *, const char *, const char *, const char *const *, int, const char *);
 +    const auto keep = library.fileName().isEmpty() ? nullptr : reinterpret_cast<Keep>(library.resolve("ssp_keep"));
-+    // An event, not a lasting failure: a notice in the person's own store, kept until dismissed or the next session.
-+    // The time is an argument, so a later stop is told again even after this one was dismissed.
++    // An event, not a lasting failure: a notice in the person's own store, kept until the person dismisses it. The
++    // time is an argument, so a later stop replaces it and is told again even after this one was dismissed. The engine
++    // is not called at KWin's start: a call there moved which of Xwayland's death signals KWin read first.
 +    static const char details[] = "{\"severity\":\"notice\"}";
 +    const QByteArray when = time.toUtf8();
 +    const QByteArray names = programs.isEmpty() ? QByteArrayLiteral("@LOCAL7") : programs.join(QStringLiteral(", ")).toUtf8();
@@ -47,43 +51,25 @@ index 1c457af..eea452a 100644
 +    }
 +}
 +
-+void clearXwaylandStoppedNotice()
-+{
-+    static QLibrary library(QString::fromUtf8(KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY));
-+    library.setLoadHints(QLibrary::PreventUnloadHint);
-+    using Clear = int (*)(int, const char *, const char *);
-+    const auto clear = library.fileName().isEmpty() ? nullptr : reinterpret_cast<Clear>(library.resolve("ssp_clear"));
-+    const int result = clear ? clear(2, "kwin-wayland", xwaylandStoppedKey)
-+                             : QProcess::execute(QStringLiteral("/usr/bin/sparky-stereo-problems"),
-+                                                 {QStringLiteral("clear"), QStringLiteral("--person"), QStringLiteral("kwin-wayland"),
-+                                                  QString::fromLatin1(xwaylandStoppedKey)});
-+    if (result != 0) {
-+        qCWarning(KWIN_CORE) << "Could not end the notice of an earlier Xwayland stop" << result;
-+    }
-+}
-+
  }
 diff --git a/src/utils/stereoreplicaproblems.h b/src/utils/stereoreplicaproblems.h
-index 50ca963..cef2dd8 100644
+index 50ca963..f0e355b 100644
 --- a/src/utils/stereoreplicaproblems.h
 +++ b/src/utils/stereoreplicaproblems.h
-@@ -20,4 +20,14 @@ enum class StereoReplicaFailure {
+@@ -20,4 +20,11 @@ enum class StereoReplicaFailure {
  
  KWIN_EXPORT void setStereoReplicaProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, bool capture = false);
  KWIN_EXPORT void setStereoReplicaConfigurationProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, const QString &identity);
 +
 +/**
 + * Tells the person, through the edition's problems engine, that Xwayland stopped and the X11 @p programs on it were
-+ * closed, at @p time (the person's own store, a notice; empty @p programs when none had a window).
++ * closed, at @p time (the person's own store, a notice; empty @p programs when none had a window). The notice stays
++ * until the person dismisses it; a later stop replaces it.
 + */
 +KWIN_EXPORT void setXwaylandStoppedNotice(const QString &time, const QStringList &programs);
-+/**
-+ * Ends the notice of an earlier session.
-+ */
-+KWIN_EXPORT void clearXwaylandStoppedNotice();
  }
 diff --git a/src/xwayland/xwayland.cpp b/src/xwayland/xwayland.cpp
-index 464caca..5a9e79e 100644
+index 464caca..2747580 100644
 --- a/src/xwayland/xwayland.cpp
 +++ b/src/xwayland/xwayland.cpp
 @@ -23,12 +23,14 @@
@@ -109,16 +95,7 @@ index 464caca..5a9e79e 100644
  #include <QDataStream>
  #include <QDir>
  #include <QFile>
-@@ -364,6 +367,8 @@ Xwayland::~Xwayland()
- 
- void Xwayland::init()
- {
-+    // a notice that Xwayland stopped belongs to the session it happened in
-+    clearXwaylandStoppedNotice();
-     m_launcher->enable();
- 
-     auto env = m_app->processStartupEnvironment();
-@@ -390,6 +395,16 @@ void Xwayland::dispatchEvents(DispatchEventsMode mode)
+@@ -390,6 +393,16 @@ void Xwayland::dispatchEvents(DispatchEventsMode mode)
      const int connectionError = xcb_connection_has_error(connection);
      if (connectionError) {
          qCWarning(KWIN_XWL, "The X11 connection broke (error %d)", connectionError);
@@ -131,7 +108,7 @@ index 464caca..5a9e79e 100644
 +                programs.append(x11Window->resourceClass());
 +            }
 +        }
-+        setXwaylandStoppedNotice(QTime::currentTime().toString(QStringLiteral("HH:mm")), programs);
++        setXwaylandStoppedNotice(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), programs);
          m_launcher->stop();
          return;
      }
