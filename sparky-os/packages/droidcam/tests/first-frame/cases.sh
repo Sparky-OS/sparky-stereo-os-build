@@ -3,9 +3,11 @@
 # Copyright 2026 under the GNU GPL3 License
 # Sparky Stereo OS: runs droidcam-cli against server.py (a stand-in for the DroidCam app) with v4l2-shim.c standing in for the video device.
 # Inside a container with gcc and python3, no network needed. Usage: cases.sh staged|fixed CLIENT
-# "staged" expects the failures of droidcam 2.1.7-1+lc1 (the red), "fixed" the behaviour of 2.1.7-2.
+# "staged" expects the failures of droidcam 2.1.7-1+lc1 (the red), "fixed" the behaviour of 2.1.7-2, "first" the first 2.1.7-2 build (the wait and
+# the sentences fixed, the stop and continue, the cut frames and the scaled line not yet).
 set -uo pipefail
 MODE=$1 CLIENT=$2
+case $MODE in staged) OLDM=staged NEWM=staged;; fixed) OLDM=fixed NEWM=fixed;; first) OLDM=fixed NEWM=staged;; *) echo "staged, fixed or first"; exit 2;; esac
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$(mktemp -d)
 gcc -shared -fPIC -O2 -o "$WORK/shim.so" "$HERE/v4l2-shim.c" -ldl || exit 2
@@ -37,7 +39,7 @@ eq() { [ "$1" = "$2" ] && echo 1 || echo 0; }
 # the app starts its camera 9 s after the request (the phone measured 7 to 16 s)
 case_run slow 9 900 hold 25
 echo "slow: frames=$(frames slow) rc=$(rc slow) secs=$(cat $WORK/slow.secs)"
-if [ "$MODE" = fixed ]; then
+if [ "$OLDM" = fixed ]; then
 	expect slow "frames reach the device after the 9 s wait" "$(ge "$(frames slow)" 30)"
 	expect slow "it says it is waiting" "$(has slow "waiting for the phone's camera")"
 	expect slow "a stop is not reported as a loss" "$(eq "$(has slow "was lost")$(has slow "sent no picture")" 00)"
@@ -56,7 +58,7 @@ expect fast "no waiting line when the picture comes at once" "$(eq "$(has fast "
 # the stream ends after 30 frames
 case_run lost 0.3 30 close 20
 echo "lost: frames=$(frames lost) rc=$(rc lost) secs=$(cat $WORK/lost.secs)"
-if [ "$MODE" = fixed ]; then
+if [ "$OLDM" = fixed ]; then
 	expect lost "exit status 4" "$(eq "$(rc lost)" 4)"
 	expect lost "it says the connection was lost" "$(has lost "The connection to the phone was lost")"
 else
@@ -66,7 +68,7 @@ fi
 # the phone sends 5 frames, is silent for 8 s, and again (gaps of 5 s and more between bursts were seen on the phone; the staged client gives up after about 6 s): a live stream
 case_run burst 0.3 5 bursts 28
 echo "burst: frames=$(frames burst) rc=$(rc burst)"
-if [ "$MODE" = fixed ]; then
+if [ "$OLDM" = fixed ]; then
 	expect burst "the stream lives through the gaps (at least 15 frames in 28 s)" "$(ge "$(frames burst)" 15)"
 	expect burst "no loss reported" "$(eq "$(has burst "was lost")" 0)"
 else
@@ -76,7 +78,7 @@ fi
 # the phone sends 3 frames and then nothing at all
 case_run stall 0.3 3 hold 30
 echo "stall: frames=$(frames stall) rc=$(rc stall) secs=$(cat $WORK/stall.secs)"
-if [ "$MODE" = fixed ]; then
+if [ "$OLDM" = fixed ]; then
 	expect stall "exit status 4 after about 15 s" "$(eq "$(rc stall)" 4)"
 	expect stall "it says the connection was lost" "$(has stall "The connection to the phone was lost")"
 	expect stall "not before 14 s" "$(ge "$(cat $WORK/stall.secs)" 14)"
@@ -85,10 +87,10 @@ else
 fi
 
 # the app answers and never sends a picture
-if [ "$MODE" = fixed ]; then limit=75; else limit=15; fi
+if [ "$OLDM" = fixed ]; then limit=75; else limit=15; fi
 case_run none 1000 0 hold $limit
 echo "none: frames=$(frames none) rc=$(rc none) secs=$(cat $WORK/none.secs)"
-if [ "$MODE" = fixed ]; then
+if [ "$OLDM" = fixed ]; then
 	expect none "exit status 3" "$(eq "$(rc none)" 3)"
 	expect none "it says the phone sent no picture" "$(has none "The phone sent no picture")"
 	expect none "after about 60 s" "$(ge "$(cat $WORK/none.secs)" 59)"
@@ -100,7 +102,7 @@ fi
 case_run reset 0 0 reset 12
 echo "reset: rc=$(rc reset)"
 expect reset "it says the connection was reset" "$(has reset "Connection reset")"
-if [ "$MODE" = fixed ]; then expect reset "exit status 1" "$(eq "$(rc reset)" 1)"; else expect reset "RED: still running" "$(eq "$(rc reset)" 124)"; fi
+if [ "$OLDM" = fixed ]; then expect reset "exit status 1" "$(eq "$(rc reset)" 1)"; else expect reset "RED: still running" "$(eq "$(rc reset)" 124)"; fi
 
 # the client is stopped and continued (Ctrl+Z, fg): recv() with a receive timeout returns EINTR after SIGCONT; read at every frame by the shim
 stopcont() {
@@ -125,7 +127,7 @@ stopcont() {
 stopcont sc-stream-control 0.3 no
 expect sc-stream-control "control, no stop: frames go on (more than 100 between 3 s and 15 s after)" "$(ge $((SC_C - SC_B)) 100)"
 stopcont sc-stream 0.3 yes
-if [ "$MODE" = fixed ]; then
+if [ "$NEWM" = fixed ]; then
 	expect sc-stream "in a stream: frames go on after the continue" "$(ge $((SC_C - SC_B)) 100)"
 	expect sc-stream "nothing false is said" "$(eq "$(has sc-stream "was lost")$(has sc-stream "sent no picture")" 00)"
 else
@@ -134,17 +136,17 @@ fi
 stopcont sc-firstwait-control 4 no
 expect sc-firstwait-control "control, no stop: the first frame at 4 s, frames go on" "$(ge "$SC_C" 100)"
 stopcont sc-firstwait 4 yes
-if [ "$MODE" = fixed ]; then
+if [ "$NEWM" = fixed ]; then
 	expect sc-firstwait "in the first-frame wait: the picture comes after the continue" "$(ge "$SC_C" 100)"
 	expect sc-firstwait "nothing false is said" "$(eq "$(has sc-firstwait "was lost")$(has sc-firstwait "sent no picture")" 00)"
 else
 	expect sc-firstwait "RED: no frame ever, still running" "$(eq "$SC_C$SC_ALIVE" 0yes)"
 fi
 
-# a frame cut in two by a pause of 8 s (a stop, a stall): whole or failed, never short
+# a frame cut in two by a pause of 8 s (a stop, a stall): whole or failed, never short (red on 2.1.7-1 only: the first 2.1.7-2 waits 15 s)
 case_run cut 0.3 5 cut:8 20
 echo "cut: frames=$(frames cut) rc=$(rc cut)"
-if [ "$MODE" = fixed ]; then
+if [ "$OLDM" = fixed ]; then
 	expect cut "the pictures arrive whole (5, the cut one, 20: at least 24, the client skips a frame when it is busy) and nothing is said about the stream" "$([ "$(frames cut)" -ge 24 ] && [ "$(has cut 'cannot be right')$(has cut 'tjDecompress')$(has cut 'was lost')" = 000 ] && echo 1 || echo 0)"
 else
 	expect cut "RED: a short count taken for a whole frame puts the stream out of step (about 6 pictures instead of 25, or errors)" "$(eq "$([ "$(frames cut)" -lt 24 ] || [ -s $WORK/cut.err ] && echo 1)" 1)"
@@ -152,16 +154,16 @@ fi
 # a frame cut and then silence for ever
 case_run cutstall 0.3 5 cutstall 40
 echo "cutstall: frames=$(frames cutstall) rc=$(rc cutstall) secs=$(cat $WORK/cutstall.secs)"
-if [ "$MODE" = fixed ]; then
+if [ "$NEWM" = fixed ]; then
 	expect cutstall "5 whole pictures, exit 4, the connection was lost, after about 15 s" "$(eq "$(frames cutstall)$(rc cutstall)$(has cutstall 'was lost')" 541)"
 else
-	expect cutstall "RED: nothing said, still running" "$(eq "$(rc cutstall)$(has cutstall 'was lost')" 1240)"
+	expect cutstall "RED: half a frame is written as a whole picture (6 pictures, not 5)" "$(eq "$(frames cutstall)" 6)"
 fi
 # the phone sends 640x480 and the device takes 1280x720
 SIZE=1280x720 case_run scaled 0.3 900 hold 8
 echo "scaled: frames=$(frames scaled)"
 expect scaled "frames reach the 1280x720 device" "$(ge "$(frames scaled)" 30)"
-if [ "$MODE" = fixed ]; then
+if [ "$NEWM" = fixed ]; then
 	expect scaled "the client says once which size the phone sends and which it is shown at" "$(eq "$(grep -c 'the phone sends 640x480, shown at 1280x720' "$WORK/scaled.err")" 1)"
 else
 	expect scaled "RED: nothing said about the scaling" "$(eq "$(has scaled 'shown at')" 0)"
