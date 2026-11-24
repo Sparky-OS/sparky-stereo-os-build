@@ -64,3 +64,21 @@ Its date is the last clean recipe commit unless `SOURCE_DATE_EPOCH` is provided.
 Build the resulting `.dsc` with `release/build-from-lc-dsc.sh`; read the suite's
 `stereo pair without glamor OK` line. The mechanical rebase without the 0005 extension
 fails that test. Keep the predecessor source closure alongside the inputs for reruns.
+
+## 24.1.15 +stereo3d4: no acquire point after an implicit sync fallback (queue row 865)
+
+`next-source-24.1.15-stereo3d4.sh PUBLISHED.dsc OUT` makes `2:24.1.15-1+stereo3d4+lc1` from the published `+stereo3d3+lc1`
+source (`repo/lc-successor.py --in-place --overlay`): patch 0015 joins the series after 0014, and the entry of
+`changelog-24.1.15-stereo3d4.txt` goes on top of the published changelog. No build dependency changes.
+Build the binary package from the new `.dsc` with `release/build-from-lc-dsc.sh` and read the suite's
+`stereo pair without glamor OK` line.
+
+0015 is upstream's merge request !2399 by Thomas H.P. Andersen (commit `cbd97d97a289`, reviewed by Olivier Fourdan and
+Michel Dänzer, open on 2026-11-24), carried unchanged: `xwl_window_handle_pixmap_sync()` destroys the window's
+`wp_linux_drm_syncobj_surface_v1` whenever it falls back to implicit sync, so the two early returns of
+`xwl_window_swap_pixmap()` no longer attach the client's flipped buffer with no acquire point.
+Xwayland counts every EGL vendor but NVIDIA's as implicit sync, so the fault is on radeonsi and the other Mesa drivers;
+on NVIDIA's own driver the same early returns set points from Xwayland's own timeline.
+The rig case that turns red on +stereo3d3 and green on +stereo3d4 is in skill `native-linux`,
+`references/xwayland-explicit-sync.md`. When upstream merges !2399, its `Applied-Upstream` line is added; the patch goes
+when a rebase reaches an Xwayland release that has it.

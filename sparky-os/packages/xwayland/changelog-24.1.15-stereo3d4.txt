@@ -1,0 +1,12 @@
+xwayland (2:24.1.15-1+stereo3d4) unstable; urgency=medium
+
+  * Xwayland no longer dies of the compositor's "explicit sync is used, but
+    no acquire point is set" (wp_linux_drm_syncobj_surface_v1 error 4), which
+    closed every X11 program with it. After a program presented with explicit
+    sync, an update of its window that fell back to implicit sync (radeonsi
+    and every other Mesa driver) kept the window's syncobj surface and
+    attached the program's own flipped buffer with no acquire point; one way
+    there is a window update queued while the surface moved off a child
+    window and back to it (queue row 865). Carried from upstream's merge
+    request !2399, "xwayland: drop surface sync on implicit sync fallback" by
+    Thomas H.P. Andersen (0015).

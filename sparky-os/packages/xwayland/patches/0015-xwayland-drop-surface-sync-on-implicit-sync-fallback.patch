@@ -1,0 +1,45 @@
+Description: Drop the surface sync when a window update falls back to implicit sync
+ xwl_window_swap_pixmap() has two early returns for when the window pixmap is
+ still the client's flipped pixmap. They ignored the return value of
+ xwl_window_handle_pixmap_sync(), so the wp_linux_drm_syncobj_surface_v1 left
+ by the client's explicitly synced flips stayed in place, the next commit of
+ the client's buffer had no acquire point, and the compositor disconnected
+ Xwayland with a no_acquire_point protocol error (error 4). The surface sync
+ is now destroyed in xwl_window_handle_pixmap_sync() itself when it falls back
+ to implicit sync, so all callers get it.
+ Carried from upstream's merge request !2399 as reviewed there by Olivier
+ Fourdan and Michel Daenzer (not merged on 2026-11-24).
+Origin: upstream, https://gitlab.freedesktop.org/xorg/xserver/-/merge_requests/2399/diffs?commit_id=cbd97d97a28977d30bf633b0906e6c3be06795ec
+Author: Thomas H.P. Andersen <phomes@gmail.com>
+Forwarded: not-needed
+Last-Update: 2026-11-24
+
+diff --git a/hw/xwayland/xwayland-window-buffers.c b/hw/xwayland/xwayland-window-buffers.c
+index a470ef313c..0bf799deb5 100644
+--- a/hw/xwayland/xwayland-window-buffers.c
++++ b/hw/xwayland/xwayland-window-buffers.c
+@@ -389,6 +389,12 @@ xwl_window_handle_pixmap_sync(struct xwl_window *xwl_window,
+         }
+     }
+ #endif /* XWL_HAS_GLAMOR */
++
++    if (implicit_sync && xwl_window->surface_sync) {
++        wp_linux_drm_syncobj_surface_v1_destroy(xwl_window->surface_sync);
++        xwl_window->surface_sync = NULL;
++    }
++
+     return implicit_sync;
+ }
+ 
+@@ -460,11 +466,6 @@ xwl_window_swap_pixmap(struct xwl_window *xwl_window, Bool handle_sync)
+         xwl_pixmap_set_buffer_release_cb(xwl_window_buffer->pixmap,
+                                          xwl_window_buffer_release_callback,
+                                          xwl_window_buffer);
+-
+-        if (xwl_window->surface_sync) {
+-            wp_linux_drm_syncobj_surface_v1_destroy(xwl_window->surface_sync);
+-            xwl_window->surface_sync = NULL;
+-        }
+     }
+ 
+     xorg_list_append(&xwl_window_buffer->link_buffer,
