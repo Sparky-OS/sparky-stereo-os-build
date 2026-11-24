@@ -26,7 +26,7 @@ Last-Update: 2026-11-24
 +# Keeping the baseline here lets the test detect new strings in native and quilt builds alike.
 +baseline = set(Path(__file__).with_name('upstream-msgids.txt').read_text().splitlines())
 +source = args.source / 'src'
-+literal = re.compile(r'\b(?:i18n|I18N_NOOP)\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)"')
++literal = re.compile(r'\bk?i18n\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)"')
 +messages = set()
 +for path in source.rglob('*'):
 +    if path.suffix in ('.cpp', '.qml', '.h'):

@@ -14,45 +14,45 @@ Last-Update: 2026-11-24
 +
 +QString cameraEffectName(const QString &filter)
 +{
-+    static constexpr struct {
++    static const struct {
 +        const char *filter;
-+        const char *name;
++        KLocalizedString name;
 +    } effects[] = {
-+        {"identity", I18N_NOOP("No effect")},
-+        {"bulge", I18N_NOOP("Bulge")},
-+        {"frei0r-filter-cartoon", I18N_NOOP("Cartoon")},
-+        {"frei0r-filter-twolay0r", I18N_NOOP("Twolay0r")},
-+        {"dicetv", I18N_NOOP("Dice")},
-+        {"frei0r-filter-distort0r", I18N_NOOP("Distort0r")},
-+        {"edgetv", I18N_NOOP("Edges")},
-+        {"coloreffects preset=heat", I18N_NOOP("Heat")},
-+        {"videobalance saturation=0 ! agingtv", I18N_NOOP("Old film")},
-+        {"videobalance saturation=1.5 hue=-0.5", I18N_NOOP("Hue −0.5")},
-+        {"kaleidoscope", I18N_NOOP("Kaleidoscope")},
-+        {"videobalance saturation=1.5 hue=+0.5", I18N_NOOP("Hue +0.5")},
-+        {"mirror", I18N_NOOP("Mirror")},
-+        {"videobalance saturation=0", I18N_NOOP("Grayscale")},
-+        {"optv", I18N_NOOP("Optical art")},
-+        {"pinch", I18N_NOOP("Pinch")},
-+        {"quarktv", I18N_NOOP("Quark")},
-+        {"radioactv", I18N_NOOP("Radioactive")},
-+        {"revtv", I18N_NOOP("Waveform")},
-+        {"rippletv", I18N_NOOP("Ripples")},
-+        {"videobalance saturation=2", I18N_NOOP("Vivid colors")},
-+        {"coloreffects preset=sepia", I18N_NOOP("Sepia")},
-+        {"shagadelictv", I18N_NOOP("Shagadelic")},
-+        {"square", I18N_NOOP("Square")},
-+        {"streaktv", I18N_NOOP("Streaks")},
-+        {"stretch", I18N_NOOP("Stretch")},
-+        {"frei0r-filter-delay0r delaytime=1", I18N_NOOP("Delay")},
-+        {"twirl", I18N_NOOP("Twirl")},
-+        {"vertigotv", I18N_NOOP("Vertigo")},
-+        {"warptv", I18N_NOOP("Warp")},
-+        {"coloreffects preset=xray", I18N_NOOP("X-ray")},
++        {"identity", ki18n("No effect")},
++        {"bulge", ki18n("Bulge")},
++        {"frei0r-filter-cartoon", ki18n("Cartoon")},
++        {"frei0r-filter-twolay0r", ki18n("Twolay0r")},
++        {"dicetv", ki18n("Dice")},
++        {"frei0r-filter-distort0r", ki18n("Distort0r")},
++        {"edgetv", ki18n("Edges")},
++        {"coloreffects preset=heat", ki18n("Heat")},
++        {"videobalance saturation=0 ! agingtv", ki18n("Old film")},
++        {"videobalance saturation=1.5 hue=-0.5", ki18n("Hue −0.5")},
++        {"kaleidoscope", ki18n("Kaleidoscope")},
++        {"videobalance saturation=1.5 hue=+0.5", ki18n("Hue +0.5")},
++        {"mirror", ki18n("Mirror")},
++        {"videobalance saturation=0", ki18n("Grayscale")},
++        {"optv", ki18n("Optical art")},
++        {"pinch", ki18n("Pinch")},
++        {"quarktv", ki18n("Quark")},
++        {"radioactv", ki18n("Radioactive")},
++        {"revtv", ki18n("Waveform")},
++        {"rippletv", ki18n("Ripples")},
++        {"videobalance saturation=2", ki18n("Vivid colors")},
++        {"coloreffects preset=sepia", ki18n("Sepia")},
++        {"shagadelictv", ki18n("Shagadelic")},
++        {"square", ki18n("Square")},
++        {"streaktv", ki18n("Streaks")},
++        {"stretch", ki18n("Stretch")},
++        {"frei0r-filter-delay0r delaytime=1", ki18n("Delay")},
++        {"twirl", ki18n("Twirl")},
++        {"vertigotv", ki18n("Vertigo")},
++        {"warptv", ki18n("Warp")},
++        {"coloreffects preset=xray", ki18n("X-ray")},
 +    };
 +    for (const auto &effect : effects) {
 +        if (filter == QLatin1String(effect.filter))
-+            return i18n(effect.name);
++            return effect.name.toString();
 +    }
 +    return filter;
 +}
