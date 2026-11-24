@@ -258,7 +258,8 @@ def aurora(phase):
             upper = ((x0,y0+.55*height),(x1,y1+.55*height),(x1,y1+height),(x0,y0+height))
             shapes.append(prism(f'aurora-{k}-{j}',lower,0,0,z,.02,'63e59a',bevel=0,alpha=.38+.52*glow))
             shapes.append(prism(f'aurora-{k}-{j}-top',upper,0,0,z,.02,'a98be6',bevel=0,alpha=.18+.34*glow))
-    positions = ((-.52,.56,-.50,.070),(.06,.62,-.52,.060),(.55,.50,-.50,.075),(.30,.70,-.53,.050))
+    # Stars as large as the Moon's smallest, so the farthest one can be measured at 64 px.
+    positions = ((-.52,.56,-.50,.085),(.06,.62,-.52,.078),(.55,.50,-.50,.090),(.30,.70,-.53,.078))
     shapes += [prism(f'star-{i}',tuple((u*r,v*r) for u,v in star()),x,y,z,.035,'dde8ff',
                      alpha=.64+.35*(.5+.5*cos(tau*(phase+i/4)))) for i,(x,y,z,r) in enumerate(positions)]
     return front(shapes)

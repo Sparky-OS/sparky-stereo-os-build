@@ -26,10 +26,10 @@ MOON_CENTRE = (-.09, -.01)
 MOON_PHASE_ANGLE = radians(125)
 MOON_TILT = -.35
 CLOUD_LOOP_RADIUS = .35
-LIGHT = dict(sun=dict(direction=(-.25, .95, -.15), strength=8., colour='fff1dc', angle=8, receives=('cloud', 'fog')),
+LIGHT = dict(sun=dict(direction=(-.25, .95, -.15), strength=14., colour='fff1dc', angle=8, receives=('cloud', 'fog')),
              moon=dict(strength=18., colour='f1f3ff', angle=1, receives=('moon',)),
              moonlight=dict(direction=(-.40, .80, -.30), strength=1.6, colour='cdd6ff', angle=4, receives=('cloud', 'fog')),
-             sky=dict(direction=(.10, 1., .30), strength=4.5, colour='f4f8ff', angle=40, receives=('cloud', 'fog')))
+             sky=dict(direction=(.10, 1., .30), strength=7., colour='f4f8ff', angle=40, receives=('cloud', 'fog')))
 REPLACED = ('solar-disc', 'ray-', 'crescent', 'cloud-', 'bolt', 'fog-', 'aurora-0-', 'aurora-1-', 'aurora-2-')
 
 

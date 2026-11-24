@@ -517,12 +517,18 @@ def solid_only(shape):
     add(shape.name, mesh)
 
 
+def samples_for(size):
+    """Volume noise shows most at the largest sizes: 96 samples at 256 px, 64 at 128 px, 32 below."""
+    return 96 if size >= 256 else 64 if size >= 128 else 32
+
+
 def timed_pair(size, camera, rig, exr, supersample, symbolic, costs, label):
+    bpy.context.scene.cycles.samples = samples_for(size)
     usage = resource.getrusage(resource.RUSAGE_SELF)
     start = time.monotonic()
     views = base.render_pair(size, camera, rig, exr, supersample, symbolic)
     after = resource.getrusage(resource.RUSAGE_SELF)
-    costs.append(dict(label=label, size=size, wall_s=round(time.monotonic()-start, 3),
+    costs.append(dict(label=label, size=size, samples=samples_for(size), wall_s=round(time.monotonic()-start, 3),
                       cpu_s=round(after.ru_utime+after.ru_stime-usage.ru_utime-usage.ru_stime, 3),
                       load=Path('/proc/loadavg').read_text().split()[0]))
     return views
@@ -626,7 +632,8 @@ def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, sta
     recipe = dict(look=rm.LOOK, name=name, parameters=params, bounds_z=bounds, real_extents=extents,
                   features=features, frames=base.FRAMES, delay_ms=100, frame_size=sizes, loop_sizes=loop_sizes,
                   camera=camera, distance=base.DISTANCE, hfov=studio.HFOV, supersample=supersample,
-                  samples=samples, scene=rm.signature(scenes[0]), costs=costs,
+                  samples={size: samples_for(size) for size in sorted(set(sizes+loop_sizes+(64,)))},
+                  scene=rm.signature(scenes[0]), costs=costs,
                   sources=record['files'], blender=bpy.app.version_string)
     (out/'geometry.json').write_text(json.dumps(recipe, indent=1)+'\n')
 
