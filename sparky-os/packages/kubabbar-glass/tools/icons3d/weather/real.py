@@ -320,12 +320,10 @@ def volume_material(spec):
     distance = g.vector('LENGTH', local)
     if spec['kind'] == 'fog':
         stretched = g.vector('MULTIPLY', local, (.35, 2.2, 1.6))
-        edge = g.math('SUBTRACT', 1., g.smooth(distance, .30, 1.))
-        scale, density, anisotropy = 2.6, 10., .15
+        scale, density, anisotropy, rough = 2.6, 10., .15, (.30, 1., .0)
     else:
         stretched = local
-        edge = g.math('SUBTRACT', 1., g.smooth(distance, .45, 1.))
-        scale, density, anisotropy = 1.7, 15., .2
+        scale, density, anisotropy, rough = 1.9, 12., .2, (.60, .90, .32)
     seed = spec['seed']
     shift = (1.7*seed+spec['loop'][0], 2.3*seed+spec['loop'][1], .9*seed)
     noise = g.node('ShaderNodeTexNoise', noise_dimensions='3D')
@@ -333,7 +331,13 @@ def volume_material(spec):
     noise.inputs['Scale'].default_value = scale
     noise.inputs['Detail'].default_value = 2.5
     noise.inputs['Roughness'].default_value = .55
-    billow = g.math('ADD', .35, g.math('MULTIPLY', g.smooth(noise.outputs['Fac'], .30, .64), .65))
+    # The noise moves the surface of each puff in and out (a cauliflower outline for a cloud, a soft band for
+    # fog); the last factor brings the density to nothing at the solid's own edge, so the tile's border stays clear.
+    wobble = g.math('ADD', distance, g.math('MULTIPLY', g.math('SUBTRACT', noise.outputs['Fac'], .5), rough[2]))
+    body = g.math('SUBTRACT', 1., g.smooth(wobble, rough[0], rough[1]))
+    hull = g.math('SUBTRACT', 1., g.smooth(distance, .86, 1.))
+    inner = g.math('ADD', .45, g.math('MULTIPLY', g.smooth(noise.outputs['Fac'], .30, .64), .55))
+    field = g.math('MULTIPLY', g.math('MULTIPLY', body, hull), inner)
     volume = g.node('ShaderNodeVolumePrincipled')
     albedo = linear(spec['colour'])
     if spec['kind'] == 'cloud' and min(albedo) > .7:
@@ -341,7 +345,7 @@ def volume_material(spec):
         albedo = tuple(.5+.5*a for a in albedo)
     volume.inputs['Color'].default_value = (*albedo, 1)
     volume.inputs['Anisotropy'].default_value = anisotropy
-    g.put(volume.inputs['Density'], g.math('MULTIPLY', g.math('MULTIPLY', edge, billow), density))
+    g.put(volume.inputs['Density'], g.math('MULTIPLY', field, density))
     return g.volume(volume.outputs[0])
 
 
@@ -531,6 +535,9 @@ def initialize(samples):
     cameras, right = base.initialize(samples)
     scene = bpy.context.scene
     scene.cycles.volume_bounces = 2
+    # Ray marching: Blender 5.0's unbiased volumes spend about 10 s per view on fixed work at any size
+    # (22 s against 0.8 s for a 64 px pair; the pictures differ by 0.006 on average).
+    scene.cycles.volume_biased = True
     scene.cycles.transparent_max_bounces = 16
     return cameras, right
 
