@@ -1,0 +1,12 @@
+A stereo QOpenGLWidget's own window is placed when its ancestors move
+(a scroll area, a layout, a dock, an item view's scroll), the way Qt keeps a
+window container in place, and no longer inside the backing store's flush,
+where on Wayland the move repainted the window from within that flush and
+the flush read a list of textures the repaint had freed (queue row 863:
+memcheck of FreeCAD's stress run, and the recipe's test stereo-widget-move,
+31 reads of a freed QPlatformTextureList each). Nothing showed on screen.
+
+A subsurface that moves no longer exposes its parent synchronously: the parent
+draws its next frame in time with its frame callback (upstream commit
+d6d2a75cdbfe by David Edmundson, carried as o863-0001), so the windows a layout
+moves reach the screen together.

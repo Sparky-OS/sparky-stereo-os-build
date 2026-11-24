@@ -1,0 +1,213 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 24 Nov 2026 21:02:43 +0000
+Subject: Widgets: place a stereo window when its ancestors move, not inside the flush
+
+A stereo QOpenGLWidget gets a native window of its own under alien ancestors
+(stereo3d-native-stereo-opengl-widget.patch), and its ancestors do not move that
+window when they move. That patch placed the window inside
+QWidgetRepaintManager::flush() of the window. On Wayland the move exposed the
+parent window synchronously; the nested repaint rebuilt the top level's texture
+lists and freed the list that flush() then handed to rhiFlush(). Memcheck of
+FreeCAD's stress run showed 31 error contexts reading a freed
+QPlatformTextureList; the recipe's test tests/stereo-widget-move shows the same
+31 in a scroll area, a graphics view's viewport and an item view.
+
+The window is now placed when the geometry of an ancestor changes, the way Qt
+keeps a window container in place (QWindowContainer's markParentChain() and
+parentWasMoved(), called from QWidget::move() and QWidget::setGeometry()): the
+widgets from a stereo window up to its window carry a bit of QWExtra,
+hasStereoWindow, beside hasWindowContainer, and move(), setGeometry(),
+setParent() and QWidget::scroll() of a marked widget place the stereo windows
+below it. setWSGeometry(), which QWidget::scroll() uses, gives a stereo window
+its place in its native parent, not in its alien parent. This patch changes
+code added by stereo3d-native-stereo-opengl-widget.patch; it is a patch of its
+own because a successor of a published source only appends to the series.
+
+Measured against the other place, the move queued until the flush returned,
+both with o863-0001 (upstream's subsurface move without a synchronous expose)
+and without it, in the test's four shapes (row 863): every place leaves no
+freed-list read; only this place with o863-0001 has every stereo window placed
+after every step in every shape, and no commit of the parent that showed a
+stereo window away from its widget in the scroll area and the item view (60
+and 62 such commits per 60 steps with the published build, 42 against 60 in
+the viewport shape). The queued move left a window at its old place for a
+whole step in the scroll area and the item view.
+
+Forwarded: not-needed
+Last-Update: 2026-11-24
+Assisted-by: Claude Opus 5.5 (Anthropic)
+---
+diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
+index ea0dce34..2cbd3c81 100644
+--- a/src/widgets/kernel/qwidget.cpp
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -207,6 +207,7 @@ void QWidgetPrivate::scrollChildren(int dx, int dy)
+                 w->data->crect = r;
+                 if (w->testAttribute(Qt::WA_WState_Created))
+                     w->d_func()->setWSGeometry();
++                placeStereoWindows(w);
+                 w->d_func()->setDirtyOpaqueRegion();
+                 QMoveEvent e(r.topLeft(), oldp);
+                 QCoreApplication::sendEvent(w, &e);
+@@ -218,8 +219,13 @@ void QWidgetPrivate::scrollChildren(int dx, int dy)
+ void QWidgetPrivate::setWSGeometry()
+ {
+     Q_Q(QWidget);
+-    if (QWindow *window = q->windowHandle())
+-        window->setGeometry(data.crect);
++    if (QWindow *window = q->windowHandle()) {
++        // a stereo window's parent can be an alien widget: its geometry is in its native parent
++        if (!q->isWindow() && extra && extra->hasStereoWindow && hasStereoWindow())
++            window->setGeometry(QRect(q->mapTo(q->nativeParentWidget(), QPoint()), data.crect.size()));
++        else
++            window->setGeometry(data.crect);
++    }
+ }
+ 
+ void QWidgetPrivate::updateWidgetTransform(QEvent *event)
+@@ -1042,6 +1048,62 @@ bool QWidgetPrivate::hasStereoWindow()
+     return isStereoEnabled() && platformComposesStereoWindows();
+ }
+ 
++// A stereo window under alien ancestors is not moved along when they move (scroll areas, layouts, docks): the widgets
++// from it up to its window are marked, and a move of a marked widget places the stereo windows below it, as
++// QWindowContainer::parentWasMoved() does for window containers. A move inside a flush of the backing store would
++// repaint the top level from within that flush (a synchronous expose on Wayland) and free the texture list it reads.
++void QWidgetPrivate::markStereoWindowParentChain()
++{
++    Q_Q(QWidget);
++    for (QWidget *w = q; w; w = w->parentWidget()) {
++        QWidgetPrivate *wd = w->d_func();
++        wd->createExtra();
++        wd->extra->hasStereoWindow = true;
++        if (w->isWindow())
++            break;
++    }
++}
++
++void QWidgetPrivate::placeStereoWindows(QWidget *widget)
++{
++    QWidgetPrivate *d = widget->d_func();
++    if (!d->extra || !d->extra->hasStereoWindow)
++        return;
++    if (!widget->isWindow() && widget->testAttribute(Qt::WA_WState_Created) && d->hasStereoWindow()) {
++        QWindow *window = widget->windowHandle();
++        QWidget *nativeParent = widget->nativeParentWidget();
++        if (window && nativeParent) {
++            const QPoint posInNativeParent = widget->mapTo(nativeParent, QPoint());
++            if (window->position() != posInNativeParent)
++                window->setPosition(posInNativeParent);
++        }
++    }
++    for (QObject *child : std::as_const(d->children)) {
++        QWidget *w = qobject_cast<QWidget *>(child);
++        if (w && !w->isWindow())
++            placeStereoWindows(w);
++    }
++}
++
++// A marked widget got a new parent: its stereo windows mark their new ancestors, and are placed
++void QWidgetPrivate::stereoWindowParentWasChanged(QWidget *widget)
++{
++    const auto mark = [](QWidget *w, const auto &self) -> void {
++        QWidgetPrivate *wd = w->d_func();
++        if (!wd->extra || !wd->extra->hasStereoWindow)
++            return;
++        if (wd->hasStereoWindow())
++            wd->markStereoWindowParentChain();
++        for (QObject *child : std::as_const(wd->children)) {
++            QWidget *cw = qobject_cast<QWidget *>(child);
++            if (cw && !cw->isWindow())
++                self(cw, self);
++        }
++    };
++    mark(widget, mark);
++    placeStereoWindows(widget);
++}
++
+ // Whether making this widget native makes its siblings native too, to keep the stacking order.
+ // A stereo window stacks above the widgets that stay in the top level's surface.
+ bool QWidgetPrivate::enforcesNativeSiblings()
+@@ -1236,6 +1298,7 @@ void QWidget::create(WId window, bool initializeWindow, bool destroyOldWindow)
+     if (!isWindow() && d->hasStereoWindow()) {
+         setAttribute(Qt::WA_DontCreateNativeAncestors);
+         setAttribute(Qt::WA_NativeWindow);
++        d->markStereoWindowParentChain();
+     }
+ 
+     if (isWindow()
+@@ -1722,6 +1785,7 @@ void QWidgetPrivate::createExtra()
+         extra->nativeChildrenForced = 0;
+         extra->inRenderWithPainter = 0;
+         extra->hasWindowContainer = false;
++        extra->hasStereoWindow = false;
+         extra->hasMask = 0;
+         createSysExtra();
+ #ifdef QWIDGET_EXTRA_DEBUG
+@@ -7361,6 +7425,8 @@ void QWidget::move(const QPoint &p)
+ 
+     if (d->extra && d->extra->hasWindowContainer)
+         QWindowContainer::parentWasMoved(this);
++    if (d->extra && d->extra->hasStereoWindow)
++        QWidgetPrivate::placeStereoWindows(this);
+ }
+ 
+ // move() was invoked with Qt::WA_WState_Created not set (frame geometry
+@@ -7438,6 +7504,8 @@ void QWidget::setGeometry(const QRect &r)
+ 
+     if (d->extra && d->extra->hasWindowContainer)
+         QWindowContainer::parentWasMoved(this);
++    if (d->extra && d->extra->hasStereoWindow)
++        QWidgetPrivate::placeStereoWindows(this);
+ }
+ 
+ void QWidgetPrivate::setGeometry_sys(int x, int y, int w, int h, bool isMove)
+@@ -11085,6 +11153,8 @@ void QWidget::setParent(QWidget *parent, Qt::WindowFlags f)
+ 
+     if (d->extra && d->extra->hasWindowContainer)
+         QWindowContainer::parentWasChanged(this);
++    if (d->extra && d->extra->hasStereoWindow)
++        QWidgetPrivate::stereoWindowParentWasChanged(this);
+ 
+     QWidget *newParentWithWindow = d->closestParentWidgetWithWindowHandle();
+     if (newParentWithWindow && newParentWithWindow != oldParentWithWindow) {
+diff --git a/src/widgets/kernel/qwidget_p.h b/src/widgets/kernel/qwidget_p.h
+index a1218d51..08795cd9 100644
+--- a/src/widgets/kernel/qwidget_p.h
++++ b/src/widgets/kernel/qwidget_p.h
+@@ -160,6 +160,7 @@ struct QWExtra {
+     uint inRenderWithPainter : 1;
+     uint hasMask : 1;
+     uint hasWindowContainer : 1;
++    uint hasStereoWindow : 1; // this widget or a widget below it has a stereo window of its own
+ };
+ 
+ /*!
+@@ -651,6 +652,9 @@ public:
+     bool platformComposesStereoWindows() const;
+     bool hasStereoWindow();
+     bool enforcesNativeSiblings();
++    void markStereoWindowParentChain();
++    static void placeStereoWindows(QWidget *widget);
++    static void stereoWindowParentWasChanged(QWidget *widget);
+     virtual bool toggleStereoTargetBuffer() { return false; } // Called in QGraphicsView::paintEvent
+ 
+     static void setWidgetParentHelper(QObject *widgetAsObject, QObject *newParent);
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+index 4f2b1e70..5c84af83 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -1210,13 +1210,6 @@ void QWidgetRepaintManager::flush(QWidget *widget, const QRegion &region, QPlatf
+     if (widget != tlw)
+         offset += widget->mapTo(tlw, QPoint());
+ 
+-    // A native widget under alien ancestors is not moved along when they move (scroll areas)
+-    if (widget != tlw && widget->d_func()->hasStereoWindow()) {
+-        const QPoint posInNativeParent = widget->mapTo(widget->nativeParentWidget(), QPoint());
+-        if (window->position() != posInNativeParent)
+-            window->setPosition(posInNativeParent);
+-    }
+-
+     // A widget uses RHI flush if itself, or one of its non-native children
+     // uses RHI for its drawing. If so, we composite the backing store raster
+     // data along with textures produced by the RHI widgets.
