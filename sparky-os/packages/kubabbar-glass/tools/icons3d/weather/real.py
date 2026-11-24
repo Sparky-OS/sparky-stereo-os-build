@@ -303,7 +303,14 @@ def moon_material(spec):
     texture = g.node('ShaderNodeTexImage', image=image('moon-colour-1024x512.png'), interpolation='Cubic')
     g.put(texture.inputs['Vector'], g.coordinates('UV'))
     diffuse = g.node('ShaderNodeBsdfDiffuse')
-    g.put(diffuse.inputs['Color'], texture.outputs['Color'])
+    pigment = texture.outputs['Color']
+    if 'tint' in spec:
+        tint = g.node('ShaderNodeMixRGB', blend_type='MULTIPLY')
+        tint.inputs[0].default_value = 1.
+        g.put(tint.inputs[1], pigment)
+        tint.inputs[2].default_value = (*linear(spec['tint']), 1.)
+        pigment = tint.outputs[0]
+    g.put(diffuse.inputs['Color'], pigment)
     diffuse.inputs['Roughness'].default_value = 1.
     light = WORLD[1] @ Vector(spec['light'])
     geometry = g.node('ShaderNodeNewGeometry')
@@ -694,11 +701,14 @@ def main():
     parser.add_argument('--supersample', type=int, default=2)
     parser.add_argument('--samples', type=int, default=32)
     parser.add_argument('--static-only', action='store_true')
+    parser.add_argument('--contrast', action='store_true')
     parser.add_argument('--no-streamers', action='store_true')
     parser.add_argument('--suffix', default='')
     parser.add_argument('--edges-only', type=int, choices=(256,))
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     variant = {'streamers': False} if args.no_streamers else {}
+    if args.contrast:
+        variant['contrast'] = True
     for name in args.names:
         if args.edges_only:
             rerender_edges(name, args.output/name, args.scratch/name, args.edges_only)

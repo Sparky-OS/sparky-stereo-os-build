@@ -104,8 +104,11 @@ def moon_spec(params, by):
     front = bbox(canonical)[2][1]
     centre = mapped(axes, (*MOON_CENTRE, front-MOON_RADIUS))
     radii = tuple(MOON_RADIUS*s for s, _ in axes)
-    return dict(kind='moon', name='moon', centre=centre, radii=radii, light=MOON_LIGHT,
-                hemisphere=params.get('hemisphere', 'north'), z=(centre[2], centre[2]+radii[2]))
+    result = dict(kind='moon', name='moon', centre=centre, radii=radii, light=MOON_LIGHT,
+                  hemisphere=params.get('hemisphere', 'north'), z=(centre[2], centre[2]+radii[2]))
+    if params.get('contrast'):
+        result['tint'] = by['crescent'].colour
+    return result
 
 
 # What a volume scatters and how dense it is. A cloud's modelled pigment (geometry.cloud, by darkness) is lifted
