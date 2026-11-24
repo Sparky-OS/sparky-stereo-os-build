@@ -1,0 +1,1769 @@
+From 2abb01417a04e08a4601b832f489bd28ae8e3629 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 24 Nov 2026 07:53:34 -0300
+Subject: [PATCH 1/2] Gui: the 3D view in stereo, fitted to the person's depth
+ limits
+
+Sparky Stereo OS: the 3D view is drawn as a stereo pair from two parallel
+cameras that meet at the camera's focal distance: in perspective Coin's own
+stereo camera (the eye moved half the separation along the camera's right
+vector, the frustum skewed), in orthographic a shear about the focal plane,
+set right after the camera as the camera's view volume moved by the inverse
+world shear, so the labels and annotations that read the view volume follow
+their points.  Coin's stereo camera turns an orthographic volume into a
+perspective frustum (the distortion of upstream issues 21496 and 27553), so
+it is used for perspective only.
+
+When "Enable 3D" is on, the view's viewport (Quarter's QOpenGLWidget) asks
+for stereo buffers in its own format; the edition's Qt shows it as a stereo
+window of its own, which Mesa hands to the desktop as full side by side,
+while the rest of the window stays one picture.  Quarter draws each frame in
+the graphics view's paint event, never in paintGL(), so it draws it there
+once per buffer: QOpenGLWidget::makeCurrent(TargetBuffer) aims the scene and
+the graphics view's own painting at each eye.
+
+The separation is not a setting.  The person sets the depth limits once, in
+the desktop's 3D settings; the view reads them through libstereo-declare
+(Wayland: for the top-level window's surface; X11: on the viewport's own
+window), four times a second, and a change redraws the view.  Before the left
+eye the scene and its annotations are drawn once from the camera between the
+eyes into a framebuffer of their own and their depth is read (after the
+scene, and after the delayed annotations, which are drawn over a cleared
+depth); the separation is the largest under which every pixel stays inside
+the limits.  Without limits both eyes are the same picture and the report
+view says why, once.  FreeCAD's own eye distance is not offered.
+
+View, Stereo holds "Enable 3D" (the quad-buffer entry, now a check box, the
+preference View/Enable3D, on by default, applied to every open 3D view by a
+new viewport with the other format) and "3D Display Settings..." (the
+desktop's systemsettings kcm_kscreen, else kcmshell6, else told).  The
+red/cyan and interleaved views are not offered: the desktop's display
+settings make every output from the two eyes.  The Python API's
+setStereoType keeps Mono and QuadBuffer for one view and refuses the others
+with a sentence; listStereoTypes lists the two.
+
+Picking, preselection and navigation use the camera between the eyes: the
+eyes exist only inside the paint event.  The navigation cube, the corner
+coordinate system, the background, the rubber band and the task overlay are
+drawn in both eyes at the same place, at the screen's depth.  A mouse
+selection, which freezes the view as a picture, keeps each eye's own picture.
+
+With FREECAD_STEREO3D_TRACE=1 each frame's fit (limits, k, the focal
+distance, the nearest and farthest distances, the separation, the predicted
+disparities) and every sentence told are printed on standard error.
+
+Forwarded: not-needed (FreeCAD's AI_POLICY.md and AGENTS.md; the edition's build)
+Assisted-by: Claude Opus 5.5 (Anthropic)
+---
+ src/Gui/CMakeLists.txt                        |  16 +
+ src/Gui/CommandView.cpp                       | 123 ++--
+ .../PreferencePages/DlgSettings3DViewImp.cpp  |   4 +
+ src/Gui/Quarter/QuarterWidget.cpp             |  54 +-
+ src/Gui/Quarter/QuarterWidget.h               |  10 +
+ src/Gui/View3DInventor.cpp                    |  27 +-
+ src/Gui/View3DInventorViewer.cpp              |  78 ++-
+ src/Gui/View3DInventorViewer.h                |  20 +
+ src/Gui/View3DPy.cpp                          |  35 +-
+ src/Gui/View3DSettings.cpp                    |   7 +
+ src/Gui/View3DStereo.cpp                      | 623 ++++++++++++++++++
+ src/Gui/View3DStereo.h                        | 164 +++++
+ src/Gui/View3DStereoLimits.cpp                |  98 +++
+ src/Gui/View3DStereoLimits.h                  |  60 ++
+ src/Gui/Workbench.cpp                         |   6 +-
+ 15 files changed, 1192 insertions(+), 133 deletions(-)
+ create mode 100644 src/Gui/View3DStereo.cpp
+ create mode 100644 src/Gui/View3DStereo.h
+ create mode 100644 src/Gui/View3DStereoLimits.cpp
+ create mode 100644 src/Gui/View3DStereoLimits.h
+
+diff --git a/src/Gui/CMakeLists.txt b/src/Gui/CMakeLists.txt
+index c256a0f..a4a0fc4 100644
+--- a/src/Gui/CMakeLists.txt
++++ b/src/Gui/CMakeLists.txt
+@@ -142,6 +142,18 @@ if (WIN32)
+     endif()
+ endif()
+ 
++if (UNIX AND NOT APPLE)
++    # The stereo 3D view reads the person's depth limits through libstereo-declare, for the window
++    # system's handles of its window, which Qt's private QPlatformNativeInterface gives
++    find_package(PkgConfig REQUIRED)
++    pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.12.2)
++    if(Qt6_VERSION VERSION_GREATER_EQUAL "6.10.0")
++        find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
++    endif()
++    # Private: the modules that link FreeCADGui need neither
++    target_link_libraries(FreeCADGui PRIVATE Qt6::GuiPrivate PkgConfig::STEREO_DECLARE)
++endif()
++
+ target_include_directories(
+     FreeCADGui
+     SYSTEM
+@@ -961,6 +973,8 @@ SET(View3D_CPP_SRCS
+     View3DInventorViewer.cpp
+     View3DInventorRiftViewer.cpp
+     View3DSettings.cpp
++    View3DStereo.cpp
++    View3DStereoLimits.cpp
+     CoinRiftWidget.cpp
+     View3DPy.cpp
+     View3DViewerPy.cpp
+@@ -982,6 +996,8 @@ SET(View3D_SRCS
+     View3DPy.h
+     View3DInventorRiftViewer.h
+     View3DSettings.h
++    View3DStereo.h
++    View3DStereoLimits.h
+     CoinRiftWidget.h
+     View3DViewerPy.h
+     NaviCube.h
+diff --git a/src/Gui/CommandView.cpp b/src/Gui/CommandView.cpp
+index 79b7f5b..a9a6469 100644
+--- a/src/Gui/CommandView.cpp
++++ b/src/Gui/CommandView.cpp
+@@ -81,6 +81,7 @@
+ #include "Utilities.h"
+ #include "View3DInventor.h"
+ #include "View3DInventorViewer.h"
++#include "View3DStereo.h"
+ #include "ViewParams.h"
+ #include "ViewProviderGeometryObject.h"
+ #include "WaitCursor.h"
+@@ -2493,45 +2494,21 @@ bool StdCmdViewIvStereoOff::isActive()
+ }
+ 
+ 
+-//===========================================================================
+-// Std_ViewIvStereoRedGreen
+-//===========================================================================
+-DEF_STD_CMD_A(StdCmdViewIvStereoRedGreen)
+-
+-StdCmdViewIvStereoRedGreen::StdCmdViewIvStereoRedGreen()
+-    : Command("Std_ViewIvStereoRedGreen")
+-{
+-    sGroup = "Standard-View";
+-    sMenuText = QT_TR_NOOP("Stereo Re&d/Cyan");
+-    sToolTipText = QT_TR_NOOP("Switches stereo viewing to red/cyan");
+-    sWhatsThis = "Std_ViewIvStereoRedGreen";
+-    sStatusTip = sToolTipText;
+-    sPixmap = "Std_ViewIvStereoRedGreen";
+-    eType = Alter3DView;
+-}
+-
+-void StdCmdViewIvStereoRedGreen::activated(int iMsg)
+-{
+-    Q_UNUSED(iMsg);
+-    doCommand(Command::Gui, "Gui.activeDocument().activeView().setStereoType(\"Anaglyph\")");
+-}
+-
+-bool StdCmdViewIvStereoRedGreen::isActive()
+-{
+-    return getGuiApplication()->sendHasMsgToActiveView("SetStereoRedGreen");
+-}
+-
+ //===========================================================================
+ // Std_ViewIvStereoQuadBuff
+ //===========================================================================
+-DEF_STD_CMD_A(StdCmdViewIvStereoQuadBuff)
++// The edition's stereo 3D view: one output, the view's two eyes, which the desktop's display
++// settings turn into what each screen needs (3D modes, anaglyph, interleaving, frame sequence). So
++// the red/cyan and interleaved views are not offered here, and the quad-buffer entry is "Enable 3D":
++// the person's choice for every 3D view, on by default.
++DEF_STD_CMD_AC(StdCmdViewIvStereoQuadBuff)
+ 
+ StdCmdViewIvStereoQuadBuff::StdCmdViewIvStereoQuadBuff()
+     : Command("Std_ViewIvStereoQuadBuff")
+ {
+     sGroup = "Standard-View";
+-    sMenuText = QT_TR_NOOP("Stereo &Quad Buffer");
+-    sToolTipText = QT_TR_NOOP("Switches stereo viewing to quad buffer");
++    sMenuText = QT_TR_NOOP("Enable &3D");
++    sToolTipText = QT_TR_NOOP("Shows the 3D views in stereo, with the depth set in the desktop's 3D settings");
+     sWhatsThis = "Std_ViewIvStereoQuadBuff";
+     sStatusTip = sToolTipText;
+     sPixmap = "Std_ViewIvStereoQuadBuff";
+@@ -2540,72 +2517,62 @@ StdCmdViewIvStereoQuadBuff::StdCmdViewIvStereoQuadBuff()
+ 
+ void StdCmdViewIvStereoQuadBuff::activated(int iMsg)
+ {
+-    Q_UNUSED(iMsg);
+-    doCommand(Command::Gui, "Gui.activeDocument().activeView().setStereoType(\"QuadBuffer\")");
++    const bool checked = iMsg != 0;
++    if (checked != View3DStereo::enabledByPreference()) {
++        if (checked && !View3DStereo::desktopOffersStereo()) {
++            View3DStereo::tellOnce(QCoreApplication::translate(
++                "Gui::View3DStereo",
++                "This desktop offers no stereo buffers, so the 3D view stays 2D."
++            ));
++        }
++        // View3DSettings applies the change to every open 3D view
++        View3DStereo::setEnabledByPreference(checked);
++    }
++    if (_pcAction) {
++        _pcAction->setBlockedChecked(checked);
++    }
+ }
+ 
+ bool StdCmdViewIvStereoQuadBuff::isActive()
+ {
+-    return getGuiApplication()->sendHasMsgToActiveView("SetStereoQuadBuff");
+-}
+-
+-//===========================================================================
+-// Std_ViewIvStereoInterleavedRows
+-//===========================================================================
+-DEF_STD_CMD_A(StdCmdViewIvStereoInterleavedRows)
+-
+-StdCmdViewIvStereoInterleavedRows::StdCmdViewIvStereoInterleavedRows()
+-    : Command("Std_ViewIvStereoInterleavedRows")
+-{
+-    sGroup = "Standard-View";
+-    sMenuText = QT_TR_NOOP("Stereo Interleaved &Rows");
+-    sToolTipText = QT_TR_NOOP("Switches stereo viewing to interleaved rows");
+-    sWhatsThis = "Std_ViewIvStereoInterleavedRows";
+-    sStatusTip = sToolTipText;
+-    sPixmap = "Std_ViewIvStereoInterleavedRows";
+-    eType = Alter3DView;
+-}
+-
+-void StdCmdViewIvStereoInterleavedRows::activated(int iMsg)
+-{
+-    Q_UNUSED(iMsg);
+-    doCommand(Command::Gui, "Gui.activeDocument().activeView().setStereoType(\"InterleavedRows\")");
++    if (_pcAction) {
++        const bool checked = _pcAction->isChecked();
++        if (checked != View3DStereo::enabledByPreference()) {
++            _pcAction->setBlockedChecked(!checked);
++        }
++    }
++    return true;
+ }
+ 
+-bool StdCmdViewIvStereoInterleavedRows::isActive()
++Action* StdCmdViewIvStereoQuadBuff::createAction()
+ {
+-    return getGuiApplication()->sendHasMsgToActiveView("SetStereoInterleavedRows");
++    Action* pcAction = Command::createAction();
++    pcAction->setCheckable(true);
++    return pcAction;
+ }
+ 
+ //===========================================================================
+-// Std_ViewIvStereoInterleavedColumns
++// Std_ViewIvStereoDisplaySettings
+ //===========================================================================
+-DEF_STD_CMD_A(StdCmdViewIvStereoInterleavedColumns)
++DEF_STD_CMD(StdCmdViewIvStereoDisplaySettings)
+ 
+-StdCmdViewIvStereoInterleavedColumns::StdCmdViewIvStereoInterleavedColumns()
+-    : Command("Std_ViewIvStereoInterleavedColumns")
++StdCmdViewIvStereoDisplaySettings::StdCmdViewIvStereoDisplaySettings()
++    : Command("Std_ViewIvStereoDisplaySettings")
+ {
+     sGroup = "Standard-View";
+-    sMenuText = QT_TR_NOOP("Stereo Interleaved &Columns");
+-    sToolTipText = QT_TR_NOOP("Switches stereo viewing to interleaved columns");
+-    sWhatsThis = "Std_ViewIvStereoInterleavedColumns";
++    sMenuText = QT_TR_NOOP("3D &Display Settings...");
++    sToolTipText = QT_TR_NOOP("Opens the desktop's display settings, where the 3D modes and the depth are set");
++    sWhatsThis = "Std_ViewIvStereoDisplaySettings";
+     sStatusTip = sToolTipText;
+-    sPixmap = "Std_ViewIvStereoInterleavedColumns";
+-    eType = Alter3DView;
++    eType = 0;
+ }
+ 
+-void StdCmdViewIvStereoInterleavedColumns::activated(int iMsg)
++void StdCmdViewIvStereoDisplaySettings::activated(int iMsg)
+ {
+     Q_UNUSED(iMsg);
+-    doCommand(Command::Gui, "Gui.activeDocument().activeView().setStereoType(\"InterleavedColumns\")");
+-}
+-
+-bool StdCmdViewIvStereoInterleavedColumns::isActive()
+-{
+-    return getGuiApplication()->sendHasMsgToActiveView("SetStereoInterleavedColumns");
++    View3DStereo::openDisplaySettings();
+ }
+ 
+-
+ //===========================================================================
+ // Std_ViewIvIssueCamPos
+ //===========================================================================
+@@ -4408,9 +4375,7 @@ void CreateViewStdCommands()
+     rcCmdMgr.addCommand(new StdCmdViewExample3());
+ 
+     rcCmdMgr.addCommand(new StdCmdViewIvStereoQuadBuff());
+-    rcCmdMgr.addCommand(new StdCmdViewIvStereoRedGreen());
+-    rcCmdMgr.addCommand(new StdCmdViewIvStereoInterleavedColumns());
+-    rcCmdMgr.addCommand(new StdCmdViewIvStereoInterleavedRows());
++    rcCmdMgr.addCommand(new StdCmdViewIvStereoDisplaySettings());
+     rcCmdMgr.addCommand(new StdCmdViewIvStereoOff());
+ 
+     rcCmdMgr.addCommand(new StdCmdViewIvIssueCamPos());
+diff --git a/src/Gui/PreferencePages/DlgSettings3DViewImp.cpp b/src/Gui/PreferencePages/DlgSettings3DViewImp.cpp
+index 1a1983b..7101ca4 100644
+--- a/src/Gui/PreferencePages/DlgSettings3DViewImp.cpp
++++ b/src/Gui/PreferencePages/DlgSettings3DViewImp.cpp
+@@ -49,6 +49,10 @@ DlgSettings3DViewImp::DlgSettings3DViewImp(QWidget* parent)
+ {
+     ui->setupUi(this);
+     addAntiAliasing();
++    // The stereo 3D view takes its depth from the desktop's 3D settings, the one place where the
++    // person sets it: FreeCAD's own eye distance is not offered
++    ui->textLabel1->hide();
++    ui->FloatSpinBox_EyeDistance->hide();
+ }
+ 
+ DlgSettings3DViewImp::~DlgSettings3DViewImp() = default;
+diff --git a/src/Gui/Quarter/QuarterWidget.cpp b/src/Gui/Quarter/QuarterWidget.cpp
+index eb48673..05d5174 100644
+--- a/src/Gui/Quarter/QuarterWidget.cpp
++++ b/src/Gui/Quarter/QuarterWidget.cpp
+@@ -330,6 +330,28 @@ QuarterWidget::replaceViewport()
+   viewport()->setAutoFillBackground(false);
+ }
+ 
++void
++QuarterWidget::replaceViewport(const QSurfaceFormat & format)
++{
++  CustomGLWidget* oldvp = static_cast<CustomGLWidget*>(viewport());
++  QWidget* focusProxy = oldvp->focusProxy();
++  CustomGLWidget* newvp = new CustomGLWidget(format, this);
++  PRIVATE(this)->replaceGLWidget(newvp);
++  setViewport(newvp);
++  newvp->setFocusProxy(focusProxy);
++
++  setAutoFillBackground(false);
++  viewport()->setAutoFillBackground(false);
++  // the render manager reinitializes for the new context at the next frame
++  initialized = false;
++}
++
++QSurfaceFormat
++QuarterWidget::viewportFormat() const
++{
++  return static_cast<CustomGLWidget*>(viewport())->myFormat;
++}
++
+ /*! destructor */
+ QuarterWidget::~QuarterWidget()
+ {
+@@ -902,14 +924,30 @@ void QuarterWidget::paintEvent(QPaintEvent* event)
+     //glDrawBuffer(w->format().swapBehavior() == QSurfaceFormat::DoubleBuffer ? GL_BACK : GL_FRONT);
+ 
+     w->makeCurrent();
+-    this->actualRedraw();
+-
+-    //start the standard graphics view processing for all widgets and graphic items. As 
+-    //QGraphicsView initaliizes a QPainter which changes the Opengl context in an unpredictable 
+-    //manner we need to store the context and recreate it after Qt is done.
+-    glPushAttrib(GL_MULTISAMPLE_BIT_EXT);
+-    inherited::paintEvent(event);
+-    glPopAttrib();
++    if (this->drawsStereoEyes()) {
++      // One frame per eye: the left buffer of the viewport, then the right one, each with the
++      // graphics view's own painting, which follows the buffer made current
++      for (int eye = 0; eye < 2; ++eye) {
++        w->makeCurrent(eye == 0 ? QOpenGLWidget::LeftBuffer : QOpenGLWidget::RightBuffer);
++        this->beginStereoEye(eye);
++        this->actualRedraw();
++        glPushAttrib(GL_MULTISAMPLE_BIT_EXT);
++        inherited::paintEvent(event);
++        glPopAttrib();
++      }
++      this->endStereoEyes();
++      w->makeCurrent(QOpenGLWidget::LeftBuffer);
++    }
++    else {
++      this->actualRedraw();
++
++      //start the standard graphics view processing for all widgets and graphic items. As
++      //QGraphicsView initaliizes a QPainter which changes the Opengl context in an unpredictable
++      //manner we need to store the context and recreate it after Qt is done.
++      glPushAttrib(GL_MULTISAMPLE_BIT_EXT);
++      inherited::paintEvent(event);
++      glPopAttrib();
++    }
+ 
+     // Causes an OpenGL error on resize
+     //if (w->format().swapBehavior() == QSurfaceFormat::DoubleBuffer)
+diff --git a/src/Gui/Quarter/QuarterWidget.h b/src/Gui/Quarter/QuarterWidget.h
+index 0e9b806..78736cb 100644
+--- a/src/Gui/Quarter/QuarterWidget.h
++++ b/src/Gui/Quarter/QuarterWidget.h
+@@ -204,6 +204,16 @@ protected:
+   virtual void actualRedraw();
+   virtual bool updateDevicePixelRatio();
+ 
++  // Stereo: when the viewport has two buffers (its format asked for stereo buffers and got them),
++  // paintEvent() draws each frame once into the left buffer and once into the right one, with
++  // everything drawn over the scene, calling beginStereoEye() before each and endStereoEyes() after
++  virtual bool drawsStereoEyes() { return false; }
++  virtual void beginStereoEye(int eye) { Q_UNUSED(eye); }
++  virtual void endStereoEyes() {}
++  // A new viewport with another surface format (stereo buffers or not), the scene unchanged
++  void replaceViewport(const QSurfaceFormat & format);
++  QSurfaceFormat viewportFormat() const;
++
+ private:
+   void constructor(const QSurfaceFormat& format, const QOpenGLWidget* sharewidget);
+   friend class QuarterWidgetP;
+diff --git a/src/Gui/View3DInventor.cpp b/src/Gui/View3DInventor.cpp
+index 6262f4c..6a1a9ed 100644
+--- a/src/Gui/View3DInventor.cpp
++++ b/src/Gui/View3DInventor.cpp
+@@ -365,24 +365,14 @@ bool View3DInventor::onMsg(const char* pMsg, const char** ppReturn)
+         _viewer->viewSelection();
+         return true;
+     }
+-    else if (strcmp("SetStereoRedGreen", pMsg) == 0) {
+-        _viewer->setStereoMode(Quarter::SoQTQuarterAdaptor::ANAGLYPH);
+-        return true;
+-    }
++    // The stereo 3D view: the view's two eyes, or one picture. The red/cyan and interleaved views
++    // are the desktop's, made from the two eyes by its display settings for each screen.
+     else if (strcmp("SetStereoQuadBuff", pMsg) == 0) {
+-        _viewer->setStereoMode(Quarter::SoQTQuarterAdaptor::QUAD_BUFFER);
+-        return true;
+-    }
+-    else if (strcmp("SetStereoInterleavedRows", pMsg) == 0) {
+-        _viewer->setStereoMode(Quarter::SoQTQuarterAdaptor::INTERLEAVED_ROWS);
+-        return true;
+-    }
+-    else if (strcmp("SetStereoInterleavedColumns", pMsg) == 0) {
+-        _viewer->setStereoMode(Quarter::SoQTQuarterAdaptor::INTERLEAVED_COLUMNS);
++        _viewer->setStereoEnabled(true);
+         return true;
+     }
+     else if (strcmp("SetStereoOff", pMsg) == 0) {
+-        _viewer->setStereoMode(Quarter::SoQTQuarterAdaptor::MONO);
++        _viewer->setStereoEnabled(false);
+         return true;
+     }
+     else if (strcmp("GetCamera", pMsg) == 0) {
+@@ -512,18 +502,9 @@ bool View3DInventor::onHasMsg(const char* pMsg) const
+     else if (strcmp("PrintPdf", pMsg) == 0) {
+         return true;
+     }
+-    else if (strcmp("SetStereoRedGreen", pMsg) == 0) {
+-        return true;
+-    }
+     else if (strcmp("SetStereoQuadBuff", pMsg) == 0) {
+         return true;
+     }
+-    else if (strcmp("SetStereoInterleavedRows", pMsg) == 0) {
+-        return true;
+-    }
+-    else if (strcmp("SetStereoInterleavedColumns", pMsg) == 0) {
+-        return true;
+-    }
+     else if (strcmp("SetStereoOff", pMsg) == 0) {
+         return true;
+     }
+diff --git a/src/Gui/View3DInventorViewer.cpp b/src/Gui/View3DInventorViewer.cpp
+index dc5ecc7..53d5871 100644
+--- a/src/Gui/View3DInventorViewer.cpp
++++ b/src/Gui/View3DInventorViewer.cpp
+@@ -104,6 +104,7 @@
+ #include <Gui/BitmapFactory.h>
+ 
+ #include "View3DInventorViewer.h"
++#include "View3DStereo.h"
+ #include "Application.h"
+ #include "Command.h"
+ #include "Document.h"
+@@ -402,8 +403,9 @@ public:
+ // *************************************************************************
+ 
+ View3DInventorViewer::View3DInventorViewer(QWidget* parent, const QOpenGLWidget* sharewidget)
+-    : Quarter::SoQTQuarterAdaptor(parent, sharewidget)
++    : Quarter::SoQTQuarterAdaptor(View3DStereo::viewFormat(QSurfaceFormat()), parent, sharewidget)
+     , SelectionObserver(false, ResolveMode::NoResolve)
++    , stereoAsked(View3DStereo::enabledByPreference())
+     , editViewProvider(nullptr)
+     , objectGroup(nullptr)
+     , navigation(nullptr)
+@@ -426,8 +428,9 @@ View3DInventorViewer::View3DInventorViewer(
+     QWidget* parent,
+     const QOpenGLWidget* sharewidget
+ )
+-    : Quarter::SoQTQuarterAdaptor(format, parent, sharewidget)
++    : Quarter::SoQTQuarterAdaptor(View3DStereo::viewFormat(format), parent, sharewidget)
+     , SelectionObserver(false, ResolveMode::NoResolve)
++    , stereoAsked(View3DStereo::enabledByPreference())
+     , editViewProvider(nullptr)
+     , objectGroup(nullptr)
+     , navigation(nullptr)
+@@ -702,10 +705,16 @@ void View3DInventorViewer::init()
+     naviCubeEnabled = true;
+ 
+     updateColors();
++
++    stereo = std::make_unique<View3DStereo>(this);
++    stereo->viewportMade(stereoAsked, false);
+ }
+ 
+ View3DInventorViewer::~View3DInventorViewer()
+ {
++    // The stereo eyes' node leaves the scene before the scene goes
++    stereo.reset();
++
+     // to prevent following OpenGL error message: "Texture is not valid in the current context.
+     // Texture has not been destroyed"
+     aboutToDestroyGLContext();
+@@ -2242,6 +2251,10 @@ void View3DInventorViewer::setRenderType(RenderType type)
+             break;
+         case Image: {
+             glImage = grabFramebuffer();
++            // In stereo each eye freezes its own picture
++            if (stereo) {
++                stereo->freezeEyes(glImage);
++            }
+         } break;
+     }
+ }
+@@ -2427,6 +2440,44 @@ void View3DInventorViewer::actualRedraw()
+     }
+ }
+ 
++void View3DInventorViewer::setStereoEnabled(bool on, bool byPerson)
++{
++    if (on == stereoAsked) {
++        return;
++    }
++    // The viewport chooses its buffers when its context is made: a new viewport, the scene unchanged. The request
++    // is recorded first: the new viewport can be painted while it is being set.
++    stereoAsked = on;
++    stereo->viewportMade(on, byPerson);
++    replaceViewport(View3DStereo::viewFormat(viewportFormat(), on));
++    redraw();
++}
++
++bool View3DInventorViewer::isStereoEnabled() const
++{
++    return stereoAsked;
++}
++
++bool View3DInventorViewer::drawsStereoEyes()
++{
++    return stereo && stereo->drawsEyes();
++}
++
++void View3DInventorViewer::beginStereoEye(int eye)
++{
++    stereo->beginEye(eye);
++}
++
++void View3DInventorViewer::endStereoEyes()
++{
++    stereo->endEyes();
++}
++
++bool View3DInventorViewer::isMeasurable() const
++{
++    return renderType == Native;
++}
++
+ void View3DInventorViewer::renderFramebuffer()
+ {
+     const SbViewportRegion vp = this->getSoRenderManager()->getViewportRegion();
+@@ -2488,7 +2539,8 @@ void View3DInventorViewer::renderGLImage()
+     glClear(GL_COLOR_BUFFER_BIT);
+ 
+     glRasterPos2f(0, 0);
+-    glDrawPixels(glImage.width(), glImage.height(), GL_BGRA, GL_UNSIGNED_BYTE, glImage.bits());
++    const QImage& image = stereo ? stereo->frozenPicture(glImage) : glImage;
++    glDrawPixels(image.width(), image.height(), GL_BGRA, GL_UNSIGNED_BYTE, image.bits());
+ 
+     printDimension();
+ 
+@@ -2537,6 +2589,10 @@ void View3DInventorViewer::renderScene()
+     SoGLRenderAction* glra = this->getSoRenderManager()->getGLRenderAction();
+     SoState* state = glra->getState();
+ 
++    // The stereo view's measuring pass draws only the scene and its annotations, and reads their
++    // depth after each
++    const bool measuring = stereo && stereo->isMeasuring();
++
+     // Render our scenegraph with the image.
+     {
+         ZoneScopedN("Background");
+@@ -2544,8 +2600,10 @@ void View3DInventorViewer::renderScene()
+         SoGLWidgetElement::set(state, qobject_cast<QOpenGLWidget*>(this->getGLWidget()));
+         SoGLRenderActionElement::set(state, glra);
+         SoGLVBOActivatedElement::set(state, this->vboEnabled);
+-        drawSingleBackground(col);
+-        glra->apply(this->backgroundroot);
++        if (!measuring) {
++            drawSingleBackground(col);
++            glra->apply(this->backgroundroot);
++        }
+     }
+ 
+     if (!this->shading) {
+@@ -2557,6 +2615,9 @@ void View3DInventorViewer::renderScene()
+     try {
+         // Render normal scenegraph.
+         inherited::actualRedraw();
++        if (measuring) {
++            stereo->sceneDrawn();
++        }
+ 
+         So3DAnnotation::render = true;
+         glClear(GL_DEPTH_BUFFER_BIT);
+@@ -2571,6 +2632,9 @@ void View3DInventorViewer::renderScene()
+         }
+ 
+         So3DAnnotation::render = false;
++        if (measuring) {
++            stereo->sceneDrawn();
++        }
+     }
+     catch (const Base::MemoryException&) {
+         // FIXME: If this exception appears then the background and camera position get broken
+@@ -2591,6 +2655,10 @@ void View3DInventorViewer::renderScene()
+         state->pop();
+     }
+ 
++    if (measuring) {
++        return;
++    }
++
+ #if defined(ENABLE_GL_DEPTH_RANGE)
+     // using 10% of the z-buffer for the foreground node
+     glDepthRange(0.0, 0.1);
+diff --git a/src/Gui/View3DInventorViewer.h b/src/Gui/View3DInventorViewer.h
+index 68c2211..a97212d 100644
+--- a/src/Gui/View3DInventorViewer.h
++++ b/src/Gui/View3DInventorViewer.h
+@@ -100,6 +100,7 @@ class Document;
+ class GLGraphicsItem;
+ class SoShapeScale;
+ class ViewerEventFilter;
++class View3DStereo;
+ 
+ /** GUI view into a 3D scene provided by View3DInventor
+  *
+@@ -167,6 +168,17 @@ public:
+ 
+     void init();
+ 
++    /** @name Stereo 3D
++     * "Enable 3D": the viewport asks for stereo buffers and, when it gets them, the view is drawn
++     * once per eye, fitted to the person's depth limits (see View3DStereo).
++     */
++    //@{
++    /// Asks for a viewport with stereo buffers or without; byPerson: the person chose it now
++    void setStereoEnabled(bool on, bool byPerson = false);
++    /// Whether this view's viewport asks for stereo buffers
++    bool isStereoEnabled() const;
++    //@}
++
+     /// Observer message from the Selection
+     void onSelectionChanged(const SelectionChanges& Reason) override;
+ 
+@@ -524,6 +536,11 @@ protected:
+     void renderGLImage();
+     void animatedViewAll(int steps, int ms);
+     void actualRedraw() override;
++    bool drawsStereoEyes() override;
++    void beginStereoEye(int eye) override;
++    void endStereoEyes() override;
++    /// Whether a frame is drawn from the scene itself, so that its depth can be measured
++    bool isMeasurable() const;
+     void setSeekMode(bool on) override;
+     void afterRealizeHook() override;
+     bool processSoEvent(const SoEvent* ev) override;
+@@ -557,6 +574,9 @@ private:
+     void createStandardCursors();
+ 
+ private:
++    friend class View3DStereo;
++    std::unique_ptr<View3DStereo> stereo;
++    bool stereoAsked;
+     NaviCube* naviCube;
+     std::set<ViewProvider*> _ViewProviderSet;
+     std::map<SoSeparator*, ViewProvider*> _ViewProviderMap;
+diff --git a/src/Gui/View3DPy.cpp b/src/Gui/View3DPy.cpp
+index d10b656..9167e26 100644
+--- a/src/Gui/View3DPy.cpp
++++ b/src/Gui/View3DPy.cpp
+@@ -21,6 +21,7 @@
+  ***************************************************************************/
+ 
+ #include <QColor>
++#include <QCoreApplication>
+ #include <QDir>
+ #include <QFileInfo>
+ #include <QImage>
+@@ -1402,14 +1403,21 @@ Py::Object View3DInventorPy::setStereoType(const Py::Tuple& args)
+         }
+     }
+ 
++    if (stereomode < 0 || stereomode > 4) {
++        throw Py::IndexError("Out of range");
++    }
++    // The stereo 3D view draws the view's two eyes, or one picture; the desktop's display settings
++    // make red/cyan, interleaved and every other stereo output from the two eyes, for each screen
++    if (stereomode != 0 && stereomode != 2) {
++        throw Py::RuntimeError(QCoreApplication::translate(
++                                   "Gui::View3DStereo",
++                                   "This view draws its two eyes; the desktop's display settings make "
++                                   "red/cyan, interleaved and every other stereo output for each screen."
++        )
++                                   .toStdString());
++    }
+     try {
+-        if (stereomode < 0 || stereomode > 4) {
+-            throw Py::IndexError("Out of range");
+-        }
+-        Quarter::SoQTQuarterAdaptor::StereoMode mode = Quarter::SoQTQuarterAdaptor::StereoMode(
+-            stereomode
+-        );
+-        getView3DInventorPtr()->getViewer()->setStereoMode(mode);
++        getView3DInventorPtr()->getViewer()->setStereoEnabled(stereomode == 2);
+         return Py::None();
+     }
+     catch (const Base::Exception& e) {
+@@ -1426,10 +1434,7 @@ Py::Object View3DInventorPy::setStereoType(const Py::Tuple& args)
+ Py::Object View3DInventorPy::getStereoType()
+ {
+     try {
+-        int mode = int(getView3DInventorPtr()->getViewer()->stereoMode());
+-        if (mode < 0 || mode > 4) {
+-            throw Py::ValueError("Invalid stereo mode");
+-        }
++        const int mode = getView3DInventorPtr()->getViewer()->isStereoEnabled() ? 2 : 0;
+         return Py::String(StereoTypeEnums[mode]);
+     }
+     catch (const Base::Exception& e) {
+@@ -1446,10 +1451,10 @@ Py::Object View3DInventorPy::getStereoType()
+ Py::Object View3DInventorPy::listStereoTypes()
+ {
+     try {
+-        Py::List list(5);
+-        for (int i = 0; i < 5; i++) {
+-            list[i] = Py::String(StereoTypeEnums[i]);
+-        }
++        // The stereo types this view offers: one picture, or its two eyes
++        Py::List list(2);
++        list[0] = Py::String(StereoTypeEnums[0]);
++        list[1] = Py::String(StereoTypeEnums[2]);
+ 
+         return list;
+     }
+diff --git a/src/Gui/View3DSettings.cpp b/src/Gui/View3DSettings.cpp
+index e13a24e..cba9cca 100644
+--- a/src/Gui/View3DSettings.cpp
++++ b/src/Gui/View3DSettings.cpp
+@@ -74,6 +74,7 @@ void View3DSettings::applySettings()
+ {
+     // apply the user settings
+     OnChange(*hGrp, "EyeDistance");
++    OnChange(*hGrp, "Enable3D");
+     OnChange(*hGrp, "CornerCoordSystem");
+     OnChange(*hGrp, "CornerCoordSystemSize");
+     OnChange(*hGrp, "AxisLetterColor");
+@@ -359,6 +360,12 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
+             _viewer->getSoRenderManager()->setStereoOffset(rGrp.GetFloat("EyeDistance", 5.0));
+         }
+     }
++    else if (strcmp(Reason, "Enable3D") == 0) {
++        // Enable 3D: the person's choice for every 3D view, on by default
++        for (auto _viewer : _viewers) {
++            _viewer->setStereoEnabled(rGrp.GetBool("Enable3D", true));
++        }
++    }
+     else if (strcmp(Reason, "CornerCoordSystem") == 0) {
+         for (auto _viewer : _viewers) {
+             _viewer->setFeedbackVisibility(rGrp.GetBool("CornerCoordSystem", true));
+diff --git a/src/Gui/View3DStereo.cpp b/src/Gui/View3DStereo.cpp
+new file mode 100644
+index 0000000..d258ac3
+--- /dev/null
++++ b/src/Gui/View3DStereo.cpp
+@@ -0,0 +1,623 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++/****************************************************************************
++ *                                                                          *
++ *   Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>       *
++ *                                                                          *
++ *   This file is part of FreeCAD.                                          *
++ *                                                                          *
++ *   FreeCAD is free software: you can redistribute it and/or modify it     *
++ *   under the terms of the GNU Lesser General Public License as            *
++ *   published by the Free Software Foundation, either version 2.1 of the   *
++ *   License, or (at your option) any later version.                        *
++ *                                                                          *
++ *   FreeCAD is distributed in the hope that it will be useful, but         *
++ *   WITHOUT ANY WARRANTY; without even the implied warranty of             *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU       *
++ *   Lesser General Public License for more details.                        *
++ *                                                                          *
++ *   You should have received a copy of the GNU Lesser General Public       *
++ *   License along with FreeCAD. If not, see                                *
++ *   <https://www.gnu.org/licenses/>.                                       *
++ *                                                                          *
++ ***************************************************************************/
++
++#include <algorithm>
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <limits>
++#include <sstream>
++#include <vector>
++
++#include <QCoreApplication>
++#include <QGuiApplication>
++#include <QOpenGLContext>
++#include <QOpenGLExtraFunctions>
++#include <QOpenGLFramebufferObject>
++#include <QOpenGLWidget>
++#include <QProcess>
++#include <QWindow>
++#include <qpa/qplatformnativeinterface.h>
++
++#include <Inventor/SbViewVolume.h>
++#include <Inventor/SoRenderManager.h>
++#include <Inventor/actions/SoGLRenderAction.h>
++#include <Inventor/elements/SoCullElement.h>
++#include <Inventor/elements/SoProjectionMatrixElement.h>
++#include <Inventor/elements/SoViewVolumeElement.h>
++#include <Inventor/elements/SoViewingMatrixElement.h>
++#include <Inventor/misc/SoState.h>
++#include <Inventor/nodes/SoCallback.h>
++#include <Inventor/nodes/SoCamera.h>
++#include <Inventor/nodes/SoGroup.h>
++#include <Inventor/nodes/SoOrthographicCamera.h>
++#include <Inventor/system/gl.h>
++
++#include <App/Application.h>
++#include <Base/Console.h>
++#include <Base/Parameter.h>
++
++#include "View3DStereo.h"
++#include "View3DInventorViewer.h"
++
++using namespace Gui;
++
++namespace
++{
++
++// Four times a second the limits are read again: a change in the desktop's 3D settings reaches an
++// open view within a quarter of a second, without reopening it
++constexpr int limitsPollMs = 250;
++// The limits may come a moment after the first frame; the person is told after two seconds
++constexpr int pollsBeforeTelling = 8;
++
++const char* const context = "Gui::View3DStereo";
++
++QString tr(const char* sentence)
++{
++    return QCoreApplication::translate(context, sentence);
++}
++
++ParameterGrp::handle viewParameters()
++{
++    return App::GetApplication().GetParameterGroupByPath("User parameter:BaseApp/Preferences/View");
++}
++
++// The fit of each frame and what is told, for a check against a prediction: FREECAD_STEREO3D_TRACE=1
++bool tracing()
++{
++    static const bool on = std::getenv("FREECAD_STEREO3D_TRACE") != nullptr;
++    return on;
++}
++
++}  // namespace
++
++View3DStereo::View3DStereo(View3DInventorViewer* viewer)
++    : viewer(viewer)
++{
++    limitsTimer.setInterval(limitsPollMs);
++    QObject::connect(&limitsTimer, &QTimer::timeout, viewer, [this]() { pollLimits(); });
++}
++
++View3DStereo::~View3DStereo()
++{
++    limitsTimer.stop();
++    if (eyeNode) {
++        if (auto superscene = dynamic_cast<SoGroup*>(viewer->getSoRenderManager()->getSceneGraph())) {
++            const int index = superscene->findChild(eyeNode);
++            if (index >= 0) {
++                superscene->removeChild(index);
++            }
++        }
++        eyeNode->unref();
++        eyeNode = nullptr;
++    }
++}
++
++bool View3DStereo::enabledByPreference()
++{
++    return viewParameters()->GetBool("Enable3D", true);
++}
++
++void View3DStereo::setEnabledByPreference(bool on)
++{
++    viewParameters()->SetBool("Enable3D", on);
++}
++
++QSurfaceFormat View3DStereo::viewFormat(QSurfaceFormat format)
++{
++    return viewFormat(format, enabledByPreference());
++}
++
++QSurfaceFormat View3DStereo::viewFormat(QSurfaceFormat format, bool on)
++{
++    // QOpenGLWidget draws for each eye only if its own format asks for stereo buffers, and that
++    // must be known before its window is created. Only the 3D view's viewport asks: the rest of the
++    // window stays one picture, the same in both eyes.
++    format.setStereo(on);
++    return format;
++}
++
++bool View3DStereo::desktopOffersStereo()
++{
++    static int offered = -1;
++    if (offered < 0) {
++        // Qt picks the framebuffer configuration when it creates the context, and QOpenGLWidget
++        // draws each eye only when its own context's format is stereo, so a context with the
++        // viewport's format gives the same answer the viewport gets.
++        QSurfaceFormat format;
++        format.setRenderableType(QSurfaceFormat::OpenGL);
++        format.setProfile(QSurfaceFormat::CompatibilityProfile);
++        format.setOption(QSurfaceFormat::DeprecatedFunctions, true);
++        format.setStereo(true);
++        QOpenGLContext probe;
++        probe.setFormat(format);
++        offered = probe.create() && probe.format().stereo() ? 1 : 0;
++    }
++    return offered == 1;
++}
++
++void View3DStereo::openDisplaySettings()
++{
++    const QStringList module {QStringLiteral("kcm_kscreen")};
++    if (!QProcess::startDetached(QStringLiteral("systemsettings"), module)
++        && !QProcess::startDetached(QStringLiteral("kcmshell6"), module)) {
++        const QString sentence = tr(QT_TRANSLATE_NOOP("Gui::View3DStereo", "Display Settings could not be opened."));
++        Base::Console().warning("%s\n", sentence.toUtf8().constData());
++        if (tracing()) {
++            std::fprintf(stderr, "freecad stereo3d told: %s\n", sentence.toUtf8().constData());
++        }
++    }
++}
++
++void View3DStereo::tellOnce(const QString& sentence)
++{
++    static std::set<QString> told;
++    if (!told.insert(sentence).second) {
++        return;
++    }
++    Base::Console().warning("%s\n", sentence.toUtf8().constData());
++    if (tracing()) {
++        std::fprintf(stderr, "freecad stereo3d told: %s\n", sentence.toUtf8().constData());
++    }
++}
++
++void View3DStereo::viewportMade(bool askedForStereo, bool byPerson)
++{
++    asked = askedForStereo;
++    personAsked = byPerson;
++    granted = false;
++    checkedViewport = nullptr;
++    frozenRight = QImage();
++    measuringBuffer.reset();
++    limitsTimer.stop();
++    if (asked && personAsked && !desktopOffersStereo()) {
++        tellOnce(tr(QT_TRANSLATE_NOOP("Gui::View3DStereo", "This desktop offers no stereo buffers, so the 3D view stays 2D.")));
++    }
++}
++
++QImage View3DStereo::grabEye(int index)
++{
++    // The eye's own buffer, copied into a single-sampled framebuffer (the viewport may be multisampled) and read as
++    // FreeCAD's own grabFramebuffer() reads one: bottom row first, BGRA
++    auto widget = qobject_cast<QOpenGLWidget*>(viewer->getGLWidget());
++    const SbVec2s size = viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
++    const int w = size[0];
++    const int h = size[1];
++    if (!widget || w <= 0 || h <= 0) {
++        return {};
++    }
++    const auto buffer = index == 0 ? QOpenGLWidget::LeftBuffer : QOpenGLWidget::RightBuffer;
++    widget->makeCurrent(buffer);
++    QOpenGLExtraFunctions* f = QOpenGLContext::currentContext()->extraFunctions();
++    QOpenGLFramebufferObject copy(QSize(w, h));
++    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, widget->defaultFramebufferObject(buffer));
++    f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, copy.handle());
++    f->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    f->glBindFramebuffer(GL_FRAMEBUFFER, copy.handle());
++    QImage image(QSize(w, h), QImage::Format_RGB32);
++    GLint alignment = 4;
++    glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
++    glPixelStorei(GL_PACK_ALIGNMENT, 4);
++    glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, image.bits());
++    glPixelStorei(GL_PACK_ALIGNMENT, alignment);
++    widget->makeCurrent(QOpenGLWidget::LeftBuffer);
++    return image;
++}
++
++void View3DStereo::freezeEyes(QImage& left)
++{
++    frozenRight = QImage();
++    if (!drawsEyes()) {
++        return;
++    }
++    QImage l = grabEye(0);
++    QImage r = grabEye(1);
++    if (!l.isNull() && !r.isNull()) {
++        left = l;
++        frozenRight = r;
++    }
++}
++
++void View3DStereo::checkViewport()
++{
++    auto widget = qobject_cast<QOpenGLWidget*>(viewer->getGLWidget());
++    if (!widget || widget == checkedViewport || !widget->isValid()) {
++        return;
++    }
++    // A viewport that asked for stereo buffers knows from its own context whether it got them
++    checkedViewport = widget;
++    granted = asked && widget->format().stereo();
++    if (asked && !granted && desktopOffersStereo()) {
++        tellOnce(tr(QT_TRANSLATE_NOOP("Gui::View3DStereo", "3D: this view got no stereo buffers, so it is shown in 2D")));
++    }
++    if (tracing()) {
++        std::fprintf(
++            stderr,
++            "freecad stereo3d viewport asked=%d granted=%d platform=%s\n",
++            int(asked),
++            int(granted),
++            qPrintable(QGuiApplication::platformName())
++        );
++    }
++    if (granted) {
++        insertEyeNode();
++        pollsWithoutLimits = 0;
++        pollLimits();
++        limitsTimer.start();
++    }
++    else {
++        limitsTimer.stop();
++    }
++}
++
++bool View3DStereo::drawsEyes()
++{
++    checkViewport();
++    if (granted) {
++        insertEyeNode();
++    }
++    return granted;
++}
++
++void View3DStereo::insertEyeNode()
++{
++    // Right after the camera in the render manager's scene: the camera has set the view volume
++    // between the eyes there, and every node after it, the view providers' annotations included,
++    // takes the eye's view volume set by this node. A new scene graph (a split view's panes are
++    // given one) is a new scene of the render manager: the node follows it.
++    auto superscene = dynamic_cast<SoGroup*>(viewer->getSoRenderManager()->getSceneGraph());
++    SoCamera* camera = viewer->getSoRenderManager()->getCamera();
++    if (!superscene || !camera) {
++        return;
++    }
++    const int index = superscene->findChild(camera);
++    if (index < 0) {
++        return;
++    }
++    if (!eyeNode) {
++        eyeNode = new SoCallback;
++        eyeNode->ref();
++        eyeNode->setName("StereoEye");
++        eyeNode->setCallback(eyeNodeCallback, this);
++    }
++    const int at = superscene->findChild(eyeNode);
++    if (at == index + 1) {
++        return;
++    }
++    if (at >= 0) {
++        superscene->removeChild(at);
++    }
++    superscene->insertChild(eyeNode, superscene->findChild(camera) + 1);
++}
++
++void View3DStereo::eyeNodeCallback(void* data, SoAction* action)
++{
++    if (!action->isOfType(SoGLRenderAction::getClassTypeId())) {
++        return;
++    }
++    auto self = static_cast<View3DStereo*>(data);
++    SoState* state = action->getState();
++    if (self->measuring) {
++        self->projection = SoProjectionMatrixElement::get(state);
++        self->nearPlane = SoViewVolumeElement::get(state).getNearDist();
++        self->projectionSeen = true;
++        return;
++    }
++    if (self->perspective || self->eyeSign == 0 || self->separation == 0.0) {
++        return;
++    }
++    // Orthographic: the scene as each eye sees it is the scene sheared about the focal plane, a
++    // point at the distance d from the camera moving s (d - c) along the camera's right vector.
++    // Moving the view volume by the inverse shear shows exactly that: its projection of a point is
++    // the projection, from the camera between the eyes, of the sheared point. The height of a
++    // point on the screen and the lighting are the same in both eyes.
++    SbViewVolume volume = SoViewVolumeElement::get(state);
++    const SbVec3f direction = volume.getProjectionDirection();
++    const SbVec3f point = volume.getProjectionPoint();
++    SbVec3f right = direction.cross(volume.getViewUp());
++    right.normalize();
++    const float s = float(self->eyeSign * self->separation / 2.0);
++    const float c = float(self->focal);
++    SbMatrix inverseShear = SbMatrix::identity();
++    for (int i = 0; i < 3; ++i) {
++        for (int j = 0; j < 3; ++j) {
++            inverseShear[i][j] -= s * direction[i] * right[j];
++        }
++    }
++    const float offset = s * (direction.dot(point) + c);
++    for (int j = 0; j < 3; ++j) {
++        inverseShear[3][j] = offset * right[j];
++    }
++    volume.transform(inverseShear);
++    SbMatrix affine;
++    SbMatrix proj;
++    volume.getMatrices(affine, proj);
++    SoCullElement::setViewVolume(state, volume);
++    SoViewVolumeElement::set(state, self->eyeNode, volume);
++    SoProjectionMatrixElement::set(state, self->eyeNode, proj);
++    SoViewingMatrixElement::set(state, self->eyeNode, affine);
++}
++
++void View3DStereo::beginEye(int index)
++{
++    SoCamera* camera = viewer->getSoRenderManager()->getCamera();
++    if (index == 0) {
++        separation = 0.0;
++        if (camera && eyeNode && viewer->isMeasurable()) {
++            measure();
++        }
++        eyeSign = -1;
++    }
++    else {
++        eyeSign = 1;
++    }
++    if (!camera) {
++        return;
++    }
++    if (perspective && separation > 0.0 && camera->focalDistance.getValue() > 0.0F) {
++        // Coin's own stereo camera: the eye moved half the separation along the camera's right
++        // vector, the frustum skewed so that both eyes meet at the focal distance
++        camera->setStereoMode(eyeSign < 0 ? SoCamera::LEFT_VIEW : SoCamera::RIGHT_VIEW);
++        camera->setStereoAdjustment(float(separation));
++        camera->setBalanceAdjustment(float(focal / camera->focalDistance.getValue()));
++    }
++    else {
++        camera->setStereoMode(SoCamera::MONOSCOPIC);
++    }
++}
++
++void View3DStereo::endEyes()
++{
++    // Picking, preselection and every other action use the camera between the eyes
++    eyeSign = 0;
++    if (SoCamera* camera = viewer->getSoRenderManager()->getCamera()) {
++        camera->setStereoMode(SoCamera::MONOSCOPIC);
++    }
++}
++
++void View3DStereo::measure()
++{
++    auto widget = qobject_cast<QOpenGLWidget*>(viewer->getGLWidget());
++    const SbVec2s size = viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
++    if (!widget || size[0] <= 0 || size[1] <= 0) {
++        return;
++    }
++    // The measuring pass: the scene and its annotations from the camera between the eyes, into a
++    // framebuffer of its own, single-sampled so that its depth can be read whatever the viewport's
++    // anti-aliasing
++    const QSize want(size[0], size[1]);
++    if (!measuringBuffer || measuringBuffer->size() != want) {
++        measuringBuffer = std::make_unique<QOpenGLFramebufferObject>(
++            want,
++            QOpenGLFramebufferObject::CombinedDepthStencil
++        );
++    }
++    if (!measuringBuffer->isValid() || !measuringBuffer->bind()) {
++        depthUnreadable = true;
++        tellOnce(tr(QT_TRANSLATE_NOOP("Gui::View3DStereo", "3D depth: the depth of this view could not be read, so both eyes show the same picture")));
++        widget->makeCurrent(QOpenGLWidget::LeftBuffer);
++        return;
++    }
++    measuring = true;
++    depthRead = false;
++    depthPixels = 0;
++    depthUnreadable = false;
++    depthNear = 1.0F;
++    depthFar = 0.0F;
++    projectionSeen = false;
++    if (SoCamera* camera = viewer->getSoRenderManager()->getCamera()) {
++        camera->setStereoMode(SoCamera::MONOSCOPIC);
++        perspective = !camera->isOfType(SoOrthographicCamera::getClassTypeId());
++        focal = camera->focalDistance.getValue();
++    }
++    viewer->renderScene();
++    measuring = false;
++    // Back to the left buffer of the viewport, which the left eye draws into
++    widget->makeCurrent(QOpenGLWidget::LeftBuffer);
++    bufferWidth = size[0];
++    if (depthUnreadable) {
++        tellOnce(tr(QT_TRANSLATE_NOOP("Gui::View3DStereo", "3D depth: the depth of this view could not be read, so both eyes show the same picture")));
++        return;
++    }
++    fit();
++}
++
++void View3DStereo::sceneDrawn()
++{
++    if (!measuring) {
++        return;
++    }
++    // The scene is drawn (or, the second time, its annotations, over a cleared depth) and nothing
++    // of the overlays yet: the depth buffer holds the nearest pixel everywhere
++    GLint viewport[4];
++    glGetIntegerv(GL_VIEWPORT, viewport);
++    const int w = viewport[2];
++    const int h = viewport[3];
++    if (w <= 0 || h <= 0) {
++        return;
++    }
++    std::vector<GLfloat> depth(static_cast<size_t>(w) * h);
++    while (glGetError() != GL_NO_ERROR) {
++    }
++    GLint alignment = 4;
++    glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
++    glPixelStorei(GL_PACK_ALIGNMENT, 1);
++    glReadPixels(viewport[0], viewport[1], w, h, GL_DEPTH_COMPONENT, GL_FLOAT, depth.data());
++    const bool failed = glGetError() != GL_NO_ERROR;
++    glPixelStorei(GL_PACK_ALIGNMENT, alignment);
++    if (failed) {
++        depthUnreadable = true;
++        return;
++    }
++    size_t seen = 0;
++    for (const GLfloat d : depth) {
++        if (d >= 1.0F) {
++            continue;  // the cleared depth: no scene there
++        }
++        depthNear = std::min(depthNear, d);
++        depthFar = std::max(depthFar, d);
++        ++seen;
++    }
++    depthRead = true;
++    depthPixels += seen;
++}
++
++void View3DStereo::fit()
++{
++    separation = 0.0;
++    std::ostringstream line;
++    line.precision(6);
++    if (limits.status != StereoDepthLimits::State::Ok || !projectionSeen || bufferWidth <= 0) {
++        line << "freecad stereo3d fit limits=" << static_cast<int>(limits.status) << " separation=0";
++        trace(line.str());
++        return;
++    }
++    // k: pixels per unit of the image plane, half the buffer's width times the projection's x
++    // scale; c: the distance of the focal point, where both eyes meet. With the separation t as a
++    // fraction of c, a point at the distance d is shifted between the eyes by k t (1 - c/d) in
++    // perspective; with the shear's slope t, by k t (d - c) in orthographic. The separation is the
++    // largest that keeps the nearest pixel inside the popped limit and the farthest inside the sunk
++    // limit.
++    const double k = bufferWidth / 2.0 * projection[0][0];
++    const double a = projection[2][2];
++    const double b = projection[3][2];
++    const double c = perspective ? std::max(focal, double(nearPlane)) : focal;
++    auto distance = [&](double d) {
++        const double z = 2.0 * d - 1.0;
++        return perspective ? b / (z + a) : (b - z) / a;
++    };
++    if (k <= 0.0 || (perspective && c <= 0.0)) {
++        trace("freecad stereo3d fit k<=0 separation=0");
++        return;
++    }
++    constexpr double none = std::numeric_limits<double>::infinity();
++    double t = none;
++    const bool seen = depthRead && depthNear <= depthFar;
++    double nearest = 0.0;
++    double farthest = 0.0;
++    if (seen) {
++        nearest = distance(depthNear);
++        farthest = distance(depthFar);
++        const double front = perspective ? c / nearest - 1.0 : c - nearest;
++        const double behind = perspective ? 1.0 - c / farthest : farthest - c;
++        if (front > 0.0) {
++            t = std::min(t, limits.popped / (k * front));
++        }
++        if (behind > 0.0) {
++            t = std::min(t, limits.sunk / (k * behind));
++        }
++    }
++    if (t == none) {
++        // Nothing off the focal plane: in perspective, infinity stands at the sunk limit; an
++        // orthographic view has no depth to show
++        t = perspective ? limits.sunk / k : 0.0;
++    }
++    focal = c;
++    separation = perspective ? t * c : t;
++    if (tracing()) {
++        auto disparity = [&](double d) {
++            return perspective ? k * t * (1.0 - c / d) : k * t * (d - c);
++        };
++        line << "freecad stereo3d fit pixels=" << depthPixels
++             << " projection=" << (perspective ? "perspective" : "orthographic")
++             << " limits sunk=" << limits.sunk << " popped=" << limits.popped << " width=" << bufferWidth
++             << " k=" << k << " c=" << c << " nearest=" << (seen ? nearest : 0.0)
++             << " farthest=" << (seen ? farthest : 0.0) << " separation=" << separation
++             << " disparity nearest=" << (seen ? disparity(nearest) : 0.0)
++             << " farthest=" << (seen ? disparity(farthest) : 0.0);
++        trace(line.str());
++    }
++}
++
++void View3DStereo::trace(const std::string& line)
++{
++    if (!tracing() || line == lastTrace) {
++        return;
++    }
++    lastTrace = line;
++    std::fprintf(stderr, "%s\n", line.c_str());
++}
++
++void View3DStereo::pollLimits()
++{
++    if (!granted) {
++        return;
++    }
++    QWidget* widget = viewer->getGLWidget();
++    const double width = std::round(widget->width() * widget->devicePixelRatioF());
++    if (width <= 0) {
++        return;
++    }
++    StereoDepthLimits::Result r;
++    QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
++    const QString platform = QGuiApplication::platformName();
++    if (platform.startsWith(QLatin1String("wayland"))) {
++        QWindow* top = viewer->window() ? viewer->window()->windowHandle() : nullptr;
++        void* display = native ? native->nativeResourceForIntegration("wl_display") : nullptr;
++        void* surface = native && top ? native->nativeResourceForWindow("surface", top) : nullptr;
++        // A stereo desktop gives the limits for the top-level window's surface, not for the view's
++        // own subsurface
++        r = StereoDepthLimits::wayland(display, surface, width, width);
++    }
++    else if (platform == QLatin1String("xcb")) {
++        void* display = native ? native->nativeResourceForIntegration("display") : nullptr;
++        // The viewport's own window is the declared stereo child window that carries the limits
++        r = StereoDepthLimits::x11(display, widget->winId(), width, width);
++    }
++    else {
++        r.status = StereoDepthLimits::State::Unreadable;
++    }
++    const bool changed = r.status != limits.status || r.sunk != limits.sunk || r.popped != limits.popped;
++    limits = r;
++    if (changed && tracing()) {
++        std::fprintf(
++            stderr,
++            "freecad stereo3d limits platform=%s status=%d sunk=%g popped=%g width=%g\n",
++            qPrintable(platform),
++            static_cast<int>(r.status),
++            r.sunk,
++            r.popped,
++            width
++        );
++    }
++    if (r.status == StereoDepthLimits::State::Ok) {
++        pollsWithoutLimits = 0;
++    }
++    else if (++pollsWithoutLimits == pollsBeforeTelling) {
++        switch (r.status) {
++            case StereoDepthLimits::State::NotOffered:
++                tellOnce(tr(QT_TRANSLATE_NOOP("Gui::View3DStereo", "3D depth: this desktop offers no depth limits, so both eyes show the same picture")));
++                break;
++            case StereoDepthLimits::State::NotDelivered:
++                tellOnce(tr(QT_TRANSLATE_NOOP("Gui::View3DStereo", "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now")));
++                break;
++            default:
++                tellOnce(tr(QT_TRANSLATE_NOOP("Gui::View3DStereo", "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture")));
++                break;
++        }
++    }
++    if (changed) {
++        viewer->redraw();
++    }
++}
+diff --git a/src/Gui/View3DStereo.h b/src/Gui/View3DStereo.h
+new file mode 100644
+index 0000000..f89dcc9
+--- /dev/null
++++ b/src/Gui/View3DStereo.h
+@@ -0,0 +1,164 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++/****************************************************************************
++ *                                                                          *
++ *   Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>       *
++ *                                                                          *
++ *   This file is part of FreeCAD.                                          *
++ *                                                                          *
++ *   FreeCAD is free software: you can redistribute it and/or modify it     *
++ *   under the terms of the GNU Lesser General Public License as            *
++ *   published by the Free Software Foundation, either version 2.1 of the   *
++ *   License, or (at your option) any later version.                        *
++ *                                                                          *
++ *   FreeCAD is distributed in the hope that it will be useful, but         *
++ *   WITHOUT ANY WARRANTY; without even the implied warranty of             *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU       *
++ *   Lesser General Public License for more details.                        *
++ *                                                                          *
++ *   You should have received a copy of the GNU Lesser General Public       *
++ *   License along with FreeCAD. If not, see                                *
++ *   <https://www.gnu.org/licenses/>.                                       *
++ *                                                                          *
++ ***************************************************************************/
++
++#ifndef GUI_VIEW3DSTEREO_H
++#define GUI_VIEW3DSTEREO_H
++
++#include <memory>
++#include <set>
++#include <string>
++
++#include <QImage>
++#include <QPointer>
++#include <QString>
++#include <QSurfaceFormat>
++#include <QTimer>
++
++#include <Inventor/SbMatrix.h>
++
++#include <FCGlobal.h>
++
++#include "View3DStereoLimits.h"
++
++class QOpenGLFramebufferObject;
++class QOpenGLWidget;
++class SoAction;
++class SoCallback;
++
++namespace Gui
++{
++class View3DInventorViewer;
++
++/*
++ * The stereo 3D view. With "Enable 3D" on, a 3D view's OpenGL viewport asks for stereo buffers
++ * in its own format; the edition's Qt shows such a viewport as a stereo window of its own, which
++ * the desktop receives as full side by side, while the rest of FreeCAD's window stays one picture,
++ * the same in both eyes. Quarter then draws each frame once per buffer, and this class sets the
++ * camera of each eye: two parallel cameras meeting at the camera's focal distance, an off-axis
++ * frustum in perspective (Coin's own stereo camera) and a shear about the focal plane in
++ * orthographic (a view volume of our own, set right after the camera).
++ *
++ * The separation is not a setting. The person sets the depth limits once, in the desktop's 3D
++ * settings; the view reads them through libstereo-declare and, before the left eye, draws the
++ * scene once from the camera between the eyes into a framebuffer of its own and reads its depth.
++ * The separation is then the largest for which every pixel of the view stays inside the limits.
++ * Without limits both eyes are the same picture, and the report view says why, once.
++ *
++ * Picking, preselection and every other action use the camera between the eyes: what the person
++ * fuses under the pointer. The overlays drawn in window coordinates (the navigation cube, the
++ * corner coordinate system, the rubber band, the background) are drawn once per eye at the same
++ * place, at the screen's depth.
++ */
++class GuiExport View3DStereo
++{
++public:
++    explicit View3DStereo(View3DInventorViewer* viewer);
++    ~View3DStereo();
++
++    View3DStereo(const View3DStereo&) = delete;
++    View3DStereo& operator=(const View3DStereo&) = delete;
++
++    // The person's choice, "Enable 3D" (User parameter:BaseApp/Preferences/View, Enable3D, on by
++    // default): the 3D views made after it ask for stereo buffers, and View3DSettings applies a
++    // change to the open ones
++    static bool enabledByPreference();
++    static void setEnabledByPreference(bool on);
++    // The format a 3D view's viewport asks for: stereo buffers when Enable 3D is on
++    static QSurfaceFormat viewFormat(QSurfaceFormat format);
++    static QSurfaceFormat viewFormat(QSurfaceFormat format, bool on);
++    // Whether this desktop gives OpenGL contexts stereo buffers, found out once per session
++    static bool desktopOffersStereo();
++    // Opens the desktop's display settings, where the 3D modes and the depth limits are set
++    static void openDisplaySettings();
++    // Says a sentence once in the report view
++    static void tellOnce(const QString& sentence);
++
++    // Whether this view's viewport has two buffers: Quarter then draws each frame twice
++    bool drawsEyes();
++    // Before the left (0) and the right (1) buffer of a frame; before the left one the scene is
++    // drawn and measured from the camera between the eyes
++    void beginEye(int index);
++    // After both eyes: the camera between the eyes again
++    void endEyes();
++    // From renderScene(): whether this pass only measures the scene's depth, and the moments it does
++    bool isMeasuring() const
++    {
++        return measuring;
++    }
++    void sceneDrawn();
++    // A viewport is being made: whether this view asks for stereo buffers and whether a person did
++    void viewportMade(bool askedForStereo, bool byPerson);
++    // A mouse selection freezes the view as a picture (View3DInventorViewer::Image): each eye keeps its own, read
++    // from its own buffer, and each eye pass draws its own. left is the viewer's own picture, replaced by the left eye's
++    void freezeEyes(QImage& left);
++    const QImage& frozenPicture(const QImage& left) const
++    {
++        return eyeSign > 0 && !frozenRight.isNull() ? frozenRight : left;
++    }
++
++private:
++    static void eyeNodeCallback(void* data, SoAction* action);
++    void insertEyeNode();
++    void checkViewport();
++    void measure();
++    void fit();
++    void pollLimits();
++    void trace(const std::string& line);
++    QImage grabEye(int index);
++
++    View3DInventorViewer* viewer;
++    SoCallback* eyeNode = nullptr;
++    std::unique_ptr<QOpenGLFramebufferObject> measuringBuffer;
++    QPointer<QOpenGLWidget> checkedViewport;
++    QTimer limitsTimer;
++    StereoDepthLimits::Result limits;
++    int pollsWithoutLimits = 0;
++
++    bool asked = false;      // the viewport asked for stereo buffers
++    bool personAsked = false;
++    bool granted = false;    // and got them
++
++    // The measuring pass
++    bool measuring = false;
++    bool depthRead = false;
++    bool depthUnreadable = false;
++    float depthNear = 1.0F;  // window depth of the nearest and the farthest pixel
++    float depthFar = 0.0F;
++    bool projectionSeen = false;
++    SbMatrix projection;     // the projection of the camera between the eyes, as Coin set it
++    float nearPlane = 0.0F;
++    int bufferWidth = 0;
++    size_t depthPixels = 0;  // pixels of the scene the measuring pass saw, for the trace
++
++    // The eyes
++    bool perspective = true;
++    double focal = 0.0;      // the distance where both eyes meet
++    double separation = 0.0; // perspective: the eye distance; orthographic: the shear's slope
++    int eyeSign = 0;         // -1 left, 1 right, 0 the camera between the eyes
++    std::string lastTrace;
++    QImage frozenRight;      // the right eye's picture while a mouse selection freezes the view
++};
++
++}  // namespace Gui
++
++#endif  // GUI_VIEW3DSTEREO_H
+diff --git a/src/Gui/View3DStereoLimits.cpp b/src/Gui/View3DStereoLimits.cpp
+new file mode 100644
+index 0000000..d54aac9
+--- /dev/null
++++ b/src/Gui/View3DStereoLimits.cpp
+@@ -0,0 +1,98 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++/****************************************************************************
++ *                                                                          *
++ *   Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>       *
++ *                                                                          *
++ *   This file is part of FreeCAD.                                          *
++ *                                                                          *
++ *   FreeCAD is free software: you can redistribute it and/or modify it     *
++ *   under the terms of the GNU Lesser General Public License as            *
++ *   published by the Free Software Foundation, either version 2.1 of the   *
++ *   License, or (at your option) any later version.                        *
++ *                                                                          *
++ *   FreeCAD is distributed in the hope that it will be useful, but         *
++ *   WITHOUT ANY WARRANTY; without even the implied warranty of             *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU       *
++ *   Lesser General Public License for more details.                        *
++ *                                                                          *
++ *   You should have received a copy of the GNU Lesser General Public       *
++ *   License along with FreeCAD. If not, see                                *
++ *   <https://www.gnu.org/licenses/>.                                       *
++ *                                                                          *
++ ***************************************************************************/
++
++#include "View3DStereoLimits.h"
++
++#include <cerrno>
++
++#include <stereo-declare.h>
++
++namespace Gui::StereoDepthLimits
++{
++
++namespace
++{
++
++Result result(int r, const stereo_depth_limits& limits)
++{
++    Result res;
++    if (r == 0) {
++        res.status = State::Ok;
++        res.sunk = limits.sunk;
++        res.popped = limits.popped;
++    }
++    else if (r == -ENOTSUP) {
++        res.status = State::NotOffered;
++    }
++    else if (r == -ENODATA) {
++        res.status = State::NotDelivered;
++    }
++    else {
++        res.status = State::Unreadable;
++    }
++    return res;
++}
++
++}  // namespace
++
++Result wayland(void* display, void* surface, double bufferWidth, double shownWidth)
++{
++    static void* initialized = nullptr;
++    if (!display || !surface) {
++        return {};
++    }
++    if (initialized != display) {
++        // The objects the library makes go on the program's default queue, which Qt dispatches; the
++        // first answer can be "not offered" until the compositor's globals have been dispatched.
++        if (stereo_declare_wayland_init(static_cast<wl_display*>(display), nullptr) != 0) {
++            return {};
++        }
++        initialized = display;
++    }
++    stereo_depth_limits limits {};
++    const int r = stereo_depth_wayland_get_buffer_limits(
++        static_cast<wl_surface*>(surface),
++        bufferWidth,
++        shownWidth,
++        &limits
++    );
++    return result(r, limits);
++}
++
++Result x11(void* display, unsigned long window, double bufferWidth, double shownWidth)
++{
++    if (!display || !window) {
++        return {};
++    }
++    stereo_depth_limits limits {};
++    const int r = stereo_depth_x11_get_buffer_limits(
++        static_cast<Display*>(display),
++        static_cast<Window>(window),
++        bufferWidth,
++        shownWidth,
++        &limits
++    );
++    return result(r, limits);
++}
++
++}  // namespace Gui::StereoDepthLimits
+diff --git a/src/Gui/View3DStereoLimits.h b/src/Gui/View3DStereoLimits.h
+new file mode 100644
+index 0000000..0d01a1f
+--- /dev/null
++++ b/src/Gui/View3DStereoLimits.h
+@@ -0,0 +1,60 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++/****************************************************************************
++ *                                                                          *
++ *   Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>       *
++ *                                                                          *
++ *   This file is part of FreeCAD.                                          *
++ *                                                                          *
++ *   FreeCAD is free software: you can redistribute it and/or modify it     *
++ *   under the terms of the GNU Lesser General Public License as            *
++ *   published by the Free Software Foundation, either version 2.1 of the   *
++ *   License, or (at your option) any later version.                        *
++ *                                                                          *
++ *   FreeCAD is distributed in the hope that it will be useful, but         *
++ *   WITHOUT ANY WARRANTY; without even the implied warranty of             *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU       *
++ *   Lesser General Public License for more details.                        *
++ *                                                                          *
++ *   You should have received a copy of the GNU Lesser General Public       *
++ *   License along with FreeCAD. If not, see                                *
++ *   <https://www.gnu.org/licenses/>.                                       *
++ *                                                                          *
++ ***************************************************************************/
++
++#ifndef GUI_VIEW3DSTEREOLIMITS_H
++#define GUI_VIEW3DSTEREOLIMITS_H
++
++/*
++ * The person's depth limits for the stereo 3D view, read through libstereo-declare.
++ *
++ * A stereo desktop (Sparky Stereo OS's KWin) sets the limits in one place, its 3D depth settings,
++ * and hands them to every window: on Wayland for the top-level window's surface, on X11 as a
++ * property of the declared stereo child window. The library converts them to the pixels of the
++ * view's buffer. This file keeps the library's X11 header out of the Qt and Coin sources.
++ */
++namespace Gui::StereoDepthLimits
++{
++
++enum class State
++{
++    Ok,
++    NotOffered,    // this desktop sends no depth limits
++    NotDelivered,  // offered, not received yet
++    Unreadable,    // any other answer of the library
++};
++
++struct Result
++{
++    State status = State::NotOffered;
++    double sunk = 0.0;    // farthest disparity allowed behind the screen, in buffer pixels
++    double popped = 0.0;  // nearest disparity allowed in front of the screen, in buffer pixels
++};
++
++// display: the program's wl_display; surface: the top-level window's wl_surface
++Result wayland(void* display, void* surface, double bufferWidth, double shownWidth);
++// display: the program's X11 Display; window: the view's declared stereo window
++Result x11(void* display, unsigned long window, double bufferWidth, double shownWidth);
++
++}  // namespace Gui::StereoDepthLimits
++
++#endif  // GUI_VIEW3DSTEREOLIMITS_H
+diff --git a/src/Gui/Workbench.cpp b/src/Gui/Workbench.cpp
+index e6d5e07..e5b5d49 100644
+--- a/src/Gui/Workbench.cpp
++++ b/src/Gui/Workbench.cpp
+@@ -716,9 +716,9 @@ MenuItem* StdWorkbench::setupMenuBar() const
+     // stereo
+     auto view3d = new MenuItem;
+     view3d->setCommand("&Stereo");
+-    *view3d << "Std_ViewIvStereoRedGreen" << "Std_ViewIvStereoQuadBuff"
+-            << "Std_ViewIvStereoInterleavedRows" << "Std_ViewIvStereoInterleavedColumns"
+-            << "Std_ViewIvStereoOff" << "Separator" << "Std_ViewIvIssueCamPos";
++    // the one output: Enable 3D, and the desktop's display settings for every screen's format
++    *view3d << "Std_ViewIvStereoQuadBuff" << "Std_ViewIvStereoDisplaySettings" << "Separator"
++            << "Std_ViewIvIssueCamPos";
+ 
+     // zoom
+     auto zoom = new MenuItem;
+-- 
+2.53.0
+

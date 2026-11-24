@@ -36,6 +36,7 @@ Upstream, the same strings go to each language's KDE translation team once the f
 - `kscreenlocker-edition-l10n.po.patch` (ORDER 46) adds the Stereo GL show controls in nine languages and carries the Spanish wallpaper-depth text from the checkout's wallpaper-cost patch. It applies to the published `6.7.4-1+stereo3d3+lc1` source through the `catalogue-rebuilds` recipe.
 
 [ORDER 46 infrastructure recipes and source versions](../packages/catalogue-rebuilds/order46b.md) identify the recipient builds for the order46b overlays.
+- `freecad-3d-view-stereo.ts.patch` (row 50, step 5): FreeCAD's stereo 3D view, its twelve sentences (View, Stereo, Enable 3D and 3D Display Settings with their tooltips, the seven sentences told in the report view, and the Python API's refusal of the program's own stereo outputs) in Polish, Brazilian Portuguese, French, German, Spanish (es-ES and es-AR), Japanese, Korean and Chinese (Simplified and Traditional), added to FreeCAD's own `src/Gui/Language/FreeCAD_*.ts` catalogues, which its build compiles into the GUI library. The seven told sentences are OpenSCAD's (`openscad-3d-view-stereo.po.patch`) word for word; the menu entries follow the edition's "Enable 3D" and "3D display settings..." with FreeCAD's accelerators. Every catalogue is well-formed XML and compiles with lrelease. A first draft with AI assistance, pending review by native speakers. Carried last in freecad's series by `sparky-os/packages/freecad/build.sh`; code half is that recipe's `patches/0001-*`.
 
 ## Which package carries each patch (ORDER 391)
 
@@ -63,3 +64,4 @@ Six of these patches were made "for the next package" and no build applied them.
 | `kscreenlocker-edition-l10n.po.patch` | kscreenlocker | 6.7.4-1+stereo3d4 |
 | `kdenlive-order46c-catalogues.patch` | kdenlive | 26.08.1-1+stereo3d8 (ORDER 61e carries the +stereo3d7 recipe of ORDER 46c) |
 | `kdenlive-order61e.po.patch` | kdenlive | 26.08.1-1+stereo3d8 (with the code half in `packages/kdenlive-stereo-61e`) |
+| `freecad-3d-view-stereo.ts.patch` | freecad | 1.1.3+dfsg-3+stereo3d1 (with the code half in `packages/freecad`) |
