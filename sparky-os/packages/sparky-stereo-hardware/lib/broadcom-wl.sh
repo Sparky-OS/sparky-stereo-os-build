@@ -503,7 +503,7 @@ wl_text() {
 }
 # wl_ask TEXT FILE YES_LABEL QUESTION: the text (and FILE, the licence, when there is one) in a window when the menu started
 # the run (buttons "Not now" and YES_LABEL), else on the terminal (QUESTION, [y/N]). 0 yes, 1 no, 2 no answer (the window
-# closed, or no terminal to ask on), 3 the window itself failed
+# closed), 3 the window itself failed, 4 nobody to ask (no window and no terminal: the engine's repair runs that way)
 wl_ask() {
 	local text=$1 file=$2 yes=$3 question=$4 answer=0 tty=${WL_TTY:-/dev/tty} reply='' markup=()
 	if [[ ${SPARKY_STEREO_HARDWARE_GUI:-} == 1 && ( -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} ) ]]; then
@@ -519,7 +519,7 @@ wl_ask() {
 			--button="$LOCAL64:1" --button="$yes:0" || answer=$?
 		case $answer in 0) return 0 ;; 1) return 1 ;; 252) return 2 ;; *) return 3 ;; esac
 	fi
-	if ! : <"$tty" 2>/dev/null; then return 2; fi
+	if ! : <"$tty" 2>/dev/null; then return 4; fi
 	printf '%s\n\n' "$text"
 	[[ -z $file ]] || cat "$file"
 	printf '\n%s' "$question"
@@ -647,6 +647,10 @@ wl_swap() {
 		0) ;;
 		1|2) wl_note 101 "$id" "${old_driver:-${free%%/*}}"
 			return 0 ;;
+		# a swap needs the person's yes: where nobody can be asked (the engine's repair) nothing changed, and that fails,
+		# so a kept problem stays until the person chooses (as the wl route's repair without a yes)
+		4) wl_note 101 "$id" "${old_driver:-${free%%/*}}"
+			return 1 ;;
 		*) err 52 "$answer"
 			return 1 ;;
 	esac
@@ -680,6 +684,8 @@ wl_back() {
 		0) ;;
 		1|2) wl_note 102 "$id" "${free%%/*}"
 			return 0 ;;
+		4) wl_note 102 "$id" "${free%%/*}"
+			return 1 ;;
 		*) err 52 "$answer"
 			return 1 ;;
 	esac

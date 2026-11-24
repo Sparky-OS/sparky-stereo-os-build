@@ -115,6 +115,14 @@ check 'no: the step ends without failing' test $rc -eq 0
 check 'no: the licence was shown and nothing installed' bash -c "grep -q 'SOFTWARE LICENSE AGREEMENT' '$T/out' && ! grep -q 'apt-get' '$calls'"
 check 'no: b43 keeps the card' on_b43
 
+echo '== nobody to ask (the engine runs the repair with no window and no terminal)'
+scenario
+WL_TTY=$T/s/no-such-terminal
+setup_broadcom_wl_swap swap >"$T/out" 2>&1; rc=$?
+check 'swap with nobody to ask: nothing installed, b43 keeps the card' bash -c "! grep -q apt-get '$calls'" && check 'nobody to ask: b43 still on' on_b43
+check 'swap with nobody to ask: fails, so a kept problem stays, and says how to choose' bash -c "[[ $rc -ne 0 ]] && grep -q 'free driver b43 drives it' '$T/out'"
+WL_TTY=$T/s/tty
+
 echo '== swap, the person says yes on the terminal'
 scenario
 echo y >"$WL_TTY"
@@ -155,6 +163,11 @@ check 'back: the swap record is gone' test ! -e "$ROOT/var/lib/sparky-stereo-har
 check 'back: the end says b43 drives the card again' grep -q 'the kernel.s driver b43 drives the card 14e4:4331 again, with the wireless interface wlp3s0b1' "$T/out"
 setup_broadcom_wl_swap back >"$T/out" 2>&1
 check 'back again: nothing to do' grep -q 'has the card 14e4:4331 already' "$T/out"
+scenario; echo y >"$WL_TTY"; setup_broadcom_wl_swap swap >/dev/null 2>&1
+WL_TTY=$T/s/no-such-terminal; : >"$calls"
+setup_broadcom_wl_swap back >"$T/out" 2>&1; rc=$?
+check 'back with nobody to ask: fails, nothing purged, wl stays' bash -c "[[ $rc -ne 0 ]] && ! grep -q purge '$calls'" && check 'back, nobody to ask: wl still on' on_wl
+WL_TTY=$T/s/tty
 
 echo '== every failure of the swap is undone and said'
 undone() { # NAME NUMBER

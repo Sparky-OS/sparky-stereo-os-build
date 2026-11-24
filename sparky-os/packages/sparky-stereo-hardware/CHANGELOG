@@ -7,7 +7,8 @@
   * known-machines.json: the MacBookPro9,2 with its BCM4331 (reference owned by broadcom-wl, message LOCAL97: b43 dropped the connection on some routers, deauthentications and firmware reloads, measured 2026-11-18), named in the swap's offer. No correction is written by the table.
   * share/network-ids.tsv: 14e4:432a and 14e4:432d take the wl-only route: no module of the published kernel 7.3.4-stereo3d18 claims them (modinfo -F alias of bcma, ssb, b43, b43legacy, brcmsmac, brcmfmac, b44).
   * Seventeen messages (LOCAL94 to LOCAL110) in the ten languages; LOCAL108 to LOCAL110 kept by the engine.
-  * Tests: tests/broadcom-wl-swap.sh (doubles, 89 checks), tests/broadcom-wl-swap-rig.sh (the real apt, dpkg, dkms and engine, with the removal trap), tests/detection.py (the BCM4331 offer, 14e4:432a), tests/known-machines.py (the MacBook). Red on 0.1.38 (no swap route, no table entry), green on 0.1.39.
+  * A swap or a way back that nobody can be asked about (the engine's Repair runs with no window and no terminal) changes nothing and fails, so the kept problem stays until the person chooses, as the wl route's repair without a yes.
+  * Tests: tests/broadcom-wl-swap.sh (doubles, 94 checks), tests/broadcom-wl-swap-rig.sh (the real apt, dpkg, dkms and engine, with the removal trap, 30 checks), tests/detection.py (the BCM4331 offer, 14e4:432a), tests/known-machines.py (the MacBook). Red on 0.1.38 (no swap route, no table entry), green on 0.1.39.
 
 -------------------------------------------------------------------------------
   Version 0.1.38 (2026-11-20)
