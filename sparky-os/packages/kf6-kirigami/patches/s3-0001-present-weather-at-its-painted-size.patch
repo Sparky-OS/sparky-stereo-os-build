@@ -9,7 +9,7 @@
  #include <QHoverEvent>
  #include <QProcess>
  #include <QTimer>
-@@ -79,9 +81,25 @@
+@@ -79,9 +81,26 @@
      std::unique_ptr<Stereo::AnimatedPicture> animation;
      QTimer tick;
      QElapsedTimer elapsed;
@@ -26,7 +26,8 @@
 +    QSize renderSize;
 +    bool shownAnimated = false;
 +    bool fallback = false;
-+    bool measuredEyePass = false;
++    int drawnEyes = 0;
++    QString nativeFailure;
 +    bool fullyClipped = false;
 +    bool surfaceProblemPending = false;
 +    Stereo::OutputMode outputMode = Stereo::OutputMode::Unknown;
@@ -37,7 +38,7 @@
      QRect nativeRect;
      QMetaObject::Connection screenConnection;
      QMetaObject::Connection activeConnection;
-@@ -102,11 +120,17 @@
+@@ -102,11 +121,17 @@
      if (enabled) {
          m_weather = std::make_unique<Weather>();
          connect(&m_weather->screen, &Stereo::ScreenMode::modeChanged, this, &QQuickItem::polish);
@@ -56,17 +57,18 @@
          disconnect(m_weather->screenConnection);
          disconnect(m_weather->activeConnection);
          disconnect(m_weather->geometryConnection);
-@@ -153,6 +177,9 @@
+@@ -153,6 +178,10 @@
      disconnect(m_weather->geometryConnection);
      stopWeatherLoop();
      m_weather->surface.clear();
 +    m_weather->nativeRect = {};
 +    m_weatherNative = false;
-+    m_weather->measuredEyePass = false;
++    m_weather->drawnEyes = 0;
++    m_weather->nativeFailure.clear();
      m_weather->screen.setScreen(m_window ? m_window->screen() : nullptr);
      if (m_window) {
          m_weather->screenConnection = connect(m_window.data(), &QWindow::screenChanged, this, [this](QScreen *screen) {
-@@ -167,8 +194,12 @@
+@@ -167,8 +196,12 @@
              }
          });
          m_weather->geometryConnection = connect(m_window.data(), &QQuickWindow::afterAnimating, this, [this]() {
@@ -81,7 +83,7 @@
              }
          });
      }
-@@ -182,6 +213,7 @@
+@@ -182,6 +215,7 @@
          m_weather->tick.stop();
          m_weather->elapsed.invalidate();
          m_weather->animation.reset();
@@ -89,7 +91,7 @@
      }
  }
  
-@@ -203,102 +235,256 @@
+@@ -203,102 +237,265 @@
      QQuickItem::hoverLeaveEvent(event);
  }
  
@@ -185,16 +187,17 @@
 +        const auto paths = KIconLoader::global()->weatherIconPaths(name, paintedSize, m_devicePixelRatio);
 +        if (paths.still != weather.paths.still) {
 +            weather.still = {};
++            weather.nativeFailure.clear();
 +            const auto [left, right] = KIconLoader::global()->readWeatherIcon(paths.still);
 +            if (!left.isNull() && !right.isNull()) {
 +                weather.still = Stereo::Picture::fromViewsInTurn(left, right, Stereo::Picture::EyeOrder::LeftFirst);
 +            }
-+        }
+         }
 +        if (paths.loop != weather.paths.loop || !paths.animateOnHover) {
 +            weather.animation.reset();
 +            weather.elapsed.invalidate();
 +            weather.nextFrame = 0;
-         }
++        }
 +        weather.paths = paths;
 +        changed = true;
      }
@@ -332,6 +335,9 @@
 +    bool fullyClipped = false;
 +    const QRect rect = weatherRect(&fullyClipped);
 +    if (changed || rect != weather.nativeRect || mode != weather.outputMode || fullyClipped != weather.fullyClipped) {
++        if (mode != weather.outputMode || rect.isEmpty()) {
++            weather.nativeFailure.clear();
++        }
          weather.nativeRect = rect;
 -    } else {
 -        weather.surface.clear();
@@ -340,17 +346,22 @@
 +        if (fullyClipped) {
 +            stopWeatherLoop();
 +        }
-+        if (!rect.isEmpty()) {
++        if (!rect.isEmpty() && weather.nativeFailure.isEmpty()) {
 +            m_weatherNative = twoEyes ? weather.surface.show(m_window.data(), rect, weather.shown)
 +                                       : weather.surface.showView(m_window.data(), rect, weather.shown.left);
++            weather.nativeFailure = weather.surface.failure();
 +        } else {
 +            m_weatherNative = false;
 +        }
-+        const QString failure = weather.surface.failure();
++        const QString failure = weather.nativeFailure;
 +        if (!m_weatherNative) {
 +            weather.surface.clear();
 +        }
-+        weather.fallback = twoEyes && !m_weatherNative && !fullyClipped;
++        const bool fallback = twoEyes && !m_weatherNative && !fullyClipped;
++        if (weather.fallback != fallback) {
++            weather.drawnEyes = 0;
++            weather.fallback = fallback;
++        }
 +        if (weather.fallback) {
 +            m_window->installEventFilter(this);
 +            if (!m_window->property("_q_stereo_icon").toBool()) {
@@ -370,7 +381,7 @@
 +                        return;
 +                    }
 +                    static QSet<QString> logged;
-+                    if (state.measuredEyePass) {
++                    if (state.drawnEyes == 3) {
 +                        const auto detail = failure.isEmpty() ? QStringLiteral("the icon has a clipped or transformed ancestor") : failure;
 +                        if (!state.surfaceProblem.isEmpty()) {
 +                            weatherProblem(QStringLiteral("clear"), state.surfaceProblem);
@@ -403,7 +414,7 @@
      return true;
  }
  
-@@ -587,7 +773,10 @@
+@@ -587,7 +784,10 @@
              stopWeatherLoop();
              m_weather->surface.clear();
              m_weather->still = {};
@@ -415,14 +426,14 @@
              m_weatherNative = false;
          }
          setStatus(Ready);
-@@ -700,7 +889,16 @@
+@@ -700,7 +900,16 @@
      // Qt Quick sets the eye before it polishes and synchronizes the window for it: the image for that eye replaces
      // the other eye's, with no animation, and what the item dirties now is drawn by that eye's pass
      const int eye = stereoEye(m_window);
 -    if ((m_weather && m_weather->still.isStereo()) || !m_stereo || eye == m_eye || m_source.isNull() || qFuzzyIsNull(width()) || qFuzzyIsNull(height())) {
 +    if (m_weather && m_weather->still.isStereo()) {
 +        if (m_weather->fallback && (eye == 1 || eye == 2)) {
-+            m_weather->measuredEyePass = true;
++            m_weather->drawnEyes |= eye;
 +            m_icon = eye == 2 ? m_weather->shown.right : m_weather->shown.left;
 +            m_textureChanged = true;
 +            update();
@@ -433,7 +444,7 @@
          return;
      }
      m_eye = eye;
-@@ -931,8 +1129,6 @@
+@@ -931,8 +1140,6 @@
      QSizeF newSize;
      if (!m_icon.width() || !m_icon.height()) {
          newSize = {0, 0};
