@@ -27,11 +27,11 @@ MOON_PHASE_ANGLE = radians(125)
 MOON_TILT = -.35
 CLOUD_LOOP_RADIUS = .35
 LIGHT = dict(sun=dict(direction=(-.25, .95, -.15), strength=14., colour='fff1dc', angle=8, receives=('cloud', 'fog')),
-             moon=dict(strength=18., colour='f1f3ff', angle=1, receives=('moon',)),
-             moonlight=dict(direction=(-.40, .80, -.30), strength=1.6, colour='cdd6ff', angle=4, receives=('cloud', 'fog')),
+             moon=dict(strength=24., colour='f1f3ff', angle=1, receives=('moon',)),
+             moonlight=dict(direction=(-.40, .80, -.30), strength=4., colour='cdd6ff', angle=4, receives=('cloud', 'fog')),
              sky=dict(direction=(.10, 1., .30), strength=7., colour='f4f8ff', angle=40, receives=('cloud', 'fog')),
              # A soft light of the night sky on the clouds' faces, so a night cloud is grey, not black.
-             nightsky=dict(direction=(.15, .55, 1.), strength=0., colour='c9d4ff', angle=60, receives=('cloud', 'fog')))
+             nightsky=dict(direction=(.15, .55, 1.), strength=4.5, colour='c9d4ff', angle=60, receives=('cloud', 'fog')))
 REPLACED = ('solar-disc', 'ray-', 'crescent', 'cloud-', 'bolt', 'fog-', 'aurora-0-', 'aurora-1-', 'aurora-2-')
 
 
@@ -120,18 +120,21 @@ def moon_spec(params, by):
 CLOUD_PIGMENTS = ('e7eef4', 'b9c6d8', '8797b1', '65748e')
 # The lift depends on the light that falls on the cloud too (the day sun lamp is twice the sky's), so a cloud of one
 # darkness reads alike under the sun, the sky and the Moon.
-CLOUD_LIFT = {'sun': {0: .5, 1: 0., 2: 0., 3: 0.}, 'sky': {0: .5, 1: 0., 2: 0., 3: 0.},
-              'moon': {0: .5, 1: 0., 2: 0., 3: 0.}}
+# Measured against the approved modelled look on #020202 and #f0f0f0 (continuation 4, scripts/fable-legibility.py):
+# lifts that leave every name at least 0.6 of the modelled look's share of legible pixels at 22 and 64 px, keep the
+# day cloud lighter than its night twin (+0.08 to +0.12 luminance at 22 px) and the night one bluer.
+CLOUD_LIFT = {'sun': {0: .5, 1: .3, 2: .2, 3: .05}, 'sky': {0: .5, 1: .7, 2: .45, 3: .45},
+              'moon': {0: .5, 1: .6, 2: .6, 3: .6}}
 # A storm's cloud is heavier than an overcast sky and its flash lights it from inside: its lift is scaled down.
-STORM_LIFT_SCALE = 1.
+STORM_LIFT_SCALE = .5
 CLOUD_DENSITY, CLOUD_CORE = 12., .60
 # Heavier clouds are denser, so their dark base covers a light panel as the modelled solid does.
-CLOUD_DENSITY_BY = {0: 1., 1: 1., 2: 1., 3: 1.}
-FOG_LIFT, FOG_DENSITY, FOG_CORE = .5, 26., .30
+CLOUD_DENSITY_BY = {0: 1., 1: 1.2, 2: 1.5, 3: 3.5}
+FOG_LIFT, FOG_DENSITY, FOG_CORE = .5, 40., .70
 # At the panel's sizes (SMALL_SIZE px and below) a volume's density is multiplied by its small factor, so a thin band
 # keeps a body a pixel or two high; the cameras are already per size.
 SMALL_SIZE = 32
-CLOUD_SMALL, FOG_SMALL = 1., 1.
+CLOUD_SMALL, FOG_SMALL = 2.2, 6.
 
 
 def to_linear(hex_colour):
