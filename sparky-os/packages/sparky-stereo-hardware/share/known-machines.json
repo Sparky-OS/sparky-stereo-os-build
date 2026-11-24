@@ -9,6 +9,14 @@
         {"id": "uvc-bulk-0bda-5722", "owner": "kernel", "reason": "Back-to-back bulk payloads; no userspace camera correction."},
         {"id": "ORDER-572", "owner": "display-size-policy", "reason": "Panel timing blocks declare 344 x 193 mm; base size field declares 29 x 17 cm. The size policy belongs to ORDER 572."}
       ]
+    },
+    {
+      "id": "apple-macbookpro9-2",
+      "match": {"dmi_product": ["MacBookPro9,2"], "pci": ["14e4:4331"]},
+      "corrections": [],
+      "references": [
+        {"id": "b43-bcm4331-connection-drops", "owner": "broadcom-wl", "card": "14e4:4331", "message": 97, "reason": "With the kernel's b43 driver the BCM4331 lost its Wi-Fi connection on some routers (deauthentications and firmware reloads, measured 2026-11-18); Hardware Setup names this in its offer of Broadcom's wl (row 728). On this HT-PHY chip b43 has no 5 GHz and no 802.11n features (linux-wireless docs, b43, Known issues)."}
+      ]
     }
   ]
 }

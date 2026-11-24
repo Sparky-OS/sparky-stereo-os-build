@@ -27,7 +27,7 @@ while (($#)); do
 		--dry-run) dry=true ;;
 		--fixture) shift; fixture=${1:?Missing fixture directory} ;;
 		--rig-driver) shift; rig_driver=${1:?Missing rig driver package} ;;
-		--broadcom-wl) shift; wl_option=${1:?Missing --broadcom-wl value: ask, yes, no, repair or reset} ;;
+		--broadcom-wl) shift; wl_option=${1:?Missing --broadcom-wl value: ask, yes, no, repair, reset, swap or back} ;;
 		--kernel) shift; kernel_choice=${1:?Missing --kernel value: v3 or base} ;;
 		--nvidia) shift; nvidia_choice=${1:?Missing NVIDIA choice: edition or nouveau} ;;
 		# NVIDIA's i386 libraries at the installed driver's version, for i386 enabled after the driver (the Repair of the
@@ -35,7 +35,7 @@ while (($#)); do
 		--nvidia-i386) exec "$LIB/nvidia-i386" install ;;
 		# packages built for a processor level above this one's, installed again so apt takes the baseline build (the Repair of the notice, ORDER 108)
 		--variants) exec "$LIB/variant-check" repair ;;
-		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-i386] [--broadcom-wl ask|yes|no|repair|reset] [--kernel v3|base] [--variants]'
+		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-i386] [--broadcom-wl ask|yes|no|repair|reset|swap|back] [--kernel v3|base] [--variants]'
 			echo '  --variants: install again the packages built for an x86-64 level above this processor, so apt takes the baseline build'
 			echo '  --kernel base: keep the baseline kernel only on an x86-64-v3 processor (the choice is kept for this machine; nothing is removed); --kernel v3: install the x86-64-v3 kernel again, the default on such a processor'
 			echo '  --nvidia edition (the default): the edition'"'"'s NVIDIA driver for the card: its open modules with HDMI 3D on Turing and newer, NVIDIA'"'"'s 580 driver on Maxwell, Pascal and Volta'
@@ -43,6 +43,7 @@ while (($#)); do
 			echo '  --nvidia-i386: only NVIDIA'"'"'s 32-bit libraries (nvidia-driver-libs:i386, libcuda1:i386) at the installed driver'"'"'s version, where dpkg has i386'
 			echo '  --broadcom-wl ask: for a Broadcom Wi-Fi card no driver of the kernel drives (BCM4360, BCM4352): show Broadcom'"'"'s licence and install Debian'"'"'s unmodified broadcom-sta-dkms (wl) only on your yes'
 			echo '  --broadcom-wl yes: you have read the licence (it is printed) and accept it: install; no: Not now (kept for this machine); repair: go on with what you accepted; reset: be asked again'
+			echo '  --broadcom-wl swap: for a Broadcom Wi-Fi card that a free driver of the kernel drives (b43 on a BCM4331) and wl drives too: show Broadcom'"'"'s licence and, on your yes, give the card to wl (undone if a step fails); back: give it to the kernel'"'"'s driver again (broadcom-sta-dkms is purged)'
 			echo '  Alone, --broadcom-wl does only this step; with --auto it is one step of the run'
 			exit 0 ;;
 		*) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -51,7 +52,7 @@ while (($#)); do
 done
 # Detection and plan parsing use stable output; Repair above keeps the person's language.
 export LC_ALL=C.UTF-8
-case "$wl_option" in ''|ask|yes|no|repair|reset) ;; *) echo 'The Broadcom Wi-Fi choice is ask, yes, no, repair or reset' >&2; exit 2 ;; esac
+case "$wl_option" in ''|ask|yes|no|repair|reset|swap|back) ;; *) echo 'The Broadcom Wi-Fi choice is ask, yes, no, repair, reset, swap or back' >&2; exit 2 ;; esac
 case "$kernel_choice" in ''|v3|base) ;; *) echo 'The kernel choice is v3 (the default on an x86-64-v3 processor) or base' >&2; exit 2 ;; esac
 case "$rig_driver" in ''|hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) echo 'Unknown rig driver' >&2; exit 2 ;; esac
 case "$nvidia_choice" in edition|nouveau) ;; *) echo 'The NVIDIA choice is edition (the default: the edition'"'"'s driver with HDMI 3D) or nouveau' >&2; exit 2 ;; esac
@@ -198,6 +199,9 @@ if $dry; then
 			log "Would show the licence of broadcom-sta-dkms (Broadcom Software License Agreement, read from the package file) and install the package unmodified only on a yes: from $WL_POOL when it is there, else from the network with the download size said first"
 		fi
 	fi
+	if grep -Fxq $'action\tbroadcom-wl-swap' "$WORK/plan"; then
+		log "Would leave the Broadcom Wi-Fi card ($(wl_swap_cards "$WORK/plan" | paste -sd, -)) to the kernel's free driver and install nothing; Broadcom's wl is offered as a choice (--broadcom-wl swap: the licence read from the package file, then the swap, undone if a step fails; --broadcom-wl back: the way back)"
+	fi
 	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then
 		if [[ $nvidia_choice == nouveau ]]; then
 			log "Would keep nouveau for the NVIDIA graphics, as chosen (--nvidia nouveau): the edition's NVIDIA driver with HDMI 3D would not be installed"
@@ -239,6 +243,7 @@ if $wl_only; then
 	# only the Wi-Fi driver's step: a terminal session, no plan window (the step asks on the terminal)
 	failed=0
 	setup_broadcom_wl "$wl_option" || failed=1
+	setup_broadcom_wl_swap "$wl_option" || failed=1
 	trap - ERR
 	finish_run "$LOG" "$failed"
 	exit
@@ -255,8 +260,27 @@ if ! $auto; then
 	# The plan, and the person's answer: install it, install it but keep nouveau for the NVIDIA graphics (offered only when
 	# the plan installs the edition's NVIDIA driver), or cancel. yad gives 1 for Cancel and 252 for a closed window; any
 	# other code means the window itself failed, which is said, never taken as an answer.
+	# A Broadcom card that the kernel's driver and wl both drive: the plan says which one has it and offers the other
+	# (row 728); the kernel's driver stays unless the person chooses wl here or with --broadcom-wl swap
+	wl_swap_button=
+	if grep -Fxq $'action\tbroadcom-wl-swap' "$WORK/plan"; then
+		swap_card=$(wl_swap_card "$WORK/plan" "$FACTS/lspci")
+		if [[ -n $swap_card ]]; then
+			IFS=$'\t' read -r swap_id _ swap_free _ swap_driver <<<"$swap_card"
+			if [[ $swap_driver == wl ]]; then
+				text=$(render_message 102 "$swap_id" "${swap_free%%/*}")
+				wl_swap_button=--button="$LOCAL96:8"
+			else
+				text=$(render_message 101 "$swap_id" "${swap_driver:-${swap_free%%/*}}")
+				wl_swap_button=--button="$LOCAL95:6"
+			fi
+			text=${text//@SWAP@/$LOCAL95}
+			printf 'note\tbroadcom-wl-swap\t%s\n' "${text//@BACK@/$LOCAL96}" >>"$WORK/plan"
+		fi
+	fi
 	buttons=(--button="$LOCAL2:1")
 	if $wl_again; then buttons+=(--button="$LOCAL66:4"); fi
+	if [[ -n $wl_swap_button ]]; then buttons+=("$wl_swap_button"); fi
 	if grep -Eq $'^action\tnvidia-(open|legacy-580xx)$' "$WORK/plan"; then buttons+=(--button="$LOCAL4:2"); fi
 	buttons+=(--button="$LOCAL3:0")
 	# A Maxwell, Pascal or Volta card has two drivers that give different results: both are said above the plan, in the
@@ -267,10 +291,13 @@ if ! $auto; then
 		explain=(--text="${text//@BUTTON@/$LOCAL4}")
 	fi
 	answer=0
+	wl_choice=
 	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${explain[@]}" "${buttons[@]}" || answer=$?
 	case $(plan_answer "$answer") in
 		edition) ;;
 		wl-again) wl_reset ;;
+		wl-swap) wl_choice=swap ;;
+		wl-back) wl_choice=back ;;
 		nouveau) nvidia_choice=nouveau ;;
 		cancel) log 'Hardware Setup cancelled; nothing was changed'; exit 0 ;;
 		*) err 52 "$answer"; stop_run ;;
@@ -280,11 +307,15 @@ if ! $auto; then
 	# the licence is asked first in the run's own window (the Wi-Fi driver is what a machine without a cable needs most)
 	wl_ask=
 	if grep -Fxq $'action\tbroadcom-wl' "$WORK/plan" && ! wl_declined; then wl_ask=ask; fi
+	# a swap or the way back the person chose in the plan window is this run's Broadcom step
+	if [[ -n $wl_choice ]]; then wl_ask=$wl_choice; fi
 	exec env SHELL=/bin/bash SPARKY_STEREO_HARDWARE_GUI=1 sparky-xterm "/usr/bin/sparky-stereo-hardware --auto --nvidia $nvidia_choice ${rig_driver:+--rig-driver $rig_driver} ${wl_ask:+--broadcom-wl $wl_ask}"
 fi
 failed=0
 # the Wi-Fi driver of a Broadcom card no kernel driver drives: the licence and the person's yes first, then the checks
 setup_broadcom_wl "$wl_option" || failed=1
+# a card the kernel's driver and wl both drive: told, or moved to wl or back when the person chose that (row 728)
+setup_broadcom_wl_swap "$wl_option" || failed=1
 # install_step PACKAGE... [OPTION...]: apt installs them, or the failure is said and counted; the setup goes on with the
 # steps that do not need them
 install_step() {

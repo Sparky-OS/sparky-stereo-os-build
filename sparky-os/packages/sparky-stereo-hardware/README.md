@@ -49,9 +49,27 @@ licence (the package's copyright file, Broadcom's Software License Agreement, un
 against its index) with the network cut, else from the network with its size said first. Each step is verified (dpkg,
 DKMS for the running kernel, the signature and the enrolled key under Secure Boot, the modules, `wl` loaded, the card's
 wireless interface) and each failure is told and kept in sparky-stereo-problems until the Wi-Fi works.
+
+A card that a free driver of the kernel drives and wl drives too (b43 on a BCM4331, 14e4:4331, among the rows of
+share/network-ids.tsv with a free driver) keeps the kernel's driver, and nothing is installed unasked (since 0.1.39).
+The plan says which driver has the card and offers the other: `--broadcom-wl swap` shows the same licence and, on a yes,
+installs the package, checks it as above, unloads the free modules and loads wl; a step that fails is undone (wl out,
+the package purged, the modules that drove the card loaded again) and said. `--broadcom-wl back` purges the package
+(a removal would keep /etc/modprobe.d/broadcom-sta-dkms.conf, which blacklists the free drivers at the next start),
+unloads wl and loads the card's own alias. Both free the saved Wi-Fi profiles tied to the card's old interface name
+(b43 names the card wlp3s0b1, wl wlp3s0) and keep the old value in /var/lib/sparky-stereo-hardware/broadcom-wl-profiles.
+A known machine (share/known-machines.json, a reference owned by broadcom-wl) has its note in the offer.
+/usr/lib/NetworkManager/conf.d/sparky-stereo-wl.conf sets, for a device whose driver is wl only, power saving off
+(wifi.powersave=2), no address change while scanning (wifi.scan-rand-mac-address=no) and the card's permanent address
+(wifi.cloned-mac-address=permanent) (Daniel, 2026-11-23: "disable power management (by tag powersave = 2) and disable
+mac randomization"; "wl only is right"). A profile's own value wins; an empty file of the same name in
+/etc/NetworkManager/conf.d switches it off.
 Credits: Broadcom Corporation for the driver; the broadcom-sta packaging by Cyril Lacoux, Daniel Baumann, Eduard Bloch
 and Roger Shimizu (Debian's copyright file of broadcom-sta-dkms); the list of the chips from Debian's README and
 CachyOS's chwd profile (GPL-3.0); an AI partner's desk study of an iMac 21.5-inch Late 2013 for the detection patch.
+Diego Escalante Urrelo's patches in Debian's broadcom-sta (power management honoured, the MAC address refused) and Andrew
+Shadura's wl entry in wpasupplicant's no-mac-addr-change.conf, which the NetworkManager file follows; the NetworkManager
+project for the settings and their manual pages.
 
 Rig drivers:
 -------------

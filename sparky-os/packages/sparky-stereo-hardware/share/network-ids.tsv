@@ -12,6 +12,10 @@
 #    copyright file of broadcom-sta-source): distribution "complete, unmodified and only for use with a
 #    Broadcom Product", with an indemnity clause; Debian ships it in non-free.
 #  - 14e4:43a0, 14e4:4360 and 14e4:43b1 (BCM4360, BCM4352, 802.11ac): Debian wiki "wl" (https://wiki.debian.org/wl) lists wl as the only driver for BCM4360; our kernel's brcmfmac knows only chip 43602, brcmsmac only 802.11 core revisions 17, 23 and 24, and b43's AC-PHY file is built by CONFIG_B43_PHY_AC, which no Kconfig defines.
+#  - 14e4:432a and 14e4:432d (BCM4321 and BCM4322, 5 GHz only): no module of the published kernel 7.3.4-stereo3d18 claims them
+#    (modinfo -F alias of bcma, ssb, b43, b43legacy, brcmsmac, brcmfmac and b44, read 2026-11-23, row 728), so wl is the only driver.
+#  - The rows with a free driver in the second column are the cards two drivers drive: detect.py plans the free driver and
+#    offers wl as the person's choice (fact network-two-drivers, action broadcom-wl-swap; row 728).
 #  - Intel and Qualcomm Atheros Wi-Fi are matched by vendor in detect.py, not listed here.
 14c3:7902	mt7921e	firmware-mediatek	MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)
 14c3:7922	mt7921e	firmware-mediatek	MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)
@@ -39,10 +43,10 @@
 14e4:4727	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
 14e4:4328	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
 14e4:4329	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
-14e4:432a	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:432a	wl (Broadcom, DKMS; no driver of our kernel)	BROADCOM-WL	Broadcom Wi-Fi
 14e4:432b	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
 14e4:432c	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
-14e4:432d	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
+14e4:432d	wl (Broadcom, DKMS; no driver of our kernel)	BROADCOM-WL	Broadcom Wi-Fi
 14e4:4365	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
 14e4:4353	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
 14e4:4357	b43/brcmsmac/brcmfmac	BROADCOM-WL	Broadcom Wi-Fi
