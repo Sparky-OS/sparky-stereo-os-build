@@ -216,6 +216,54 @@ def front(shapes):
     return [replace(shape,outline=shape.rings[0]) for shape in shapes]
 
 
+# The aurora's curtains, nearest first: depth, height and the phase offset of their sway.
+AURORA_CURTAINS = ((.08,.56,0.),(-.18,.62,1/3),(-.40,.50,2/3))
+AURORA_SPANS = (.66,.60,.54)
+AURORA_LAND = .30
+AURORA_STRIPS = 10
+
+
+def aurora_base(curtain, phase, u):
+    """A point of curtain's lower edge at u in [0, 1] along it: x, y, depth and the curtain's height.
+
+    The curtain sways sideways and its edge ripples once a loop, so phase 1 is phase 0.
+    """
+    z, height, offset = AURORA_CURTAINS[curtain]
+    x = AURORA_SPANS[curtain]*(2*u-1)+.035*sin(tau*(phase+offset))
+    y = -.30+.05*sin(tau*(1.3*u+offset))+.025*sin(tau*(phase+offset+u))
+    return x, y, z, height
+
+
+def aurora_light(curtain, phase, u):
+    """The light running along a curtain: 1 at the crest, 0 in the trough, one crest per loop."""
+    return .5+.5*cos(tau*(phase-u-AURORA_CURTAINS[curtain][2]))
+
+
+def aurora(phase):
+    """Curtains of light at three depths over a dark horizon, stars behind them.
+
+    The land is the nearest solid, the stars the farthest; each curtain is a row of strips whose
+    brightness follows the light running along it, green below and violet above.
+    """
+    hills = [(-.80,-.62),(.80,-.62)]+[(.80-1.60*i/16,-.47+.045*sin(tau*i/16*1.5)+.02*cos(tau*i/16*4))
+                                      for i in range(17)]
+    shapes = [prism('aurora-land',tuple(hills),0,0,AURORA_LAND,.08,'26323d',bevel=0)]
+    for k in range(len(AURORA_CURTAINS)):
+        for j in range(AURORA_STRIPS):
+            u0, u1 = j/AURORA_STRIPS, (j+1)/AURORA_STRIPS
+            x0, y0, z, height = aurora_base(k,phase,u0)
+            x1, y1, _, _ = aurora_base(k,phase,u1)
+            glow = aurora_light(k,phase,(u0+u1)/2)
+            lower = ((x0,y0),(x1,y1),(x1,y1+.55*height),(x0,y0+.55*height))
+            upper = ((x0,y0+.55*height),(x1,y1+.55*height),(x1,y1+height),(x0,y0+height))
+            shapes.append(prism(f'aurora-{k}-{j}',lower,0,0,z,.02,'63e59a',bevel=0,alpha=.38+.52*glow))
+            shapes.append(prism(f'aurora-{k}-{j}-top',upper,0,0,z,.02,'a98be6',bevel=0,alpha=.18+.34*glow))
+    positions = ((-.52,.56,-.50,.070),(.06,.62,-.52,.060),(.55,.50,-.50,.075),(.30,.70,-.53,.050))
+    shapes += [prism(f'star-{i}',tuple((u*r,v*r) for u,v in star()),x,y,z,.035,'dde8ff',
+                     alpha=.64+.35*(.5+.5*cos(tau*(phase+i/4)))) for i,(x,y,z,r) in enumerate(positions)]
+    return front(shapes)
+
+
 def status(phase, sign, symbolic=False, disc_back=.008):
     del phase
     if sign == 'alert':
@@ -247,6 +295,9 @@ def _parameters(name):
     windy = 'wind' in key
     if key in ('severe-alert','none-available','pressure','humidity'):
         return dict(family='status', sign='alert' if key=='severe-alert' else key)
+    if key == 'aurora':
+        # An addition of ours: no freedesktop weather name exists for the aurora.
+        return dict(family='aurora')
     if key.startswith('clear') or key in ('sunrise','sunset'):
         return dict(family='moon' if night else 'sun', windy=windy, horizon=key if key in ('sunrise','sunset') else None, inset=.86 if key=='clear' else 1)
     if key in ('fog','mist'):
@@ -297,6 +348,8 @@ def _model(params, phase, disc_back):
         return shapes
     if family == 'status':
         return status(phase,params['sign'],params.get('symbolic',False),disc_back)
+    if family == 'aurora':
+        return aurora(phase)
     if family in ('fog','wind'):
         return fog(phase) if family=='fog' else wind(phase)
     if family == 'cloud':
