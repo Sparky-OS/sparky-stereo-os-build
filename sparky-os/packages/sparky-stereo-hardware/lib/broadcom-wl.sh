@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/16 (ORDER 614)
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/16
+# Last update 2026/11/24
 # Broadcom's wl Wi-Fi driver for a card no driver of our kernel drives (the 802.11ac chips: BCM4360, BCM4352).
 # Daniel, 2026-10-05: Debian's unmodified broadcom-sta-dkms goes on the ISO and is installed only for a matching card,
 # with its licence shown. Debian's package is never modified, repacked or rebuilt here: the very file whose copyright
@@ -33,6 +33,8 @@ WL_BLACKLIST=etc/modprobe.d/broadcom-sta-dkms.conf
 # each saved Wi-Fi profile the tool freed from an interface name, with the value it had
 WL_PROFILES_KEPT=$WL_STATE/broadcom-wl-profiles
 WL_KNOWN_MACHINES=${WL_KNOWN_MACHINES:-/usr/bin/sparky-stereo-known-machines}
+# NetworkManager's settings for every card wl can drive, whichever driver has it (row 728b)
+WL_SETTINGS=${WL_SETTINGS:-/usr/lib/sparky-stereo-hardware/broadcom-wl-settings}
 
 # wl_fail ID ARG...: the ERROR line (and the run's list of errors) and the same message kept in the engine; always 1
 wl_fail() {
@@ -293,7 +295,18 @@ setup_broadcom_wl() {
 			return 1
 		fi
 	fi
-	wl_verify "$kernel" "${addresses[0]#* }" "${addresses[0]% *}"
+	wl_verify "$kernel" "${addresses[0]#* }" "${addresses[0]% *}" || return 1
+	wl_settings
+}
+
+# wl_settings: NetworkManager's settings for the cards wl can drive (Wi-Fi power saving off, the card's own address), written
+# again with the permanent address the driver now in place reports, and read by NetworkManager (row 728b). udev does the
+# same when the card's interface appears; here the run says it, and a failure is the writer's own kept problem.
+wl_settings() {
+	if ! run "$WL_SETTINGS" write --reload; then
+		log 'NOTE the Wi-Fi settings for this card (power saving off, its own address) could not be written now; the reason is kept (sparky-stereo-problems list) and they are written again at the next start'
+	fi
+	return 0
 }
 
 # wl_build_log: dkms's make.log of the current build of the package
@@ -664,8 +677,8 @@ wl_swap() {
 		return 1
 	fi
 	new_iface=$(wl_interface_of "$address")
-	# the defaults of /usr/lib/NetworkManager/conf.d/sparky-stereo-wl.conf apply at the next connection without a restart
-	if wl_nm_running && ! run nmcli general reload conf; then log 'NOTE NetworkManager did not reload its configuration; it does at the next start'; fi
+	# the settings follow the card: wl's permanent address is added to them, and NetworkManager reads them again
+	wl_settings
 	wl_free_profiles "$old_iface" "$new_iface" "${old_driver:-none}" wl || rc=1
 	load_strings
 	log "$(render_message 103 "$id" "$new_iface" "${old_iface:-none}" "${old_driver:-none}")"
@@ -709,6 +722,7 @@ wl_back() {
 	fi
 	driver=$(wl_interface_driver "$new_iface")
 	log "VERIFIED the card $id has the wireless interface $new_iface, driven by $driver"
+	wl_settings
 	wl_forget_swap
 	wl_problem_clear
 	wl_free_profiles "$old_iface" "$new_iface" wl "$driver" || rc=1

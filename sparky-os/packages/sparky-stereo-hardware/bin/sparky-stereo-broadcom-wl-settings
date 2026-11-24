@@ -1,0 +1,322 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) 2026/11/24 (row 728b)
+# Copyright 2026 under the GNU GPL3 License
+# broadcom-wl-settings write [--reload|--force-reload] [--dry-run] | show
+# NetworkManager's settings that keep a Broadcom card connected (Wi-Fi power saving off, its own address while it scans and
+# while it is connected), for every card that Broadcom's wl driver can drive (the BROADCOM-WL rows of network-ids.tsv),
+# whichever driver has the card: the kernel's free driver (b43, brcmsmac, brcmfmac) or wl. No other card's defaults change.
+# Daniel, 2026-11-23: "with newer kernels, we must disable power management (by tag powersave = 2) and disable mac
+# randomization"; 2026-11-24, on the cards it is for: "the proper shape is "that are broadcom able" since we know these
+# features tend to make it fail no matter the drive (we attempted both drivers with default settings)".
+# NetworkManager matches a section on a device by a device spec (NetworkManager.conf(5), "Device List Format"); none names a
+# PCI id, a driver name follows the driver and not the card (b43, brcmsmac and brcmfmac drive many cards wl cannot), and an
+# interface name changes with the driver (b43 wlp3s0b1, wl wlp3s0). So the file is matched on each card's permanent address
+# (mac:, which NetworkManager compares with the address the kernel reports as permanent, IFLA_PERM_ADDRESS), and every
+# permanent address the card has shown under any driver is kept, so the match follows the card when the driver changes.
+# The file is NetworkManager's per-boot configuration (/run/NetworkManager/conf.d, NetworkManager.conf(5), DESCRIPTION):
+# written at every start before NetworkManager starts (sparky-stereo-hardware-broadcom-wl.service), by udev when the
+# interface of a Broadcom card appears or a Broadcom card leaves the bus (71-sparky-stereo-broadcom-wl.rules), by the driver
+# swap and at install; gone when no such card is in the computer. A file of the same name in /etc/NetworkManager/conf.d is
+# the person's and replaces this one (NetworkManager.conf(5), DESCRIPTION); it is never touched here. A failure is said and
+# kept by sparky-stereo-problems until a later run works (Daniel, 2026-11-01: "either it works or not and the user must
+# know").
+#   write          writes the file and the record of the cards; --reload: NetworkManager reads its configuration again when
+#                  the file changed and it runs; --force-reload: also when nothing changed (the upgrade from 0.1.39)
+#   show           prints the cards, their addresses and what the file would hold; writes nothing
+#   --dry-run      prints the engine's commands instead of running them
+# Tests: SPARKY_STEREO_SYSFS (a sysfs tree), SPARKY_STEREO_HARDWARE_DATA (network-ids.tsv), SPARKY_STEREO_HARDWARE_STATE,
+# SPARKY_STEREO_NM_RUN_CONF and SPARKY_STEREO_NM_ETC_CONF (the two conf.d folders), SPARKY_STEREO_NETWORKMANAGER (its
+# program), SPARKY_STEREO_PERM_ADDRESSES (a file of "INTERFACE<TAB>ADDRESS" lines in place of the kernel's answer),
+# SPARKY_STEREO_PROBLEMS_STORE (the engine's folder, read to clear only a problem that is kept).
+import datetime
+import os
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+PKG = "sparky-stereo-hardware"
+KEY = "broadcom-wl-settings"
+NAME = "sparky-stereo-broadcom-wl.conf"
+MARK = "# Written by sparky-stereo-hardware (broadcom-wl-settings)"
+REPAIR = '["/usr/lib/sparky-stereo-hardware/broadcom-wl-settings","write","--reload"]'
+SYSFS = os.environ.get("SPARKY_STEREO_SYSFS", "/sys")
+DATA = os.environ.get("SPARKY_STEREO_HARDWARE_DATA", "/usr/share/sparky/sparky-stereo-hardware")
+STATE = os.environ.get("SPARKY_STEREO_HARDWARE_STATE", "/var/lib/sparky-stereo-hardware")
+RUN_CONF = os.environ.get("SPARKY_STEREO_NM_RUN_CONF", "/run/NetworkManager/conf.d")
+ETC_CONF = os.environ.get("SPARKY_STEREO_NM_ETC_CONF", "/etc/NetworkManager/conf.d")
+NETWORKMANAGER = os.environ.get("SPARKY_STEREO_NETWORKMANAGER", "/usr/sbin/NetworkManager")
+RECORD = os.path.join(STATE, "broadcom-wl-cards")
+KEPT = os.path.join(os.environ.get("SPARKY_STEREO_PROBLEMS_STORE", "/var/lib/sparky-stereo-problems"), f"{PKG}_{KEY}.json")
+RTM_GETLINK, NLM_F_REQUEST, NLMSG_ERROR, IFLA_IFNAME, IFLA_PERM_ADDRESS = 18, 1, 2, 3, 54
+
+
+def say(text):
+    print(f"broadcom-wl-settings: {text}", file=sys.stderr)
+
+
+def engine(args, dry):
+    cmd = ["sparky-stereo-problems"] + args
+    if dry:
+        print(" ".join(cmd))
+        return
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except OSError as e:
+        say(f"the problems engine could not be run ({e}); this line and the journal are all there is")
+
+
+def broadcom_wl_ids():
+    ids = set()
+    with open(os.path.join(DATA, "network-ids.tsv")) as f:
+        for line in f:
+            if line.strip() and not line.startswith("#"):
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) >= 3 and fields[2] == "BROADCOM-WL":
+                    ids.add(fields[0].lower())
+    return ids
+
+
+def read_attr(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def cards_present(ids):
+    """{PCI address: (vendor:device, the device's real sysfs path)} of every card on the bus with a BROADCOM-WL id"""
+    cards = {}
+    root = os.path.join(SYSFS, "bus/pci/devices")
+    for address in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        dev = os.path.join(root, address)
+        pci_id = f"{read_attr(os.path.join(dev, 'vendor'))[2:]}:{read_attr(os.path.join(dev, 'device'))[2:]}".lower()
+        if pci_id in ids:
+            cards[address] = (pci_id, os.path.realpath(dev))
+    return cards
+
+
+def permanent_address(iface):
+    """the address the kernel reports as the interface's permanent one (IFLA_PERM_ADDRESS), which NetworkManager reads and
+    compares with a mac: spec; None when the kernel reports none (the driver left it unset)"""
+    fixture = os.environ.get("SPARKY_STEREO_PERM_ADDRESSES")
+    if fixture:
+        with open(fixture) as f:
+            for line in f:
+                name, _, addr = line.rstrip("\n").partition("\t")
+                if name == iface:
+                    return addr.lower() or None
+        return None
+    name = iface.encode() + b"\0"
+    attr = struct.pack("HH", 4 + len(name), IFLA_IFNAME) + name
+    attr += b"\0" * (-len(attr) % 4)
+    body = struct.pack("BxHiII", socket.AF_UNSPEC, 0, 0, 0, 0) + attr
+    with socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, socket.NETLINK_ROUTE) as s:
+        s.bind((0, 0))
+        s.send(struct.pack("IHHII", 16 + len(body), RTM_GETLINK, NLM_F_REQUEST, 1, 0) + body)
+        data = s.recv(65536)
+    length, kind = struct.unpack_from("IH", data, 0)
+    if kind == NLMSG_ERROR:
+        raise OSError(-struct.unpack_from("i", data, 16)[0], f"the kernel has no interface {iface}")
+    pos = 16 + 16
+    while pos + 4 <= length:
+        alen, atype = struct.unpack_from("HH", data, pos)
+        if alen < 4:
+            break
+        if atype & 0x3FFF == IFLA_PERM_ADDRESS:
+            value = data[pos + 4:pos + alen]
+            return ":".join(f"{b:02x}" for b in value) if any(value) else None
+        pos += (alen + 3) & ~3
+    return None
+
+
+def interfaces_of(cards):
+    """(PCI address, interface, driver, permanent address or None) for each wireless interface of a present card: the
+    interface's device is the card or a device under it (b43 and brcmsmac bind the card's bcma core, wl the PCI device)"""
+    found = []
+    root = os.path.join(SYSFS, "class/net")
+    for iface in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        net = os.path.join(root, iface)
+        if not (os.path.exists(os.path.join(net, "wireless")) or os.path.exists(os.path.join(net, "phy80211"))):
+            continue
+        device = os.path.realpath(os.path.join(net, "device"))
+        for address, (_pci_id, path) in cards.items():
+            if device == path or device.startswith(path + "/"):
+                link = os.path.join(net, "device/driver")
+                driver = os.path.basename(os.readlink(link)) if os.path.islink(link) else ""
+                try:
+                    perm = permanent_address(iface)
+                except OSError as e:
+                    # gone between the listing and the question (a driver being unloaded): its removal is its own event
+                    print(f"broadcom-wl-settings: {iface} is no longer there ({e.strerror}); left out")
+                    continue
+                found.append((address, iface, driver, perm))
+    return found
+
+
+def read_record():
+    rows = []
+    try:
+        with open(RECORD) as f:
+            for line in f:
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) == 5 and not line.startswith("#"):
+                    rows.append(fields)
+    except FileNotFoundError:
+        pass
+    return rows
+
+
+def merged_record(cards, seen):
+    """the record keeps, for each card in the computer now, every permanent address it showed and the drivers it showed it
+    under; a card no longer in the computer leaves it"""
+    today = datetime.date.today().isoformat()
+    rows = [r for r in read_record() if r[0] in cards and cards[r[0]][0] == r[1]]
+    for address, _iface, driver, perm in seen:
+        if not perm:
+            continue
+        row = next((r for r in rows if r[0] == address and r[2] == perm), None)
+        if row is None:
+            rows.append([address, cards[address][0], perm, driver or "-", today])
+        elif driver and driver not in row[3].split(","):
+            row[3] = driver if row[3] == "-" else row[3] + "," + driver
+    return rows
+
+
+def conf_text(rows):
+    specs = ",".join(f"mac:{r[2]}" for r in rows)
+    cards = "\n".join(f"# {r[0]} {r[1]}: {r[2]}, seen under {r[3].replace(',', ', ')}" for r in rows)
+    return f"""{MARK} at every start and when a Broadcom card's interface appears; it is made
+# again each time, so a change here does not last. Your own settings go in /etc/NetworkManager/conf.d/{NAME}, which replaces
+# this file (NetworkManager.conf(5), DESCRIPTION), or in a profile, whose own value wins over these defaults.
+# The cards that Broadcom's wl driver can drive, whichever driver has them now, each by every permanent address it has shown
+# (NetworkManager.conf(5), "Device List Format", mac:HWADDR):
+{cards}
+
+# NetworkManager.conf(5), DEVICE SECTION, wifi.scan-rand-mac-address: "no" leaves the card's address unchanged while it scans.
+[device-sparky-stereo-broadcom-wl]
+match-device={specs}
+wifi.scan-rand-mac-address=no
+
+# NetworkManager.conf(5), CONNECTION SECTION: defaults used only when a profile asks for the default.
+[connection-sparky-stereo-broadcom-wl]
+match-device={specs}
+# nm-settings-nmcli(5), 802-11-wireless.powersave: "disable" (2) disables Wi-Fi power saving; the file takes the number
+# (NetworkManager.conf(5), CONNECTION SECTION: enum values "only can be configured via their numeric magic number").
+wifi.powersave=2
+# nm-settings-nmcli(5), 802-11-wireless.cloned-mac-address: "permanent" uses the permanent hardware address of the device.
+wifi.cloned-mac-address=permanent
+"""
+
+
+def write_atomic(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.new"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def networkmanager_state():
+    try:
+        out = subprocess.run(["systemctl", "show", "-p", "ActiveState", "--value", "NetworkManager.service"],
+                             capture_output=True, text=True, check=False).stdout.strip()
+    except OSError:
+        return "unknown"
+    return out or "unknown"
+
+
+def reload_networkmanager():
+    """NetworkManager reads its configuration again (nmcli general reload conf), only when it runs: asking a stopped
+    NetworkManager over D-Bus could start it. Returns an error text, or None"""
+    state = networkmanager_state()
+    deadline = time.monotonic() + 30
+    while state == "activating" and time.monotonic() < deadline:
+        time.sleep(0.5)
+        state = networkmanager_state()
+    if state not in ("active", "reloading"):
+        return None
+    done = subprocess.run(["nmcli", "general", "reload", "conf"], capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        return f"nmcli general reload conf: exit {done.returncode}: {(done.stderr or done.stdout).strip()}"
+    return None
+
+
+def write(reload, force, dry):
+    if not os.path.exists(NETWORKMANAGER):
+        say(f"NetworkManager is not installed ({NETWORKMANAGER}), so there is nothing to write")
+        return 0
+    cards = cards_present(broadcom_wl_ids())
+    seen = interfaces_of(cards)
+    failed = []
+    for address, iface, driver, perm in seen:
+        print(f"broadcom-wl-settings: {address} {cards[address][0]}: interface {iface}, driver {driver or 'none'}, "
+              f"permanent address {perm or 'none'}")
+        if not perm:
+            failed.append(["LOCAL112", cards[address][0], iface, driver or "none", iface])
+    rows = merged_record(cards, seen)
+    old_record = read_record()
+    if rows != old_record:
+        os.makedirs(STATE, exist_ok=True)
+        write_atomic(RECORD, "".join("\t".join(r) + "\n" for r in rows))
+    path = os.path.join(RUN_CONF, NAME)
+    current = read_attr(path) if os.path.exists(path) else None
+    changed = False
+    if current is not None and not current.startswith(MARK):
+        failed.append(["LOCAL111", path, ", ".join(sorted({c[0] for c in cards.values()})) or "-"])
+    elif rows:
+        text = conf_text(rows)
+        if current != text.strip():
+            write_atomic(path, text)
+            changed = True
+            print(f"broadcom-wl-settings: wrote {path} for " + ", ".join(f"{r[1]} {r[2]}" for r in rows))
+    elif current is not None:
+        os.remove(path)
+        changed = True
+        print(f"broadcom-wl-settings: removed {path}: no card that Broadcom's wl driver can drive is in the computer now")
+    if os.path.exists(os.path.join(ETC_CONF, NAME)):
+        print(f"broadcom-wl-settings: {os.path.join(ETC_CONF, NAME)} is the person's and replaces {path}; it is left as it is")
+    if (changed and reload) or force:
+        error = reload_networkmanager()
+        if error:
+            failed.append(["LOCAL113", error])
+    for message in failed:
+        say(f"{message[0]} " + " | ".join(message[1:]))
+    if failed:
+        engine(["keep", "--repair", REPAIR, PKG, KEY] + failed[0], dry)
+        return 1
+    if os.path.exists(KEPT) or dry:
+        engine(["clear", PKG, KEY], dry)
+    return 0
+
+
+def show():
+    cards = cards_present(broadcom_wl_ids())
+    seen = interfaces_of(cards)
+    for address, (pci_id, _path) in cards.items():
+        print(f"card {address} {pci_id}")
+    for address, iface, driver, perm in seen:
+        print(f"interface {iface} of {address}: driver {driver or 'none'}, permanent address {perm or 'none'}")
+    rows = merged_record(cards, seen)
+    print(conf_text(rows) if rows else "no card that Broadcom's wl driver can drive is in the computer: no file")
+    return 0
+
+
+def main(argv):
+    try:
+        if argv[:1] == ["write"]:
+            return write("--reload" in argv, "--force-reload" in argv, "--dry-run" in argv)
+        if argv[:1] == ["show"]:
+            return show()
+    except OSError as e:
+        say(f"LOCAL113 {e}")
+        engine(["keep", "--repair", REPAIR, PKG, KEY, "LOCAL113", str(e)], "--dry-run" in argv)
+        return 1
+    print("broadcom-wl-settings write [--reload|--force-reload] [--dry-run] | show", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

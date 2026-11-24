@@ -27,7 +27,43 @@ swap_machine() {
 	swap_load bcma
 	swap_load b43
 	: >"$NM_PROFILES"
+	swap_settings_writer
 }
+# swap_settings_writer: the real writer of NetworkManager's settings for the cards wl can drive (bin/sparky-stereo-broadcom-wl-
+# settings, row 728b), pointed at this sysfs tree and its own folders, with a permanent address for each name the card has
+# (b43's and wl's differ on purpose: the file must follow the card even then); its calls are written. It runs once now, as
+# udev runs it when the card's interface appears at the start, so b43's address is known before any swap.
+swap_settings_writer() {
+	local s=$ROOT/settings
+	mkdir -p "$s"
+	printf 'wlp3s0b1\t00:25:00:aa:bb:01\nwlp3s0\t00:25:00:aa:bb:02\n' >"$s/perm"
+	: >"$s/NetworkManager"
+	{
+		echo '#!/bin/sh'
+		printf 'echo "broadcom-wl-settings $*" >>%q\n' "$calls"
+		printf 'export SPARKY_STEREO_SYSFS=%q SPARKY_STEREO_HARDWARE_DATA=%q SPARKY_STEREO_HARDWARE_STATE=%q\n' "$ROOT/sys" "$PKG/share" "$s/state"
+		printf 'export SPARKY_STEREO_NM_RUN_CONF=%q SPARKY_STEREO_NM_ETC_CONF=%q SPARKY_STEREO_NETWORKMANAGER=%q\n' "$s/run" "$s/etc" "$s/NetworkManager"
+		printf 'export SPARKY_STEREO_PERM_ADDRESSES=%q SPARKY_STEREO_PROBLEMS_STORE=%q\n' "$s/perm" "$s/problems"
+		printf 'exec python3 %q "$@"\n' "$PKG/bin/sparky-stereo-broadcom-wl-settings"
+	} >"$s/writer"
+	chmod +x "$s/writer"
+	WL_SETTINGS=$s/writer
+	export WL_SETTINGS
+	"$WL_SETTINGS" write >/dev/null 2>&1
+	: >"$calls"
+}
+# swap_settings_specs: the device specs of the file the writer keeps in NetworkManager's per-boot folder
+swap_settings_specs() { grep -h '^match-device=' "$ROOT/settings/run/sparky-stereo-broadcom-wl.conf" 2>/dev/null | sort -u | cut -d= -f2; }
+# swap_settings_after PATTERN: the writer's last run comes after the last call that matches PATTERN
+swap_settings_after() {
+	local w p
+	w=$(grep -n '^broadcom-wl-settings write --reload' "$calls" | tail -n1 | cut -d: -f1)
+	p=$(grep -nE -- "$1" "$calls" | tail -n1 | cut -d: -f1)
+	[[ -n $w && -n $p && $w -gt $p ]]
+}
+# swap_settings_follow PATTERN: the writer ran after the last call matching PATTERN, and the file matches the card by both of
+# its addresses, b43's and wl's
+swap_settings_follow() { swap_settings_after "$1" && [[ $(swap_settings_specs) == mac:00:25:00:aa:bb:01,mac:00:25:00:aa:bb:02 ]]; }
 # swap_module_built: the real wl.ko DKMS installed for the running kernel, read from the file (a container with only the
 # kernel's headers has no modules.dep, so modinfo by name finds nothing there), its vermagic naming the running kernel
 swap_module_built() {

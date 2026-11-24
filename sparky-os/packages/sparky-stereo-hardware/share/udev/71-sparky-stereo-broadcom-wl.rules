@@ -1,0 +1,8 @@
+# Created by Daniel Ramos (Capitain Jack) 2026/11/24 (row 728b)
+# Copyright 2026 under the GNU GPL3 License
+# The interface of a Broadcom card appears (at start, after a driver swap, a card added) or a Broadcom card leaves the bus:
+# NetworkManager's settings for the cards Broadcom's wl driver can drive are written again, with the address this driver
+# reports. RUN finishes before udev announces the interface, so NetworkManager has the settings before it scans or
+# connects on it (the program is short: it reads sysfs, asks the kernel one question and reloads NetworkManager's files).
+SUBSYSTEM=="net", ACTION=="add", ATTRS{vendor}=="0x14e4", RUN+="/usr/lib/sparky-stereo-hardware/broadcom-wl-settings write --reload"
+SUBSYSTEM=="pci", ACTION=="remove", ENV{PCI_ID}=="14E4:*", RUN+="/usr/lib/sparky-stereo-hardware/broadcom-wl-settings write --reload"

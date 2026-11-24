@@ -52,6 +52,11 @@ scenario() {
 	ROOT=$T/s/root WORK=$T/s/work FACTS=$T/s/facts WL_POOL=$T/s/pool WL_WAIT=1
 	LOCALE_FILE=$T/s/locale
 	export ROOT WORK FACTS WL_POOL WL_WAIT LOCALE_FILE
+	# the writer of NetworkManager's settings (row 728b) has its own test; here only its call is written
+	printf '#!/bin/sh\necho "broadcom-wl-settings $*" >>%q\n' "$T/s/calls" >"$T/s/settings"
+	chmod +x "$T/s/settings"
+	WL_SETTINGS=$T/s/settings
+	export WL_SETTINGS
 	echo 'LANG=en_US.UTF-8' >"$LOCALE_FILE"
 	calls=$T/s/calls
 	: >"$calls"
@@ -176,6 +181,7 @@ for v in 'dpkg status installed' 'dkms built and installed' 'Secure Boot is off'
 	check "VERIFIED $v" grep -q "VERIFIED.*$v" "$T/out"
 done
 check 'the free modules are unloaded only when loaded, wl is loaded' has 'modprobe wl'
+check 'the Wi-Fi settings are written once wl has the card' bash -c "[[ \$(grep -n '^broadcom-wl-settings write --reload' '$calls' | cut -d: -f1) -gt \$(grep -n 'modprobe wl' '$calls' | tail -n1 | cut -d: -f1) ]]"
 check 'the problem is cleared' grep -q '^problems clear sparky-stereo-hardware broadcom-wl' "$T/s/problems/log"
 check 'the card now counts as working' bash -c "[[ -n '$(wl_interface_of $ADDRESS)' && '$(wl_driver_of $ADDRESS)' == wl ]]"
 unset -f curl

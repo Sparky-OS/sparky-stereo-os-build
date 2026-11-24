@@ -9,6 +9,13 @@ if [ "$1" = remove ] && command -v deb-systemd-helper > /dev/null; then
 	deb-systemd-helper mask sparky-stereo-opengl-default.service >/dev/null || true
 	deb-systemd-helper disable sparky-stereo-known-machines.service >/dev/null || true
 	deb-systemd-helper disable sparky-stereo-hardware-bt-voice.service >/dev/null || true
+	deb-systemd-helper disable sparky-stereo-hardware-broadcom-wl.service >/dev/null || true
+fi
+# the per-boot Wi-Fi settings this package wrote go with it (a file of that name without its first line is not ours)
+f=/run/NetworkManager/conf.d/sparky-stereo-broadcom-wl.conf
+if [ "$1" = remove ] && [ -f "$f" ] && head -n1 "$f" | grep -q '^# Written by sparky-stereo-hardware (broadcom-wl-settings)'; then
+	rm -f "$f"
+	if [ -d /run/systemd/system ] && systemctl is-active --quiet NetworkManager.service; then nmcli general reload conf >/dev/null 2>&1 || true; fi
 fi
 if [ "$1" = purge ]; then
 	if command -v deb-systemd-helper > /dev/null; then
@@ -16,7 +23,9 @@ if [ "$1" = purge ]; then
 		deb-systemd-helper unmask sparky-stereo-opengl-default.service >/dev/null || true
 		deb-systemd-helper purge sparky-stereo-known-machines.service >/dev/null || true
 		deb-systemd-helper purge sparky-stereo-hardware-bt-voice.service >/dev/null || true
+		deb-systemd-helper purge sparky-stereo-hardware-broadcom-wl.service >/dev/null || true
 	fi
+	rm -f /var/lib/sparky-stereo-hardware/broadcom-wl-cards
 	rm -f /etc/sparky-stereo/opengl-stereo.conf
 	rmdir /etc/sparky-stereo 2>/dev/null || true
 fi
