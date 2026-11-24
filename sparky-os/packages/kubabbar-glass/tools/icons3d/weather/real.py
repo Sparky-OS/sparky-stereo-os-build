@@ -638,6 +638,39 @@ def render_name(name, out, scratch, sizes, loop_sizes, supersample, samples, sta
     (out/'geometry.json').write_text(json.dumps(recipe, indent=1)+'\n')
 
 
+def rerender_edges(name, out, scratch, size):
+    """Fit the features again at a larger size, as the thin flake branch of milestone 2 was: a feature only a few
+    pixels across at 64 px gives too few samples for a stable horizontal fit. The 64 px renders are kept beside."""
+    recipe_path = out/'geometry.json'
+    recipe = json.loads(recipe_path.read_text())
+    params = recipe['parameters']
+    record = json.loads((SOURCES/'derivation.json').read_text())
+    poses = [geo.model(params, i/base.FRAMES, base.DISC_BACK) for i in range(base.FRAMES+1)]
+    scene = rm.specs(params, poses[0], 0, base.DISC_BACK)
+    camera, _ = base.cameras_for(params, poses, {64, 256, size})
+    scratch.mkdir(parents=True, exist_ok=True)
+    cameras, right = initialize(recipe['samples'].get('64', 32) if isinstance(recipe['samples'], dict) else 32)
+    WORLD[:] = [Matrix.Translation(base.CENTRE) @ cameras['centre'].rotation_euler.to_matrix().to_4x4(),
+                cameras['centre'].rotation_euler.to_matrix(), poses[0]]
+    costs = recipe.setdefault('costs', [])
+    for label, row in recipe['features'].items():
+        for prefix in ('edge', 'witness'):
+            if (out/f'{prefix}-{label}.pns').exists() and not (out/f'{prefix}-{label}-64.pns').exists():
+                (out/f'{prefix}-{label}.pns').rename(out/f'{prefix}-{label}-64.pns')
+        build(scene, record, only=row['name'])
+        views = timed_pair(size, camera[size], (cameras, right), scratch/'edge.exr', recipe['supersample'], False, costs,
+                           f'{label}-{size}')
+        write_png(out/f'edge-{label}.pns', views, pair_mark=True)
+        if row.get('witness'):
+            solid_only(next(s for s in poses[0] if s.name == row['witness']))
+            views = timed_pair(size, camera[size], (cameras, right), scratch/'edge.exr', recipe['supersample'], False,
+                               costs, f'witness-{label}-{size}')
+            write_png(out/f'witness-{label}.pns', views, pair_mark=True)
+        row['size'] = size
+    recipe['camera'][str(size)] = camera[size]
+    recipe_path.write_text(json.dumps(recipe, indent=1)+'\n')
+
+
 WORLD = [Matrix(), Matrix(), []]
 
 
@@ -653,9 +686,13 @@ def main():
     parser.add_argument('--static-only', action='store_true')
     parser.add_argument('--no-streamers', action='store_true')
     parser.add_argument('--suffix', default='')
+    parser.add_argument('--edges-only', type=int, choices=(256,))
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     variant = {'streamers': False} if args.no_streamers else {}
     for name in args.names:
+        if args.edges_only:
+            rerender_edges(name, args.output/name, args.scratch/name, args.edges_only)
+            continue
         render_name(name, args.output/(name+args.suffix), args.scratch/(name+args.suffix), tuple(args.sizes),
                     tuple(args.loops), args.supersample, args.samples, args.static_only, variant)
 
