@@ -54,3 +54,14 @@ invalid = json.loads(json.dumps(table))
 invalid['machines'][0]['match'] = {'device_command': ['anything']}
 assert 'invalid machine match' in run(fixture, invalid, False)
 print('PASS unsupported correction and unknown match fields fail visibly')
+
+# row 728: the MacBookPro9,2 with its BCM4331 is in the table with a reference the Wi-Fi offer reads (no correction written)
+mac = ('P: /devices/virtual/dmi/id\nE: SUBSYSTEM=dmi\nA: product_name=MacBookPro9,2\n\n'
+       'P: /devices/pci0000:00/0000:00:1c.1/0000:03:00.0\nE: SUBSYSTEM=pci\nA: vendor=0x14e4\nA: device=0x4331\n')
+result = run(mac)
+assert [entry['id'] for entry in result['matched']] == ['apple-macbookpro9-2'], result
+ref = result['matched'][0]['references'][0]
+assert result['matched'][0]['corrections'] == [] and ref['owner'] == 'broadcom-wl' and ref['card'] == '14e4:4331' and ref['message'] == 97, ref
+assert run(mac.replace('device=0x4331', 'device=0x43a0'))['matched'] == []
+assert run(mac.replace('MacBookPro9,2', 'MacBookPro9,1'))['matched'] == []
+print('PASS MacBookPro9,2 with the BCM4331 matched, its Wi-Fi reference read; another card or model is not')

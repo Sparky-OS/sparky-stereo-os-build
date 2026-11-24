@@ -22,6 +22,17 @@ WL_REPAIR='["sparky-stereo-hardware","--broadcom-wl","repair"]'
 # modprobe -r b44 b43 b43legacy ssb brcmsmac bcma; modprobe wl)
 WL_FREE_MODULES=(b44 b43 b43legacy ssb brcmsmac bcma)
 WL_WAIT=${WL_WAIT:-10}
+# A card a free driver of our kernel drives and wl drives too (row 728): the kernel's driver stays the default and nothing
+# is installed unasked; wl is the person's choice, with the way back. Its failures are kept under their own key, and the
+# repair is the swap again.
+WL_SWAP_KEY=broadcom-wl-swap
+WL_SWAP_REPAIR='["sparky-stereo-hardware","--broadcom-wl","swap"]'
+WL_SWAP_STATE=$WL_STATE/broadcom-wl-swap
+# the conffile of broadcom-sta-dkms that keeps the free drivers from loading by themselves: a removal keeps it, a purge does not
+WL_BLACKLIST=etc/modprobe.d/broadcom-sta-dkms.conf
+# each saved Wi-Fi profile the tool freed from an interface name, with the value it had
+WL_PROFILES_KEPT=$WL_STATE/broadcom-wl-profiles
+WL_KNOWN_MACHINES=${WL_KNOWN_MACHINES:-/usr/bin/sparky-stereo-known-machines}
 
 # wl_fail ID ARG...: the ERROR line (and the run's list of errors) and the same message kept in the engine; always 1
 wl_fail() {
@@ -46,16 +57,25 @@ wl_driver_of() {
 	link=$(readlink "$ROOT/sys/bus/pci/devices/$1/driver" 2>/dev/null) || return 0
 	basename "$link"
 }
-# wl_interface_of ADDRESS: the wireless interface of that PCI device, if there is one
+# wl_interface_of ADDRESS: the wireless interface of that PCI device, if there is one. wl binds the PCI device itself; b43
+# and brcmsmac bind a core of the bus (bcma or ssb) under it, so the interface's device is the PCI device or below it
+# (/sys/devices/.../0000:03:00.0/bcma0:1 for b43 on a BCM4331).
 wl_interface_of() {
-	local net
+	local net dev
 	for net in "$ROOT"/sys/class/net/*; do
 		[[ -e $net/wireless || -e $net/phy80211 ]] || continue
-		[[ $(basename "$(readlink -f "$net/device" 2>/dev/null)") == "$1" ]] || continue
+		dev=$(readlink -f "$net/device" 2>/dev/null) || continue
+		[[ $dev/ == */"$1"/* ]] || continue
 		basename "$net"
 		return 0
 	done
 	return 0
+}
+# wl_interface_driver IFACE: the kernel driver of the interface's own device (wl, b43, brcmsmac)
+wl_interface_driver() {
+	local link
+	link=$(readlink "$ROOT/sys/class/net/$1/device/driver" 2>/dev/null) || return 0
+	basename "$link"
 }
 wl_package_status() {
 	local status
@@ -167,6 +187,8 @@ wl_note() {
 	local text
 	load_strings
 	text=$(render_message "$@")
+	text=${text//@SWAP@/$LOCAL95}
+	text=${text//@BACK@/$LOCAL96}
 	log "NOTE ${text//@BUTTON@/$LOCAL66}"
 }
 
@@ -401,10 +423,11 @@ wl_verify() {
 		return 1
 	fi
 	log 'VERIFIED the module wl is loaded'
-	# 4. a wireless interface of that card
+	# 4. a wireless interface of that card, driven by wl (not one a free driver still holds)
 	while :; do
 		iface=$(wl_interface_of "$address")
-		[[ -z $iface ]] || break
+		if [[ -n $iface && $(wl_interface_driver "$iface") == wl ]]; then break; fi
+		iface=
 		((waited < WL_WAIT)) || break
 		sleep 1
 		waited=$((waited + 1))
@@ -417,4 +440,309 @@ wl_verify() {
 	wl_problem_clear
 	load_strings
 	log "$(render_message 71 "$id" "$iface")"
+}
+
+# A card that a free driver of our kernel and wl both drive (row 728; the BCM4331 of a MacBookPro9,2 runs on b43).
+# Daniel, 2026-10-14: "where two paths appear differ, make sure it's a user option then and do both". The kernel's driver
+# keeps the card and nothing is installed unasked, as before; wl is offered with Broadcom's licence, and the way back is
+# offered once wl has the card. Which of the two is the default is not a recorded design: today's is kept (Daniel's call).
+# A swap that fails is undone (wl out, broadcom-sta-dkms purged, the kernel's driver back) and said; nothing is left half
+# done (Daniel, 2026-11-01: "either it works or not and the user must know").
+
+# wl_swap_cards PLAN: "ID FREE_DRIVERS" for each card of the plan that a free driver and wl both drive
+wl_swap_cards() { awk -F '\t' '$1 == "fact" && $2 == "network-two-drivers" {print $3}' "$1"; }
+# wl_swap_card PLAN LSPCI: the first such card present, "ID<TAB>ADDRESS<TAB>FREE_DRIVERS<TAB>INTERFACE<TAB>DRIVER" (the
+# last two empty when no driver has an interface on it)
+wl_swap_card() {
+	local id free address iface
+	while read -r id free; do
+		[[ -n $id ]] || continue
+		address=$(wl_addresses "$id" "$2" | head -n1)
+		[[ -n $address ]] || continue
+		iface=$(wl_interface_of "$address")
+		printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$address" "$free" "$iface" "$(if [[ -n $iface ]]; then wl_interface_driver "$iface"; fi)"
+		return 0
+	done < <(wl_swap_cards "$1")
+}
+# wl_loaded_free_modules: the free modules loaded now, in the order Debian unloads them
+wl_loaded_free_modules() {
+	local module
+	for module in "${WL_FREE_MODULES[@]}"; do [[ ! -d $ROOT/sys/module/$module ]] || echo "$module"; done
+}
+# wl_forget_swap: the record of a swap goes once the kernel's driver has the card again
+wl_forget_swap() { rm -f -- "$ROOT/${WL_SWAP_STATE:?}"; }
+
+# wl_machine_note ID: the known-machines table's sentence for this computer and card (a reference owned by broadcom-wl
+# that names the card and a message), in the person's language; nothing when the computer is not in the table
+wl_machine_note() {
+	local out entry message product
+	out=$("$WL_KNOWN_MACHINES" --sysfs-root "${ROOT:-}/sys" 2>/dev/null) || return 0
+	product=$(cat "${ROOT:-}/sys/class/dmi/id/product_name" 2>/dev/null) || product=
+	while IFS=$'\t' read -r entry message; do
+		[[ $message =~ ^[0-9]+$ ]] || continue
+		render_message "$message" "${product:-$entry}"
+	done < <(python3 -I -c '
+import json, sys
+for entry in json.loads(sys.stdin.read()).get("matched", []):
+    for ref in entry.get("references", []):
+        if ref.get("owner") == "broadcom-wl" and ref.get("card") == sys.argv[1] and isinstance(ref.get("message"), int):
+            print(entry.get("id", ""), ref["message"], sep="\t")' "$1" <<<"$out")
+}
+
+# wl_text TEXT CARD FREE MACHINE PROFILES SOURCE: a framing text with its placeholders filled in (the strings now loaded)
+wl_text() {
+	local t=$1
+	t=${t//@CARD@/$2}
+	t=${t//@FREE@/$3}
+	t=${t//@MACHINE@/${4:+$4 }}
+	t=${t//@PROFILES@/${5:+$5 }}
+	t=${t//@SOURCE@/${6:+$6 }}
+	t=${t//@INSTALL@/$LOCAL63}
+	t=${t//@SWAP@/$LOCAL95}
+	printf '%s' "${t//@BACK@/$LOCAL96}"
+}
+# wl_ask TEXT FILE YES_LABEL QUESTION: the text (and FILE, the licence, when there is one) in a window when the menu started
+# the run (buttons "Not now" and YES_LABEL), else on the terminal (QUESTION, [y/N]). 0 yes, 1 no, 2 no answer (the window
+# closed), 3 the window itself failed, 4 nobody to ask (no window and no terminal: the engine's repair runs that way)
+wl_ask() {
+	local text=$1 file=$2 yes=$3 question=$4 answer=0 tty=${WL_TTY:-/dev/tty} reply='' markup=()
+	if [[ ${SPARKY_STEREO_HARDWARE_GUI:-} == 1 && ( -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} ) ]]; then
+		if [[ -z $file ]]; then
+			# no licence to show: the text itself is the window's content
+			file=$WORK/wl-ask.txt
+			printf '%s\n' "$text" >"$file"
+		else
+			text=${text//&/&amp;}
+			markup=(--text="${text//</&lt;}")
+		fi
+		yad --text-info --wrap --title="$LOCAL61" "${markup[@]}" --filename="$file" --width=760 --height=520 \
+			--button="$LOCAL64:1" --button="$yes:0" || answer=$?
+		case $answer in 0) return 0 ;; 1) return 1 ;; 252) return 2 ;; *) return 3 ;; esac
+	fi
+	if ! : <"$tty" 2>/dev/null; then return 4; fi
+	printf '%s\n\n' "$text"
+	[[ -z $file ]] || cat "$file"
+	printf '\n%s' "$question"
+	read -r reply <"$tty" || reply=
+	echo
+	case ${reply,,} in y|yes) return 0 ;; *) return 1 ;; esac
+}
+
+# wl_nm_running: NetworkManager answers on this computer
+wl_nm_running() { command -v nmcli >/dev/null 2>&1 && [[ $(nmcli -t -f RUNNING general 2>/dev/null) == running ]]; }
+# wl_profiles_bound IFACE: "UUID<TAB>NAME" of each saved Wi-Fi profile tied to that interface name. NetworkManager offers
+# such a profile only on a device of that name (nm-settings-nmcli(5), connection.interface-name), so after a driver swap
+# renames the card (b43 on a BCM4331 core is wlp3s0b1, wl on the PCI device is wlp3s0: systemd.net-naming-scheme(7),
+# "bnumber: Broadcom bus (BCMA) core number") it no longer connects.
+wl_profiles_bound() {
+	local uuid type name
+	[[ -n ${1:-} ]] && wl_nm_running || return 0
+	while IFS=: read -r uuid type; do
+		[[ -n $uuid && $type == 802-11-wireless ]] || continue
+		[[ $(nmcli -g connection.interface-name connection show "$uuid" 2>/dev/null) == "$1" ]] || continue
+		name=$(nmcli -g connection.id connection show "$uuid" 2>/dev/null)
+		name=${name//\\:/:}
+		printf '%s\t%s\n' "$uuid" "${name//\\\\/\\}"
+	done < <(nmcli -t -f UUID,TYPE connection show 2>/dev/null)
+}
+# wl_free_profiles OLD NEW FROM TO: each saved Wi-Fi profile tied to the interface name OLD is freed from it (its
+# connection.interface-name emptied), so it connects on NEW, the name the card has under the driver TO; each one is named,
+# and its old value is kept with the date and both drivers in WL_PROFILES_KEPT. Returns 1 when one could not be freed (said
+# and kept).
+wl_free_profiles() {
+	local old=$1 new=$2 from=$3 to=$4 uuid name out rc failed=0
+	[[ -n $old && $old != "$new" ]] || return 0
+	if ! wl_nm_running; then
+		wl_note 106 "$old"
+		return 0
+	fi
+	while IFS=$'\t' read -r uuid name; do
+		[[ -n $uuid ]] || continue
+		rc=0
+		out=$(nmcli connection modify "$uuid" connection.interface-name '' 2>&1) || rc=$?
+		if ((rc == 0)) && [[ -z $(nmcli -g connection.interface-name connection show "$uuid" 2>/dev/null) ]]; then
+			mkdir -p "$ROOT/$WL_STATE"
+			printf '%s\t%s\t%s\tconnection.interface-name\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%MZ)" "$uuid" "$name" "$old" "$from" "$to" \
+				>>"$ROOT/$WL_PROFILES_KEPT"
+			load_strings
+			log "FREED $(render_message 105 "$name" "$old" "$new")"
+		else
+			wl_fail 110 "$name" "$old" "${out:-nmcli exited $rc}" "$uuid"
+			failed=1
+		fi
+	done < <(wl_profiles_bound "$old")
+	return "$failed"
+}
+
+# wl_purge CARD: broadcom-sta-dkms removed with its configuration (its blacklist conffile goes only at a purge), checked
+wl_purge() {
+	local rc=0
+	local -x DEBIAN_FRONTEND=noninteractive
+	run apt-get -y purge "$WL_PACKAGE" || rc=$?
+	if ((rc != 0)) || [[ $(wl_package_status) != not-installed || -e $ROOT/$WL_BLACKLIST ]]; then
+		wl_fail 109 "$rc" "$1"
+		return 1
+	fi
+	log "VERIFIED $WL_PACKAGE is purged: dpkg lists it no more and /$WL_BLACKLIST is gone"
+}
+# wl_free_driver_back ADDRESS MODULE...: the kernel's driver takes the card again: the modules that drove it before, loaded
+# in the order the kernel loads them (the bus first), or, when none is known, the card's own alias as the kernel asks for
+# it at the start; then a wireless interface of the card that another driver than wl drives. Prints the interface.
+wl_free_driver_back() {
+	local address=$1 i alias iface waited=0
+	shift
+	if (($#)); then
+		for ((i = $#; i >= 1; i--)); do run modprobe "${!i}" >&2 || true; done
+	else
+		alias=$(cat "$ROOT/sys/bus/pci/devices/$address/modalias" 2>/dev/null) || alias=
+		if [[ -n $alias ]]; then run modprobe "$alias" >&2 || true; fi
+	fi
+	while :; do
+		iface=$(wl_interface_of "$address")
+		if [[ -n $iface && $(wl_interface_driver "$iface") != wl ]]; then
+			printf '%s\n' "$iface"
+			return 0
+		fi
+		((waited < WL_WAIT)) || return 1
+		sleep 1
+		waited=$((waited + 1))
+	done
+}
+# wl_undo ID ADDRESS MODULE...: a swap that failed is undone and said; always 1 (the swap did not happen)
+wl_undo() {
+	local id=$1 address=$2 iface
+	shift 2
+	log "Broadcom Wi-Fi: the swap to wl failed, so it is undone: wl out, $WL_PACKAGE removed with its settings, the kernel's driver back"
+	if [[ -d $ROOT/sys/module/wl ]] && ! run modprobe -r wl; then log 'NOTE wl could not be unloaded now'; fi
+	if [[ $(wl_package_status) != not-installed ]] && ! wl_purge "$id"; then return 1; fi
+	if iface=$(wl_free_driver_back "$address" "$@"); then
+		wl_forget_swap
+		err 107 "$id" "$(wl_interface_driver "$iface")" "$iface"
+	else
+		wl_fail 108 "${*:-free}" "$id" "no wireless interface within $WL_WAIT seconds"
+	fi
+	return 1
+}
+
+# wl_swap ID ADDRESS FREE IFACE DRIVER: Broadcom's licence and the person's yes (the framing names the driver the card has,
+# the known machine's note and the saved profiles that will be freed), then wl takes the card; undone when a step fails
+wl_swap() {
+	local id=$1 address=$2 free=$3 old_iface=$4 old_driver=$5 kernel answer=0 rc=0 licence sum deb_version source_text
+	local text machine profiles new_iface modules=()
+	kernel=$(uname -r)
+	WL_WORK=$WORK/wl
+	wl_fetch "$WL_WORK" || return 1
+	licence=$WORK/wl-licence.txt
+	wl_licence "$WL_DEB" "$licence" || return 1
+	deb_version=$(dpkg-deb -f "$WL_DEB" Version)
+	sum=$(sha256sum "$licence" | cut -c1-64)
+	load_strings
+	if [[ $WL_SOURCE == pool ]]; then source_text=$LOCAL67; else source_text=$(render_message 68 "${WL_SIZE:-?}"); fi
+	machine=$(wl_machine_note "$id")
+	profiles=$(wl_profiles_bound "$old_iface" | cut -f2 | paste -sd, - | sed 's/,/, /g')
+	[[ -z $profiles ]] || profiles=$(render_message 98 "$old_iface" "$profiles")
+	text=$(wl_text "$LOCAL94" "$id" "${old_driver:-${free%%/*}}" "$machine" "$profiles" "$source_text")
+	wl_ask "$text" "$licence" "$LOCAL63" "$LOCAL70" || answer=$?
+	case $answer in
+		0) ;;
+		1|2) wl_note 101 "$id" "${old_driver:-${free%%/*}}"
+			return 0 ;;
+		# a swap needs the person's yes: where nobody can be asked (the engine's repair) nothing changed, and that fails,
+		# so a kept problem stays until the person chooses (as the wl route's repair without a yes)
+		4) wl_note 101 "$id" "${old_driver:-${free%%/*}}"
+			return 1 ;;
+		*) err 52 "$answer"
+			return 1 ;;
+	esac
+	log "LICENCE shown: $WL_PACKAGE $deb_version ($WL_SOURCE), copyright file sha256 $sum; accepted, to move the card $id from ${old_driver:-no driver} to wl"
+	mkdir -p "$ROOT/$WL_STATE" || return 1
+	printf '%s\t%s\t%s\n' "$WL_PACKAGE" "$deb_version" "$sum" >"$ROOT/$WL_STATE/broadcom-wl-accepted"
+	mapfile -t modules < <(wl_loaded_free_modules)
+	printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$address" "$old_iface" "$old_driver" "${modules[*]}" >"$ROOT/$WL_SWAP_STATE"
+	if ! wl_install_package "$kernel" || ! wl_verify "$kernel" "$address" "$id"; then
+		wl_undo "$id" "$address" "${modules[@]}"
+		return 1
+	fi
+	new_iface=$(wl_interface_of "$address")
+	# the defaults of /usr/lib/NetworkManager/conf.d/sparky-stereo-wl.conf apply at the next connection without a restart
+	if wl_nm_running && ! run nmcli general reload conf; then log 'NOTE NetworkManager did not reload its configuration; it does at the next start'; fi
+	wl_free_profiles "$old_iface" "$new_iface" "${old_driver:-none}" wl || rc=1
+	load_strings
+	log "$(render_message 103 "$id" "$new_iface" "${old_iface:-none}" "${old_driver:-none}")"
+	return "$rc"
+}
+
+# wl_back ID ADDRESS FREE IFACE: the person's yes, then broadcom-sta-dkms purged, wl out and the kernel's driver back
+wl_back() {
+	local id=$1 address=$2 free=$3 old_iface=$4 answer=0 rc=0 out text profiles new_iface modules_text='' modules=() driver
+	load_strings
+	profiles=$(wl_profiles_bound "$old_iface" | cut -f2 | paste -sd, - | sed 's/,/, /g')
+	[[ -z $profiles ]] || profiles=$(render_message 98 "$old_iface" "$profiles")
+	text=$(wl_text "$LOCAL99" "$id" "${free%%/*}" "" "$profiles" "")
+	wl_ask "$text" "" "$LOCAL96" "$LOCAL100" || answer=$?
+	case $answer in
+		0) ;;
+		1|2) wl_note 102 "$id" "${free%%/*}"
+			return 0 ;;
+		4) wl_note 102 "$id" "${free%%/*}"
+			return 1 ;;
+		*) err 52 "$answer"
+			return 1 ;;
+	esac
+	log "Broadcom Wi-Fi: back to the kernel's driver for the card $id, as you chose"
+	if [[ -s $ROOT/$WL_SWAP_STATE ]]; then
+		IFS=$'\t' read -r _ _ _ _ modules_text <"$ROOT/$WL_SWAP_STATE" || true
+		read -r -a modules <<<"$modules_text"
+	fi
+	wl_purge "$id" || return 1
+	if [[ -d $ROOT/sys/module/wl ]]; then
+		out=$(modprobe -r wl 2>&1) || rc=$?
+		[[ -z $out ]] || echo "$out"
+		if ((rc != 0)); then
+			wl_fail 108 "${free%%/*}" "$id" "modprobe -r wl: ${out:-exit $rc}"
+			return 1
+		fi
+	fi
+	if ! new_iface=$(wl_free_driver_back "$address" "${modules[@]}"); then
+		wl_fail 108 "${free%%/*}" "$id" "no wireless interface within $WL_WAIT seconds"
+		return 1
+	fi
+	driver=$(wl_interface_driver "$new_iface")
+	log "VERIFIED the card $id has the wireless interface $new_iface, driven by $driver"
+	wl_forget_swap
+	wl_problem_clear
+	wl_free_profiles "$old_iface" "$new_iface" wl "$driver" || rc=1
+	load_strings
+	log "$(render_message 104 "$driver" "$id" "$new_iface")"
+	return "$rc"
+}
+
+# setup_broadcom_wl_swap OPTION: the step for a card that a free driver and wl both drive (fact network-two-drivers).
+# swap: Broadcom's licence and the person's yes, then wl takes the card; back: the person's yes, then the kernel's driver
+# takes it again; anything else: told which driver has the card and how to change it, and nothing is done.
+# Returns 1 when a step failed (said, kept, and a failed swap undone).
+setup_broadcom_wl_swap() {
+	local option=${1:-} card id address free iface driver
+	local WL_PROBLEM_KEY=$WL_SWAP_KEY WL_REPAIR=$WL_SWAP_REPAIR
+	card=$(wl_swap_card "$WORK/plan" "$FACTS/lspci")
+	[[ -n $card ]] || return 0
+	IFS=$'\t' read -r id address free iface driver <<<"$card"
+	case $option in
+		swap)
+			if [[ $driver == wl ]]; then
+				log "VERIFIED Broadcom Wi-Fi: wl drives $id at $address, wireless interface $iface, as you chose"
+				wl_problem_clear
+				return 0
+			fi
+			wl_swap "$id" "$address" "$free" "$iface" "$driver" ;;
+		back)
+			if [[ $driver != wl && $(wl_package_status) == not-installed ]]; then
+				log "Broadcom Wi-Fi: the kernel's driver ${driver:-${free%%/*}} has the card $id already; nothing to do"
+				wl_problem_clear
+				return 0
+			fi
+			wl_back "$id" "$address" "$free" "$iface" ;;
+		*)
+			if [[ $driver == wl ]]; then wl_note 102 "$id" "${free%%/*}"; else wl_note 101 "$id" "${driver:-${free%%/*}}"; fi ;;
+	esac
 }

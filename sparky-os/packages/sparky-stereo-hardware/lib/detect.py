@@ -412,6 +412,14 @@ for line in read("lspci").splitlines() if new_facts else []:
             if "broadcom-wl" not in actions:
                 actions.append("broadcom-wl")
                 emit("action", "broadcom-wl")
+        else:
+            # a card a free driver of our kernel drives and wl drives too (BCM4331 among them: Broadcom's README lists it,
+            # Debian's broadcom-sta.ids comments it out for b43): the kernel's driver keeps it and nothing is installed;
+            # the action layer offers wl as the person's choice, with the way back (row 728)
+            emit("fact", f"network-two-drivers\t{pci_id} {driver}")
+            if "broadcom-wl-swap" not in actions:
+                actions.append("broadcom-wl-swap")
+                emit("action", "broadcom-wl-swap")
     elif package != "-":
         match(f"Network {pci_id} {note}: firmware {package}", package)
 if network_seen:
