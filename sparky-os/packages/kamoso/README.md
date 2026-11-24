@@ -106,3 +106,12 @@ The removed row's delegate lives on until its deferred deletion, with `index` -1
 A delegate without its row now builds no pipeline and removes nothing.
 `configgrid-test` loads the real `src/qml/Config.qml` with stand-ins for the types Kamoso registers in C++; it fails on the old file with that description and passes on the new one.
 Its QML modules are Build-Depends with `<!nocheck>`, and the recipe removes the leading `-` from Debian's `override_dh_auto_test`, so a failing test stops the package build.
+
+## Effect previews that a format stopped (patch 0004)
+
+The grid joined each preview's filter to `glupload ! qml6glsink` with nothing that converts after the filter.
+The effectv elements give only RGBx, xRGB, BGRx and xBGR, and qml6glsink takes RGBA, BGRA, RGB, YV12 and NV12 as GL memory, so twelve previews stopped: in 2D their rows left the grid, in 3D their tiles stayed black.
+`linkEffectPreview()` in `src/video/effectpreview.h` puts one `videoconvert` between the filter and the upload, as one already stands before the filter.
+Measured against `glcolorconvert` after `glupload`, which also passes all 31: preparing the whole grid once took 3.39 s of processor time against 4.01 s on llvmpipe and 4.59 s against 4.74 s on an RTX 3060 (median of five).
+`effectpreview-test` joins every filter of Config.qml's model through that function to qml6glsink's own template in system memory; without the conversion the twelve fail.
+The camera's own pipeline was not affected: camerabin's viewfinder bin converts by itself.

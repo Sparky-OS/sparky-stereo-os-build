@@ -1,0 +1,222 @@
+Description: Convert an effect preview's format before its sink
+ The effects grid joins each preview, "... ! FILTER name=last", to
+ glupload ! qml6glsink with nothing that converts after the filter. The
+ effectv elements (dicetv, edgetv, agingtv, optv, quarktv, radioactv,
+ revtv, rippletv, shagadelictv, streaktv, vertigotv, warptv) give only
+ RGBx, xRGB, BGRx and xBGR, and qml6glsink takes RGBA, BGRA, RGB, YV12 and
+ NV12 as GL memory, so their previews stop ("reason not-linked"); in 2D
+ the grid then removes those twelve rows, in 3D they stay black. One
+ videoconvert now stands between the filter and the upload, as one
+ already stands before the filter (linkEffectPreview() in
+ src/video/effectpreview.h). The camera's own pipeline was not affected:
+ camerabin's viewfinder bin converts by itself. The test joins every
+ filter of Config.qml's model through that function to qml6glsink's own
+ template in system memory; without the conversion the twelve fail.
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-24
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -28,3 +28,9 @@ target_compile_definitions(configgrid-test PRIVATE KAMOSO_CONFIG_QML="${CMAKE_SO
+ target_link_libraries(configgrid-test PRIVATE Qt6::Test Qt6::Qml Qt6::Quick KF6::I18n)
+ add_test(NAME configgrid COMMAND configgrid-test)
+ set_tests_properties(configgrid PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
++
++add_executable(effectpreview-test effectpreview-test.cpp)
++target_include_directories(effectpreview-test PRIVATE ../src/video)
++target_compile_definitions(effectpreview-test PRIVATE KAMOSO_CONFIG_QML="${CMAKE_SOURCE_DIR}/src/qml/Config.qml")
++target_link_libraries(effectpreview-test PRIVATE Qt6::Test PkgConfig::GStreamer)
++add_test(NAME effectpreview COMMAND effectpreview-test)
+diff --git a/autotests/effectpreview-test.cpp b/autotests/effectpreview-test.cpp
+new file mode 100644
+--- /dev/null
++++ b/autotests/effectpreview-test.cpp
+@@ -0,0 +1,139 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++// Every effect of the grid's model (src/qml/Config.qml) is joined to its sink by Kamoso's own linkEffectPreview() and
++// must reach its first buffer. The sink here is a caps filter with qml6glsink's own pad template moved to system memory
++// (a test has no GL context, so identity stands for glupload, which keeps the format; texture-target goes with GL). Without the conversion, the
++// effectv effects stop: they give only RGBx, xRGB, BGRx and xBGR.
++
++#include "effectpreview.h"
++
++#include <QFile>
++#include <QRegularExpression>
++#include <QTemporaryDir>
++#include <QTest>
++
++class EffectPreviewTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase()
++    {
++        gst_init(nullptr, nullptr);
++        QVERIFY(m_dir.isValid());
++        m_sample = m_dir.filePath(QStringLiteral("sample.jpg"));
++        GError *error = nullptr;
++        GstElement *writer = gst_parse_launch(
++            QStringLiteral("videotestsrc num-buffers=1 pattern=smpte ! video/x-raw,width=160,height=120 ! jpegenc ! filesink location=%1")
++                .arg(m_sample).toUtf8().constData(),
++            &error);
++        QVERIFY2(!error, error ? error->message : "");
++        QVERIFY(run(writer));
++
++        GstElementFactory *factory = gst_element_factory_find("qml6glsink");
++        QVERIFY2(factory, "qml6glsink is needed: it is the sink the previews draw into");
++        for (const GList *l = gst_element_factory_get_static_pad_templates(factory); l; l = l->next) {
++            auto *pad = static_cast<GstStaticPadTemplate *>(l->data);
++            if (pad->direction == GST_PAD_SINK)
++                m_sinkCaps = gst_static_caps_get(&pad->static_caps);
++        }
++        gst_object_unref(factory);
++        QVERIFY(m_sinkCaps);
++        m_sinkCaps = gst_caps_make_writable(m_sinkCaps);
++        // The same formats in system memory; texture-target belongs to GL memory only.
++        for (guint i = 0; i < gst_caps_get_size(m_sinkCaps); ++i) {
++            gst_caps_set_features(m_sinkCaps, i, gst_caps_features_new(GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY, nullptr));
++            gst_structure_remove_field(gst_caps_get_structure(m_sinkCaps, i), "texture-target");
++        }
++    }
++
++    void everyEffectReachesTheSink_data()
++    {
++        QTest::addColumn<QString>("filter");
++        QFile qml(QStringLiteral(KAMOSO_CONFIG_QML));
++        QVERIFY(qml.open(QIODevice::ReadOnly));
++        static const QRegularExpression element(QStringLiteral("^\\s*ListElement \\{ filters: \"([^\"]*)\" \\}"));
++        int count = 0;
++        for (const QString &line : QString::fromUtf8(qml.readAll()).split(QLatin1Char('\n'))) {
++            const auto match = element.match(line);
++            if (match.hasMatch()) {
++                QTest::newRow(match.captured(1).toUtf8().constData()) << match.captured(1);
++                ++count;
++            }
++        }
++        QCOMPARE(count, 31);
++    }
++
++    void everyEffectReachesTheSink()
++    {
++        QFETCH(QString, filter);
++        GError *error = nullptr;
++        // The description of Config.qml's delegate, with one frame so that the pipeline ends.
++        GstElement *pipeline = gst_parse_launch(
++            QStringLiteral("filesrc location=\"%1\" ! decodebin ! imagefreeze num-buffers=1 ! videoconvert ! %2 name=last")
++                .arg(m_sample, filter).toUtf8().constData(),
++            &error);
++        QVERIFY2(!error, error ? error->message : "");
++        GstElement *last = gst_bin_get_by_name(GST_BIN(pipeline), "last");
++        QVERIFY(last);
++        GstElement *upload = gst_element_factory_make("identity", nullptr);
++        GstElement *caps = gst_element_factory_make("capsfilter", nullptr);
++        g_object_set(caps, "caps", m_sinkCaps, nullptr);
++        GstElement *sink = gst_element_factory_make("fakesink", nullptr);
++        g_object_set(sink, "signal-handoffs", TRUE, nullptr);
++        int buffers = 0;
++        g_signal_connect(sink, "handoff", G_CALLBACK(+[](GstElement *, GstBuffer *, GstPad *, gpointer count) {
++            ++*static_cast<int *>(count);
++        }), &buffers);
++        QVERIFY(linkEffectPreview(GST_BIN(pipeline), last, upload, caps));
++        gst_bin_add(GST_BIN(pipeline), sink);
++        QVERIFY(gst_element_link(caps, sink));
++        gst_object_unref(last);
++        QVERIFY2(run(pipeline), qPrintable(m_lastError));
++        QVERIFY(buffers >= 1);
++    }
++
++    void cleanupTestCase()
++    {
++        if (m_sinkCaps)
++            gst_caps_unref(m_sinkCaps);
++    }
++
++private:
++    bool run(GstElement *pipeline)
++    {
++        m_lastError.clear();
++        gst_element_set_state(pipeline, GST_STATE_PLAYING);
++        GstBus *bus = gst_element_get_bus(pipeline);
++        GstMessage *message = gst_bus_timed_pop_filtered(bus, 30 * GST_SECOND, GstMessageType(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
++        bool ok = message && GST_MESSAGE_TYPE(message) == GST_MESSAGE_EOS;
++        if (message && GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
++            GError *error = nullptr;
++            gchar *debug = nullptr;
++            gst_message_parse_error(message, &error, &debug);
++            m_lastError = QString::fromUtf8(error->message) + QStringLiteral(": ") + QString::fromUtf8(debug ? debug : "");
++            g_error_free(error);
++            g_free(debug);
++        } else if (!message) {
++            m_lastError = QStringLiteral("no end of stream within 30 s");
++        }
++        if (message)
++            gst_message_unref(message);
++        gst_object_unref(bus);
++        gst_element_set_state(pipeline, GST_STATE_NULL);
++        gst_object_unref(pipeline);
++        return ok;
++    }
++
++    QTemporaryDir m_dir;
++    QString m_sample;
++    GstCaps *m_sinkCaps = nullptr;
++    QString m_lastError;
++};
++
++QTEST_GUILESS_MAIN(EffectPreviewTest)
++
++#include "effectpreview-test.moc"
+diff --git a/src/video/effectpreview.h b/src/video/effectpreview.h
+new file mode 100644
+--- /dev/null
++++ b/src/video/effectpreview.h
+@@ -0,0 +1,21 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++#pragma once
++
++#include <gst/gst.h>
++
++// Joins an effect preview, "... ! FILTER name=last", to its sink. A filter may give only formats the sink does not take:
++// the effectv elements give RGBx, xRGB, BGRx or xBGR, and qml6glsink takes RGBA, BGRA, RGB, YV12 and NV12 as GL memory.
++// So one videoconvert stands between the filter and the upload, as one already stands before the filter.
++inline bool linkEffectPreview(GstBin *bin, GstElement *last, GstElement *upload, GstElement *sink)
++{
++    GstElement *convert = gst_element_factory_make("videoconvert", nullptr);
++    if (!convert)
++        return false;
++    gst_bin_add_many(bin, convert, upload, sink, nullptr);
++    return gst_element_link_many(last, convert, upload, sink, nullptr);
++}
+diff --git a/src/video/webcamcontrol.cpp b/src/video/webcamcontrol.cpp
+--- a/src/video/webcamcontrol.cpp
++++ b/src/video/webcamcontrol.cpp
+@@ -13,6 +13,7 @@
+ #include "stereophoto.h"
+ #include "stereorecorder.h"
+ #include "stereopublisher.h"
++#include "effectpreview.h"
+ #include <QTemporaryDir>
+ #include <QImageWriter>
+ #include <stereo-layer/screenmode.h>
+@@ -176,8 +177,7 @@ public:
+                                                                           , "widget", qobject_cast<QQuickItem *>(parent())
+                                                                           , "async", true
+                                                                           , nullptr);
+-            gst_bin_add_many(GST_BIN(m_pipeline.data()), glupload, sink, nullptr);
+-            bool correct = gst_element_link_many(lastItem, glupload, sink, nullptr);
++            bool correct = linkEffectPreview(GST_BIN(m_pipeline.data()), lastItem, glupload, sink);
+             Q_ASSERT(correct);
+             gst_object_unref(lastItem);
+             m_bus.reset(gst_pipeline_get_bus(m_pipeline.data()));
