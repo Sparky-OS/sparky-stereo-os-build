@@ -320,10 +320,10 @@ def volume_material(spec):
     distance = g.vector('LENGTH', local)
     if spec['kind'] == 'fog':
         stretched = g.vector('MULTIPLY', local, (.35, 2.2, 1.6))
-        scale, density, anisotropy, rough = 2.6, 26., .15, (.30, 1., .0)
+        scale, anisotropy, rough = 2.6, .15, (spec['core'], 1., .0)
     else:
         stretched = local
-        scale, density, anisotropy, rough = 1.9, 12., .2, (.60, .90, .32)
+        scale, anisotropy, rough = 1.9, .2, (spec['core'], .90, .32)
     seed = spec['seed']
     shift = (1.7*seed+spec['loop'][0], 2.3*seed+spec['loop'][1], .9*seed)
     noise = g.node('ShaderNodeTexNoise', noise_dimensions='3D')
@@ -339,14 +339,23 @@ def volume_material(spec):
     inner = g.math('ADD', .45, g.math('MULTIPLY', g.smooth(noise.outputs['Fac'], .30, .64), .55))
     field = g.math('MULTIPLY', g.math('MULTIPLY', body, hull), inner)
     volume = g.node('ShaderNodeVolumePrincipled')
-    albedo = linear(spec['colour'])
-    if (spec['kind'] == 'cloud' and min(albedo) > .7) or spec['kind'] == 'fog':
-        # A fair-weather cloud or a fog bank scatters almost all its light: white, not the modelled pigment's grey.
-        albedo = tuple(.5+.5*a for a in albedo)
-    volume.inputs['Color'].default_value = (*albedo, 1)
+    # The scattering colour and the density come with the scene (real_model.ellipsoid_spec).
+    volume.inputs['Color'].default_value = (*spec['albedo'], 1)
     volume.inputs['Anisotropy'].default_value = anisotropy
-    g.put(volume.inputs['Density'], g.math('MULTIPLY', field, density))
+    size_factor = g.node('ShaderNodeValue', name='rw-size')
+    size_factor.outputs[0].default_value = 1.
+    g.put(volume.inputs['Density'], g.math('MULTIPLY', g.math('MULTIPLY', field, spec['density']),
+                                           size_factor.outputs[0]))
+    g.material['small'] = spec['small']
     return g.volume(volume.outputs[0])
+
+
+def size_materials(size):
+    """A volume's density at the panel's sizes: its small factor at rm.SMALL_SIZE px and below, 1 above."""
+    for material in bpy.data.materials:
+        node = material.node_tree.nodes.get('rw-size') if material.node_tree else None
+        if node is not None:
+            node.outputs[0].default_value = material['small'] if size <= rm.SMALL_SIZE else 1.
 
 
 def bolt_material(kind, strength):
@@ -524,6 +533,7 @@ def samples_for(size):
 
 def timed_pair(size, camera, rig, exr, supersample, symbolic, costs, label):
     bpy.context.scene.cycles.samples = samples_for(size)
+    size_materials(size)
     usage = resource.getrusage(resource.RUSAGE_SELF)
     start = time.monotonic()
     views = base.render_pair(size, camera, rig, exr, supersample, symbolic)

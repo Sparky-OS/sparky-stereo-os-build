@@ -29,7 +29,9 @@ CLOUD_LOOP_RADIUS = .35
 LIGHT = dict(sun=dict(direction=(-.25, .95, -.15), strength=14., colour='fff1dc', angle=8, receives=('cloud', 'fog')),
              moon=dict(strength=18., colour='f1f3ff', angle=1, receives=('moon',)),
              moonlight=dict(direction=(-.40, .80, -.30), strength=1.6, colour='cdd6ff', angle=4, receives=('cloud', 'fog')),
-             sky=dict(direction=(.10, 1., .30), strength=7., colour='f4f8ff', angle=40, receives=('cloud', 'fog')))
+             sky=dict(direction=(.10, 1., .30), strength=7., colour='f4f8ff', angle=40, receives=('cloud', 'fog')),
+             # A soft light of the night sky on the clouds' faces, so a night cloud is grey, not black.
+             nightsky=dict(direction=(.15, .55, 1.), strength=0., colour='c9d4ff', angle=60, receives=('cloud', 'fog')))
 REPLACED = ('solar-disc', 'ray-', 'crescent', 'cloud-', 'bolt', 'fog-', 'aurora-0-', 'aurora-1-', 'aurora-2-')
 
 
@@ -113,10 +115,39 @@ def moon_spec(params, by):
                 hemisphere=params.get('hemisphere', 'north'), z=(centre[2], centre[2]+radii[2]))
 
 
-def ellipsoid_spec(kind, shape, phase, index):
+# What a volume scatters and how dense it is. A cloud's modelled pigment (geometry.cloud, by darkness) is lifted
+# toward white by LIFT so it reads on a dark panel as on a light one; its base stays darker by the light from above.
+CLOUD_PIGMENTS = ('e7eef4', 'b9c6d8', '8797b1', '65748e')
+CLOUD_LIFT = {0: .5, 1: 0., 2: 0., 3: 0.}
+# Night clouds (darkness 2 and 3 under the Moon) take their own lift.
+NIGHT_LIFT = {0: .5, 1: 0., 2: 0., 3: 0.}
+CLOUD_DENSITY, CLOUD_CORE = 12., .60
+# Heavier clouds are denser, so their dark base covers a light panel as the modelled solid does.
+CLOUD_DENSITY_BY = {0: 1., 1: 1., 2: 1., 3: 1.}
+FOG_LIFT, FOG_DENSITY, FOG_CORE = .5, 26., .30
+# At the panel's sizes (SMALL_SIZE px and below) a volume's density is multiplied by its small factor, so a thin band
+# keeps a body a pixel or two high; the cameras are already per size.
+SMALL_SIZE = 32
+CLOUD_SMALL, FOG_SMALL = 1., 1.
+
+
+def to_linear(hex_colour):
+    values = (int(hex_colour[i:i+2], 16)/255 for i in (0, 2, 4))
+    return tuple(v/12.92 if v <= .04045 else ((v+.055)/1.055)**2.4 for v in values)
+
+
+def ellipsoid_spec(kind, shape, phase, index, night=False):
     (x0, x1), (y0, y1), (z0, z1) = bbox(shape)
+    pigment = to_linear(shape.colour)
+    if kind == 'fog':
+        lift, density, core, small = FOG_LIFT, FOG_DENSITY, FOG_CORE, FOG_SMALL
+    else:
+        darkness = CLOUD_PIGMENTS.index(shape.colour) if shape.colour in CLOUD_PIGMENTS else 0
+        lift = (NIGHT_LIFT if night else CLOUD_LIFT)[darkness]
+        density, core, small = CLOUD_DENSITY*CLOUD_DENSITY_BY[darkness], CLOUD_CORE, CLOUD_SMALL
     return dict(kind=kind, name=shape.name, centre=((x0+x1)/2, (y0+y1)/2, (z0+z1)/2),
                 radii=((x1-x0)/2, (y1-y0)/2, (z1-z0)/2), colour=shape.colour, seed=index,
+                albedo=tuple(lift+(1-lift)*a for a in pigment), density=density, core=core, small=small,
                 loop=(CLOUD_LOOP_RADIUS*cos(tau*phase), CLOUD_LOOP_RADIUS*sin(tau*phase)), z=(z0, z1))
 
 
@@ -171,8 +202,11 @@ def lamp_specs(params):
         return []
     luminary = params.get('luminary') or {'sun': 'sun', 'moon': 'moon'}.get(family)
     if luminary == 'moon':
-        return [dict(kind='lamp', name='moon-light', direction=moon_light(), **LIGHT['moon']),
-                dict(kind='lamp', name='moonlight', **LIGHT['moonlight'])]
+        lamps = [dict(kind='lamp', name='moon-light', direction=moon_light(), **LIGHT['moon']),
+                 dict(kind='lamp', name='moonlight', **LIGHT['moonlight'])]
+        if LIGHT['nightsky']['strength'] > 0:
+            lamps.append(dict(kind='lamp', name='nightsky-light', **LIGHT['nightsky']))
+        return lamps
     return [dict(kind='lamp', name=f'{luminary or "sky"}-light', **LIGHT[luminary or 'sky'])]
 
 
@@ -187,7 +221,8 @@ def specs(params, shapes, phase, disc_back):
     if 'crescent' in by:
         result.append(moon_spec(params, by))
     clouds = [shape for shape in shapes if shape.name.startswith('cloud-')]
-    result += [ellipsoid_spec('cloud', shape, phase, i) for i, shape in enumerate(clouds)]
+    night = params.get('luminary') == 'moon'
+    result += [ellipsoid_spec('cloud', shape, phase, i, night) for i, shape in enumerate(clouds)]
     fog = [shape for shape in shapes if shape.name.startswith('fog-')]
     result += [ellipsoid_spec('fog', shape, phase, i) for i, shape in enumerate(fog)]
     if 'bolt' in by:
