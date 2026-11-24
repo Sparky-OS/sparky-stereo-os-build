@@ -9,7 +9,7 @@ add_library(sparkystereocamera STATIC
     cameraservice.cpp cameraservice.h)
 set_target_properties(sparkystereocamera PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(sparkystereocamera PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(sparkystereocamera PUBLIC Qt6::Core KF6::I18n)
+target_link_libraries(sparkystereocamera PUBLIC Qt6::Core KF6::I18n PkgConfig::STEREOPOLICY)
 
 add_executable(sparky-stereo-camera cli.cpp)
 target_link_libraries(sparky-stereo-camera PRIVATE sparkystereocamera)

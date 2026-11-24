@@ -235,7 +235,7 @@ def supplied_by_programs(name, items, before, programs, plugins):
     program, counts as a plugin. What a program supplies it is its own exports and those of this build's shared
     objects in the plugin's directory; its programs are the executables that, so counted, supply every symbol the
     previous build left undefined, and each of them must supply every new one too. Anything else stays a finding.
-    A file whose previous build left symbols undefined is a shared object (compare() stops on a program that did),
+    A file whose previous build left symbols undefined is a shared object (compare() asks only for those),
     whatever its name: an Octave function (`*.oct`) counts as a plugin as a `*.so` module does."""
     if system_library_dir(str(Path(name).parent)):
         return []
@@ -529,11 +529,19 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
             # stays a block: a carried defect is fixed, not noted; any other unusable predecessor stops the build.
             # The key is also absent when this build no longer ships the ELF file at all: then nothing finds the
             # library, and the note says that instead.
+            # The same holds for a symbol a program of the previous build left undefined and this build resolves
+            # (pipewire-tests: the installed JACK examples loaded jackd2's libjack, which lacks PipeWire's
+            # jack_get_video_image_size, fixed in +stereo3d1): a note, and the comparison goes on; a symbol undefined
+            # in both builds stays a block, and a new undefined symbol is a finding below.
             shipped = {'/' + str(path.relative_to(new_root)) for path in elf_files(new_root)}
-            for name, kind, item in [k for k in broken_before if k[1] == 'not found' and k not in now]:
-                notes.append(f'{name}: the previous build could not find {item}; this build finds it' if name in shipped
-                             else f'{name}: the previous build could not find {item}; this build no longer ships the file')
-            broken_before = [k for k in broken_before if k[1] != 'not found' or k in now]
+            for name, kind, item in [k for k in broken_before if k[1] in ('not found', 'undefined') and k not in now]:
+                if kind == 'not found':
+                    notes.append(f'{name}: the previous build could not find {item}; this build finds it' if name in shipped
+                                 else f'{name}: the previous build could not find {item}; this build no longer ships the file')
+                else:
+                    notes.append(f'{name}: the previous build left {item} undefined; this build resolves it' if name in shipped
+                                 else f'{name}: the previous build left {item} undefined; this build no longer ships the file')
+            broken_before = [k for k in broken_before if k[1] not in ('not found', 'undefined') or k in now]
             if broken_before:
                 raise package.Invalid('predecessor failed archive-qualified resolution: ' +
                                       '; '.join(f'{name}: {kind} {item}' for name, kind, item in broken_before[:5]))
@@ -545,7 +553,9 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
             for (name, kind), items in sorted(grouped.items()):
                 shown = ', '.join(items[:3]) + (f' and {len(items) - 3} more' if len(items) > 3 else '')
                 hosts = []
-                if kind == 'undefined':
+                # Only a shared object of the previous build can be a plugin; a program whose old symbol this build
+                # resolves (noted above) never is, whatever another program of the package exports.
+                if kind == 'undefined' and name in old_shared:
                     if programs is None and any(k == 'undefined' and rel == name for (rel, k, _) in before):
                         programs, plugins = program_exports(dict.fromkeys([Path(new_deb)] + [Path(d) for d in siblings]),
                                                             qualified.directory, qualified.owner.ensure_space)

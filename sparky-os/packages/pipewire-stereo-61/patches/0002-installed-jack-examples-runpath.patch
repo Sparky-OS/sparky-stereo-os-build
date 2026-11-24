@@ -1,0 +1,46 @@
+Description: Keep the installed JACK examples on PipeWire's JACK implementation
+ The examples link against PipeWire's JACK extensions in the build tree.
+ Preserve that library choice after installation without changing the system
+ JACK provider or the resolution of other installed tests. The video example
+ must also wait for an input before reading a whole image: an unconnected
+ JACK port supplies only an audio-sized silence buffer.
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-23
+
+--- a/pipewire-jack/src/meson.build
++++ b/pipewire-jack/src/meson.build
+@@ -108,6 +108,7 @@
+     install_dir : installed_tests_execdir / 'examples' / 'jack',
+     dependencies : [sdl_dep, mathlib],
+     link_with: pipewire_jack,
++    install_rpath : libjack_path,
+   )
+ endif
+ executable('ump-source',
+@@ -117,4 +118,5 @@
+   install_dir : installed_tests_execdir / 'examples' / 'jack',
+   dependencies : [mathlib],
+   link_with: pipewire_jack,
++  install_rpath : libjack_path,
+ )
+--- a/pipewire-jack/examples/video-dsp-play.c
++++ b/pipewire-jack/examples/video-dsp-play.c
+@@ -69,9 +69,14 @@
+ 	uint32_t i, j;
+ 	uint8_t *src, *dst;
+ 
++	handle_events(data);
++
++	/* An unconnected JACK port supplies audio-sized silence, not an image. */
++	if (jack_port_connected(data->in_port) == 0)
++		return 0;
+         sdata = jack_port_get_buffer (data->in_port, nframes);
+-
+-	handle_events(data);
++	if (sdata == NULL)
++		return 0;
+ 
+ 	if (SDL_LockTexture(data->texture, NULL, &ddata, &dstride) < 0) {
+ 		fprintf(stderr, "Couldn't lock texture: %s\n", SDL_GetError());

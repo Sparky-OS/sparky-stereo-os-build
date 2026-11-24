@@ -1,0 +1,26 @@
+Description: Parse caps when a Qt video material is recreated
+Author: Will
+Origin: upstream, https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12461
+Forwarded: not-needed
+Last-Update: 2026-11-23
+
+--- a/ext/qt/qtitem.cc
++++ b/ext/qt/qtitem.cc
+@@ -334,6 +334,7 @@ QtGLVideoItem::updatePaintNode(QSGNode * oldNode,
+     tex = GstQSGMaterial::new_for_format_and_target (GST_VIDEO_INFO_FORMAT (&this->priv->v_info), this->priv->tex_target);
+     texNode->setMaterial(tex);
+     texNode->setFlag(QSGGeometryNode::Flag::OwnsMaterial);
++    this->priv->caps_change = TRUE;
+   }
+ 
+   if ((old_buffer = tex->getBuffer(&was_bound))) {
+--- a/ext/qt6/qt6glitem.cc
++++ b/ext/qt6/qt6glitem.cc
+@@ -328,6 +328,7 @@ Qt6GLVideoItem::updatePaintNode(QSGNode * oldNode,
+         QSGTexture::Filtering::Nearest);
+     texNode->setMaterial(tex);
+     texNode->setFlag(QSGGeometryNode::OwnsMaterial);
++    this->priv->caps_change = TRUE;
+   }
+ 
+   if ((old_buffer = tex->getBuffer(&was_bound))) {

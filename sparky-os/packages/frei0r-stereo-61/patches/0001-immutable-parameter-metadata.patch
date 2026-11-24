@@ -1,0 +1,94 @@
+Description: Keep registered C++ parameter metadata immutable across instances
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-23
+
+--- a/include/frei0r.hpp
++++ b/include/frei0r.hpp
+@@ -46,6 +46,8 @@
+   };
+   
+   static std::vector<param_info> s_params;
++  // Metadata is built by the registration instance, before the plugin is exposed.
++  static bool s_registering = true;
+ 
+   
+   class fx
+@@ -59,7 +61,7 @@
+ 
+     fx()
+     {
+-      s_params.clear(); // reinit static params 
++      if (s_registering) s_params.clear();
+     }
+     
+     virtual unsigned int effect_type()=0;
+@@ -72,7 +74,7 @@
+ 			const std::string& desc)
+     {
+       param_ptrs.push_back(&p_loc);
+-      s_params.push_back(param_info(name,desc,F0R_PARAM_COLOR));
++      if (s_registering) s_params.push_back(param_info(name,desc,F0R_PARAM_COLOR));
+     }
+     
+     void register_param(double& p_loc,
+@@ -80,7 +82,7 @@
+ 			const std::string& desc)
+     {
+       param_ptrs.push_back(&p_loc);
+-      s_params.push_back(param_info(name,desc,F0R_PARAM_DOUBLE));
++      if (s_registering) s_params.push_back(param_info(name,desc,F0R_PARAM_DOUBLE));
+     }
+ 
+     void register_param(bool& p_loc,
+@@ -88,7 +90,7 @@
+ 			const std::string& desc)
+     {
+       param_ptrs.push_back(&p_loc);
+-      s_params.push_back(param_info(name,desc,F0R_PARAM_BOOL));
++      if (s_registering) s_params.push_back(param_info(name,desc,F0R_PARAM_BOOL));
+     }
+ 
+     void register_param(f0r_param_position& p_loc,
+@@ -96,7 +98,7 @@
+ 			const std::string& desc)
+     {
+       param_ptrs.push_back(&p_loc);
+-      s_params.push_back(param_info(name,desc,F0R_PARAM_POSITION));
++      if (s_registering) s_params.push_back(param_info(name,desc,F0R_PARAM_POSITION));
+     }
+     
+     void register_param(std::string& p_loc,
+@@ -104,7 +106,7 @@
+ 			const std::string& desc)
+     {
+       param_ptrs.push_back(&p_loc);
+-      s_params.push_back(param_info(name,desc,F0R_PARAM_STRING));
++      if (s_registering) s_params.push_back(param_info(name,desc,F0R_PARAM_STRING));
+     }
+ 
+ 
+@@ -284,14 +286,12 @@
+       
+       s_effect_type=a.effect_type();
+       s_color_model=color_model;
++      s_registering=false;
+     }
+ 
+   private:
+     static fx* build(unsigned int width, unsigned int height)
+     {
+-      // Constructors re-register metadata; restore it if construction fails.
+-      std::vector<param_info> previous_params;
+-      previous_params.swap(s_params);
+ #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+       try {
+ #endif
+@@ -302,7 +302,6 @@
+       } catch (const std::bad_alloc&) {
+       }
+ #endif
+-      s_params.swap(previous_params);
+       return 0;
+     }
+   };

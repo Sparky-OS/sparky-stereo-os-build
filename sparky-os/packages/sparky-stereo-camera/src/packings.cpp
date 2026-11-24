@@ -2,47 +2,63 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "packings.h"
-
 #include <KLocalizedString>
+#include <stereo-policy.h>
 
 using namespace Sparky::Camera;
 
-// The ids and the English words are the layer's (src/picture/filechoicelist.cpp, context Stereo::FileChoiceMenu): the
-// catalogues here hold the same sentence with the layer's own translation, so one camera and one file read alike.
+namespace
+{
+QString previewInput(const stereo_policy_input_format &format)
+{
+    if (format.view == STEREO_POLICY_VIEW_MONO)
+        return QStringLiteral("StereoNone");
+    if (format.anaglyph == STEREO_POLICY_ANAGLYPH_RED_CYAN)
+        return QStringLiteral("StereoAnaglyphCyanRed");
+    if (format.anaglyph == STEREO_POLICY_ANAGLYPH_GREEN_MAGENTA)
+        return QStringLiteral("StereoAnaglyphGreenMagenta");
+    if (format.anaglyph != STEREO_POLICY_ANAGLYPH_NONE)
+        return {};
+    switch (format.layout) {
+    case STEREO_POLICY_LAYOUT_NONE: return QStringLiteral("StereoAutomatic");
+    case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE: return QStringLiteral("StereoSideBySide");
+    case STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM: return QStringLiteral("StereoTopBottom");
+    case STEREO_POLICY_LAYOUT_ROWS: return QStringLiteral("StereoRowInterleaved");
+    case STEREO_POLICY_LAYOUT_COLUMNS: return QStringLiteral("StereoColumnInterleaved");
+    case STEREO_POLICY_LAYOUT_CHECKERBOARD: return QStringLiteral("StereoCheckerboard");
+    case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX: return QStringLiteral("StereoSideBySideQuincunx");
+    case STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL: return {}; // PreviewSource does not preserve the source frame ordinal.
+    case STEREO_POLICY_LAYOUT_DEPTH_SIDE_BY_SIDE:
+        return format.order == STEREO_POLICY_DEPTH_FIRST ? QStringLiteral("StereoDepthSideBySideDepthFirst") : QStringLiteral("StereoDepthSideBySide");
+    case STEREO_POLICY_LAYOUT_DEPTH_TOP_AND_BOTTOM:
+        return format.order == STEREO_POLICY_DEPTH_FIRST ? QStringLiteral("StereoDepthTopBottomDepthFirst") : QStringLiteral("StereoDepthTopBottom");
+    case STEREO_POLICY_LAYOUT_DEPTH_GRAPHICS: return QStringLiteral("StereoDepthGraphics");
+    case STEREO_POLICY_LAYOUT_DEPTH_BACKGROUND: return QStringLiteral("StereoDepthBackground");
+    default: return {}; // The existing preview refusal remains visible for an unsupported input.
+    }
+}
+}
+
 QList<Packing> Sparky::Camera::packings()
 {
-    return {
-        {QStringLiteral("mono"), i18n("Not 3D"), QStringLiteral("StereoNone"), false, QString()},
-        {QStringLiteral("sideBySideLeftFirst"), i18n("Side by side, left eye first"), QStringLiteral("StereoSideBySide"), false, QString()},
-        {QStringLiteral("sideBySideRightFirst"), i18n("Side by side, right eye first"), QStringLiteral("StereoSideBySide"), true, QString()},
-        {QStringLiteral("topBottomLeftFirst"), i18n("Top and bottom, left eye first"), QStringLiteral("StereoTopBottom"), false, QString()},
-        {QStringLiteral("topBottomRightFirst"), i18n("Top and bottom, right eye first"), QStringLiteral("StereoTopBottom"), true, QString()},
-        {QStringLiteral("rowInterleavedLeftFirst"), i18n("Rows, left eye first"), QStringLiteral("StereoRowInterleaved"), false, QStringLiteral("interleaved")},
-        {QStringLiteral("rowInterleavedRightFirst"), i18n("Rows, right eye first"), QStringLiteral("StereoRowInterleaved"), true, QStringLiteral("interleaved")},
-        {QStringLiteral("columnInterleavedLeftFirst"), i18n("Columns, left eye first"), QStringLiteral("StereoColumnInterleaved"), false, QStringLiteral("interleaved")},
-        {QStringLiteral("columnInterleavedRightFirst"), i18n("Columns, right eye first"), QStringLiteral("StereoColumnInterleaved"), true, QStringLiteral("interleaved")},
-        {QStringLiteral("checkerboardLeftFirst"), i18n("Checkerboard, left eye first"), QStringLiteral("StereoCheckerboard"), false, QStringLiteral("interleaved")},
-        {QStringLiteral("checkerboardRightFirst"), i18n("Checkerboard, right eye first"), QStringLiteral("StereoCheckerboard"), true, QStringLiteral("interleaved")},
-        {QStringLiteral("sideBySideQuincunxLeftFirst"), i18n("Side by side quincunx, left eye first"), QStringLiteral("StereoSideBySideQuincunx"), false, QStringLiteral("interleaved")},
-        {QStringLiteral("sideBySideQuincunxRightFirst"), i18n("Side by side quincunx, right eye first"), QStringLiteral("StereoSideBySideQuincunx"), true, QStringLiteral("interleaved")},
-        {QStringLiteral("anaglyphCyanRed"), i18n("Red/cyan"), QStringLiteral("StereoAnaglyphCyanRed"), false, QStringLiteral("anaglyph")},
-        {QStringLiteral("anaglyphGreenMagenta"), i18n("Green/magenta"), QStringLiteral("StereoAnaglyphGreenMagenta"), false, QStringLiteral("anaglyph")},
-        {QStringLiteral("anaglyphAmberBlue"), i18n("Amber/blue"), QString(), false, QStringLiteral("anaglyph")},
-        {QStringLiteral("depthSideBySidePictureFirst"), i18n("Side by side, picture first"), QStringLiteral("StereoDepthSideBySide"), false, QStringLiteral("depth")},
-        {QStringLiteral("depthSideBySideDepthFirst"), i18n("Side by side, depth first"), QStringLiteral("StereoDepthSideBySideDepthFirst"), false, QStringLiteral("depth")},
-        {QStringLiteral("depthTopBottomPictureFirst"), i18n("Top and bottom, picture first"), QStringLiteral("StereoDepthTopBottom"), false, QStringLiteral("depth")},
-        {QStringLiteral("depthTopBottomDepthFirst"), i18n("Top and bottom, depth first"), QStringLiteral("StereoDepthTopBottomDepthFirst"), false, QStringLiteral("depth")},
-        {QStringLiteral("depthGraphicsTopBottom"), i18n("Four rows: picture, depth, graphics, graphics depth"), QStringLiteral("StereoDepthGraphics"), false, QStringLiteral("depth")},
-        {QStringLiteral("depthBackgroundQuarters"), i18n("Four quarters: picture, depth, background, background depth"), QStringLiteral("StereoDepthBackground"), false, QStringLiteral("depth")},
-    };
+    QList<Packing> result;
+    for (size_t i = 0; i < stereo_policy_input_format_count(); ++i) {
+        const auto *format = stereo_policy_input_format_at(i);
+        const QString group = format->group == 2 ? QStringLiteral("interleaved")
+            : format->group == 3 ? QStringLiteral("sequence")
+            : format->group == 4 ? QStringLiteral("anaglyph")
+            : format->group == 5 ? QStringLiteral("depth") : QString();
+        result.append({QString::fromLatin1(format->id), i18n(format->text), previewInput(*format),
+                       !stereo_policy_is_depth_layout(format->layout) && format->order == STEREO_POLICY_RIGHT_FIRST, group});
+    }
+    return result;
 }
 
 Packing Sparky::Camera::packingById(const QString &id)
 {
     for (const Packing &p : packings()) {
-        if (p.id == id) {
+        if (p.id == id)
             return p;
-        }
     }
-    return packings().first();
+    return {}; // An unknown saved value must not silently become Automatic or Not 3D.
 }
