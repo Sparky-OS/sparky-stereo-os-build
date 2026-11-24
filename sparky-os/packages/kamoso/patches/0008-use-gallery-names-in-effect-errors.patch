@@ -1,0 +1,235 @@
+Description: Use the gallery display name in flat and per-eye effect failures
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-24
+
+--- /dev/null
++++ b/src/video/effectname.cpp
+@@ -0,0 +1,49 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#include "effectname.h"
++#include <KLocalizedString>
++
++QString cameraEffectName(const QString &filter)
++{
++    static constexpr struct {
++        const char *filter;
++        const char *name;
++    } effects[] = {
++        {"identity", I18N_NOOP("No effect")},
++        {"bulge", I18N_NOOP("Bulge")},
++        {"frei0r-filter-cartoon", I18N_NOOP("Cartoon")},
++        {"frei0r-filter-twolay0r", I18N_NOOP("Twolay0r")},
++        {"dicetv", I18N_NOOP("Dice")},
++        {"frei0r-filter-distort0r", I18N_NOOP("Distort0r")},
++        {"edgetv", I18N_NOOP("Edges")},
++        {"coloreffects preset=heat", I18N_NOOP("Heat")},
++        {"videobalance saturation=0 ! agingtv", I18N_NOOP("Old film")},
++        {"videobalance saturation=1.5 hue=-0.5", I18N_NOOP("Hue −0.5")},
++        {"kaleidoscope", I18N_NOOP("Kaleidoscope")},
++        {"videobalance saturation=1.5 hue=+0.5", I18N_NOOP("Hue +0.5")},
++        {"mirror", I18N_NOOP("Mirror")},
++        {"videobalance saturation=0", I18N_NOOP("Grayscale")},
++        {"optv", I18N_NOOP("Optical art")},
++        {"pinch", I18N_NOOP("Pinch")},
++        {"quarktv", I18N_NOOP("Quark")},
++        {"radioactv", I18N_NOOP("Radioactive")},
++        {"revtv", I18N_NOOP("Waveform")},
++        {"rippletv", I18N_NOOP("Ripples")},
++        {"videobalance saturation=2", I18N_NOOP("Vivid colors")},
++        {"coloreffects preset=sepia", I18N_NOOP("Sepia")},
++        {"shagadelictv", I18N_NOOP("Shagadelic")},
++        {"square", I18N_NOOP("Square")},
++        {"streaktv", I18N_NOOP("Streaks")},
++        {"stretch", I18N_NOOP("Stretch")},
++        {"frei0r-filter-delay0r delaytime=1", I18N_NOOP("Delay")},
++        {"twirl", I18N_NOOP("Twirl")},
++        {"vertigotv", I18N_NOOP("Vertigo")},
++        {"warptv", I18N_NOOP("Warp")},
++        {"coloreffects preset=xray", I18N_NOOP("X-ray")},
++    };
++    for (const auto &effect : effects) {
++        if (filter == QLatin1String(effect.filter))
++            return i18n(effect.name);
++    }
++    return filter;
++}
+--- /dev/null
++++ b/src/video/effectname.h
+@@ -0,0 +1,7 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++#pragma once
++
++#include <QString>
++
++QString cameraEffectName(const QString &filter);
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -13,6 +13,7 @@
+     previewfetcher.cpp
+     video/webcamcontrol.cpp
+     video/stereopreview.cpp
++    video/effectname.cpp
+     video/stereoeffects.cpp
+     video/stereophoto.cpp
+     video/stereorecorder.cpp
+--- a/src/qml/Config.qml
++++ b/src/qml/Config.qml
+@@ -19,39 +19,6 @@
+     cellHeight: cellWidth * 3/4
+ 
+ 
+-    readonly property var effectNames: ({
+-        "identity": i18n("No effect"),
+-        "bulge": i18n("Bulge"),
+-        "frei0r-filter-cartoon": i18n("Cartoon"),
+-        "frei0r-filter-twolay0r": i18n("Twolay0r"),
+-        "dicetv": i18n("Dice"),
+-        "frei0r-filter-distort0r": i18n("Distort0r"),
+-        "edgetv": i18n("Edges"),
+-        "coloreffects preset=heat": i18n("Heat"),
+-        "videobalance saturation=0 ! agingtv": i18n("Old film"),
+-        "videobalance saturation=1.5 hue=-0.5": i18n("Hue −0.5"),
+-        "kaleidoscope": i18n("Kaleidoscope"),
+-        "videobalance saturation=1.5 hue=+0.5": i18n("Hue +0.5"),
+-        "mirror": i18n("Mirror"),
+-        "videobalance saturation=0": i18n("Grayscale"),
+-        "optv": i18n("Optical art"),
+-        "pinch": i18n("Pinch"),
+-        "quarktv": i18n("Quark"),
+-        "radioactv": i18n("Radioactive"),
+-        "revtv": i18n("Waveform"),
+-        "rippletv": i18n("Ripples"),
+-        "videobalance saturation=2": i18n("Vivid colors"),
+-        "coloreffects preset=sepia": i18n("Sepia"),
+-        "shagadelictv": i18n("Shagadelic"),
+-        "square": i18n("Square"),
+-        "streaktv": i18n("Streaks"),
+-        "stretch": i18n("Stretch"),
+-        "frei0r-filter-delay0r delaytime=1": i18n("Delay"),
+-        "twirl": i18n("Twirl"),
+-        "vertigotv": i18n("Vertigo"),
+-        "warptv": i18n("Warp"),
+-        "coloreffects preset=xray": i18n("X-ray")
+-    })
+     header: Kirigami.InlineMessage {
+         width: view.width
+         visible: WebcamControl.stereoPreviewActive && WebcamControl.stereoEffectMessage.length > 0
+@@ -163,7 +130,7 @@
+                 anchors.right: parent.right
+                 anchors.bottom: parent.bottom
+                 visible: WebcamControl.stereoPreviewActive || delegateItem.previewFailed
+-                text: view.effectNames[model.filters] || model.filters
++                text: WebcamControl.effectName(model.filters || "")
+                 wrapMode: Text.WordWrap
+                 padding: Kirigami.Units.smallSpacing
+                 background: Rectangle { color: Kirigami.Theme.backgroundColor; opacity: 0.9 }
+--- a/src/video/webcamcontrol.h
++++ b/src/video/webcamcontrol.h
+@@ -63,6 +63,7 @@
+         QString effectMessage() const { return m_effectMessage; }
+         QVideoSink *stereoSink() const { return m_stereoSink; }
+         void setStereoSink(QVideoSink *sink);
++        Q_INVOKABLE QString effectName(const QString &filter) const;
+         Q_INVOKABLE void openCameraSettings();
+         Q_INVOKABLE void openDisplaySettings();
+ 
+--- a/src/video/webcamcontrol.cpp
++++ b/src/video/webcamcontrol.cpp
+@@ -14,6 +14,7 @@
+ #include "stereorecorder.h"
+ #include "stereopublisher.h"
+ #include "effectpreview.h"
++#include "effectname.h"
+ #include <QTemporaryDir>
+ #include <QImageWriter>
+ #include <stereo-layer/screenmode.h>
+@@ -425,6 +426,11 @@
+     }
+     Q_EMIT stereoChanged();
+ }
++QString WebcamControl::effectName(const QString &filter) const
++{
++    return cameraEffectName(filter);
++}
++
+ void WebcamControl::openCameraSettings()
+ {
+     QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_sparkystereo_camera")});
+@@ -748,7 +754,7 @@
+             elem = nullptr;
+             if (!m_extraFilters.isEmpty() && !pairFilter) {
+                 qWarning() << "The effect" << m_extraFilters << "could not start in the camera:" << reason;
+-                effectMessage = i18n("The effect %1 could not start: %2. The camera is shown without it.", m_extraFilters, reason);
++                effectMessage = i18n("The effect %1 could not start: %2. The camera is shown without it.", effectName(m_extraFilters), reason);
+                 const qsizetype effectEnd = filters.indexOf(QStringLiteral(" ! "), m_extraFilters.size());
+                 const QString withoutEffect = effectEnd < 0 ? QString() : filters.mid(effectEnd + 3);
+                 if (!withoutEffect.isEmpty())
+--- a/src/video/stereoeffects.cpp
++++ b/src/video/stereoeffects.cpp
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ // SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+ #include "stereoeffects.h"
++#include "effectname.h"
+ #include <KLocalizedString>
+ #include <gst/app/gstappsrc.h>
+ #include <gst/app/gstappsink.h>
+@@ -40,7 +41,7 @@
+     const auto input = m_input;
+     reset();
+     m_refused = true;
+-    Q_EMIT failed(i18n("The effect %1 could not run separately for each eye: %2. The camera is shown without this effect.", m_filter, reason));
++    Q_EMIT failed(i18n("The effect %1 could not run separately for each eye: %2. The camera is shown without this effect.", cameraEffectName(m_filter), reason));
+     if (!input.isNull()) Q_EMIT ready(input);
+ }
+ bool StereoEffects::start(const QSize &size)
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ find_package(Qt6 REQUIRED COMPONENTS Test Qml Quick)
+-add_executable(stereopreview-test stereopreview-test.cpp ../src/video/stereopreview.cpp ../src/video/stereoeffects.cpp)
++add_executable(stereopreview-test stereopreview-test.cpp ../src/video/stereopreview.cpp ../src/video/stereoeffects.cpp ../src/video/effectname.cpp)
+ target_include_directories(stereopreview-test PRIVATE ../src/video)
+ target_link_libraries(stereopreview-test PRIVATE Qt6::Test Qt6::Multimedia KF6::I18n Stereo::Layer Stereo::Policy PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
+ add_test(NAME stereopreview COMMAND stereopreview-test)
+@@ -13,7 +13,7 @@
+ target_link_libraries(stereorecorder-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n KF6::KIOCore PkgConfig::GStreamer PkgConfig::GStreamerApp)
+ add_test(NAME stereorecorder COMMAND stereorecorder-test)
+ set_tests_properties(stereorecorder PROPERTIES ENVIRONMENT "GST_PLUGIN_FEATURE_RANK=audiotestsrc:512")
+-add_executable(stereoeffects-test stereoeffects-test.cpp ../src/video/stereoeffects.cpp)
++add_executable(stereoeffects-test stereoeffects-test.cpp ../src/video/stereoeffects.cpp ../src/video/effectname.cpp)
+ target_include_directories(stereoeffects-test PRIVATE ../src/video)
+ target_link_libraries(stereoeffects-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
+ add_test(NAME stereoeffects COMMAND stereoeffects-test)
+@@ -23,7 +23,8 @@
+ target_link_libraries(stereopublisher-test PRIVATE Qt6::Test Qt6::Gui KF6::I18n PkgConfig::GStreamer PkgConfig::GStreamerVideo PkgConfig::GStreamerApp)
+ add_test(NAME stereopublisher COMMAND stereopublisher-test)
+ 
+-add_executable(configgrid-test configgrid-test.cpp)
++add_executable(configgrid-test configgrid-test.cpp ../src/video/effectname.cpp)
++target_include_directories(configgrid-test PRIVATE ../src/video)
+ target_compile_definitions(configgrid-test PRIVATE KAMOSO_CONFIG_QML="${CMAKE_SOURCE_DIR}/src/qml/Config.qml")
+ target_link_libraries(configgrid-test PRIVATE Qt6::Test Qt6::Qml Qt6::Quick KF6::I18n PkgConfig::GStreamer)
+ add_test(NAME configgrid COMMAND configgrid-test)
+--- a/autotests/configgrid-test.cpp
++++ b/autotests/configgrid-test.cpp
+@@ -10,6 +10,7 @@
+ // tile in 2D and 3D alike, can still be chosen, and its reason is logged once per effect; and no delegate ever hands
+ // "undefined" to GStreamer.
+ 
++#include "effectname.h"
+ #include <KLocalizedContext>
+ #include <KLocalizedString>
+ #include <QPointer>
+@@ -106,6 +107,7 @@
+     Q_PROPERTY(bool stereoPreviewActive READ stereoPreviewActive NOTIFY stereoChanged)
+     Q_PROPERTY(QString stereoEffectMessage READ stereoEffectMessage NOTIFY stereoChanged)
+ public:
++    Q_INVOKABLE QString effectName(const QString &filter) const { return cameraEffectName(filter); }
+     QString currentDevice() const
+     {
+         return QStringLiteral("test camera");

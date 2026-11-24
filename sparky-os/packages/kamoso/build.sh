@@ -66,10 +66,12 @@ install -m644 "$HERE/patches/0004-effect-previews-convert-before-the-sink.patch"
 install -m644 "$HERE/patches/0005-failed-effect-preview-keeps-its-row-and-says-so.patch" source/debian/patches/
 install -m644 "$HERE/patches/0006-preroll-gallery-previews-in-opaque-rgb.patch" source/debian/patches/
 install -m644 "$HERE/patches/0007-translate-stereo-camera-messages.patch" source/debian/patches/
+install -m644 "$HERE/patches/0008-use-gallery-names-in-effect-errors.patch" source/debian/patches/
 printf '%s\n' 0001-follow-the-session-default-camera.patch 0002-stereo-camera-viewfinder.patch \
     0003-effects-grid-removed-row-builds-no-pipeline.patch 0004-effect-previews-convert-before-the-sink.patch \
     0005-failed-effect-preview-keeps-its-row-and-says-so.patch 0006-preroll-gallery-previews-in-opaque-rgb.patch \
-    0007-translate-stereo-camera-messages.patch >>source/debian/patches/series
+    0007-translate-stereo-camera-messages.patch \
+    0008-use-gallery-names-in-effect-errors.patch >>source/debian/patches/series
 python3 - source/debian/control <<'CONTROL'
 from pathlib import Path
 import sys
@@ -100,7 +102,8 @@ p.write_text('kamoso (26.04.0-1+stereo3d2) unstable; urgency=medium\n\n'
              '  * Build no effect preview for a removed effect row.\n'
              '  * Convert an effect preview\'s format before its sink.\n'
              '  * A failed effect preview keeps its row and says so.\n'
-             '  * Preroll gallery previews in opaque RGB and show when they are preparing.\n\n'
+             '  * Preroll gallery previews in opaque RGB and show when they are preparing.\n'
+             '  * Translate the stereo camera and use gallery names in effect errors.\n\n'
              ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + date + '\n\n' + p.read_text())
 PY
 cd source
