@@ -65,9 +65,11 @@ install -m644 "$HERE/patches/0003-effects-grid-removed-row-builds-no-pipeline.pa
 install -m644 "$HERE/patches/0004-effect-previews-convert-before-the-sink.patch" source/debian/patches/
 install -m644 "$HERE/patches/0005-failed-effect-preview-keeps-its-row-and-says-so.patch" source/debian/patches/
 install -m644 "$HERE/patches/0006-preroll-gallery-previews-in-opaque-rgb.patch" source/debian/patches/
+install -m644 "$HERE/patches/0007-translate-stereo-camera-messages.patch" source/debian/patches/
 printf '%s\n' 0001-follow-the-session-default-camera.patch 0002-stereo-camera-viewfinder.patch \
     0003-effects-grid-removed-row-builds-no-pipeline.patch 0004-effect-previews-convert-before-the-sink.patch \
-    0005-failed-effect-preview-keeps-its-row-and-says-so.patch 0006-preroll-gallery-previews-in-opaque-rgb.patch >>source/debian/patches/series
+    0005-failed-effect-preview-keeps-its-row-and-says-so.patch 0006-preroll-gallery-previews-in-opaque-rgb.patch \
+    0007-translate-stereo-camera-messages.patch >>source/debian/patches/series
 python3 - source/debian/control <<'CONTROL'
 from pathlib import Path
 import sys
