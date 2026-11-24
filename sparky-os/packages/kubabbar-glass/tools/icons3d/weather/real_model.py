@@ -21,10 +21,8 @@ CORONA_DEPTH = .14
 STREAMER_RADII = (.052, .012)
 MOON_RADIUS = .46
 MOON_CENTRE = (-.09, -.01)
-# The light falls from behind the Moon on its upper left, as the modelled crescent is lit: a crescent of
-# about 21 % of the disc (phase angle 125 degrees), the horns turned as the modelled crescent's (-0.35 rad).
-MOON_PHASE_ANGLE = radians(125)
-MOON_TILT = -.35
+# A full Moon reflects sunlight from the viewer's direction.
+MOON_LIGHT = (0., 0., 1.)
 CLOUD_LOOP_RADIUS = .35
 LIGHT = dict(sun=dict(direction=(-.25, .95, -.15), strength=14., colour='fff1dc', angle=8, receives=('cloud', 'fog')),
              moon=dict(strength=24., colour='f1f3ff', angle=1, receives=('moon',)),
@@ -38,11 +36,6 @@ REPLACED = ('solar-disc', 'ray-', 'crescent', 'cloud-', 'bolt', 'fog-', 'aurora-
 def normalized(vector):
     length = sqrt(sum(v*v for v in vector))
     return tuple(v/length for v in vector)
-
-
-def moon_light():
-    x, y = cos(pi+MOON_TILT), sin(pi+MOON_TILT)
-    return normalized((sin(MOON_PHASE_ANGLE)*x, sin(MOON_PHASE_ANGLE)*y, cos(MOON_PHASE_ANGLE)))
 
 
 def points(shape):
@@ -111,7 +104,7 @@ def moon_spec(params, by):
     front = bbox(canonical)[2][1]
     centre = mapped(axes, (*MOON_CENTRE, front-MOON_RADIUS))
     radii = tuple(MOON_RADIUS*s for s, _ in axes)
-    return dict(kind='moon', name='moon', centre=centre, radii=radii, light=moon_light(),
+    return dict(kind='moon', name='moon', centre=centre, radii=radii, light=MOON_LIGHT,
                 hemisphere=params.get('hemisphere', 'north'), z=(centre[2], centre[2]+radii[2]))
 
 
@@ -208,7 +201,7 @@ def lamp_specs(params):
         return []
     luminary = params.get('luminary') or {'sun': 'sun', 'moon': 'moon'}.get(family)
     if luminary == 'moon':
-        lamps = [dict(kind='lamp', name='moon-light', direction=moon_light(), **LIGHT['moon']),
+        lamps = [dict(kind='lamp', name='moon-light', direction=MOON_LIGHT, **LIGHT['moon']),
                  dict(kind='lamp', name='moonlight', **LIGHT['moonlight'])]
         if LIGHT['nightsky']['strength'] > 0:
             lamps.append(dict(kind='lamp', name='nightsky-light', **LIGHT['nightsky']))
