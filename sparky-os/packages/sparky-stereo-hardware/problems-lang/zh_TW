@@ -44,3 +44,6 @@ LOCAL93="這台電腦上有用開發者自帶 makefile 編譯安裝的 HeadsetCo
 LOCAL108="Broadcom Wi-Fi：核心的驅動程式（%s）此刻沒有重新接管網卡 %s（%s）。broadcom-sta-dkms 已移除，所以電腦啟動時核心的驅動程式會自動載入：請重新啟動電腦。"
 LOCAL109="Broadcom Wi-Fi：無法連同設定一起移除 broadcom-sta-dkms（apt 結束狀態 %s；見日誌），所以網卡 %s 仍使用 wl。請以管理員身分執行 apt-get purge broadcom-sta-dkms，然後重新啟動電腦。"
 LOCAL110="已儲存的 Wi-Fi 網路「%s」綁定在介面 %s 上，無法解除綁定（%s）。請用以下指令解除：nmcli connection modify %s connection.interface-name \"\""
+LOCAL111="Broadcom Wi-Fi：%s 不是硬體設定寫入的檔案，所以保持原樣，沒有寫入讓網卡 %s 保持連線的設定（關閉省電，使用網卡本身的位址）。請刪除該檔案，或把您自己的設定放在 /etc/NetworkManager/conf.d/sparky-stereo-broadcom-wl.conf 中。"
+LOCAL112="Broadcom Wi-Fi：網卡 %s（介面 %s，驅動程式 %s）沒有回報固定的 MAC 位址，所以 NetworkManager 無法辨識它，讓它保持連線的設定（關閉省電，使用網卡本身的位址）對它不起作用。回報時請附上以下指令的輸出：ip -d link show %s"
+LOCAL113="Broadcom Wi-Fi：無法套用讓網卡保持連線的設定（關閉省電，使用網卡本身的位址）（%s）。電腦啟動時以及網卡的介面出現時會再次寫入。"

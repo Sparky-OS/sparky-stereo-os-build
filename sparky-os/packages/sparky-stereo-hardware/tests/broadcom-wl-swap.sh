@@ -136,7 +136,8 @@ check 'wl drives the card on wlp3s0' on_wl
 check 'both bound profiles freed, the unbound one untouched' bash -c "[[ -z \$(awk -F '\t' '\$1==\"11111111-aaaa\"{print \$4}' '$NM_PROFILES') && -z \$(awk -F '\t' '\$1==\"22222222-bbbb\"{print \$4}' '$NM_PROFILES') ]] && grep -q 'FREED.*Cafe: 2.*wlp3s0b1.*wlp3s0 now' '$T/out' && ! grep -q 'modify 33333333' '$calls'"
 check 'each freed profile kept with its old value and both drivers' bash -c "grep -c \$'connection.interface-name\twlp3s0b1\tb43\twl' '$ROOT/var/lib/sparky-stereo-hardware/broadcom-wl-profiles' | grep -qx 2"
 check 'the swap is recorded with the modules to give back' grep -q $'14e4:4331\t0000:03:00.0\twlp3s0b1\tb43\tb43 bcma' "$ROOT/var/lib/sparky-stereo-hardware/broadcom-wl-swap"
-check 'NetworkManager reloads its configuration' has 'nmcli general reload conf'
+check 'the settings follow the card: the writer runs after wl is in place, the file matches b43 and wl' swap_settings_follow '^modprobe wl'
+check 'no bare reload of NetworkManager by the swap itself' lacks '^nmcli general reload conf'
 check 'the end says wl drives it and to restart once' grep -q 'wl drives the card 14e4:4331 now, with the wireless interface wlp3s0 (before: wlp3s0b1, driver b43). Restart the computer once' "$T/out"
 check 'the swap key is cleared, nothing kept' bash -c "grep -q '^problems clear sparky-stereo-hardware broadcom-wl-swap' '$T/s/problems/log' && ! grep -q '^problems keep' '$T/s/problems/log'"
 
@@ -160,6 +161,7 @@ check 'back: the blacklist conffile is gone' test ! -e "$ROOT/etc/modprobe.d/bro
 check 'back: bcma loaded again, b43 drives the card on wlp3s0b1' on_b43
 check 'back: the profile tied to wlp3s0 is freed and kept' bash -c "[[ -z \$(awk -F '\t' '\$1==\"44444444-dddd\"{print \$4}' '$NM_PROFILES') ]] && grep -q \$'Garden\tconnection.interface-name\twlp3s0\twl\tb43' '$ROOT/var/lib/sparky-stereo-hardware/broadcom-wl-profiles'"
 check 'back: the swap record is gone' test ! -e "$ROOT/var/lib/sparky-stereo-hardware/broadcom-wl-swap"
+check 'back: the writer runs once the free driver has the card, and the file still matches both addresses' swap_settings_follow '^modprobe '
 check 'back: the end says b43 drives the card again' grep -q 'the kernel.s driver b43 drives the card 14e4:4331 again, with the wireless interface wlp3s0b1' "$T/out"
 setup_broadcom_wl_swap back >"$T/out" 2>&1
 check 'back again: nothing to do' grep -q 'has the card 14e4:4331 already' "$T/out"

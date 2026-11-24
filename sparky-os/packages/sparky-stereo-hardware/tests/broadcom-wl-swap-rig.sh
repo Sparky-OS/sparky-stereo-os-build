@@ -68,6 +68,7 @@ check 'swap: the package blacklists b43 for real (its conffile)' blacklisted_for
 check 'swap: wl drives the card on wlp3s0' on_wl
 check 'swap: the saved profile is freed and kept' bash -c "[[ -z \$(awk -F '\t' '\$1==\"11111111-aaaa\"{print \$4}' '$NM_PROFILES') ]] && grep -q \$'Home\tconnection.interface-name\twlp3s0b1\tb43\twl' /var/lib/sparky-stereo-hardware/broadcom-wl-profiles"
 check 'swap: nothing kept in the engine' bash -c '! sparky-stereo-problems list --json sparky-stereo-hardware 2>/dev/null | grep -q broadcom-wl-swap'
+check 'swap: the settings follow the card: the file matches b43 and wl' swap_settings_follow '^modprobe wl'
 
 echo '== back: a real purge, the blacklist gone, the kernel driver loaded by its alias as at the start'
 echo y >"$WL_TTY"; : >"$calls"
@@ -79,6 +80,7 @@ check 'back: dkms has no broadcom-sta left' bash -c "[[ -z \$(dkms status -m bro
 check 'back: the module file is gone' bash -c "[[ -z \$(find /lib/modules/$KERNEL -name 'wl.ko*') ]]"
 check 'back: the blacklist is gone from the real configuration' bash -c '! /usr/sbin/modprobe --showconfig | grep -qx "blacklist b43"'
 check 'back: b43 drives the card again on wlp3s0b1' on_b43
+check 'back: the writer ran after the free driver came back, the file still matches both' swap_settings_follow '^modprobe '
 
 echo '== the trap: a removal keeps the blacklist conffile, so the kernel driver would not load at the start'
 scenario

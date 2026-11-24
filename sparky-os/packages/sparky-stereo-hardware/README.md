@@ -59,11 +59,27 @@ the package purged, the modules that drove the card loaded again) and said. `--b
 unloads wl and loads the card's own alias. Both free the saved Wi-Fi profiles tied to the card's old interface name
 (b43 names the card wlp3s0b1, wl wlp3s0) and keep the old value in /var/lib/sparky-stereo-hardware/broadcom-wl-profiles.
 A known machine (share/known-machines.json, a reference owned by broadcom-wl) has its note in the offer.
-/usr/lib/NetworkManager/conf.d/sparky-stereo-wl.conf sets, for a device whose driver is wl only, power saving off
-(wifi.powersave=2), no address change while scanning (wifi.scan-rand-mac-address=no) and the card's permanent address
-(wifi.cloned-mac-address=permanent) (Daniel, 2026-11-23: "disable power management (by tag powersave = 2) and disable
-mac randomization"; "wl only is right"). A profile's own value wins; an empty file of the same name in
-/etc/NetworkManager/conf.d switches it off.
+Every card that Broadcom's wl driver can drive (the BROADCOM-WL rows of share/network-ids.tsv) gets, whichever driver has
+it at that moment (the kernel's free driver or wl), Wi-Fi power saving off (wifi.powersave=2), no address change while
+scanning (wifi.scan-rand-mac-address=no) and its permanent address while connected (wifi.cloned-mac-address=permanent)
+(Daniel, 2026-11-23: "disable power management (by tag powersave = 2) and disable mac randomization"; 2026-11-24: "the
+proper shape is "that are broadcom able" since we know these features tend to make it fail no matter the drive (we
+attempted both drivers with default settings)"). Other Wi-Fi cards keep NetworkManager's defaults (since 0.1.40).
+NetworkManager matches a device by its name, permanent address, type or driver, never by a PCI id (NetworkManager.conf(5),
+"Device List Format"); the free drivers' names would also catch 82 device ids that are not BROADCOM-WL rows (the kernel's
+module aliases of b43, b43legacy, brcmsmac, brcmfmac and their buses), and the interface's name changes with the driver
+(b43 wlp3s0b1, wl wlp3s0). So /usr/lib/sparky-stereo-hardware/broadcom-wl-settings writes
+/run/NetworkManager/conf.d/sparky-stereo-broadcom-wl.conf (NetworkManager's per-boot folder) matched on every permanent
+address the card has shown under any driver, kept in /var/lib/sparky-stereo-hardware/broadcom-wl-cards. It runs before
+NetworkManager starts (sparky-stereo-hardware-broadcom-wl.service), from udev when the interface of a Broadcom card
+appears or a Broadcom card leaves the bus (71-sparky-stereo-broadcom-wl.rules: it ends before NetworkManager sees the
+interface, and NetworkManager reads its files again only when the file changed), after the swap and the way back, and
+at install; the file goes when no such card is in the computer. A profile's own value wins; a file of the same name in
+/etc/NetworkManager/conf.d is the person's and replaces ours (an empty one switches it off), and is never touched. A
+failure (a file of our name in /run that is not ours, a card that reports no permanent address, NetworkManager refusing
+to read its files again) is said and kept in sparky-stereo-problems (key broadcom-wl-settings, messages LOCAL111 to
+LOCAL113) with the writer as its repair. 0.1.39's /usr/lib/NetworkManager/conf.d/sparky-stereo-wl.conf, matched on the
+driver wl only, is gone.
 Credits: Broadcom Corporation for the driver; the broadcom-sta packaging by Cyril Lacoux, Daniel Baumann, Eduard Bloch
 and Roger Shimizu (Debian's copyright file of broadcom-sta-dkms); the list of the chips from Debian's README and
 CachyOS's chwd profile (GPL-3.0); an AI partner's desk study of an iMac 21.5-inch Late 2013 for the detection patch.

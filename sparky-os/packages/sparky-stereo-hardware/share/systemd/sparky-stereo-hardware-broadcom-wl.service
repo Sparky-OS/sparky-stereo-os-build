@@ -1,0 +1,17 @@
+# Created by Daniel Ramos (Capitain Jack) 2026/11/24 (row 728b)
+# Copyright 2026 under the GNU GPL3 License
+# NetworkManager's settings for the cards Broadcom's wl driver can drive (Wi-Fi power saving off, the card's own address),
+# written into its per-boot folder before it starts, from the cards on the bus and the addresses they showed before; the
+# interface of a card that appears later is handled by 71-sparky-stereo-broadcom-wl.rules (row 728b).
+[Unit]
+Description=Wi-Fi settings for the cards Broadcom's wl driver can drive, before NetworkManager starts
+Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sparky-stereo-hardware/broadcom-wl-settings write --reload
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target
