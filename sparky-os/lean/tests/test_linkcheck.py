@@ -530,3 +530,67 @@ def test_a_system_library_new_import_still_blocks_with_a_program(tmp_path):
     with pytest.raises(package.Invalid, match='1 new undefined: host_new'):
         linkcheck.check(gui('1+lc1', 'ui2.so', where), previous_deb=gui('1', 'ui1.so', where), archive_context=context,
                         siblings=[host('1+lc1'), gl('1+lc1')], previous_siblings=[gl('1')])
+
+
+def _octave_case(tmp_path):
+    """Octave's shape (row 50): its functions are shared objects named `*.oct` in Octave's own directory (which ends in
+    `-linux-gnu` without being a system library directory), built without Octave's libraries in NEEDED (Debian's octave
+    11.3.0-1 too), so each leaves the program's symbols undefined; the program that loads them with dlopen() exports
+    them. The control: a program under a name without `.so` that leaves a symbol undefined (linked against a library
+    that defines it, shipped with one of the same name that does not) stays a program."""
+    from lean.tests.archive_fixtures import signed_archive, deb
+    (tmp_path / 'host.c').write_text('int host_old(void) { return 1; }\nint host_new(void) { return 2; }\n'
+                                     'int main(void) { return 0; }\n')
+    (tmp_path / 'f1.c').write_text('int host_old(void);\nint f(void) { return host_old(); }\n')
+    (tmp_path / 'f2.c').write_text('int host_old(void);\nint host_new(void);\nint f(void) { return host_old() + host_new(); }\n')
+    (tmp_path / 'full.c').write_text('int host_old(void) { return 1; }\n')
+    (tmp_path / 'empty.c').write_text('int other(void) { return 0; }\n')
+    (tmp_path / 'tool.c').write_text('int host_old(void);\nint main(void) { return host_old(); }\n')
+    (tmp_path / 'full').mkdir()
+    for out, src, flags in (('host', 'host.c', ['-rdynamic']), ('f1.oct', 'f1.c', ['-shared', '-fPIC']),
+                            ('f2.oct', 'f2.c', ['-shared', '-fPIC']),
+                            ('full/libtooldemo.so.1', 'full.c', ['-shared', '-fPIC', '-Wl,-soname,libtooldemo.so.1']),
+                            ('libtooldemo.so.1', 'empty.c', ['-shared', '-fPIC', '-Wl,-soname,libtooldemo.so.1']),
+                            ('tool', 'tool.c', [str(tmp_path / 'full/libtooldemo.so.1')])):
+        subprocess.run(['gcc', '-o', str(tmp_path / out), str(tmp_path / src)] + flags, check=True)
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+    where = 'usr/lib/x86_64-linux-gnu/octave/11.3.0/oct/x86_64-pc-linux-gnu/'
+    made = {}
+
+    def octave(version, function='f1.oct', tool=False):
+        if (version, function, tool) not in made:
+            files = {where + '__demo__.oct': tmp_path / function, 'usr/bin/octave-demo': tmp_path / 'host'}
+            if tool:
+                files['usr/bin/octave-tool'] = tmp_path / 'tool'
+                files['usr/lib/x86_64-linux-gnu/libtooldemo.so.1'] = tmp_path / 'libtooldemo.so.1'
+            made[(version, function, tool)] = deb(tmp_path / f'octave-{version}-{function}-{tool}', 'octave-demo', version,
+                                                  depends='libc6', files=files)
+        return made[(version, function, tool)]
+    return context, octave, where + '__demo__.oct'
+
+
+def test_an_octave_function_leaves_its_program_symbols_as_a_library_does(tmp_path):
+    context, octave, function = _octave_case(tmp_path)
+    assert linkcheck.shared_object(tmp_path / 'f1.oct')
+    assert not linkcheck.shared_object(tmp_path / 'host') and not linkcheck.shared_object(tmp_path / 'tool')
+    assert not linkcheck.system_library_dir('/' + function.rsplit('/', 1)[0])
+    assert linkcheck.system_library_dir('/usr/lib/x86_64-linux-gnu') and linkcheck.system_library_dir('/lib64')
+    notes = linkcheck.check(octave('1+lc1'), previous_deb=octave('1'), archive_context=context)
+    assert not any('predecessor' in n for n in notes), notes
+    notes = linkcheck.check(octave('1+lc1'), archive_context=context)
+    assert any(f'/{function}: 1 symbols left to its program (no previous build to compare)' in n for n in notes), notes
+
+
+def test_an_octave_function_new_import_its_program_exports_is_a_note(tmp_path):
+    context, octave, function = _octave_case(tmp_path)
+    notes = linkcheck.check(octave('1+lc1', 'f2.oct'), previous_deb=octave('1'), archive_context=context)
+    assert any(f'/{function}: 1 new symbols left to the programs that load it' in n and 'host_new' in n
+               and '/usr/bin/octave-demo' in n for n in notes), notes
+
+
+def test_a_program_without_so_in_its_name_leaving_symbols_still_blocks(tmp_path):
+    context, octave, function = _octave_case(tmp_path)
+    with pytest.raises(package.Invalid, match='predecessor failed archive-qualified resolution: /usr/bin/octave-tool'):
+        linkcheck.check(octave('1+lc1', tool=True), previous_deb=octave('1', tool=True), archive_context=context)
+    with pytest.raises(package.Invalid, match='/usr/bin/octave-tool: undefined host_old'):
+        linkcheck.check(octave('1+lc1', tool=True), archive_context=context)

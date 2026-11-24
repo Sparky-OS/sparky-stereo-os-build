@@ -1,0 +1,30 @@
+## System-wide startup file for Octave.
+##
+## If the environment variable OCTAVE_SITE_INITFILE is set when Octave
+## starts, then that file is executed instead of this file.
+##
+## This file contain commands that should be executed each time Octave starts
+## for every user at this site.
+
+## Set the Debian-specific error handler
+missing_component_hook ("debian_missing_handler");
+
+## Sparky Stereo OS: figures are drawn in stereo 3D on a 3D desktop while
+## Enable 3D is on, which it is unless the person turned it off in a
+## figure's Tools menu (see "help sparky_stereo_menu")
+## (getpref with a default would create the preference: read it only when the
+## person has set it)
+try
+  on = (! ispref ("sparky_stereo", "enable_3d")
+        || getpref ("sparky_stereo", "enable_3d"));
+  set (0, "defaultfigurestereo", {"off", "on"}{on + 1});
+  clear on;
+catch err
+  warning ("Octave:sparky-stereo", "Enable 3D: %s", err.message);
+end_try_catch
+
+## Sparky Stereo OS: the GUI opens with a 3D example in stereo, which its
+## menu Welcome > Open empty turns off (see "help sparky_stereo_welcome")
+if (isguirunning ())
+  sparky_stereo_welcome ();
+endif
