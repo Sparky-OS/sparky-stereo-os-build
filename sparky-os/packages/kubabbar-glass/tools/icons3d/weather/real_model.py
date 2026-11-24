@@ -25,7 +25,7 @@ MOON_CENTRE = (-.09, -.01)
 MOON_LIGHT = (0., 0., 1.)
 CLOUD_LOOP_RADIUS = .35
 LIGHT = dict(sun=dict(direction=(-.25, .95, -.15), strength=14., colour='fff1dc', angle=8, receives=('cloud', 'fog')),
-             moon=dict(strength=24., colour='f1f3ff', angle=1, receives=('moon',)),
+             moon=dict(strength=4., colour='f1f3ff', angle=1, receives=('moon',)),
              moonlight=dict(direction=(-.40, .80, -.30), strength=4., colour='cdd6ff', angle=4, receives=('cloud', 'fog')),
              sky=dict(direction=(.10, 1., .30), strength=7., colour='f4f8ff', angle=40, receives=('cloud', 'fog')),
              # A soft light of the night sky on the clouds' faces, so a night cloud is grey, not black.
