@@ -17,7 +17,7 @@ def main(root):
             names = set()
             for size in sizes:
                 native = theme / 'stereo' / f'{size}x{size}' / 'status'
-                names.update(path.name for path in native.glob(f'weather-*{still_ext}'))
+                names.update(path.name for path in native.glob(f'weather-*{still_ext}') if not path.stem.endswith('.loop'))
             if not names:
                 errors.append(f'{theme}: no weather stills')
             for size in sizes:
