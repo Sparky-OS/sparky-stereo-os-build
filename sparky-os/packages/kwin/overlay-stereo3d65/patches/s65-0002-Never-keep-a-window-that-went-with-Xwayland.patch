@@ -1,0 +1,82 @@
+Description: Never keep a window that went with Xwayland
+ When Xwayland goes away, Workspace::cleanupX11() releases the X11 windows on
+ the shutdown path, which skips activateNextWindow(), and removeWindow()
+ cleared the active window without saying so, so effects and scripts were
+ never told. The translucency effect kept the dead X11 window as its active
+ one; its set() on that window threw "Window property references invalid
+ window" at every later activation, and the newly selected window stayed
+ translucent. removeWindow() now changes the active window through
+ setActiveWindow(nullptr), so windowActivated(nullptr) is emitted as for any
+ other change. The translucency effect forgets its stored window when the
+ window is deleted (the technique of Vlad Zahorodnii's d57be742ff for Dim
+ Inactive, BUG 442222) and stores the newly active window before animating the
+ previous one, so a failure on the previous window cannot leave every later
+ window translucent (queue row 862).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed, no contributions to KDE for now; the failure is kept in the edition's list of unfiled failures
+Last-Update: 2026-11-24
+
+diff --git a/src/plugins/translucency/package/contents/code/main.js b/src/plugins/translucency/package/contents/code/main.js
+index a502753..4fdb45a 100644
+--- a/src/plugins/translucency/package/contents/code/main.js
++++ b/src/plugins/translucency/package/contents/code/main.js
+@@ -143,12 +143,11 @@ var translucencyEffect = {
+             if (translucencyEffect.settings.inactive === 100) {
+                 return;
+             }
+-            translucencyEffect.inactive.animate(translucencyEffect.activeWindow);
++            // The newly active window first: should the previous one fail, the new one is still opaque and the next
++            // activation does not meet the previous one again.
++            var previous = translucencyEffect.activeWindow;
+             translucencyEffect.activeWindow = window;
+-            if (window === null) {
+-                return;
+-            }
+-            if (window.translucencyInactiveAnimation !== undefined) {
++            if (window !== null && window.translucencyInactiveAnimation !== undefined) {
+                 // start revert animation
+                 animate({
+                     window: window,
+@@ -162,6 +161,7 @@ var translucencyEffect = {
+                 cancel(window.translucencyInactiveAnimation);
+                 window.translucencyInactiveAnimation = undefined;
+             }
++            translucencyEffect.inactive.animate(previous);
+         },
+         animate: function (window) {
+             var ids;
+@@ -227,11 +227,18 @@ var translucencyEffect = {
+             }
+         });
+     },
++    windowDeleted: function (window) {
++        // a window can be deleted with no activation after it (Xwayland gone): never keep it
++        if (translucencyEffect.activeWindow === window) {
++            translucencyEffect.activeWindow = null;
++        }
++    },
+     init: function () {
+         effect.configChanged.connect(translucencyEffect.loadConfig);
+         effects.windowAdded.connect(translucencyEffect.manage);
+         effects.windowAdded.connect(translucencyEffect.startAnimation);
+         effects.windowClosed.connect(translucencyEffect.cancelAnimations);
++        effects.windowDeleted.connect(translucencyEffect.windowDeleted);
+         effects.windowActivated.connect(translucencyEffect.inactive.activated);
+         effects.desktopChanged.connect(translucencyEffect.updateAnimation);
+ 
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index fdd3124..9464489 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -1059,7 +1059,10 @@ void Workspace::removeWindow(Window *window)
+     }
+     attention_chain.removeAll(window);
+     if (window == m_activeWindow) {
+-        m_activeWindow = nullptr;
++        // Nothing was activated in its place: the X11 windows go without activateNextWindow() when Xwayland goes away,
++        // and an X11 successor takes the focus only later. Say that no window is active, as for any other change, so
++        // that effects and scripts never keep a window that is gone.
++        setActiveWindow(nullptr);
+     }
+     if (m_windowKeysWindow == window) {
+         setupWindowShortcutDone(false);

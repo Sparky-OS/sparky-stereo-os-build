@@ -1,3 +1,7 @@
+## A window that went with Xwayland (+stereo3d65)
+
+`prepare-source-65.sh PUBLISHED_64_DIR OUT TOOLKIT` takes the published +64 source (r1123a) and adds three edition patches for queue row 862, a station where every selected window stayed translucent after Xwayland died. s65-0001 adds testTranslucencyXwayland and a check to testXwaylandServerCrash (both fail on +64). s65-0002: `Workspace::removeWindow()` makes "no window active" through `setActiveWindow(nullptr)`, so `windowActivated(nullptr)` reaches effects and scripts when the active X11 window goes with Xwayland (the shutdown path of `cleanupX11()` skips `activateNextWindow()`); the translucency effect forgets a deleted window and handles the newly active window before the previous one. s65-0003: when KWin finds the X11 connection broken it keeps one notice in the person's store of sparky-stereo-problems (messages LOCAL5 to LOCAL7 in `stereo-replica-lang`, ten languages, `--subject LOCAL5=LOCAL6` in `rules`) and ends it at its next start. `build-65.sh` takes build-64.sh's seven arguments with +64 as the previous family. The new tests join `test-in-container.sh`'s list.
+
 
 ## Screenshot replies on the replica successor (+stereo3d62)
 

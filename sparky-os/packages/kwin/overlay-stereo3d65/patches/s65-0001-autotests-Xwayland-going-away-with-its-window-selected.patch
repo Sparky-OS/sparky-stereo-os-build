@@ -1,0 +1,240 @@
+Description: autotests: Xwayland going away with its window selected
+ The Xwayland crash test also checks that the compositor says no window is
+ selected after the selected X11 window went with Xwayland. A new test,
+ testTranslucencyXwayland, kills Xwayland with an X11 window selected, then
+ selects two Wayland windows in turn under the translucency effect at the
+ edition's Inactive=91: it fails on the effect's script error and on an
+ opacity held below 100 % on the selected window (queue row 862).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed, no contributions to KDE for now; the failure is kept in the edition's list of unfiled failures
+Last-Update: 2026-11-24
+
+diff --git a/autotests/integration/effects/CMakeLists.txt b/autotests/integration/effects/CMakeLists.txt
+index cca5a6f..204fe1d 100644
+--- a/autotests/integration/effects/CMakeLists.txt
++++ b/autotests/integration/effects/CMakeLists.txt
+@@ -11,4 +11,5 @@ integrationTest(NAME testFallApartStereo SRCS fallapart_stereo_test.cpp LIBS scr
+ 
+ if(KWIN_BUILD_X11)
+     integrationTest(NAME testTranslucency SRCS translucency_test.cpp LIBS XCB::ICCCM BUILTIN_EFFECTS)
++    integrationTest(NAME testTranslucencyXwayland SRCS translucency_xwayland_test.cpp LIBS XCB::ICCCM BUILTIN_EFFECTS)
+ endif()
+diff --git a/autotests/integration/effects/translucency_xwayland_test.cpp b/autotests/integration/effects/translucency_xwayland_test.cpp
+new file mode 100644
+index 0000000..92466b1
+--- /dev/null
++++ b/autotests/integration/effects/translucency_xwayland_test.cpp
+@@ -0,0 +1,171 @@
++/*
++    KWin - the KDE window manager
++    This file is part of the KDE project.
++
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "kwin_wayland_test.h"
++
++#include "compositor.h"
++#include "effect/anidata_p.h"
++#include "effect/animationeffect.h"
++#include "effect/effecthandler.h"
++#include "effect/effectloader.h"
++#include "main.h"
++#include "wayland_server.h"
++#include "window.h"
++#include "workspace.h"
++#include "x11window.h"
++#include "xwayland/xwayland.h"
++#include "xwayland/xwaylandlauncher.h"
++
++#include <KConfigGroup>
++#include <KWayland/Client/surface.h>
++
++#include <QProcess>
++#include <QRegularExpression>
++
++#include <xcb/xcb_icccm.h>
++
++using namespace KWin;
++
++class TranslucencyXwaylandTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase();
++    void init();
++    void cleanup();
++
++    void testSelectedWindowAfterXwaylandCrash();
++
++private:
++    AnimationEffect *m_translucencyEffect = nullptr;
++};
++
++// The opacity, in percent, the effect keeps a window at once its animations have ended: the lowest target of an
++// opacity animation it still holds for the window, or 100 when it holds none.
++static int heldOpacity(AnimationEffect *effect, Window *window)
++{
++    qreal opacity = 1.0;
++    const auto &state = effect->state();
++    const auto it = state.find(window->effectWindow());
++    if (it == state.end()) {
++        return 100;
++    }
++    for (const AniData &animation : it->second.first) {
++        if (animation.attribute == AnimationEffect::Opacity) {
++            opacity = std::min<qreal>(opacity, animation.to[0]);
++        }
++    }
++    return qRound(opacity * 100);
++}
++
++void TranslucencyXwaylandTest::initTestCase()
++{
++    qputenv("XDG_DATA_DIRS", QCoreApplication::applicationDirPath().toUtf8());
++    qRegisterMetaType<KWin::Window *>();
++    qRegisterMetaType<KWin::Effect *>();
++    QVERIFY(waylandServer()->init(qAppName()));
++
++    auto config = KSharedConfig::openConfig(QString(), KConfig::SimpleConfig);
++    KConfigGroup plugins(config, QStringLiteral("Plugins"));
++    const auto builtinNames = EffectLoader().listOfKnownEffects();
++    for (const QString &name : builtinNames) {
++        plugins.writeEntry(name + QStringLiteral("Enabled"), false);
++    }
++    // the edition's value (sparky-stereo-look's /etc/xdg/kwinrc)
++    config->group(QStringLiteral("Effect-translucency")).writeEntry(QStringLiteral("Inactive"), 91);
++    config->sync();
++    kwinApp()->setConfig(config);
++
++    qputenv("KWIN_EFFECTS_FORCE_ANIMATIONS", "1");
++    kwinApp()->start();
++    QVERIFY(Compositor::self());
++    Test::setOutputConfig({
++        Rect(0, 0, 1280, 1024),
++    });
++}
++
++void TranslucencyXwaylandTest::init()
++{
++    QVERIFY(Test::setupWaylandConnection());
++
++    auto effectloader = effects->findChild<AbstractEffectLoader *>();
++    QVERIFY(effectloader);
++    QSignalSpy effectLoadedSpy(effectloader, &AbstractEffectLoader::effectLoaded);
++    QVERIFY(effects->loadEffect(QStringLiteral("translucency")));
++    QCOMPARE(effectLoadedSpy.count(), 1);
++    m_translucencyEffect = qobject_cast<AnimationEffect *>(effectLoadedSpy.first().first().value<Effect *>());
++    QVERIFY(m_translucencyEffect);
++}
++
++void TranslucencyXwaylandTest::cleanup()
++{
++    Test::destroyWaylandConnection();
++    if (effects->isEffectLoaded(QStringLiteral("translucency"))) {
++        effects->unloadEffect(QStringLiteral("translucency"));
++    }
++    m_translucencyEffect = nullptr;
++}
++
++void TranslucencyXwaylandTest::testSelectedWindowAfterXwaylandCrash()
++{
++    // An X11 window is the selected one when Xwayland goes away. KWin releases the X11 windows on the shutdown path,
++    // where nothing activates another window. The windows selected next must be opaque, the others at 91 %, and the
++    // effect must not fail on the window that went with Xwayland (queue row 862).
++    QTest::failOnWarning(QRegularExpression(QStringLiteral("references invalid window")));
++
++    std::unique_ptr<KWayland::Client::Surface> surfaceA = Test::createSurface();
++    std::unique_ptr<Test::XdgToplevel> toplevelA = Test::createXdgToplevelSurface(surfaceA.get());
++    Window *windowA = Test::renderAndWaitForShown(surfaceA.get(), QSize(100, 50), Qt::white);
++    QVERIFY(windowA);
++    std::unique_ptr<KWayland::Client::Surface> surfaceB = Test::createSurface();
++    std::unique_ptr<Test::XdgToplevel> toplevelB = Test::createXdgToplevelSurface(surfaceB.get());
++    Window *windowB = Test::renderAndWaitForShown(surfaceB.get(), QSize(100, 50), Qt::white);
++    QVERIFY(windowB);
++
++    Test::XcbConnectionPtr c = Test::createX11Connection();
++    QVERIFY(!xcb_connection_has_error(c.get()));
++    const Rect geometry(0, 0, 100, 200);
++    xcb_window_t windowId = xcb_generate_id(c.get());
++    xcb_create_window(c.get(), XCB_COPY_FROM_PARENT, windowId, rootWindow(), geometry.x(), geometry.y(),
++                      geometry.width(), geometry.height(), 0, XCB_WINDOW_CLASS_INPUT_OUTPUT, XCB_COPY_FROM_PARENT, 0, nullptr);
++    xcb_size_hints_t hints{};
++    xcb_icccm_size_hints_set_position(&hints, 1, geometry.x(), geometry.y());
++    xcb_icccm_size_hints_set_size(&hints, 1, geometry.width(), geometry.height());
++    xcb_icccm_set_wm_normal_hints(c.get(), windowId, &hints);
++    xcb_map_window(c.get(), windowId);
++    xcb_flush(c.get());
++    QSignalSpy windowAddedSpy(workspace(), &Workspace::windowAdded);
++    QVERIFY(windowAddedSpy.wait());
++    QPointer<X11Window> x11Window = windowAddedSpy.last().first().value<X11Window *>();
++    QVERIFY(x11Window);
++    workspace()->activateWindow(x11Window);
++    QTRY_COMPARE(workspace()->activeWindow(), x11Window.data());
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA), 91);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB), 91);
++
++    // Xwayland goes away with its window selected
++    QSignalSpy x11ConnectionChangedSpy(kwinApp(), &Application::x11ConnectionChanged);
++    Xwl::Xwayland *xwayland = static_cast<Xwl::Xwayland *>(kwinApp()->xwayland());
++    xwayland->xwaylandLauncher()->process()->kill();
++    QVERIFY(x11ConnectionChangedSpy.wait());
++    QTRY_VERIFY(!x11Window);
++    c.reset();
++
++    workspace()->activateWindow(windowA);
++    QTRY_COMPARE(workspace()->activeWindow(), windowA);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA), 100);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB), 91);
++
++    workspace()->activateWindow(windowB);
++    QTRY_COMPARE(workspace()->activeWindow(), windowB);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowB), 100);
++    QTRY_COMPARE(heldOpacity(m_translucencyEffect, windowA), 91);
++}
++
++WAYLANDTEST_MAIN(TranslucencyXwaylandTest)
++#include "translucency_xwayland_test.moc"
+diff --git a/autotests/integration/xwaylandserver_crash_test.cpp b/autotests/integration/xwaylandserver_crash_test.cpp
+index abe0876..8c26a7c 100644
+--- a/autotests/integration/xwaylandserver_crash_test.cpp
++++ b/autotests/integration/xwaylandserver_crash_test.cpp
+@@ -33,6 +33,7 @@ private Q_SLOTS:
+ void XwaylandServerCrashTest::initTestCase()
+ {
+     qRegisterMetaType<X11Window *>();
++    qRegisterMetaType<Window *>();
+     QVERIFY(waylandServer()->init(qAppName()));
+ 
+     KSharedConfig::Ptr config = KSharedConfig::openConfig(QString(), KConfig::SimpleConfig);
+@@ -80,6 +81,8 @@ void XwaylandServerCrashTest::testCrash()
+     QPointer<X11Window> window = windowCreatedSpy.last().first().value<X11Window *>();
+     QVERIFY(window);
+     QVERIFY(window->isDecorated());
++    workspace()->activateWindow(window);
++    QTRY_COMPARE(workspace()->activeWindow(), window.data());
+ 
+     // Create an override-redirect window.
+     xcb_window_t windowId2 = xcb_generate_id(c.get());
+@@ -98,6 +101,7 @@ void XwaylandServerCrashTest::testCrash()
+     QVERIFY(unmanaged);
+ 
+     // Let's pretend that the Xwayland process has crashed.
++    QSignalSpy windowActivatedSpy(workspace(), &Workspace::windowActivated);
+     QSignalSpy x11ConnectionChangedSpy(kwinApp(), &Application::x11ConnectionChanged);
+     Xwl::Xwayland *xwayland = static_cast<Xwl::Xwayland *>(kwinApp()->xwayland());
+     xwayland->xwaylandLauncher()->process()->terminate();
+@@ -110,6 +114,12 @@ void XwaylandServerCrashTest::testCrash()
+     QCOMPARE(kwinApp()->x11Connection(), nullptr);
+     QCOMPARE(kwinApp()->x11RootWindow(), XCB_WINDOW_NONE);
+ 
++    // The selected window went with Xwayland. Nothing was selected after it, so the compositor says that no window is
++    // selected, as it does for every other change, and effects and scripts do not keep the window (queue row 862).
++    QCOMPARE(workspace()->activeWindow(), nullptr);
++    QVERIFY(!windowActivatedSpy.isEmpty());
++    QCOMPARE(windowActivatedSpy.last().first().value<Window *>(), nullptr);
++
+     // Render a frame to ensure that the compositor doesn't crash.
+     kwinApp()->scene()->addRepaintFull();
+     QSignalSpy frameRenderedSpy(kwinApp()->scene(), &WorkspaceScene::frameRendered);

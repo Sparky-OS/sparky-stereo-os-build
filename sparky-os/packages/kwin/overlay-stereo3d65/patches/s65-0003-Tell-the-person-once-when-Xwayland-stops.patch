@@ -1,0 +1,137 @@
+Description: Tell the person once when Xwayland stops and its X11 programs close
+ When KWin finds the X11 connection broken, Xwayland has gone and the X11
+ programs on it close with it. KWin's own "Xwayland has crashed" popup is on
+ the path where the process is reaped first; XwaylandLauncher::stop()
+ disconnects it on this path, so nothing reached the person. KWin keeps one
+ notice in the person's store of the edition's problems engine
+ (sparky-stereo-problems, message LOCAL6 of debian/stereo-replica-lang): the
+ time, the X11 programs that had a window (their WM_CLASS), why and what to
+ do, in the ten languages; it ends the notice at its next start (queue row 862).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed, edition integration with sparky-stereo-problems
+Last-Update: 2026-11-24
+
+diff --git a/src/utils/stereoreplicaproblems.cpp b/src/utils/stereoreplicaproblems.cpp
+index 1c457af..eea452a 100644
+--- a/src/utils/stereoreplicaproblems.cpp
++++ b/src/utils/stereoreplicaproblems.cpp
+@@ -78,4 +78,47 @@ void setStereoReplicaConfigurationProblem(BackendOutput *output, std::optional<S
+     reportProblem(output, failure, QStringLiteral("stereo-configuration-"), identity);
+ }
+ 
++static const char xwaylandStoppedKey[] = "xwayland-stopped";
++
++void setXwaylandStoppedNotice(const QString &time, const QStringList &programs)
++{
++    static QLibrary library(QString::fromUtf8(KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY));
++    library.setLoadHints(QLibrary::PreventUnloadHint);
++    using Keep = int (*)(int, const char *, const char *, const char *, const char *const *, int, const char *);
++    const auto keep = library.fileName().isEmpty() ? nullptr : reinterpret_cast<Keep>(library.resolve("ssp_keep"));
++    // An event, not a lasting failure: a notice in the person's own store, kept until dismissed or the next session.
++    // The time is an argument, so a later stop is told again even after this one was dismissed.
++    static const char details[] = "{\"severity\":\"notice\"}";
++    const QByteArray when = time.toUtf8();
++    const QByteArray names = programs.isEmpty() ? QByteArrayLiteral("@LOCAL7") : programs.join(QStringLiteral(", ")).toUtf8();
++    int result;
++    if (keep) {
++        const char *args[] = {when.constData(), names.constData()};
++        result = keep(2, "kwin-wayland", xwaylandStoppedKey, "LOCAL6", args, 2, details);
++    } else {
++        result = QProcess::execute(QStringLiteral("/usr/bin/sparky-stereo-problems"),
++                                   {QStringLiteral("keep"), QStringLiteral("--person"), QStringLiteral("--quiet"), QStringLiteral("--details"),
++                                    QString::fromLatin1(details), QStringLiteral("kwin-wayland"), QString::fromLatin1(xwaylandStoppedKey),
++                                    QStringLiteral("LOCAL6"), time, QString::fromUtf8(names)});
++    }
++    if (result != 0) {
++        qCWarning(KWIN_CORE) << "Could not tell the person that Xwayland stopped and closed the X11 programs" << programs << result;
++    }
++}
++
++void clearXwaylandStoppedNotice()
++{
++    static QLibrary library(QString::fromUtf8(KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY));
++    library.setLoadHints(QLibrary::PreventUnloadHint);
++    using Clear = int (*)(int, const char *, const char *);
++    const auto clear = library.fileName().isEmpty() ? nullptr : reinterpret_cast<Clear>(library.resolve("ssp_clear"));
++    const int result = clear ? clear(2, "kwin-wayland", xwaylandStoppedKey)
++                             : QProcess::execute(QStringLiteral("/usr/bin/sparky-stereo-problems"),
++                                                 {QStringLiteral("clear"), QStringLiteral("--person"), QStringLiteral("kwin-wayland"),
++                                                  QString::fromLatin1(xwaylandStoppedKey)});
++    if (result != 0) {
++        qCWarning(KWIN_CORE) << "Could not end the notice of an earlier Xwayland stop" << result;
++    }
++}
++
+ }
+diff --git a/src/utils/stereoreplicaproblems.h b/src/utils/stereoreplicaproblems.h
+index 50ca963..cef2dd8 100644
+--- a/src/utils/stereoreplicaproblems.h
++++ b/src/utils/stereoreplicaproblems.h
+@@ -20,4 +20,14 @@ enum class StereoReplicaFailure {
+ 
+ KWIN_EXPORT void setStereoReplicaProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, bool capture = false);
+ KWIN_EXPORT void setStereoReplicaConfigurationProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, const QString &identity);
++
++/**
++ * Tells the person, through the edition's problems engine, that Xwayland stopped and the X11 @p programs on it were
++ * closed, at @p time (the person's own store, a notice; empty @p programs when none had a window).
++ */
++KWIN_EXPORT void setXwaylandStoppedNotice(const QString &time, const QStringList &programs);
++/**
++ * Ends the notice of an earlier session.
++ */
++KWIN_EXPORT void clearXwaylandStoppedNotice();
+ }
+diff --git a/src/xwayland/xwayland.cpp b/src/xwayland/xwayland.cpp
+index 464caca..5a9e79e 100644
+--- a/src/xwayland/xwayland.cpp
++++ b/src/xwayland/xwayland.cpp
+@@ -23,12 +23,14 @@
+ #include "keyboard_input.h"
+ #include "main_wayland.h"
+ #include "utils/common.h"
++#include "utils/stereoreplicaproblems.h"
+ #include "utils/xcbutils.h"
+ #include "wayland/display.h"
+ #include "wayland_server.h"
+ #include "waylandwindow.h"
+ #include "workspace.h"
+ #include "x11eventfilter.h"
++#include "x11window.h"
+ #include "xkb.h"
+ #include "xwayland_logging.h"
+ 
+@@ -38,6 +40,7 @@
+ #include <wayland/surface.h>
+ 
+ #include <QAbstractEventDispatcher>
++#include <QTime>
+ #include <QDataStream>
+ #include <QDir>
+ #include <QFile>
+@@ -364,6 +367,8 @@ Xwayland::~Xwayland()
+ 
+ void Xwayland::init()
+ {
++    // a notice that Xwayland stopped belongs to the session it happened in
++    clearXwaylandStoppedNotice();
+     m_launcher->enable();
+ 
+     auto env = m_app->processStartupEnvironment();
+@@ -390,6 +395,16 @@ void Xwayland::dispatchEvents(DispatchEventsMode mode)
+     const int connectionError = xcb_connection_has_error(connection);
+     if (connectionError) {
+         qCWarning(KWIN_XWL, "The X11 connection broke (error %d)", connectionError);
++        // Xwayland went away: the person is told once which X11 programs closed with it, before they are released
++        QStringList programs;
++        for (Window *window : workspace()->windows()) {
++            auto x11Window = qobject_cast<X11Window *>(window);
++            if (x11Window && x11Window->isClient() && !x11Window->isDeleted() && !x11Window->resourceClass().isEmpty()
++                && !programs.contains(x11Window->resourceClass())) {
++                programs.append(x11Window->resourceClass());
++            }
++        }
++        setXwaylandStoppedNotice(QTime::currentTime().toString(QStringLiteral("HH:mm")), programs);
+         m_launcher->stop();
+         return;
+     }
