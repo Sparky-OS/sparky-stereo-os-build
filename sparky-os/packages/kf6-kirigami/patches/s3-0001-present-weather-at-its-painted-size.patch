@@ -282,7 +282,7 @@
 -                weather.keptFailure = key;
 +            const qint64 now = weather.elapsed.elapsed();
 +            if (weather.nextFrame >= 0) {
-+                weather.tick.start(int(qBound<qint64>(1, weather.nextFrame - now, std::numeric_limits<int>::max())));
++                weather.tick.start(int(std::clamp<qint64>(weather.nextFrame - now, 1, std::numeric_limits<int>::max())));
 +            } else {
 +                weather.tick.stop();
              }
