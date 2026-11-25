@@ -23,7 +23,7 @@ OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 sparky_provenance_init "$IMAGE" "$HERE"
 TREE=$(cd "$HERE/../../.." && pwd)
-VERSION=${VERSION:-20261125.1~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261125.2~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -239,20 +239,26 @@ cp -a "$SB/contents/splash" "$T/contents/"
 cp "$HERE/sparkyblack/splash/Splash.qml" "$T/contents/splash/Splash.qml"   # bottomRect fix
 cp -a "$QP" "$D/usr/share/plasma/desktoptheme/"
 cp -a "$QPDECO" "$D/usr/share/aurorae/themes/"
-# Zinjanthr0pus's four colour schemes with every text at 4.5:1 or more (queue row 68), from this recipe
+# Zinjanthr0pus's four colour schemes with every text at 4.5:1 or more (queue row 68), from this recipe, the look's default;
+# and beside them each as its author made it, under its own name ("... (zinjanthr0pus's original colours)") (Daniel,
+# 2026-11-25: "on qplatinum - offer both, our is default")
 cp "$HERE"/qplatinum/color-schemes/*.colors "$D/usr/share/color-schemes/"
+cp "$HERE"/qplatinum/color-schemes-original/*.colors "$D/usr/share/color-schemes/"
 control "$D" sparky-stereo-look-qplatinum \
 	"sparky-stereo-look-sparkyblack, kwin-style-aurorae, qt6ct" "" \
 	"QPlatinum look: the System 8 Platinum appearance" \
 	"Zinjanthr0pus's QPlatinum Plasma style and colour schemes and the" \
 	"QPlatinum22p window decoration, as a global theme with Sparky black's" \
 	"icons, cursor and splash. Every text of the four colour schemes reads at" \
-	"4.5:1 or more on its own backgrounds."
+	"4.5:1 or more on its own backgrounds; each scheme as its author made it" \
+	"stays selectable as \"... (zinjanthr0pus's original colours)\"."
 cat >"$D/usr/share/doc/sparky-stereo-look-qplatinum/copyright" <<'EOF'
 QPlatinum look.
 QPlatinum Plasma style and colour schemes: Copyright Zinjanthr0pus, AGPL-3.0 (the LICENSE
-file in /usr/share/plasma/desktoptheme/QPlatinum; its metadata says GPLv3). The four colour schemes' texts
-brought to 4.5:1, hues kept (2026, Daniel Ramos (Capitain Jack)).
+file in /usr/share/plasma/desktoptheme/QPlatinum; its metadata says GPLv3); zinjanthr0pus on the KDE Store
+(https://store.kde.org/p/1731975). The four colour schemes' texts brought to 4.5:1, hues kept (2026, Daniel Ramos
+(Capitain Jack)); each also ships as its author made it (*Original.colors: only its name, in ten languages, and its
+author's name and page as X-KDE-PluginInfo keys added).
 QPlatinum22p window decoration: Niels / Zinjanthr0pus, GPL-3.0
 (https://github.com/nielsvm/kde-aurorae-platinum; LICENSE in its theme folder).
 Global theme definition: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later.
