@@ -318,8 +318,17 @@ def main():
                                                                 info.get("receiver", {}).get("volume", {}).get("muted")))
 
 
+def captions():
+    rc, out, _ = run("python3", "-I", "/rigtools/kwin_windows.py", os.path.join(OUT, "kwin.log"), timeout=30)
+    try:
+        return [w.get("caption", "") for w in json.loads(out.strip().splitlines()[-1])]
+    except (json.JSONDecodeError, IndexError, AttributeError):
+        return []
+
+
 def page(name, args=(), lang=None):
-    """The Throw page in System Settings, as the person opens it; a capture of the screen it shows on."""
+    """The Throw page in System Settings, as the person opens it; a capture of the screen it shows on, the window
+    captions while it is open, and the device setup requests made while it is open."""
     env = dict(os.environ, QT_QPA_PLATFORM="wayland")
     if os.path.isdir("/tools/plugins"):
         env["QT_PLUGIN_PATH"] = "/tools/plugins"
@@ -327,23 +336,33 @@ def page(name, args=(), lang=None):
         # gettext translates nothing while LC_ALL is C (the image's environment sets it): all three together
         env["LANGUAGE"] = lang
         env["LANG"] = env["LC_ALL"] = f"{lang}.UTF-8"
+    before = len(events(LIVING, "eureka"))
     shell = subprocess.Popen(["systemsettings", "kcm_sparkystereo_throw", *args], env=env, stdout=subprocess.DEVNULL,
                              stderr=open(os.path.join(OUT, f"page-{name}.log"), "w"))
     time.sleep(12)
     png = os.path.join(OUT, "frames", f"page-{name}.png")
     rc, out, err = run("python3", "-I", "/rigtools/capture.py", png, timeout=60)
+    shown = captions()
+    asked = len(events(LIVING, "eureka")) - before
     shell.terminate()
     try:
         shell.wait(10)
     except subprocess.TimeoutExpired:
         shell.kill()
-    return rc == 0 and os.path.exists(png)
+    log(f"page {name}: captured {rc == 0 and os.path.exists(png)}, captions {shown}, setup requests to Living room TV {asked}")
+    return {"captured": rc == 0 and os.path.exists(png), "captions": shown, "asked": asked}
 
 
 def pages():
-    row("C1", "the Throw page opens in System Settings and is captured (English)", True, page("devices"))
-    row("C2", "a device's page opens from the page's argument and is captured", True, page("living-room", ["--args", f"device={LIVING}"]))
-    row("C3", "the device's page in Brazilian Portuguese is captured", True, page("living-room-pt_BR", ["--args", f"device={LIVING}"], "pt_BR"))
+    first = page("devices")
+    row("C1", "the Throw page opens in System Settings (its window's caption) and is captured", (True, True),
+        (any(c.startswith("Throw") and "System Settings" in c for c in first["captions"]), first["captured"]))
+    second = page("living-room", ["--args", f"device={LIVING}"])
+    row("C2", "a device's page opens from the page's argument: it asks the device for its information (setup requests) "
+        "and is captured", (True, True), (second["asked"] > 0, second["captured"]))
+    third = page("living-room-pt_BR", ["--args", f"device={LIVING}"], "pt_BR")
+    row("C3", "the device's page in Brazilian Portuguese (caption \"Throw (jogar)\", setup requests) is captured",
+        (True, True, True), (any(c.startswith("Throw (jogar)") for c in third["captions"]), third["asked"] > 0, third["captured"]))
 
 
 def make_pair():
