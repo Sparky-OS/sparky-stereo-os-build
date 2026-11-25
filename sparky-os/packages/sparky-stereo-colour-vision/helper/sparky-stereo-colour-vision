@@ -1,0 +1,630 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The one switch behind System Settings' Colour vision page.
+
+  sparky-stereo-colour-vision status [--json]
+  sparky-stereo-colour-vision set none|protan|deutan|tritan|mono [--terminals|--no-terminals] [--json]
+  sparky-stereo-colour-vision sync [--json]       follow a change made on KDE's Accessibility page
+
+The state is KWin's own: kwinrc [Plugins] colorblindnesscorrectionEnabled and
+[Effect-colorblindnesscorrection] Mode, the keys KDE's Accessibility page writes, so both pages show one
+choice. Each surface is set and read back:
+  kwin     the correction effect (KDE's keys, then KWin's loadEffect/unloadEffect and reconfigureEffect)
+  scheme   the colour-vision variant of the person's colour scheme (plasma-apply-colorscheme); the person's
+           colour settings are kept and put back exactly when the choice returns to none
+  konsole  a profile of ours whose parent is the person's default profile, with the colour-safe scheme
+  nano     ~/.config/nano/nanorc of ours, only when the person has no nano settings file of their own
+  console  one line in ~/.config/sparky-stereo/colour-vision that /etc/profile.d reads on the text console
+A file the person wrote is never rewritten: what could not be set is said, with the reason.
+"""
+import errno
+import fcntl
+import gettext
+import hashlib
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+KINDS = {'none': None, 'protan': 0, 'deutan': 1, 'tritan': 2, 'mono': 3}
+MODE_KIND = {v: k for k, v in KINDS.items() if v is not None}
+LANGUAGES = ['de', 'es', 'fr', 'ja', 'ko', 'pl', 'pt_BR', 'zh_CN', 'zh_TW']
+DOMAIN = 'kcm_sparkystereo_colourvision'
+SUFFIX = 'ColourVision'
+KIND_NAMES = {'protan': 'Protan', 'deutan': 'Deutan', 'tritan': 'Tritan', 'mono': 'Mono'}
+KIND_PHRASES = {'protan': 'protan colour vision', 'deutan': 'deutan colour vision', 'tritan': 'tritan colour vision', 'mono': 'monochromacy'}
+KIND_CONTEXT = '@item colour vision kind, used inside a sentence'
+PROFILE = 'SparkyStereoColourVision.profile'
+MARK = '# sparky-stereo-colour-vision'
+
+
+def env_dir(name, default):
+    value = os.environ.get(name, '')
+    return Path(value) if value.startswith('/') else Path.home() / default
+
+
+CONFIG = env_dir('XDG_CONFIG_HOME', '.config')
+DATA = env_dir('XDG_DATA_HOME', '.local/share')
+STATE = env_dir('XDG_STATE_HOME', '.local/state') / 'sparky-stereo-colour-vision'
+DATA_DIRS = [Path(p) for p in (os.environ.get('XDG_DATA_DIRS') or '/usr/local/share:/usr/share').split(':') if p.startswith('/')]
+SHARE = Path(os.environ.get('SPARKY_STEREO_COLOUR_VISION_DATA', '/usr/share/sparky-stereo/colour-vision'))
+LINE = CONFIG / 'sparky-stereo' / 'colour-vision'
+SAVED = STATE / 'saved.json'
+LAST = STATE / 'last.json'
+
+
+def tr(text, language=None, context=None):
+    try:
+        t = gettext.translation(DOMAIN, localedir=os.environ.get('SPARKY_STEREO_COLOUR_VISION_LOCALEDIR') or None,
+                                languages=[language] if language else None, fallback=True)
+    except OSError:
+        return text
+    return t.pgettext(context, text) if context else t.gettext(text)
+
+
+# ---------------------------------------------------------------------------- KConfig files, written as KConfig writes them
+
+def lock(path):
+    """KConfig takes PATH.lock (QLockFile) while it writes; take the same lock, so neither writes over the other."""
+    lockfile = Path(str(path) + '.lock')
+    for _ in range(100):
+        try:
+            fd = os.open(lockfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            try:
+                pid = int(lockfile.read_text().split('\n', 1)[0])
+                os.kill(pid, 0)
+            except (ValueError, OSError):
+                lockfile.unlink(missing_ok=True)   # stale, as QLockFile judges it: its process is gone
+                continue
+            time.sleep(0.05)
+            continue
+        os.write(fd, f'{os.getpid()}\nsparky-stereo-colour-vision\n{socket.gethostname()}\n'.encode())
+        os.close(fd)
+        return lockfile
+    raise OSError(errno.EAGAIN, 'lock busy', str(lockfile))
+
+
+class KConfigFile:
+    """Raw groups of one KConfig file: [(header or None, [lines])]. Values are kept exactly as written."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.groups = [(None, [])]
+        if self.path.exists():
+            for line in self.path.read_text(encoding='utf-8').splitlines():
+                if line.startswith('[') and line.rstrip().endswith(']'):
+                    self.groups.append((line.rstrip()[1:-1], []))
+                else:
+                    self.groups[-1][1].append(line)
+
+    def group(self, name):
+        for header, lines in self.groups:
+            if header == name:
+                return lines
+        return None
+
+    def get(self, name, key):
+        for line in self.group(name) or []:
+            k, sep, v = line.partition('=')
+            if sep and k.strip() == key:
+                return v
+        return None
+
+    def set(self, name, key, value):
+        lines = self.group(name)
+        if lines is None:
+            self.groups.append((name, []))
+            lines = self.groups[-1][1]
+        for i, line in enumerate(lines):
+            k, sep, _ = line.partition('=')
+            if sep and k.strip() == key:
+                if value is None:
+                    del lines[i]
+                else:
+                    lines[i] = f'{key}={value}'
+                return
+        if value is not None:
+            while lines and not lines[-1].strip():
+                lines.pop()
+            lines.append(f'{key}={value}')
+
+    def replace_group(self, name, lines):
+        for i, (header, _) in enumerate(self.groups):
+            if header == name:
+                if lines is None:
+                    del self.groups[i]
+                else:
+                    self.groups[i] = (name, list(lines))
+                return
+        if lines is not None:
+            self.groups.append((name, list(lines)))
+
+    def headers(self):
+        return [h for h, _ in self.groups if h is not None]
+
+    def text(self):
+        out = []
+        for header, lines in self.groups:
+            body = list(lines)
+            while body and not body[-1].strip():
+                body.pop()
+            if header is None:
+                if body:
+                    out.extend(body)
+                    out.append('')
+                continue
+            if not body:
+                continue
+            out.append(f'[{header}]')
+            out.extend(body)
+            out.append('')
+        return '\n'.join(out).rstrip('\n') + '\n' if out else ''
+
+    def save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        held = lock(self.path)
+        try:
+            tmp = self.path.with_name(f'.{self.path.name}.sparky-cv-{os.getpid()}')
+            tmp.write_text(self.text(), encoding='utf-8')
+            if self.path.exists():
+                shutil.copymode(self.path, tmp)
+                if not os.access(self.path, os.W_OK):
+                    tmp.unlink()
+                    raise PermissionError(errno.EACCES, 'Permission denied', str(self.path))
+            os.replace(tmp, self.path)
+        finally:
+            held.unlink(missing_ok=True)
+
+
+def read_config(file, group, key, default=''):
+    """The cascaded value, as KDE programs read it (system defaults under /etc/xdg and kdedefaults included)."""
+    try:
+        r = subprocess.run(['kreadconfig6', '--file', file, '--group', group, '--key', key, '--default', default],
+                           capture_output=True, text=True, timeout=20)
+    except FileNotFoundError:
+        return KConfigFile(CONFIG / file).get(group, key) or default
+    return r.stdout.rstrip('\n') if r.returncode == 0 else default
+
+
+def write_error(surface, path, exc):
+    return {'id': surface, 'state': 'failed', 'path': str(path), 'error': errno.errorcode.get(exc.errno, str(exc.errno)) if exc.errno else str(exc)}
+
+
+def run(argv, timeout=60):
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, '', 'timeout')
+    return r
+
+
+def dbus_kwin(method, argument):
+    r = run(['dbus-send', '--session', '--print-reply', '--dest=org.kde.KWin', '/Effects', f'org.kde.kwin.Effects.{method}',
+             f'string:{argument}'], timeout=20)
+    return r is not None and r.returncode == 0
+
+
+# ---------------------------------------------------------------------------- saved state
+
+def load_json(path, default):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def save_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(value, indent=1, sort_keys=True))
+    os.replace(tmp, path)
+
+
+def sha(path):
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+# ---------------------------------------------------------------------------- kwin: KDE's own keys
+
+def kwin_kind():
+    enabled = read_config('kwinrc', 'Plugins', 'colorblindnesscorrectionEnabled', 'false').lower() == 'true'
+    if not enabled:
+        return 'none'
+    try:
+        return MODE_KIND.get(int(read_config('kwinrc', 'Effect-colorblindnesscorrection', 'Mode', '0')), 'protan')
+    except ValueError:
+        return 'protan'
+
+
+def set_kwin(kind):
+    path = CONFIG / 'kwinrc'
+    try:
+        cfg = KConfigFile(path)
+        cfg.set('Plugins', 'colorblindnesscorrectionEnabled', 'false' if kind == 'none' else 'true')
+        if kind != 'none':
+            cfg.set('Effect-colorblindnesscorrection', 'Mode', str(KINDS[kind]))
+        cfg.save()
+    except OSError as e:
+        return write_error('kwin', path, e)
+    answered = dbus_kwin('unloadEffect' if kind == 'none' else 'loadEffect', 'colorblindnesscorrection')
+    answered = dbus_kwin('reconfigureEffect', 'colorblindnesscorrection') and answered
+    if kwin_kind() != kind:
+        return {'id': 'kwin', 'state': 'failed', 'path': str(path), 'error': 'read-back'}
+    if kind == 'none':
+        return {'id': 'kwin', 'state': 'off'}
+    return {'id': 'kwin', 'state': 'set' if answered else 'pending', 'mode': KINDS[kind]}
+
+
+# ---------------------------------------------------------------------------- colour scheme
+
+COLOUR_GENERAL_KEYS = ['ColorScheme', 'ColorSchemeHash', 'AccentColor', 'LastUsedCustomAccentColor', 'accentColorFromWallpaper',
+                       'TitlebarIsAccentColored', 'accentActiveTitlebar', 'accentInactiveTitlebar']
+
+
+def colour_groups(cfg):
+    return [h for h in cfg.headers() if h.startswith('Colors:') or h.startswith('ColorEffects:') or h == 'WM']
+
+
+def snapshot_kdeglobals():
+    cfg = KConfigFile(CONFIG / 'kdeglobals')
+    return {'groups': {h: cfg.group(h) for h in colour_groups(cfg)},
+            'general': {k: cfg.get('General', k) for k in COLOUR_GENERAL_KEYS},
+            'contrast': cfg.get('KDE', 'contrast')}
+
+
+def restore_kdeglobals(snap):
+    path = CONFIG / 'kdeglobals'
+    cfg = KConfigFile(path)
+    for h in colour_groups(cfg):
+        if h not in snap['groups']:
+            cfg.replace_group(h, None)
+    for h, lines in snap['groups'].items():
+        cfg.replace_group(h, lines)
+    for k, v in snap['general'].items():
+        cfg.set('General', k, v)
+    cfg.set('KDE', 'contrast', snap['contrast'])
+    cfg.save()
+    # what plasma-apply-colorscheme says after it writes: every KDE program reloads its palette (KGlobalSettings::PaletteChanged)
+    run(['dbus-send', '--session', '--type=signal', '/KGlobalSettings', 'org.kde.KGlobalSettings.notifyChange', 'int32:0', 'int32:0'],
+        timeout=10)
+
+
+def find_data(sub, name, user_first=True):
+    dirs = ([DATA] if user_first else []) + DATA_DIRS
+    for d in dirs:
+        p = d / sub / name
+        if p.exists():
+            return p
+    return None
+
+
+def scheme_name(path):
+    return KConfigFile(path).get('General', 'Name') or path.stem
+
+
+def set_scheme(kind, saved):
+    current = read_config('kdeglobals', 'General', 'ColorScheme', 'BreezeLight')
+    ours = SUFFIX in current
+    if kind == 'none':
+        snap = saved.pop('scheme', None)
+        if snap is None:
+            return {'id': 'scheme', 'state': 'off'}
+        made = snap.get('made')
+        if ours:   # only while the person has not chosen another scheme since: a newer choice of theirs stays
+            try:
+                restore_kdeglobals(snap['kdeglobals'])
+            except OSError as e:
+                saved['scheme'] = snap
+                return write_error('scheme', CONFIG / 'kdeglobals', e)
+        if made and sha(made['path']) == made['sha256']:
+            Path(made['path']).unlink(missing_ok=True)
+        return {'id': 'scheme', 'state': 'off'}
+
+    base = saved.get('scheme', {}).get('base') if ours else current
+    if not ours:
+        saved['scheme'] = {'base': base, 'kdeglobals': snapshot_kdeglobals()}
+    target = base + SUFFIX + KIND_NAMES[kind]
+    base_file = find_data('color-schemes', base + '.colors')
+    shipped = find_data('color-schemes', target + '.colors', user_first=False)
+    target_file = None
+    if shipped is not None and base_file is not None and \
+            KConfigFile(shipped).get('General', 'X-Sparky-Colour-Vision-Base-SHA256') == sha(base_file):
+        target_file = shipped
+    elif base_file is None:
+        return {'id': 'scheme', 'state': 'failed', 'name': base, 'error': 'no-scheme'}
+    else:
+        target_file = DATA / 'color-schemes' / (target + '.colors')
+        try:
+            write_variant(base_file, target_file, kind)
+        except OSError as e:
+            return write_error('scheme', target_file, e)
+    made = saved['scheme'].get('made')
+    if made and made['path'] != str(target_file) and sha(made['path']) == made['sha256']:
+        Path(made['path']).unlink(missing_ok=True)   # the variant made for the kind chosen before
+    if target_file != shipped:
+        saved['scheme']['made'] = {'path': str(target_file), 'sha256': sha(target_file)}
+    else:
+        saved['scheme'].pop('made', None)
+    name = scheme_name(target_file)
+    if not ours or current != target:
+        r = run(['plasma-apply-colorscheme', target])
+        if r is None:
+            return {'id': 'scheme', 'state': 'failed', 'name': name, 'error': 'missing-program', 'program': 'plasma-apply-colorscheme'}
+        if r.returncode != 0:
+            return {'id': 'scheme', 'state': 'failed', 'name': name, 'error': 'program-failed', 'program': 'plasma-apply-colorscheme',
+                    'status': r.returncode}
+    if read_config('kdeglobals', 'General', 'ColorScheme', '') != target:
+        return {'id': 'scheme', 'state': 'failed', 'name': name, 'error': 'read-back'}
+    return dict({'id': 'scheme', 'state': 'set', 'name': name, 'scheme': target}, **limits(base, kind))
+
+
+def limits(base, kind):
+    """What step 3 of queue row 68 measured for this scheme's variant: the pairs that stay close for this kind."""
+    data = load_json(SHARE / 'limits.json', {})
+    if base not in data.get('measured', []):
+        return {'measured': False, 'close': []}
+    return {'measured': True, 'close': data.get('close', {}).get(base, {}).get(kind, [])}
+
+
+# the variant: the person's scheme with only the colours that carry meaning moved to the shipped map,
+# each kept at 4.5:1 or more on the background of its own colour group (WCAG 2.2, 1.4.3)
+ROLE_KEYS = {'negative': 'ForegroundNegative', 'neutral': 'ForegroundNeutral', 'positive': 'ForegroundPositive',
+             'link': 'ForegroundLink', 'visited': 'ForegroundVisited'}
+GROUPS = ['View', 'Window', 'Button', 'Tooltip', 'Complementary', 'Header', 'Selection']
+
+
+def _lin(c):
+    c /= 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def luminance(rgb):
+    return 0.2126 * _lin(rgb[0]) + 0.7152 * _lin(rgb[1]) + 0.0722 * _lin(rgb[2])
+
+
+def contrast(a, b):
+    la, lb = luminance(a), luminance(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def parse_rgb(value):
+    try:
+        parts = [int(x) for x in value.split(',')[:3]]
+    except (ValueError, AttributeError):
+        return None
+    return parts if len(parts) == 3 else None
+
+
+def mix(rgb, t, end):
+    return [round(c + (end - c) * t) for c in rgb]
+
+
+def reach(colours, backgrounds, target=4.5):
+    """The map's colours moved together, one shared step at a time, towards white (dark backgrounds) or black (light ones)
+    until every one reaches the target on every background: one shared step keeps the map's lightness ladder, so colours
+    that differ in lightness for a person without hues still differ."""
+    end = 255 if max(luminance(b) for b in backgrounds) < 0.18 else 0
+    for step in range(0, 201):
+        moved = [mix(c, step / 200.0, end) for c in colours]
+        if all(contrast(c, b) >= target for c in moved for b in backgrounds):
+            return moved
+    return moved
+
+
+def write_variant(base_file, target_file, kind):
+    maps = json.loads((SHARE / 'maps.json').read_text())[kind]
+    cfg = KConfigFile(base_file)
+    for g in GROUPS:
+        group = f'Colors:{g}'
+        if cfg.group(group) is None:
+            continue
+        backs = [parse_rgb(cfg.get(group, k)) for k in ('BackgroundNormal', 'BackgroundAlternate')]
+        backs = [b for b in backs if b]
+        if not backs:
+            continue
+        side = 'dark' if luminance(backs[0]) < 0.18 else 'light'
+        roles = [r for r, key in ROLE_KEYS.items() if cfg.get(group, key) is not None]
+        for role, rgb in zip(roles, reach([maps[side][r] for r in roles], backs)):
+            cfg.set(group, ROLE_KEYS[role], ','.join(str(c) for c in rgb))
+    base_name = cfg.get('General', 'Name') or base_file.stem
+    cfg.set('General', 'Name', f'{base_name} ({KIND_PHRASES[kind]})')
+    for lang in LANGUAGES:
+        local = cfg.get('General', f'Name[{lang}]') or base_name
+        cfg.set('General', f'Name[{lang}]', f'{local} ({tr(KIND_PHRASES[kind], lang, KIND_CONTEXT)})')
+    cfg.set('General', 'X-Sparky-Colour-Vision-Base-SHA256', sha(base_file))
+    cfg.path = Path(target_file)
+    cfg.save()
+
+
+# ---------------------------------------------------------------------------- Konsole
+
+def set_konsole(kind, terminals, saved):
+    rc_path = CONFIG / 'konsolerc'
+    profile_path = DATA / 'konsole' / PROFILE
+    rc = KConfigFile(rc_path)
+    current = read_config('konsolerc', 'Desktop Entry', 'DefaultProfile', '')
+    ours = current == PROFILE
+    if kind == 'none' or not terminals:
+        snap = saved.pop('konsole', None)
+        if snap is None:
+            return {'id': 'konsole', 'state': 'off'}
+        if rc.get('Desktop Entry', 'DefaultProfile') == PROFILE:
+            try:
+                rc.set('Desktop Entry', 'DefaultProfile', snap['DefaultProfile'])
+                rc.save()
+            except OSError as e:
+                saved['konsole'] = snap
+                return write_error('konsole', rc_path, e)
+        if sha(profile_path) == snap.get('profile_sha256'):
+            profile_path.unlink(missing_ok=True)
+        return {'id': 'konsole', 'state': 'off'}
+    if ours:
+        parent = saved.get('konsole', {}).get('parent', 'FALLBACK/')
+    else:
+        found = find_data('konsole', current) if current else None
+        parent = str(found) if found else 'FALLBACK/'
+        saved['konsole'] = {'DefaultProfile': rc.get('Desktop Entry', 'DefaultProfile'), 'parent': parent}
+    text = (f'[General]\nName={tr("Colour vision")}\nParent={parent}\n\n'
+            f'[Appearance]\nColorScheme=BreezeColourVision{KIND_NAMES[kind]}\n')
+    try:
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = profile_path.with_name(f'.{PROFILE}.tmp')
+        tmp.write_text(text, encoding='utf-8')
+        os.replace(tmp, profile_path)
+    except OSError as e:
+        return write_error('konsole', profile_path, e)
+    saved['konsole']['profile_sha256'] = sha(profile_path)
+    try:
+        rc.set('Desktop Entry', 'DefaultProfile', PROFILE)
+        rc.save()
+    except OSError as e:
+        return write_error('konsole', rc_path, e)
+    if read_config('konsolerc', 'Desktop Entry', 'DefaultProfile', '') != PROFILE:
+        return {'id': 'konsole', 'state': 'failed', 'path': str(rc_path), 'error': 'read-back'}
+    return {'id': 'konsole', 'state': 'set'}
+
+
+# ---------------------------------------------------------------------------- nano
+
+def nano_files():
+    return Path.home() / '.nanorc', CONFIG / 'nano' / 'nanorc'
+
+
+def set_nano(kind, terminals):
+    home_rc, xdg_rc = nano_files()
+    lines = (SHARE / 'nanorc').read_text()
+    ours = xdg_rc.exists() and xdg_rc.read_text(errors='replace').startswith(MARK)
+    if kind == 'none' or not terminals:
+        if ours:
+            xdg_rc.unlink(missing_ok=True)
+        return {'id': 'nano', 'state': 'off'}
+    for own in (home_rc, xdg_rc):
+        if own.exists() and not (own == xdg_rc and ours):
+            return {'id': 'nano', 'state': 'kept', 'path': str(own), 'lines': lines.strip().replace('\n', '; ')}
+    try:
+        xdg_rc.parent.mkdir(parents=True, exist_ok=True)
+        xdg_rc.write_text(f'{MARK}: written by System Settings, Colour vision, and removed when it returns to None\n{lines}')
+    except OSError as e:
+        return write_error('nano', xdg_rc, e)
+    return {'id': 'nano', 'state': 'set', 'path': str(xdg_rc)}
+
+
+# ---------------------------------------------------------------------------- the line the shell reads
+
+def read_line():
+    try:
+        words = LINE.read_text().split()
+    except OSError:
+        return 'none', False
+    kind = words[0] if words and words[0] in KINDS else 'none'
+    return kind, 'terminals' in words[1:]
+
+
+def set_line(kind, terminals):
+    try:
+        if kind == 'none':
+            LINE.unlink(missing_ok=True)
+            return {'id': 'console', 'state': 'off'}
+        LINE.parent.mkdir(parents=True, exist_ok=True)
+        LINE.write_text(f'{kind} terminals\n' if terminals else f'{kind}\n')
+    except OSError as e:
+        return write_error('console', LINE, e)
+    return {'id': 'console', 'state': 'set' if terminals else 'off'}
+
+
+# ---------------------------------------------------------------------------- status, set, sync
+
+def status():
+    kind = kwin_kind()
+    line_kind, terminals = read_line()
+    last = load_json(LAST, {})
+    failed = {s['id']: s for s in last.get('surfaces', []) if s.get('state') in ('failed', 'kept')} if last.get('kind') == kind else {}
+    rows = [{'id': 'kwin', 'state': 'off' if kind == 'none' else 'set', 'mode': KINDS[kind]}]
+    current = read_config('kdeglobals', 'General', 'ColorScheme', 'BreezeLight')
+    if SUFFIX in current:
+        f = find_data('color-schemes', current + '.colors')
+        base = load_json(SAVED, {}).get('scheme', {}).get('base', current.split(SUFFIX)[0])
+        rows.append(dict({'id': 'scheme', 'state': 'set', 'scheme': current, 'name': scheme_name(f) if f else current}, **limits(base, kind)))
+    else:
+        rows.append(failed.get('scheme', {'id': 'scheme', 'state': 'off'}))
+    konsole = read_config('konsolerc', 'Desktop Entry', 'DefaultProfile', '') == PROFILE and (DATA / 'konsole' / PROFILE).exists()
+    rows.append({'id': 'konsole', 'state': 'set'} if konsole else failed.get('konsole', {'id': 'konsole', 'state': 'off'}))
+    home_rc, xdg_rc = nano_files()
+    if xdg_rc.exists() and xdg_rc.read_text(errors='replace').startswith(MARK):
+        rows.append({'id': 'nano', 'state': 'set', 'path': str(xdg_rc)})
+    else:
+        rows.append(failed.get('nano', {'id': 'nano', 'state': 'off'}))
+    rows.append({'id': 'console', 'state': 'set' if (terminals and line_kind == kind and kind != 'none') else 'off'})
+    return {'kind': kind, 'terminals': terminals and kind != 'none', 'surfaces': rows}
+
+
+def apply(kind, terminals):
+    STATE.mkdir(parents=True, exist_ok=True)
+    with open(STATE / 'lock', 'w') as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        saved = load_json(SAVED, {})
+        terminals = terminals and kind != 'none'
+        rows = [set_kwin(kind)]
+        rows.append(set_scheme(kind, saved))
+        rows.append(set_konsole(kind, terminals, saved))
+        rows.append(set_nano(kind, terminals))
+        rows.append(set_line(kind, terminals))
+        save_json(SAVED, saved)
+        save_json(LAST, {'kind': kind, 'terminals': terminals, 'surfaces': rows})
+    result = status()
+    by_id = {r['id']: r for r in rows}
+    result['surfaces'] = [by_id[r['id']] if by_id[r['id']]['state'] in ('failed', 'kept', 'pending') else r for r in result['surfaces']]
+    return result
+
+
+def sync():
+    kind = kwin_kind()
+    line_kind, terminals = read_line()
+    if kind == line_kind:
+        return status()
+    return apply(kind, terminals)
+
+
+def main(argv):
+    as_json = '--json' in argv
+    args = [a for a in argv if a != '--json']
+    if not args or args[0] in ('-h', '--help'):
+        print(__doc__.strip())
+        return 0 if args else 2
+    command = args[0]
+    if command == 'status':
+        result = status()
+    elif command == 'sync':
+        result = sync()
+    elif command == 'set' and len(args) >= 2 and args[1] in KINDS:
+        terminals = read_line()[1]
+        if '--terminals' in args[2:]:
+            terminals = True
+        if '--no-terminals' in args[2:]:
+            terminals = False
+        result = apply(args[1], terminals)
+    else:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    if as_json:
+        print(json.dumps(result))
+    else:
+        print(f'colour vision: {result["kind"]}, terminals: {"yes" if result["terminals"] else "no"}')
+        for s in result['surfaces']:
+            print(f'  {s["id"]}: {s["state"]}' + (f' ({s.get("error")}: {s.get("path", "")})' if s.get('error') else ''))
+    return 1 if any(s['state'] == 'failed' for s in result['surfaces']) else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
