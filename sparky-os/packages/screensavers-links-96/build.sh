@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../repo/build-provenance.sh"
 PROJECT=${1:?project} WORK=$(mkdir -p "$2" && cd "$2" && pwd) PRED=$(cd "$3" && pwd) SIB=$(cd "$4" && pwd)
-: "${SPARKY_LC_ARCHIVE_DIR:?the link gate's folder (sparky-os/lean/archive.md)}" "${REPO:?the published tree}" "${IMAGE:?a builder image}"
+: "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate (sparky-os/lean/archive.md)}" "${REPO:?the published tree}" "${IMAGE:?a builder image}"
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 sparky_provenance_init "$IMAGE" "$HERE"
 docker run --ulimit core=1 --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}links-$PROJECT" --cpus 4 --platform linux/amd64 \
