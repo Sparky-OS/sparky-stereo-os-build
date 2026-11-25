@@ -3,7 +3,8 @@
 # Copyright 2026 under the GNU GPL3 License
 # Sparky Stereo OS: the next +lc1 source of mpv-dmo, +stereo3d12 (row 137): the published +stereo3d11+lc1 source
 # (row 835) unpacked, patch 0064 (the render API's stereo view parameter, ours: upstream has none) appended to its
-# series, the changelog entry of the
+# series, libmpv-dev's Depends completed with the two development packages mpv.pc requires and it did not name
+# (libmedia-gpu-route-dev, libstereo-av-dev: without them `pkg-config --cflags mpv` fails), the changelog entry of the
 # plain version then the Lean Code entry on top of that history (repo/lc-successor.py --in-place --overlay), so the old
 # changelog stays a byte identical suffix. +stereo3d11 was made the same way from +stereo3d10 with patches 0062 and
 # 0063 (upstream's 3847a8157f6e by Dudemanguy and f4d13e1c2c91 by llyyr), +stereo3d10 from +stereo3d9 with patch 0061.
@@ -29,6 +30,22 @@ for p in 0064-render-add-MPV_RENDER_PARAM_STEREO_VIEW-one-view-of-a-stereo-video
 	cp "$HERE/patches/$p" "$W/overlay/patches/"
 	echo "$p" >> "$W/overlay/patches/series"
 done
+# mpv.pc lists media-gpu-route and stereo-av in Requires.private, so pkg-config needs their .pc files for --cflags:
+# libmpv-dev depends on their development packages, as it does on every other library of that list
+python3 - "$W/published/debian/control" "$W/overlay/control" <<'CONTROL'
+import sys
+from pathlib import Path
+s = Path(sys.argv[1]).read_text()
+start = s.index('\nPackage: libmpv-dev\n')
+end = s.find('\n\n', start + 1)
+if end < 0:  # the last stanza of the file
+    end = len(s)
+stanza = s[start:end]
+old = ' libstereo-dibr-dev (>= 1.9.0),\n'
+assert stanza.count(old) == 1 and 'libmedia-gpu-route-dev' not in stanza and 'libstereo-av-dev' not in stanza
+stanza = stanza.replace(old, ' libmedia-gpu-route-dev (>= 0.2.0),\n libstereo-av-dev (>= 1.12.0),\n' + old)
+Path(sys.argv[2]).write_text(s[:start] + stanza + s[end:])
+CONTROL
 mapfile -t items < <(python3 - "$HERE/changelog-stereo3d12.txt" <<'PY'
 import sys
 import re
