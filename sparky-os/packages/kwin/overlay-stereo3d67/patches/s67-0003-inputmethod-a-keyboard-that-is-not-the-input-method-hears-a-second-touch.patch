@@ -1,0 +1,325 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 13:55:37 -0300
+Subject: [PATCH] inputmethod: a keyboard that is not the input method
+ hears a second touch and keeps the field in view
+
+Row 71 of the edition: in Japanese, Korean and Chinese sessions Fcitx 5 is
+KWin's input method and Plasma Keyboard is Fcitx 5's on-screen keyboard, a
+second program with a layer-shell window.
+
+- A text field's request for the keyboard (text-input v2 and v3
+  show_input_panel, the internal context's request), also from a field that
+  already has the focus, is now said: InputMethod::showRequested(), relayed
+  as the scriptable D-Bus signal showRequested() of org.kde.kwin.VirtualKeyboard.
+  activeChanged alone says nothing of a second touch on a focused field,
+  so such a keyboard did not show for it.
+- org.kde.kwin.VirtualKeyboard.setOnScreenKeyboardShown(bool): the calling
+  process's shown layer-shell window is its keyboard. While it is shown and
+  KWin's own panel is not shown at the bottom, updateInputPanelState() gives
+  that window's frame to the focused window's setVirtualKeyboardGeometry()
+  and to text-input v2's input_panel_state, as for KWin's own panel: the
+  window ends where the keyboard begins (full-screen and desktop windows,
+  and the "overlay" option, as before) and gets its place back when the
+  keyboard says it is hidden, its window closes or the caller leaves the
+  bus. No coordinates are taken from the caller.
+
+Assisted-by: Claude Opus 5.5
+---
+ src/inputmethod.cpp          | 85 +++++++++++++++++++++++++++++++++---
+ src/inputmethod.h            | 20 +++++++++
+ src/virtualkeyboard_dbus.cpp | 18 ++++++++
+ src/virtualkeyboard_dbus.h   | 13 +++++-
+ 4 files changed, 128 insertions(+), 8 deletions(-)
+
+diff --git a/src/inputmethod.cpp b/src/inputmethod.cpp
+index 675490a..4c1a86b 100644
+--- a/src/inputmethod.cpp
++++ b/src/inputmethod.cpp
+@@ -13,6 +13,7 @@
+ #include "effect/effecthandler.h"
+ #include "input.h"
+ #include "inputpanelv1window.h"
++#include "layershellv1window.h"
+ #include "keyboard_input.h"
+ #include "utils/common.h"
+ #include "virtualkeyboard_dbus.h"
+@@ -43,6 +44,7 @@
+ #include <KShell>
+ 
+ #include <QDBusConnection>
++#include <QDBusServiceWatcher>
+ #include <QDBusMessage>
+ #include <QDBusPendingCall>
+ #include <QKeyEvent>
+@@ -97,6 +99,14 @@ void InputMethod::init()
+ #endif
+ 
+     new VirtualKeyboardDBus(this);
++    m_onScreenKeyboardWatcher = new QDBusServiceWatcher(this);
++    m_onScreenKeyboardWatcher->setConnection(QDBusConnection::sessionBus());
++    m_onScreenKeyboardWatcher->setWatchMode(QDBusServiceWatcher::WatchForUnregistration);
++    connect(m_onScreenKeyboardWatcher, &QDBusServiceWatcher::serviceUnregistered, this, [this](const QString &name) {
++        if (name == m_onScreenKeyboardOwner) {
++            setOnScreenKeyboardShown(m_onScreenKeyboardPid, false, name);
++        }
++    });
+     qCDebug(KWIN_VIRTUALKEYBOARD) << "Registering the DBus interface";
+ 
+     new TextInputManagerV2Interface(waylandServer()->display(), this);
+@@ -106,7 +116,7 @@ void InputMethod::init()
+     connect(waylandServer()->seat(), &SeatInterface::focusedTextInputSurfaceChanged, this, &InputMethod::handleFocusedSurfaceChanged);
+ 
+     TextInputV2Interface *textInputV2 = waylandServer()->seat()->textInputV2();
+-    connect(textInputV2, &TextInputV2Interface::requestShowInputPanel, this, &InputMethod::show);
++    connect(textInputV2, &TextInputV2Interface::requestShowInputPanel, this, &InputMethod::requestShow);
+     connect(textInputV2, &TextInputV2Interface::requestHideInputPanel, this, &InputMethod::hide);
+     connect(textInputV2, &TextInputV2Interface::surroundingTextChanged, this, &InputMethod::surroundingTextChanged);
+     connect(textInputV2, &TextInputV2Interface::contentTypeChanged, this, &InputMethod::contentTypeChanged);
+@@ -121,13 +131,13 @@ void InputMethod::init()
+     connect(textInputV3, &TextInputV3Interface::enabledChanged, this, &InputMethod::textInputInterfaceV3EnabledChanged);
+     connect(textInputV3, &TextInputV3Interface::enableRequested, this, &InputMethod::textInputInterfaceV3EnableRequested);
+     connect(textInputV3, &TextInputV3Interface::cursorRectangleChanged, this, &InputMethod::cursorRectangleChanged);
+-    connect(textInputV3, &TextInputV3Interface::requestShowInputPanel, this, &InputMethod::show);
++    connect(textInputV3, &TextInputV3Interface::requestShowInputPanel, this, &InputMethod::requestShow);
+     connect(textInputV3, &TextInputV3Interface::requestHideInputPanel, this, &InputMethod::hide);
+ 
+     connect(m_internalContext, &InternalInputMethodContext::surroundingTextChanged, this, &InputMethod::surroundingTextChanged);
+     connect(m_internalContext, &InternalInputMethodContext::contentTypeChanged, this, &InputMethod::contentTypeChanged);
+     connect(m_internalContext, &InternalInputMethodContext::enabledChanged, this, &InputMethod::refreshActive);
+-    connect(m_internalContext, &InternalInputMethodContext::showInputPanelRequested, this, &InputMethod::show);
++    connect(m_internalContext, &InternalInputMethodContext::showInputPanelRequested, this, &InputMethod::requestShow);
+     connect(m_internalContext, &InternalInputMethodContext::hideInputPanelRequested, this, &InputMethod::hide);
+ 
+     connect(input()->keyboard()->xkb(), &Xkb::modifierStateChanged, this, [this]() {
+@@ -163,6 +173,58 @@ void InputMethod::show()
+     }
+ }
+ 
++void InputMethod::requestShow()
++{
++    Q_EMIT showRequested();
++    show();
++}
++
++void InputMethod::setOnScreenKeyboardShown(qint64 pid, bool shown, const QString &owner)
++{
++    if (shown) {
++        m_onScreenKeyboardPid = pid;
++        m_onScreenKeyboardOwner = owner;
++        m_onScreenKeyboardWatcher->setWatchedServices(owner.isEmpty() ? QStringList() : QStringList{owner});
++        // the window may be mapped after the keyboard said it is shown
++        connect(workspace(), &Workspace::windowAdded, this, &InputMethod::refreshOnScreenKeyboardWindow, Qt::UniqueConnection);
++    } else if (pid == m_onScreenKeyboardPid) {
++        m_onScreenKeyboardPid = 0;
++        m_onScreenKeyboardOwner.clear();
++        m_onScreenKeyboardWatcher->setWatchedServices({});
++        disconnect(workspace(), &Workspace::windowAdded, this, &InputMethod::refreshOnScreenKeyboardWindow);
++    } else {
++        // another program's keyboard saying it is hidden does not hide this one
++        return;
++    }
++    refreshOnScreenKeyboardWindow();
++}
++
++void InputMethod::refreshOnScreenKeyboardWindow()
++{
++    Window *found = nullptr;
++    if (m_onScreenKeyboardPid) {
++        const auto windows = workspace()->windows();
++        for (Window *window : windows) {
++            if (qobject_cast<LayerShellV1Window *>(window) && window->pid() == m_onScreenKeyboardPid && !window->isDeleted() && window->isShown()) {
++                found = window;
++                break;
++            }
++        }
++    }
++    if (found != m_onScreenKeyboardWindow) {
++        if (m_onScreenKeyboardWindow) {
++            disconnect(m_onScreenKeyboardWindow, nullptr, this, nullptr);
++        }
++        m_onScreenKeyboardWindow = found;
++        if (found) {
++            connect(found, &Window::frameGeometryChanged, this, &InputMethod::updateInputPanelState);
++            connect(found, &Window::hiddenChanged, this, &InputMethod::refreshOnScreenKeyboardWindow);
++            connect(found, &Window::closed, this, &InputMethod::refreshOnScreenKeyboardWindow, Qt::QueuedConnection);
++        }
++    }
++    updateInputPanelState();
++}
++
+ void InputMethod::hide()
+ {
+     m_shouldShowPanel = false;
+@@ -819,11 +881,20 @@ void InputMethod::updateInputPanelState()
+     }
+ 
+     RectF overlap = RectF(0, 0, 0, 0);
++    const bool bottomKeyboard = m_panel && m_panel->mode() != InputPanelV1Window::Mode::Overlay && m_panel->isShown();
++    // another program's on-screen keyboard (one that is not the input method) is kept clear of as KWin's own panel is,
++    // while KWin's own panel is not shown at the bottom
++    RectF onScreenKeyboard;
++    if (!bottomKeyboard && m_onScreenKeyboardWindow && !m_onScreenKeyboardWindow->isDeleted() && m_onScreenKeyboardWindow->isShown()) {
++        onScreenKeyboard = m_onScreenKeyboardWindow->frameGeometry();
++    }
+     if (m_trackedWindow) {
+-        const bool bottomKeyboard = m_panel && m_panel->mode() != InputPanelV1Window::Mode::Overlay && m_panel->isShown();
+-        m_trackedWindow->setVirtualKeyboardGeometry(bottomKeyboard ? m_panel->frameGeometry() : RectF());
++        m_trackedWindow->setVirtualKeyboardGeometry(bottomKeyboard ? m_panel->frameGeometry() : onScreenKeyboard);
+ 
+-        if (m_panel && m_panel->mode() != InputPanelV1Window::Mode::Overlay) {
++        if (!onScreenKeyboard.isEmpty()) {
++            overlap = m_trackedWindow->frameGeometry() & onScreenKeyboard;
++            overlap.moveTo(m_trackedWindow->mapToLocal(overlap.topLeft()));
++        } else if (m_panel && m_panel->mode() != InputPanelV1Window::Mode::Overlay) {
+             overlap = m_trackedWindow->frameGeometry() & m_panel->frameGeometry();
+             overlap.moveTo(m_trackedWindow->mapToLocal(overlap.topLeft()));
+         }
+@@ -833,7 +904,7 @@ void InputMethod::updateInputPanelState()
+     if (!t) {
+         return;
+     }
+-    t->setInputPanelState(m_panel && m_panel->isShown(), overlap.toRect());
++    t->setInputPanelState((m_panel && m_panel->isShown()) || !onScreenKeyboard.isEmpty(), overlap.toRect());
+ }
+ 
+ void InputMethod::setInputMethodCommand(const QString &command)
+diff --git a/src/inputmethod.h b/src/inputmethod.h
+index 702ab97..14c1ece 100644
+--- a/src/inputmethod.h
++++ b/src/inputmethod.h
+@@ -22,6 +22,7 @@
+ #include <KConfigWatcher>
+ 
+ class QProcess;
++class QDBusServiceWatcher;
+ 
+ namespace KWin
+ {
+@@ -94,8 +95,21 @@ public:
+ 
+     RectF cursorRectangle() const;
+ 
++    /**
++     * The on-screen keyboard of another program, one that is not the input method (the keyboard of Fcitx 5 is one), says
++     * whether it is @p shown. While it is, the shown layer-shell window of process @p pid keeps the focused window clear of
++     * it as KWin's own input panel does: the window ends where the keyboard begins, and gets its place back when the
++     * keyboard says it is hidden, when its window closes or when @p owner, the D-Bus name that said so, leaves the bus.
++     */
++    Q_INVOKABLE void setOnScreenKeyboardShown(qint64 pid, bool shown, const QString &owner = QString());
++
+ Q_SIGNALS:
+     void panelChanged();
++    /**
++     * A text field asked for the on-screen keyboard (text-input's show_input_panel, also for a field that already has the
++     * focus, as a second touch on it does). A keyboard that is not the input method hears it on D-Bus.
++     */
++    void showRequested();
+     void activeChanged(bool active);
+     void modeChanged(VirtualKeyboardVisibility mode);
+     void visibleChanged();
+@@ -126,6 +140,8 @@ private Q_SLOTS:
+     void handleTabletOnlyChanged(const KConfigGroup &group);
+ 
+ private:
++    void requestShow();
++    void refreshOnScreenKeyboardWindow();
+     void updateInputPanelState();
+     void adoptInputMethodContext();
+     void commitString(quint32 serial, const QString &text);
+@@ -160,6 +176,10 @@ private:
+     VirtualKeyboardVisibility m_virtualKeyboardVisibility = VirtualKeyboardVisibility::NonMouseInput;
+     quint32 m_serial = 0;
+     QPointer<InputPanelV1Window> m_panel;
++    qint64 m_onScreenKeyboardPid = 0;
++    QString m_onScreenKeyboardOwner;
++    QPointer<Window> m_onScreenKeyboardWindow;
++    QDBusServiceWatcher *m_onScreenKeyboardWatcher = nullptr;
+     QPointer<Window> m_trackedWindow;
+     QPointer<InputMethodGrabV1> m_keyboardGrab;
+ 
+diff --git a/src/virtualkeyboard_dbus.cpp b/src/virtualkeyboard_dbus.cpp
+index d77545c..03b59ba 100644
+--- a/src/virtualkeyboard_dbus.cpp
++++ b/src/virtualkeyboard_dbus.cpp
+@@ -8,6 +8,8 @@
+ */
+ #include "virtualkeyboard_dbus.h"
+ #include <QDBusConnection>
++#include <QDBusConnectionInterface>
++#include <QDBusReply>
+ 
+ namespace KWin
+ {
+@@ -24,6 +26,7 @@ VirtualKeyboardDBus::VirtualKeyboardDBus(InputMethod *parent)
+     connect(parent, &InputMethod::visibleChanged, this, &VirtualKeyboardDBus::visibleChanged);
+     connect(parent, &InputMethod::availableChanged, this, &VirtualKeyboardDBus::availableChanged);
+     connect(parent, &InputMethod::activeClientSupportsTextInputChanged, this, &VirtualKeyboardDBus::activeClientSupportsTextInputChanged);
++    connect(parent, &InputMethod::showRequested, this, &VirtualKeyboardDBus::showRequested);
+ }
+ 
+ VirtualKeyboardDBus::~VirtualKeyboardDBus() = default;
+@@ -78,6 +81,21 @@ void VirtualKeyboardDBus::forceActivate()
+     m_inputMethod->forceActivate();
+ }
+ 
++void VirtualKeyboardDBus::setOnScreenKeyboardShown(bool shown)
++{
++    if (!calledFromDBus()) {
++        return;
++    }
++    // the keyboard's window is found by the process that says it is shown: no coordinates are taken from the caller
++    const QString caller = message().service();
++    const QDBusReply<uint> pid = connection().interface()->servicePid(caller);
++    if (!pid.isValid() || pid.value() == 0) {
++        sendErrorReply(QDBusError::AccessDenied, QStringLiteral("The process of %1 is not known: its on-screen keyboard cannot be kept clear of").arg(caller));
++        return;
++    }
++    m_inputMethod->setOnScreenKeyboardShown(pid.value(), shown, caller);
++}
++
+ }
+ 
+ #include "moc_virtualkeyboard_dbus.cpp"
+diff --git a/src/virtualkeyboard_dbus.h b/src/virtualkeyboard_dbus.h
+index c617a33..bbde04f 100644
+--- a/src/virtualkeyboard_dbus.h
++++ b/src/virtualkeyboard_dbus.h
+@@ -9,12 +9,13 @@
+ #pragma once
+ 
+ #include "inputmethod.h"
++#include <QDBusContext>
+ #include <QObject>
+ 
+ namespace KWin
+ {
+ 
+-class KWIN_EXPORT VirtualKeyboardDBus : public QObject
++class KWIN_EXPORT VirtualKeyboardDBus : public QObject, protected QDBusContext
+ {
+     Q_OBJECT
+     Q_CLASSINFO("D-Bus Interface", "org.kde.kwin.VirtualKeyboard")
+@@ -39,6 +40,12 @@ public:
+ 
+     Q_SCRIPTABLE bool willShowOnActive() const;
+     Q_SCRIPTABLE void forceActivate();
++    /**
++     * For an on-screen keyboard that is not the input method (the keyboard of Fcitx 5 is one): the calling program's
++     * layer-shell window is its keyboard, now @p shown or hidden. While it is shown, KWin keeps the focused window clear of
++     * it as it does for its own input panel.
++     */
++    Q_SCRIPTABLE void setOnScreenKeyboardShown(bool shown);
+ 
+ Q_SIGNALS:
+     Q_SCRIPTABLE void modeChanged();
+@@ -46,6 +53,10 @@ Q_SIGNALS:
+     Q_SCRIPTABLE void visibleChanged();
+     Q_SCRIPTABLE void availableChanged();
+     Q_SCRIPTABLE void activeClientSupportsTextInputChanged();
++    /**
++     * A text field asked for the on-screen keyboard, also one that already has the focus (a second touch on it).
++     */
++    Q_SCRIPTABLE void showRequested();
+ 
+ private:
+     InputMethod *const m_inputMethod;

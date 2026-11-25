@@ -1,0 +1,177 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 13:54:44 -0300
+Subject: [PATCH] autotests: a keyboard that is not the input method hears
+ a second touch and keeps the field in view
+
+Two tests of the edition's row 71, red on +stereo3d66: the virtual
+keyboard's D-Bus object says each time a text field asks for the
+keyboard (a second touch on a field that already has the focus), and the
+layer-shell window of a program that says its keyboard is shown keeps the
+focused window clear of it as KWin's own input panel does, until it says
+it is hidden or its window closes. The test connection binds the layer
+shell.
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/integration/inputmethod_test.cpp | 127 ++++++++++++++++++++-
+ 1 file changed, 126 insertions(+), 1 deletion(-)
+
+diff --git a/autotests/integration/inputmethod_test.cpp b/autotests/integration/inputmethod_test.cpp
+index 4135ad0..2ecf222 100644
+--- a/autotests/integration/inputmethod_test.cpp
++++ b/autotests/integration/inputmethod_test.cpp
+@@ -46,6 +46,7 @@
+ #include <linux/input-event-codes.h>
+ #include <memory>
+ #include <sys/mman.h>
++#include <unistd.h>
+ #include <wayland-client.h>
+ 
+ using namespace KWin;
+@@ -77,6 +78,8 @@ private Q_SLOTS:
+     void testSendRepeatInfo();
+     void testSendRepeatInfoV10();
+     void testWindowNoIMActivation();
++    void testShowRequestedOnFocusedField();
++    void testOnScreenKeyboardKeepsFieldInView();
+ 
+ private:
+     void touchNow()
+@@ -115,7 +118,7 @@ void InputMethodTest::init()
+ 
+     touchNow();
+ 
+-    QVERIFY(Test::setupWaylandConnection(Test::AdditionalWaylandInterface::Seat | Test::AdditionalWaylandInterface::TextInputManagerV2 | Test::AdditionalWaylandInterface::InputMethodV1 | Test::AdditionalWaylandInterface::TextInputManagerV3));
++    QVERIFY(Test::setupWaylandConnection(Test::AdditionalWaylandInterface::Seat | Test::AdditionalWaylandInterface::TextInputManagerV2 | Test::AdditionalWaylandInterface::InputMethodV1 | Test::AdditionalWaylandInterface::TextInputManagerV3 | Test::AdditionalWaylandInterface::LayerShellV1));
+ 
+     kwinApp()->inputMethod()->setMode(InputMethod::VirtualKeyboardVisibility::NonMouseInput);
+ }
+@@ -1115,6 +1118,128 @@ void InputMethodTest::testWindowNoIMActivation()
+     QVERIFY(!kwinApp()->inputMethod()->isActive());
+ }
+ 
++void InputMethodTest::testShowRequestedOnFocusedField()
++{
++    // A keyboard that is not KWin's input method (the keyboard of Fcitx 5 is one) shows for a touch on a field that already
++    // has the focus only if KWin tells it that the field asked for the keyboard: the virtual keyboard's D-Bus object says so
++    // for each request, the first and every later one.
++    auto dbusObject = kwinApp()->inputMethod()->findChild<VirtualKeyboardDBus *>();
++    QVERIFY(dbusObject);
++    const int signalIndex = dbusObject->metaObject()->indexOfSignal("showRequested()");
++    QVERIFY(signalIndex >= 0);
++    QSignalSpy showRequestedSpy(dbusObject, dbusObject->metaObject()->method(signalIndex));
++    QVERIFY(showRequestedSpy.isValid());
++
++    std::unique_ptr<KWayland::Client::Surface> surface(Test::createSurface());
++    std::unique_ptr<Test::XdgToplevel> shellSurface(Test::createXdgToplevelSurface(surface.get()));
++    Window *window = Test::renderAndWaitForShown(surface.get(), QSize(1280, 1024), Qt::red);
++    QVERIFY(window);
++    std::unique_ptr<KWayland::Client::TextInput> textInput(Test::waylandTextInputManager()->createTextInput(Test::waylandSeat()));
++    QVERIFY(textInput != nullptr);
++
++    touchNow();
++    textInput->enable(surface.get());
++    textInput->showInputPanel();
++    QVERIFY(showRequestedSpy.count() || showRequestedSpy.wait());
++    QCOMPARE(showRequestedSpy.count(), 1);
++
++    // the field keeps the focus and asks again, as Qt does for a second touch on it
++    textInput->showInputPanel();
++    QVERIFY(showRequestedSpy.count() == 2 || showRequestedSpy.wait());
++    QCOMPARE(showRequestedSpy.count(), 2);
++
++    shellSurface.reset();
++    QVERIFY(Test::waitForWindowClosed(window));
++}
++
++void InputMethodTest::testOnScreenKeyboardKeepsFieldInView()
++{
++    // The keyboard of another program (one that is not KWin's input method, as the keyboard of Fcitx 5) says it is shown:
++    // KWin keeps the focused window clear of that program's layer-shell window as it does for its own input panel, and
++    // gives the window its place back when the keyboard says it is hidden or its window closes.
++    auto dbusObject = kwinApp()->inputMethod()->findChild<VirtualKeyboardDBus *>();
++    QVERIFY(dbusObject);
++    QVERIFY(dbusObject->metaObject()->indexOfMethod("setOnScreenKeyboardShown(bool)") >= 0);
++
++    std::unique_ptr<KWayland::Client::Surface> surface(Test::createSurface());
++    std::unique_ptr<Test::XdgToplevel> shellSurface(Test::createXdgToplevelSurface(surface.get()));
++    Window *window = Test::renderAndWaitForShown(surface.get(), QSize(1280, 1024), Qt::red);
++    QVERIFY(window);
++    QCOMPARE(window->frameGeometry().size(), QSize(1280, 1024));
++    QSignalSpy frameGeometryChangedSpy(window, &Window::frameGeometryChanged);
++    QSignalSpy toplevelConfigureRequestedSpy(shellSurface.get(), &Test::XdgToplevel::configureRequested);
++    QSignalSpy surfaceConfigureRequestedSpy(shellSurface->xdgSurface(), &Test::XdgSurface::configureRequested);
++    QVERIFY(surfaceConfigureRequestedSpy.wait());
++
++    auto followResize = [&]() {
++        if (!surfaceConfigureRequestedSpy.wait()) {
++            return false;
++        }
++        Test::render(surface.get(), toplevelConfigureRequestedSpy.last().first().value<QSize>(), Qt::red);
++        return frameGeometryChangedSpy.wait();
++    };
++
++    // the field takes the text input focus. The test's input method stands for Fcitx 5, whose own panel (its candidate
++    // popup) is an overlay, never a keyboard at the bottom
++    Test::inputMethod()->setMode(Test::MockInputMethod::Mode::Overlay);
++    std::unique_ptr<KWayland::Client::TextInput> textInput(Test::waylandTextInputManager()->createTextInput(Test::waylandSeat()));
++    QVERIFY(textInput != nullptr);
++    waylandServer()->seat()->setFocusedTextInputSurface(window->surface());
++    textInput->enable(surface.get());
++    QSignalSpy paneladded(kwinApp()->inputMethod(), &KWin::InputMethod::panelChanged);
++    QVERIFY(paneladded.wait());
++    QVERIFY(kwinApp()->inputMethod()->panel()->mode() == InputPanelV1Window::Mode::Overlay);
++
++    // the other program's keyboard: a layer-shell window across the bottom of the first output, 300 high, that never takes
++    // the keyboard focus
++    std::unique_ptr<KWayland::Client::Surface> keyboardSurface(Test::createSurface());
++    std::unique_ptr<Test::LayerSurfaceV1> keyboardShellSurface(Test::createLayerSurfaceV1(keyboardSurface.get(), QStringLiteral("dock")));
++    keyboardShellSurface->set_anchor(Test::LayerSurfaceV1::anchor_bottom | Test::LayerSurfaceV1::anchor_left | Test::LayerSurfaceV1::anchor_right);
++    keyboardShellSurface->set_size(0, 300);
++    keyboardShellSurface->set_keyboard_interactivity(0);
++    keyboardSurface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QSignalSpy keyboardConfigureSpy(keyboardShellSurface.get(), &Test::LayerSurfaceV1::configureRequested);
++    QVERIFY(keyboardConfigureSpy.wait());
++    keyboardShellSurface->ack_configure(keyboardConfigureSpy.last().at(0).toUInt());
++    Window *keyboardWindow = Test::renderAndWaitForShown(keyboardSurface.get(), keyboardConfigureSpy.last().at(1).toSize(), Qt::blue);
++    QVERIFY(keyboardWindow);
++    QCOMPARE(keyboardWindow->frameGeometry().size(), QSize(1280, 300));
++    QCOMPARE(keyboardWindow->frameGeometry().y(), 1024 - 300);
++    QCOMPARE(window->frameGeometry().size(), QSize(1280, 1024));
++    // the keyboard's program is found by its process (here the test's own), the field's window is the one tracked
++    QCOMPARE(keyboardWindow->pid(), getpid());
++    QCOMPARE(kwinApp()->inputMethod()->activeWindow(), window);
++
++    auto sayShown = [](bool shown) {
++        return QMetaObject::invokeMethod(kwinApp()->inputMethod(), "setOnScreenKeyboardShown", Q_ARG(qint64, qint64(getpid())), Q_ARG(bool, shown));
++    };
++
++    // the program says its keyboard is shown: the window ends where the keyboard begins
++    QVERIFY(sayShown(true));
++    QVERIFY(followResize());
++    QCOMPARE(window->frameGeometry().y(), 0);
++    QCOMPARE(window->frameGeometry().height(), 1024 - 300);
++
++    // it says its keyboard is hidden: the window has its place back
++    QVERIFY(sayShown(false));
++    QVERIFY(followResize());
++    QCOMPARE(window->frameGeometry().height(), 1024);
++
++    // shown again, then its window closes without a word: the window has its place back all the same
++    QVERIFY(sayShown(true));
++    QVERIFY(followResize());
++    QCOMPARE(window->frameGeometry().height(), 1024 - 300);
++    keyboardShellSurface.reset();
++    keyboardSurface.reset();
++    QVERIFY(Test::waitForWindowClosed(keyboardWindow));
++    QVERIFY(followResize());
++    QCOMPARE(window->frameGeometry().height(), 1024);
++
++    shellSurface.reset();
++    QVERIFY(Test::waitForWindowClosed(window));
++    Test::inputMethod()->setMode(Test::MockInputMethod::Mode::TopLevel);
++}
++
+ WAYLANDTEST_MAIN(InputMethodTest)
+ 
+ #include "inputmethod_test.moc"
