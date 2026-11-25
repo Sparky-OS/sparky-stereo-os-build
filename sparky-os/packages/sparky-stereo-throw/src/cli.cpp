@@ -21,7 +21,7 @@ QTextStream err(stderr);
 int usage()
 {
     err << i18nc("@info:usage the command's help; keep the words in angle brackets' meaning",
-                 "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute]\n");
+                 "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n");
     return 2;
 }
 } // namespace
@@ -114,6 +114,28 @@ int main(int argc, char **argv)
             return 1;
         }
         return 0;
+    }
+    if (verb == QLatin1String("status") && args.size() == 2) {
+        const QDBusReply<QString> reply = throwd.call(QStringLiteral("Status"), id);
+        if (!reply.isValid()) {
+            err << reply.error().message() << '\n';
+            return 1;
+        }
+        out << QJsonDocument::fromJson(reply.value().toUtf8()).toJson(QJsonDocument::Compact) << '\n';
+        return 0;
+    }
+    if (verb == QLatin1String("choose") && (args.size() == 3 || args.size() == 4)) {
+        // "-" leaves the choice to the table: the codec it prefers, the codec's own default mode
+        const QString codec = args.at(2) == QLatin1String("-") ? QString() : args.at(2);
+        const QString mode = args.size() == 4 && args.at(3) != QLatin1String("-") ? args.at(3) : QString();
+        const QDBusReply<QString> reply = throwd.call(QStringLiteral("SetChoice"), id, codec, mode);
+        if (!reply.isValid()) {
+            err << reply.error().message() << '\n';
+            return 1;
+        }
+        const QJsonObject answer = QJsonDocument::fromJson(reply.value().toUtf8()).object();
+        out << QJsonDocument(answer).toJson(QJsonDocument::Indented);
+        return answer.contains(QStringLiteral("error")) ? 1 : 0;
     }
     if (verb == QLatin1String("info") && args.size() == 2) {
         const QDBusReply<QString> reply = throwd.call(QStringLiteral("DeviceInfo"), id);

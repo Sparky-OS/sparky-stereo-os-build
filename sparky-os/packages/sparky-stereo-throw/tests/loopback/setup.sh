@@ -14,7 +14,7 @@ mkdir -p "$OUT/devices"
 ip link set lo up
 ip link add dummy0 type dummy
 ip link set dummy0 multicast on
-for n in 1 2 3 4 5; do ip addr add 10.81.0.$n/24 dev dummy0; done
+for n in 1 2 3 4 5 6; do ip addr add 10.81.0.$n/24 dev dummy0; done
 ip link set dummy0 up
 ip -brief addr > "$OUT/net.txt"
 ip route >> "$OUT/net.txt"
@@ -41,6 +41,7 @@ devices=(
     "10.81.0.3 cast-study.local|Study screen|Mystery Box 3000|normal|5d7a9c4e81ab4c3d9e2f000000000083"
     "10.81.0.4 cast-hall.local|Hall TV|Chromecast|no-pong|5d7a9c4e81ab4c3d9e2f000000000084"
     "10.81.0.5 cast-den.local|Den TV|Google TV Streamer|normal|5d7a9c4e81ab4c3d9e2f000000000085"
+    "10.81.0.6 cast-kitchen.local|Kitchen speaker|Google Nest Mini|normal|5d7a9c4e81ab4c3d9e2f000000000086"
 )
 for entry in "${devices[@]}"; do
     IFS='|' read -r addrhost name model mode id <<< "$entry"

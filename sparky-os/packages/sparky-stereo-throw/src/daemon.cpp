@@ -3,6 +3,8 @@
 #include "daemon.h"
 
 #include <KLocalizedString>
+#include <KSharedConfig>
+#include <KConfigGroup>
 
 #include <QCollator>
 #include <algorithm>
@@ -79,27 +81,78 @@ bool Daemon::start()
     return true;
 }
 
+namespace
+{
+KConfigGroup choiceGroup(const QString &id)
+{
+    return KSharedConfig::openConfig(QStringLiteral("sparky-stereo-throwrc"))->group(QStringLiteral("Device")).group(id);
+}
+QString words(const char *context, const QString &text)
+{
+    // the table's words in the person's language where the catalogue has them; a product's own name stays
+    return text.isEmpty() ? text : ki18nc(context, text.toUtf8().constData()).toString();
+}
+} // namespace
+
+Plan Daemon::planFor(const Device &device) const
+{
+    ModelRow row = m_table.row(device.model);
+    if (device.group) {
+        row.video = false;
+    }
+    const KConfigGroup group = choiceGroup(device.id);
+    return Codecs::plan(row, group.readEntry("Codec", QString()), group.readEntry("Mode", QString()));
+}
+
 QJsonObject Daemon::describe(const Device &device) const
 {
     const ModelRow row = m_table.row(device.model);
-    QString size = QStringLiteral("%1x%2@%3").arg(row.size.width()).arg(row.size.height()).arg(row.refreshHz);
+    const Plan plan = planFor(device);
+    const KConfigGroup group = choiceGroup(device.id);
+    const QStringList here = Codecs::encodable();
+    QJsonArray codecs;
+    for (const auto &c : row.codecs) {
+        QJsonArray modes;
+        for (const auto &m : c.modes) {
+            modes.append(m.text());
+        }
+        const bool available = here.contains(c.codec);
+        codecs.append(QJsonObject{
+            {QStringLiteral("codec"), c.codec},
+            {QStringLiteral("label"), Codecs::info(c.codec).label},
+            {QStringLiteral("profile"), c.profile},
+            {QStringLiteral("level"), c.level},
+            {QStringLiteral("modes"), modes},
+            {QStringLiteral("default"), c.defaultMode.text()},
+            {QStringLiteral("available"), available},
+            {QStringLiteral("missing"), available ? QString() : Codecs::missing(c.codec)},
+        });
+    }
+    const bool video = row.video && !device.group;
     QJsonObject o{
         {QStringLiteral("id"), device.id},
         {QStringLiteral("name"), device.name},
         {QStringLiteral("model"), device.model},
-        // the table's words in the person's language where the catalogue has them; a product's own name stays
-        {QStringLiteral("generation"),
-         row.generation.isEmpty() ? row.generation
-                                  : ki18nc("@info a Cast model's generation, from the device table", row.generation.toUtf8().constData()).toString()},
+        {QStringLiteral("generation"), words("@info a Cast model's generation, from the device table", row.generation)},
+        {QStringLiteral("short"), words("@info a Cast model in a few words, from the device table", row.shortWords)},
         {QStringLiteral("known"), row.known},
-        {QStringLiteral("video"), row.video && !device.group},
+        {QStringLiteral("video"), video},
         {QStringLiteral("group"), device.group},
         {QStringLiteral("host"), device.host},
         {QStringLiteral("address"), device.address.toString()},
         {QStringLiteral("port"), device.port},
-        {QStringLiteral("codec"), row.codec},
-        {QStringLiteral("level"), row.level},
-        {QStringLiteral("mode"), size},
+        {QStringLiteral("codecs"), codecs},
+        {QStringLiteral("choiceCodec"), group.readEntry("Codec", QString())},
+        {QStringLiteral("choiceMode"), group.readEntry("Mode", QString())},
+        {QStringLiteral("codec"), video ? plan.info.codec : QString()},
+        {QStringLiteral("codecLabel"), video ? plan.info.label : QString()},
+        {QStringLiteral("autoCodecLabel"), video ? Codecs::plan(row, QString(), QString()).info.label : QString()},
+        {QStringLiteral("mode"), video && plan.mode.isValid() ? plan.mode.text() : QString()},
+        {QStringLiteral("level"), video && row.codecRow(plan.info.codec) ? row.codecRow(plan.info.codec)->level : QString()},
+        {QStringLiteral("container"), plan.info.format},
+        {QStringLiteral("sound"), Codecs::soundWords(plan).translated()},
+        {QStringLiteral("limited"), plan.limited.translated()},
+        {QStringLiteral("planError"), plan.error.translated()},
         {QStringLiteral("state"), QStringLiteral("idle")},
     };
     if (const auto last = m_lastState.constFind(device.id); last != m_lastState.constEnd()) {
@@ -109,9 +162,60 @@ QJsonObject Daemon::describe(const Device &device) const
     if (auto session = m_sessions.value(device.id)) {
         o.insert(QStringLiteral("state"), session->state());
         o.insert(QStringLiteral("detail"), session->detail());
-        o.insert(QStringLiteral("mode"), QStringLiteral("%1x%2@%3").arg(session->size().width()).arg(session->size().height()).arg(session->refreshHz()));
+        if (session->plan().video) {
+            o.insert(QStringLiteral("mode"), session->plan().mode.text());
+            o.insert(QStringLiteral("codec"), session->plan().info.codec);
+            o.insert(QStringLiteral("codecLabel"), session->plan().info.label);
+        }
+        o.insert(QStringLiteral("sink"), session->sinkName());
     }
     return o;
+}
+
+QString Daemon::SetChoice(const QString &id, const QString &codec, const QString &mode)
+{
+    const auto device = m_discovery.device(id);
+    if (!device) {
+        return json(QJsonObject{{QStringLiteral("error"), QStringLiteral("no device %1 has been found").arg(id)}});
+    }
+    const ModelRow row = m_table.row(device->model);
+    if (!codec.isEmpty() && !row.codecRow(codec)) {
+        return json(QJsonObject{{QStringLiteral("error"), QStringLiteral("%1 does not take %2").arg(device->name, codec)}});
+    }
+    if (!mode.isEmpty()) {
+        const CodecRow *c = row.codecRow(codec.isEmpty() ? Codecs::plan(row, QString(), QString()).info.codec : codec);
+        if (!c || !c->allows(Mode::parse(mode))) {
+            return json(QJsonObject{{QStringLiteral("error"), QStringLiteral("%1 is not a mode %2 takes in that codec").arg(mode, device->name)}});
+        }
+    }
+    // kept per device, by its identity, as KWin keeps its network screen's 3D format by the same identity
+    KConfigGroup group = choiceGroup(id);
+    if (codec.isEmpty()) {
+        group.deleteEntry("Codec");
+    } else {
+        group.writeEntry("Codec", codec);
+    }
+    if (mode.isEmpty()) {
+        group.deleteEntry("Mode");
+    } else {
+        group.writeEntry("Mode", mode);
+    }
+    group.sync();
+    Q_EMIT DevicesChanged();
+    return json(describe(*device));
+}
+
+QString Daemon::Status(const QString &id)
+{
+    if (auto session = m_sessions.value(id)) {
+        return json(session->status());
+    }
+    QJsonObject o{{QStringLiteral("state"), QStringLiteral("idle")}};
+    if (const auto last = m_lastState.constFind(id); last != m_lastState.constEnd()) {
+        o.insert(QStringLiteral("state"), last->first);
+        o.insert(QStringLiteral("detail"), last->second);
+    }
+    return json(o);
 }
 
 QString Daemon::Devices()
@@ -140,7 +244,7 @@ QString Daemon::Throw(const QString &id)
     if (auto session = m_sessions.value(id); session && (session->state() == QLatin1String("starting") || session->state() == QLatin1String("throwing"))) {
         return QString();
     }
-    auto session = new ThrowSession(*device, m_table.row(device->model), this);
+    auto session = new ThrowSession(*device, m_table.row(device->model), planFor(*device), this);
     m_sessions.insert(id, session);
     connect(session, &ThrowSession::stateChanged, this, [this, id](const QString &state, const QString &detail) {
         m_lastState.insert(id, {state, detail});

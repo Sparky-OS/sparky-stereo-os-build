@@ -134,6 +134,18 @@ void ThrowKcm::setVolume(const QString &id, double level, int muted)
     });
 }
 
+void ThrowKcm::setChoice(const QString &id, const QString &codec, const QString &mode)
+{
+    auto watcher = new QDBusPendingCallWatcher(throwd()->asyncCall(QStringLiteral("SetChoice"), id, codec, mode), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
+        w->deleteLater();
+        QDBusPendingReply<QString> reply = *w;
+        const QJsonObject answer = QJsonDocument::fromJson(reply.isValid() ? reply.value().toUtf8() : QByteArray()).object();
+        setError(!reply.isValid() ? reply.error().message() : answer.value(QStringLiteral("error")).toString());
+        refresh();
+    });
+}
+
 void ThrowKcm::openOnlineAccounts()
 {
     QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_kaccounts")});

@@ -11,6 +11,24 @@ import org.kde.kcmutils as KCM
 KCM.SimpleKCM {
     id: page
     property var device: ({})
+    // the device as the daemon describes it now (a choice made here changes it)
+    readonly property var current: {
+        for (const d of kcm.devices) {
+            if (d.id === device.id) {
+                return d
+            }
+        }
+        return device
+    }
+    readonly property var codecRows: current.codecs || []
+    readonly property var codecRow: {
+        for (const c of codecRows) {
+            if (c.codec === current.codec) {
+                return c
+            }
+        }
+        return ({})
+    }
     readonly property var info: kcm.infoId === device.id ? kcm.info : ({})
     readonly property var eureka: info.eureka || ({})
     readonly property var deviceInfo: eureka.device_info || ({})
@@ -44,7 +62,9 @@ KCM.SimpleKCM {
         }
         QQC2.Label {
             Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label what the model name tells about the device", "Generation:")
-            text: device.generation || ""
+            text: current.generation || ""
+            wrapMode: Text.Wrap
+            Layout.maximumWidth: Kirigami.Units.gridUnit * 24
         }
         QQC2.Label {
             Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label", "Address:")
@@ -54,12 +74,69 @@ KCM.SimpleKCM {
             Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label the device's software version", "Firmware:")
             text: build.cast_build_revision || i18ndc("sparky-stereo-throw", "@info the device did not give it", "not given by the device")
         }
+
+        Kirigami.Separator {
+            Kirigami.FormData.isSection: true
+            Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@title:group how a Throw to this device is made", "Throw")
+        }
+        QQC2.ComboBox {
+            id: codecBox
+            visible: !!page.current.video
+            Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label the video codec a Throw sends", "Codec:")
+            textRole: "text"
+            valueRole: "value"
+            implicitContentWidthPolicy: QQC2.ComboBox.WidestText
+            model: {
+                const rows = [{value: "", text: i18ndc("sparky-stereo-throw", "@item the table's choice; %1 what it is", "Automatic (%1)", page.current.autoCodecLabel || "")}]
+                for (const c of page.codecRows) {
+                    rows.push({value: c.codec, text: c.available ? c.label : i18ndc("sparky-stereo-throw", "@item a codec this computer cannot encode; %1 its name", "%1 (no encoder on this computer)", c.label)})
+                }
+                return rows
+            }
+            currentIndex: Math.max(0, indexOfValue(page.current.choiceCodec || ""))
+            onActivated: kcm.setChoice(page.current.id, currentValue, "")
+        }
+        QQC2.ComboBox {
+            visible: !!page.current.video
+            Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label the picture's size and rate a Throw sends", "Mode:")
+            textRole: "text"
+            valueRole: "value"
+            implicitContentWidthPolicy: QQC2.ComboBox.WidestText
+            model: {
+                const rows = [{value: "", text: i18ndc("sparky-stereo-throw", "@item the table's choice; %1 what it is", "Automatic (%1)", page.codecRow.default || "")}]
+                for (const m of (page.codecRow.modes || [])) {
+                    rows.push({value: m, text: m})
+                }
+                return rows
+            }
+            currentIndex: Math.max(0, indexOfValue(page.current.choiceMode || ""))
+            onActivated: kcm.setChoice(page.current.id, page.current.choiceCodec || "", currentValue)
+        }
         QQC2.Label {
+            visible: !!page.current.video && !!page.current.mode
             Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label the picture a Throw sends", "Throw mode:")
-            text: i18ndc("sparky-stereo-throw", "@info %1 the mode, %2 the codec, %3 its level", "%1, %2 level %3", device.mode || "", device.codec || "", device.level || "")
+            text: i18ndc("sparky-stereo-throw", "@info %1 the mode, %2 the codec, %3 its level", "%1, %2 level %3", page.current.mode || "", page.current.codecLabel || "", page.current.level || "")
+        }
+        QQC2.Label {
+            Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label the sound a Throw sends", "Sound:")
+            text: page.current.sound || ""
+            wrapMode: Text.Wrap
+            Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: !!page.current.limited
+            type: Kirigami.MessageType.Information
+            text: page.current.limited || ""
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: !!page.current.planError
+            type: Kirigami.MessageType.Error
+            text: page.current.planError || ""
         }
         QQC2.Button {
-            visible: device.state === "throwing"
+            visible: page.current.state === "throwing" && !!page.current.video
             icon.name: "preferences-desktop-display"
             text: i18ndc("sparky-stereo-throw", "@action:button the network screen's 3D format and eye swap are in Display Settings", "3D Format and Eye Swap…")
             onClicked: kcm.openDisplaySettings()

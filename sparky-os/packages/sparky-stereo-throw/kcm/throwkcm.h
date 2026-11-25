@@ -57,6 +57,8 @@ public:
     Q_INVOKABLE void stop(const QString &id);
     Q_INVOKABLE void loadInfo(const QString &id);
     Q_INVOKABLE void setVolume(const QString &id, double level, int muted);
+    // the codec and mode for a device ("" for the table's choice), kept by the daemon per device
+    Q_INVOKABLE void setChoice(const QString &id, const QString &codec, const QString &mode);
     Q_INVOKABLE void openOnlineAccounts();
     Q_INVOKABLE void openDisplaySettings();
 

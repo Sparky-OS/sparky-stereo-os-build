@@ -60,8 +60,8 @@ msgid "%1 (model %2) is not in the device table. Its Throw uses the limits of th
 msgstr "%1 (モデル %2) はデバイス表にありません。この機器への Throw は初代 Chromecast の上限を使います: 1920x1080、毎秒 30 フレーム、H.264。"
 
 msgctxt "@info:usage the command's help; keep the words in angle brackets' meaning"
-msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute]\n"
-msgstr "使い方: sparky-stereo-throw list | throw <id> [--wait 秒数] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute]\n"
+msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
+msgstr "使い方: sparky-stereo-throw list | throw <id> [--wait 秒数] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
 
 msgctxt "@title notification the subject of a kept Throw problem"
 msgid "A Throw could not go on"
@@ -110,6 +110,62 @@ msgstr "スピーカーのグループ"
 msgctxt "@info a Cast model's generation, from the device table"
 msgid "not in the table: the first Chromecast's limits"
 msgstr "表にありません: 初代 Chromecast の上限"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a codec"
+msgid "the device does not take %1"
+msgstr "デバイスは %1 を受け付けません"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a codec, %2 the encoders looked for"
+msgid "this computer cannot encode %1: %2"
+msgstr "このコンピューターは %1 をエンコードできません: %2"
+
+msgctxt "@info why a Throw cannot be made"
+msgid "this computer cannot encode any codec the device takes"
+msgstr "このコンピューターは、デバイスが受け付けるどのコーデックもエンコードできません"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a mode, %2 a codec"
+msgid "%1 in %2 is not a mode the device takes"
+msgstr "%2 の %1 はデバイスが受け付けるモードではありません"
+
+msgctxt "@info a device gets less than it can show; %1 and %3 sizes, %2 codecs, %4 a codec"
+msgid "It shows up to %1 in %2; this computer has no encoder for it, so it gets %3 in %4."
+msgstr "%2 では最大 %1 まで表示できますが、このコンピューターにはそのエンコーダーがないため、%4 の %3 を受け取ります。"
+
+msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
+msgid "Opus, %1 kHz, %2 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"
+msgstr "Opus、%1 kHz、%2 チャンネル (圧縮: デバイスが受け付ける WebM ストリームは Opus か Vorbis しか運べません)"
+
+msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
+msgid "FLAC, 24 bit, %1 kHz, %2 channels (lossless)"
+msgstr "FLAC、24 ビット、%1 kHz、%2 チャンネル (ロスレス)"
+
+msgctxt "@info a Throw cannot start as chosen; %1 is the Cast device's name, %2 why"
+msgid "The Throw to %1 cannot start as chosen: %2. Choose another codec or mode on its page."
+msgstr "%1 への Throw は選んだとおりに開始できません: %2。そのページで別のコーデックかモードを選んでください。"
+
+msgctxt "@item the sound output of a Throw; %1 is the Cast device's name"
+msgid "Throw: %1"
+msgstr "Throw: %1"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "1st to 3rd generation"
+msgstr "第 1〜第 3 世代"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "display, 720p"
+msgstr "ディスプレイ、720p"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "speaker"
+msgstr "スピーカー"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "speaker group"
+msgstr "スピーカーグループ"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "not in the table"
+msgstr "表にありません"
 
 msgctxt "@info a Cast device's model and what the model name tells; %1 model, %2 generation"
 msgid "%1 — %2"
@@ -250,3 +306,27 @@ msgstr "これらの設定には、デバイスが Google アカウントにだ�
 msgctxt "@action:button open KDE's Online Accounts page"
 msgid "Open Online Accounts…"
 msgstr "オンラインアカウントを開く…"
+
+msgctxt "@title:group how a Throw to this device is made"
+msgid "Throw"
+msgstr "Throw"
+
+msgctxt "@label the video codec a Throw sends"
+msgid "Codec:"
+msgstr "コーデック:"
+
+msgctxt "@item the table's choice; %1 what it is"
+msgid "Automatic (%1)"
+msgstr "自動 (%1)"
+
+msgctxt "@item a codec this computer cannot encode; %1 its name"
+msgid "%1 (no encoder on this computer)"
+msgstr "%1 (このコンピューターにエンコーダーがありません)"
+
+msgctxt "@label the picture's size and rate a Throw sends"
+msgid "Mode:"
+msgstr "モード:"
+
+msgctxt "@label the sound a Throw sends"
+msgid "Sound:"
+msgstr "音声:"

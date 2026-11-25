@@ -60,8 +60,8 @@ msgid "%1 (model %2) is not in the device table. Its Throw uses the limits of th
 msgstr "%1 (modèle %2) n’est pas dans la table des appareils. Son Throw utilise les limites du premier Chromecast : 1920x1080 à 30 images par seconde, H.264."
 
 msgctxt "@info:usage the command's help; keep the words in angle brackets' meaning"
-msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute]\n"
-msgstr "Utilisation : sparky-stereo-throw list | throw <id> [--wait SECONDES] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute]\n"
+msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
+msgstr "Utilisation : sparky-stereo-throw list | throw <id> [--wait SECONDES] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
 
 msgctxt "@title notification the subject of a kept Throw problem"
 msgid "A Throw could not go on"
@@ -110,6 +110,62 @@ msgstr "un groupe d’enceintes"
 msgctxt "@info a Cast model's generation, from the device table"
 msgid "not in the table: the first Chromecast's limits"
 msgstr "absent de la table : les limites du premier Chromecast"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a codec"
+msgid "the device does not take %1"
+msgstr "l’appareil ne prend pas en charge %1"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a codec, %2 the encoders looked for"
+msgid "this computer cannot encode %1: %2"
+msgstr "cet ordinateur ne peut pas encoder en %1 : %2"
+
+msgctxt "@info why a Throw cannot be made"
+msgid "this computer cannot encode any codec the device takes"
+msgstr "cet ordinateur ne peut encoder aucun codec que l’appareil prend en charge"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a mode, %2 a codec"
+msgid "%1 in %2 is not a mode the device takes"
+msgstr "%1 en %2 n’est pas un mode que l’appareil prend en charge"
+
+msgctxt "@info a device gets less than it can show; %1 and %3 sizes, %2 codecs, %4 a codec"
+msgid "It shows up to %1 in %2; this computer has no encoder for it, so it gets %3 in %4."
+msgstr "Il affiche jusqu’à %1 en %2 ; cet ordinateur n’a pas d’encodeur pour cela, il reçoit donc %3 en %4."
+
+msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
+msgid "Opus, %1 kHz, %2 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"
+msgstr "Opus, %1 kHz, %2 canaux (compressé : le flux WebM que l’appareil accepte ne transporte que de l’Opus ou du Vorbis)"
+
+msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
+msgid "FLAC, 24 bit, %1 kHz, %2 channels (lossless)"
+msgstr "FLAC, 24 bits, %1 kHz, %2 canaux (sans perte)"
+
+msgctxt "@info a Throw cannot start as chosen; %1 is the Cast device's name, %2 why"
+msgid "The Throw to %1 cannot start as chosen: %2. Choose another codec or mode on its page."
+msgstr "Le Throw vers %1 ne peut pas démarrer comme choisi : %2. Choisissez un autre codec ou mode sur sa page."
+
+msgctxt "@item the sound output of a Throw; %1 is the Cast device's name"
+msgid "Throw: %1"
+msgstr "Throw: %1"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "1st to 3rd generation"
+msgstr "1re à 3e génération"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "display, 720p"
+msgstr "écran, 720p"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "speaker"
+msgstr "enceinte"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "speaker group"
+msgstr "groupe d’enceintes"
+
+msgctxt "@info a Cast model in a few words, from the device table"
+msgid "not in the table"
+msgstr "absent de la table"
 
 msgctxt "@info a Cast device's model and what the model name tells; %1 model, %2 generation"
 msgid "%1 — %2"
@@ -250,3 +306,27 @@ msgstr "Ces réglages demandent une clé que l’appareil ne donne qu’à votre
 msgctxt "@action:button open KDE's Online Accounts page"
 msgid "Open Online Accounts…"
 msgstr "Ouvrir Comptes en ligne…"
+
+msgctxt "@title:group how a Throw to this device is made"
+msgid "Throw"
+msgstr "Throw"
+
+msgctxt "@label the video codec a Throw sends"
+msgid "Codec:"
+msgstr "Codec :"
+
+msgctxt "@item the table's choice; %1 what it is"
+msgid "Automatic (%1)"
+msgstr "Automatique (%1)"
+
+msgctxt "@item a codec this computer cannot encode; %1 its name"
+msgid "%1 (no encoder on this computer)"
+msgstr "%1 (aucun encodeur sur cet ordinateur)"
+
+msgctxt "@label the picture's size and rate a Throw sends"
+msgid "Mode:"
+msgstr "Mode :"
+
+msgctxt "@label the sound a Throw sends"
+msgid "Sound:"
+msgstr "Son :"

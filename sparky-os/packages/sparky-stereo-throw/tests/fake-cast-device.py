@@ -6,8 +6,8 @@
 Grown from the cast study's receiver (row 81's study, skills/stereo-serving/scripts/cast-handshake/receiver.py): the
 CASTv2 channel (TLS, each message a 4-byte big-endian length and a CastMessage from pychromecast's generated module) with
 the connection, heartbeat, receiver and media namespaces. Added for the proof:
-- on LOAD it fetches the URL it was told with ffmpeg (-c copy into capture.mkv) the way a device's player would, and
-  logs what ffprobe reads from it;
+- on LOAD it fetches the URL it was told over HTTP from its own address, the way a device's player would, keeps the bytes
+  as they came (capture-N.<container>) and logs what ffprobe reads from them;
 - /setup/eureka_info on HTTPS 8443 and HTTP 8008, answered without any account for params device_info, name and
   build_info (the read pychromecast 14.1.1 dial.py makes); any other /setup path answers 401, as a device that wants
   its cast-local-authorization-token;
@@ -103,14 +103,37 @@ def read_exact(conn, n):
 fetches = [0]
 
 
-def fetch(url):
-    """What a device's player does: fetch the live stream; kept (capture-N.mkv, one per LOAD) for ffprobe and frames."""
+EXT = {"video/x-matroska": "mkv", "video/mp4": "mp4", "video/webm": "webm", "audio/ogg": "ogg"}
+
+
+def fetch(url, content_type):
+    """What a device's player does: fetch the live stream over HTTP, from the device's own address; the bytes are kept as
+    they came (capture-N.<container>, one per LOAD) for ffprobe and frames."""
+    import http.client
+    import time
+    from urllib.parse import urlsplit
     fetches[0] += 1
-    out = f"{args.out}/capture-{fetches[0]}.mkv"
+    out = f"{args.out}/capture-{fetches[0]}.{EXT.get(content_type, 'bin')}"
     log({"event": "fetch-start", "url": url, "file": out})
-    proc = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-rw_timeout", "15000000", "-i", url,
-                           "-c", "copy", "-t", str(args.capture_seconds), out], capture_output=True, text=True)
-    log({"event": "fetch-end", "status": proc.returncode, "stderr": proc.stderr[-400:]})
+    parts = urlsplit(url)
+    status, total, error = None, 0, ""
+    try:
+        conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=15, source_address=(args.bind, 0))
+        conn.request("GET", parts.path)
+        resp = conn.getresponse()
+        status = resp.status
+        end = time.monotonic() + args.capture_seconds
+        with open(out, "wb") as f:
+            while time.monotonic() < end and not stop_event.is_set():
+                chunk = resp.read1(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+                total += len(chunk)
+        conn.close()
+    except OSError as exc:
+        error = str(exc)
+    log({"event": "fetch-end", "status": status, "bytes": total, "error": error, "contentType": content_type})
     probe = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-count_frames", "-of", "json", out],
                            capture_output=True, text=True)
     try:
@@ -171,7 +194,7 @@ def handle(conn, peer, session):
                     send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, {"type": "LOAD_FAILED", "requestId": rid})
                     continue
                 send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, session.media_status(rid, "BUFFERING"))
-                threading.Thread(target=fetch, args=(session.media.get("contentId"),), daemon=True).start()
+                threading.Thread(target=fetch, args=(session.media.get("contentId"), session.media.get("contentType")), daemon=True).start()
                 send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, session.media_status(0, "PLAYING"))
             elif msg.namespace == NS_MEDIA and mtype == "GET_STATUS":
                 send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, session.media_status(rid))

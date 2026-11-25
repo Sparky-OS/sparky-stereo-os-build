@@ -5,6 +5,7 @@
 // to it; nothing else speaks Cast.
 #pragma once
 
+#include "codecs.h"
 #include "devicetable.h"
 #include "discovery.h"
 #include "throwsession.h"
@@ -37,6 +38,10 @@ public Q_SLOTS:
     QString DeviceInfo(const QString &id);
     // the receiver's volume and mute, as the device's platform receiver takes them without an account; read back after
     QString SetVolume(const QString &id, double level, int muted);
+    // the person's codec and mode for a device ("" for the table's pick), kept per device; JSON of the device, or an error
+    QString SetChoice(const QString &id, const QString &codec, const QString &mode);
+    // JSON: the Throw's state, what the device reports (player state, buffering) and the bytes it fetched
+    QString Status(const QString &id);
 
 Q_SIGNALS:
     void DevicesChanged();
@@ -44,6 +49,7 @@ Q_SIGNALS:
 
 private:
     QJsonObject describe(const Device &device) const;
+    Plan planFor(const Device &device) const;
     void finishInfo(const QString &id);
 
     Discovery m_discovery;

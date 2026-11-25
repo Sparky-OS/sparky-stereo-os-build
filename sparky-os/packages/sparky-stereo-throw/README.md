@@ -11,11 +11,15 @@ The person throws the desktop to it from the Throw page in System Settings or wi
 3. **The network screen:** the screencast protocol's version 7 request (`stream_virtual_output_with_properties`), its name the device's identity, its description the device's name, the table's mode, not a headset.
    KWin +stereo3d66 makes it a screen like the others: a monitor's 3D formats and eye swap in Display Settings, the person's choice kept per device, "Throw to" in the window menu.
    KWin gives the protocol to this program through `org.sparky.throw.desktop` (`X-KDE-Wayland-Interfaces`, its `Exec` the daemon's installed path).
-4. **The stream:** KPipeWire's H.264 encoder on the screen's PipeWire node, Matroska live (libavformat, `live` on) on a small HTTP server, a random path per Throw.
+4. **The stream:** KPipeWire's encoder on the screen's PipeWire node in the codec the device takes (the table's pick: the first one in its row this computer encodes; or the person's choice on the device's page), in the container that follows the codec (Matroska for H.264, fragmented MP4 for HEVC, WebM for VP8 and VP9), on a small HTTP server, a random path per Throw.
+   VP9 is not offered yet: KPipeWire 6.7.4's VP9 encoder gives no picture for a live screen (libvpx's 25 frames of lag, which upstream KPipeWire sets to 0), and a VP9 choice is refused with that reason; AV1 waits for an AV1 encoder in KPipeWire.
    A device that connects gets the current group of pictures at once, then the live packets, so a still screen shows too.
-5. **The channel:** CASTv2 over TLS on the device's port, with no device authentication asked (as pychromecast and GNOME Network Displays send); `LAUNCH` of the Default Media Receiver (`CC1AD845`), `LOAD` of the stream as `LIVE`.
+   The server listens on this computer's address that faces the device and answers that device only; a connection that sends no request within 5 seconds is closed.
+   The picture and the sound travel unencrypted between this computer and the device, as the device's own player fetches them.
+5. **The sound:** a PipeWire sink named "Throw: <device>" exists while the Throw runs; the person chooses it as any output, and what plays into it travels in the same stream (FLAC, 24 bit, 48 kHz, lossless, in Matroska and MP4; Opus in WebM, which carries Opus or Vorbis only). A speaker or a group gets a Throw of the sound alone (FLAC in Ogg).
+6. **The channel:** CASTv2 over TLS on the device's port, with no device authentication asked (as pychromecast and GNOME Network Displays send); `LAUNCH` of the Default Media Receiver (`CC1AD845`), `LOAD` of the stream as `LIVE`.
    The heartbeat is answered and watched: three missed PONGs and the device is gone, which is said.
-6. **Saying what happened:** a running Throw's events through KNotification (`sparkystereothrow.notifyrc`).
+7. **Saying what happened:** a running Throw's events through KNotification (`sparkystereothrow.notifyrc`).
    Every failure is kept in the edition's problems engine under `throw:<id>` until a Throw to that device works again, in the person's language.
 
 ## What a device lets the PC set

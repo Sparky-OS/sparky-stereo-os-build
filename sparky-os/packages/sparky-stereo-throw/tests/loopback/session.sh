@@ -7,7 +7,10 @@
 set -u
 OUT=${1:?out dir}
 export XDG_RUNTIME_DIR=$OUT/run HOME=$OUT/home LANG=C.UTF-8
-mkdir -p "$XDG_RUNTIME_DIR" "$HOME" "$OUT/frames"
+mkdir -p "$XDG_RUNTIME_DIR" "$HOME" "$OUT/frames" "$HOME/.config"
+# a long session must not lock its screen: KWin's locker cannot unlock without logind in a container, and every later
+# capture would show its message instead of the page
+printf '[Daemon]\nAutolock=false\nLockOnResume=false\n' > "$HOME/.config/kscreenlockerrc"
 chmod 700 "$XDG_RUNTIME_DIR"
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
     exec dbus-run-session -- bash "$0" "$@"

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-2.0-or-later
 cmake_minimum_required(VERSION 3.22)
-project(sparky-stereo-throw VERSION 0.1.0)
+project(sparky-stereo-throw VERSION 0.2.0)
 
 set(QT_MIN_VERSION "6.8.0")
 set(KF_MIN_VERSION "6.10.0")
@@ -18,6 +18,7 @@ find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons Config I18n DN
 find_package(KPipeWire REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(AV REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil)
+pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
 pkg_check_modules(WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
 pkg_check_modules(PROBLEMS REQUIRED IMPORTED_TARGET sparky-stereo-problems)
 
