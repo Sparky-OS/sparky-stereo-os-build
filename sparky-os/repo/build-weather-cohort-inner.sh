@@ -63,6 +63,11 @@ case "$COMPONENT" in
         preserve=(--preserve-source 'src/*.h' 'Qt moc and QML registration read the authored declarations.'
                   --preserve-source 'src/*.cpp' 'Qt moc and QML registration read the authored sources.')
         ;;
+    sparky-stereo-weather-settings)
+        cp -a "$recipe" source
+        version=$(dpkg-parsechangelog -l source/debian/changelog -S Version)
+        unset SPARKY_LC_PREVIOUS_DIR
+        ;;
     sparky-stereo-weather-icons)
         cp -a "$recipe" source
         cp -a /input/icons source/
