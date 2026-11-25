@@ -22,6 +22,7 @@ DSC_MAP = {
     "plasma-workspace-order46b.po.patch": "plasma-workspace_6.7.4-2+stereo3d10+lc1.dsc",
     "powerdevil-order46b.po.patch": "powerdevil_6.7.4-1+stereo3d2+lc1.dsc",
     "plasma-pa-virtual-streams.po.patch": "plasma-pa_6.7.4-1.dsc",
+    "plasma-keyboard-fcitx.po.patch": "plasma-keyboard_6.7.4-2.dsc",
     "plasma-pa-audio-routes.po.patch": "plasma-pa_6.7.4-1+stereo3d1+lc1.dsc",
     "paraview-stereo.po.patch": "paraview_6.1.1+dfsg1-3.dsc",
     "kalgebra-stereo3d.po.patch": "kalgebra_26.04.0-1+stereo3d2.dsc",
