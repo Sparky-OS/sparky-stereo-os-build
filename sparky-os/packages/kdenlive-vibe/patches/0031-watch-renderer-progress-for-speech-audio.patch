@@ -1,0 +1,180 @@
+Description: Watch the renderer's own progress during speech audio export
+ Preserve a diagnostic log with the renderer state at the watchdog deadline.
+Origin: vendor
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+Last-Update: 2026-11-25
+
+--- a/renderer/kdenlive_render.cpp
++++ b/renderer/kdenlive_render.cpp
+@@ -20,6 +20,8 @@
+ #include <QThread>
+ #include <QtGlobal>
+ 
++#include <atomic>
++#include <cstdio>
+ #include <memory>
+ 
+ QString getCIMltRepositoryPath()
+@@ -47,6 +49,20 @@
+     return {};
+ }
+ 
++static void reportSpeechAudioProgress(int phase, int frame = -1)
++{
++    std::fprintf(stdout, "speech-audio %d %d\n", phase, frame);
++    std::fflush(stdout);
++}
++
++static void reportSpeechAudioFrame(mlt_properties, void *data, mlt_event_data eventData)
++{
++    auto *lastFrame = static_cast<std::atomic<int> *>(data);
++    if (auto frame = mlt_event_data_to_frame(eventData)) {
++        lastFrame->store(mlt_frame_get_position(frame), std::memory_order_relaxed);
++    }
++}
++
+ static int exportSpeechAudio(const QStringList &args)
+ {
+     if (args.size() != 9) {
+@@ -71,9 +87,11 @@
+     }
+     const bool mono = args.at(7) == QStringLiteral("mono");
+     const bool timeline = tracksCount > 0;
++    reportSpeechAudioProgress(1);
+     const QString repoPath = getCIMltRepositoryPath();
+     Mlt::Factory::init(repoPath.isEmpty() ? nullptr : repoPath.toUtf8().constData());
+     LocaleHandling::resetAllLocale();
++    reportSpeechAudioProgress(2);
+ 
+     const QString profilePath = args.at(8);
+     Mlt::Profile profile(profilePath.isEmpty() ? nullptr : profilePath.toUtf8().constData());
+@@ -105,6 +123,8 @@
+             break;
+         }
+     }
++    reportSpeechAudioProgress(3);
++    std::atomic<int> lastFrame{-1};
+     Mlt::Consumer consumer(profile, "avformat", args.at(2).toUtf8().constData());
+     if (!consumer.is_valid()) {
+         return 1;
+@@ -116,16 +136,26 @@
+         consumer.set("ac", 1);
+         consumer.set("acodec", "pcm_s16le");
+     }
++    mlt_events_listen(consumer.get_properties(), &lastFrame, "consumer-frame-show", reportSpeechAudioFrame);
+     producer.set_in_and_out(in, out);
++    reportSpeechAudioProgress(4);
+     if (consumer.connect(producer) != 0 || consumer.start() != 0) {
+         return 1;
+     }
+     // Consumer::run registers for consumer-stopped after checking the state.
+     // Polling avoids losing a stop that happens in that interval. The editor
+     // enforces the deadline even if start or stop blocks inside MLT.
++    int reportedFrame = -1;
++    reportSpeechAudioProgress(5);
+     while (!consumer.is_stopped()) {
++        const int frame = lastFrame.load(std::memory_order_relaxed);
++        if (frame > reportedFrame) {
++            reportedFrame = frame;
++            reportSpeechAudioProgress(5, frame);
++        }
+         QThread::msleep(10);
+     }
++    reportSpeechAudioProgress(6, lastFrame.load(std::memory_order_relaxed));
+     return consumer.stop();
+ }
+ 
+--- a/src/speech/speechaudiojob.cpp
++++ b/src/speech/speechaudiojob.cpp
+@@ -6,20 +6,24 @@
+ #include "kdenlivesettings.h"
+ 
+ #include <KLocalizedString>
++#include <QDebug>
+ #include <QFileInfo>
+ 
+ SpeechAudioJob::SpeechAudioJob(QObject *parent)
+     : QObject(parent)
+ {
+     m_timer.setInterval(250);
++    connect(&m_renderer, &QProcess::readyReadStandardOutput, this, &SpeechAudioJob::readProgress);
+     connect(&m_timer, &QTimer::timeout, this, [this]() {
+-        const qint64 size = QFileInfo(m_output).size();
+-        if (size > m_size && size > 44) {
+-            m_size = size;
+-            m_progress.restart();
+-        } else if (m_progress.hasExpired(idleSeconds * 1000)) {
+-            complete(i18n("Audio export timed out after %1 seconds without audio.", idleSeconds));
++        readProgress();
++        if (!m_progress.hasExpired(idleSeconds * 1000)) {
++            return;
+         }
++        const auto state = m_renderer.state();
++        const char *renderer = state == QProcess::Running ? "alive" : (state == QProcess::Starting ? "starting" : "gone");
++        qWarning().nospace() << "Speech audio export timeout: renderer=" << renderer << " pid=" << m_renderer.processId() << " phase=" << m_phase
++                             << " last_frame=" << m_lastFrame << " elapsed_ms=" << m_elapsed.elapsed() << " idle_ms=" << m_progress.elapsed();
++        complete(i18n("Audio export timed out after %1 seconds without audio.", idleSeconds));
+     });
+     connect(&m_renderer, &QProcess::errorOccurred, this, [this]() { complete(i18n("Audio export failed")); });
+     connect(&m_renderer, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
+@@ -42,10 +46,11 @@
+     Q_ASSERT(!m_running);
+     m_running = true;
+     m_output = output;
+-    m_size = 0;
++    m_phase = 0;
++    m_lastFrame = -1;
++    m_elapsed.start();
+     m_progress.start();
+     m_timer.start();
+-    m_renderer.setStandardOutputFile(QProcess::nullDevice());
+     m_renderer.setStandardErrorFile(QProcess::nullDevice());
+     m_renderer.start(KdenliveSettings::kdenliverendererpath(), arguments);
+ }
+@@ -58,6 +63,25 @@
+ bool SpeechAudioJob::isRunning() const
+ {
+     return m_running;
++}
++
++void SpeechAudioJob::readProgress()
++{
++    while (m_renderer.canReadLine()) {
++        const auto fields = m_renderer.readLine().simplified().split(' ');
++        if (fields.size() != 3 || fields.at(0) != "speech-audio") {
++            continue;
++        }
++        bool phaseOk = false;
++        bool frameOk = false;
++        const int phase = fields.at(1).toInt(&phaseOk);
++        const int frame = fields.at(2).toInt(&frameOk);
++        if (phaseOk && frameOk && (phase > m_phase || (phase == m_phase && frame > m_lastFrame))) {
++            m_phase = phase;
++            m_lastFrame = qMax(m_lastFrame, frame);
++            m_progress.restart();
++        }
++    }
+ }
+ 
+ void SpeechAudioJob::complete(const QString &error)
+--- a/src/speech/speechaudiojob.h
++++ b/src/speech/speechaudiojob.h
+@@ -23,13 +23,16 @@
+     void finished(const QString &error);
+ 
+ private:
++    void readProgress();
+     void complete(const QString &error);
+ 
+     static constexpr int idleSeconds = 20;
+     QProcess m_renderer;
+     QTimer m_timer;
++    QElapsedTimer m_elapsed;
+     QElapsedTimer m_progress;
+     QString m_output;
+-    qint64 m_size{0};
++    int m_phase{0};
++    int m_lastFrame{-1};
+     bool m_running{false};
+ };
