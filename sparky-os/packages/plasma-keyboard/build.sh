@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS: builds plasma-keyboard 6.7.4-2+stereo3d1+lc1 from Debian's 6.7.4-2 source package (row 71).
+# Sparky Stereo OS: builds plasma-keyboard 6.7.4-2+stereo3d2+lc1 from Debian's 6.7.4-2 source package (row 71).
 # Created by Daniel Ramos (Capitain Jack) 2026/11/25
 # Copyright 2026 under the GNU GPL3 License
 # Source package once (the patch after Debian's own, the changelog entry), then the Lean Code source, then the build with
@@ -22,10 +22,16 @@ SRC=$(cd "$3" && pwd)
 IMAGE=${4:-sparky-lc-migration:20261020}
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 name=${NAME_PREFIX:-plasma-keyboard}-build-$$
+# SPARKY_LC_SIBLINGS_DIR (optional): the edition packages built for this one and not published yet (KWin 6.7.4-2+stereo3d67,
+# which +stereo3d2 depends on); the link gate takes them as edition siblings, as release/build-from-lc-dsc.sh does
+SIBS=()
+if [ -n "${SPARKY_LC_SIBLINGS_DIR:-}" ]; then
+	SIBS=(-v "$(cd "$SPARKY_LC_SIBLINGS_DIR" && pwd)":/siblings:ro -e SIBLINGS=1)
+fi
 sparky_provenance_init "$IMAGE"
 docker create --ulimit core=1 --name "$name" --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
+	"${SPARKY_PROV_ARGS[@]}" "${SIBS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v "$HERE/patches":/patches:ro -v "$HERE/../../translations/plasma-keyboard-fcitx.po.patch":/translations/plasma-keyboard-fcitx.po.patch:ro \

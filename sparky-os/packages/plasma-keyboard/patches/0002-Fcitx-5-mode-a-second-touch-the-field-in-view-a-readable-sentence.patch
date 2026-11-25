@@ -1,0 +1,242 @@
+Description: Fcitx 5 mode: a second touch, the field kept in view, a readable sentence
+ In Fcitx 5 mode (patch 0001) a touch on a text field that already has the
+ focus shows the keyboard again: KWin 6.7.4-2+stereo3d67 says each request of
+ a field on D-Bus (org.kde.kwin.VirtualKeyboard.showRequested) and the bridge
+ asks KWin's own rule (willShowOnActive) as when the field gets the focus. The
+ bridge tells KWin when its keyboard is shown and hidden
+ (setOnScreenKeyboardShown), and KWin keeps the focused window clear of the
+ keyboard's window as it does for its own panel; a KWin that cannot is said
+ once in the log. "Fcitx 5 does not answer" is drawn in the system's
+ negative-text colour, lightened just enough for a contrast of 4.5:1 on the
+ keyboard. The candidates Fcitx 5 hands over are logged in the debug category.
+ Tests: testShownAgainWhenTheFieldAsks and testKWinToldWhenShown in
+ autotests/fcitxbridgetest.
+Author: Daniel Campos Ramos
+Origin: vendor, Sparky Stereo OS (row 71, second round), branch order71b of KDE's plasma/plasma-keyboard at v6.7.4
+Forwarded: no
+Last-Update: 2026-11-25
+---
+Commit 5a59d52: Fcitx 5 mode: a second touch, the field kept in view, a readable sentence
+
+ 4 files changed, 112 insertions(+), 2 deletions(-)
+
+diff --git a/autotests/fcitxbridgetest.cpp b/autotests/fcitxbridgetest.cpp
+index 635ecd8..2521804 100644
+--- a/autotests/fcitxbridgetest.cpp
++++ b/autotests/fcitxbridgetest.cpp
+@@ -44,13 +44,21 @@ public:
+         m_willShow = willShow;
+         Q_EMIT activeChanged();
+     }
++    QList<bool> m_shownSaid;
+ public Q_SLOTS:
+     Q_SCRIPTABLE bool willShowOnActive()
+     {
+         return m_willShow;
+     }
++    // the edition's KWin 6.7.4-2+stereo3d67: the calling program's layer-shell window is its keyboard, shown or hidden
++    Q_SCRIPTABLE void setOnScreenKeyboardShown(bool shown)
++    {
++        m_shownSaid.append(shown);
++    }
+ Q_SIGNALS:
+     Q_SCRIPTABLE void activeChanged();
++    // a text field asked for the keyboard, also one that already has the focus
++    Q_SCRIPTABLE void showRequested();
+ };
+ 
+ // Fcitx 5: org.fcitx.Fcitx.VirtualKeyboard1 on /virtualkeyboard of org.fcitx.Fcitx5 (fcitx5 src/ui/virtualkeyboard)
+@@ -216,6 +224,8 @@ private Q_SLOTS:
+     void testInputMethods();
+     void testHideKey();
+     void testPlainTypingWhenFcitxRefuses();
++    void testShownAgainWhenTheFieldAsks();
++    void testKWinToldWhenShown();
+ 
+ private:
+     void setUpStandIns();
+@@ -518,5 +528,46 @@ void FcitxBridgeTest::testPlainTypingWhenFcitxRefuses()
+     QVERIFY(m_backend->m_keys.isEmpty());
+ }
+ 
++void FcitxBridgeTest::testShownAgainWhenTheFieldAsks()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    m_kwin->setState(true, true);
++    QTRY_VERIFY(m_bridge->isVisible());
++    // the hide key: the keyboard goes, the field keeps the focus and KWin stays active (no activeChanged)
++    m_bridge->hide();
++    QVERIFY(!m_bridge->isVisible());
++    QTRY_COMPARE(m_fcitxKeyboard->m_hides, 1);
++    QTest::qWait(300);
++    // a second touch on that field: KWin says a field asked for the keyboard, and would show one for a touch
++    Q_EMIT m_kwin->showRequested();
++    QTRY_VERIFY(m_bridge->isVisible());
++    // the same request after a click: KWin would show no keyboard for the mouse, so none shows
++    m_bridge->hide();
++    QTRY_COMPARE(m_fcitxKeyboard->m_hides, 2);
++    QTest::qWait(300);
++    m_kwin->m_willShow = false;
++    Q_EMIT m_kwin->showRequested();
++    QTest::qWait(500);
++    QVERIFY(!m_bridge->isVisible());
++}
++
++void FcitxBridgeTest::testKWinToldWhenShown()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    m_kwin->setState(true, true);
++    QTRY_VERIFY(m_bridge->isVisible());
++    QTRY_COMPARE(m_kwin->m_shownSaid, QList<bool>{true});
++    // the field loses the focus: the keyboard hides and KWin hears it, to give the window its place back
++    m_kwin->setState(false, false);
++    QTRY_VERIFY(!m_bridge->isVisible());
++    QTRY_COMPARE(m_kwin->m_shownSaid, (QList<bool>{true, false}));
++}
++
+ QTEST_MAIN(FcitxBridgeTest)
+ #include "fcitxbridgetest.moc"
+diff --git a/src/fcitx/fcitxbridge.cpp b/src/fcitx/fcitxbridge.cpp
+index fd09fdb..3f7b0ea 100644
+--- a/src/fcitx/fcitxbridge.cpp
++++ b/src/fcitx/fcitxbridge.cpp
+@@ -227,6 +227,9 @@ bool FcitxBridge::start()
+     });
+ 
+     m_bus.connect(s_kwinName, s_kwinPath, s_kwinInterface, u"activeChanged"_s, this, SLOT(kwinActiveChanged()));
++    // a text field asked for the keyboard, also one that already has the focus (a second touch on it): KWin's own rule
++    // decides again, as for a field that becomes active (the edition's KWin 6.7.4-2+stereo3d67 says it)
++    m_bus.connect(s_kwinName, s_kwinPath, s_kwinInterface, u"showRequested"_s, this, SLOT(kwinShowRequested()));
+ 
+     refreshInputMethods();
+     kwinActiveChanged();
+@@ -253,6 +256,29 @@ void FcitxBridge::kwinActiveChanged()
+     });
+ }
+ 
++void FcitxBridge::kwinShowRequested()
++{
++    qCDebug(PlasmaKeyboard) << "KWin: a text field asked for the keyboard";
++    kwinActiveChanged();
++}
++
++void FcitxBridge::tellKWinShown(bool shown)
++{
++    // KWin keeps the focused window clear of this keyboard's window, as it does for its own input panel; it finds the
++    // window by this process, so no coordinates go with the call
++    auto tell = QDBusMessage::createMethodCall(s_kwinName, s_kwinPath, s_kwinInterface, u"setOnScreenKeyboardShown"_s);
++    tell << shown;
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(tell), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<> reply = *call;
++        if (reply.isError() && !m_toldKWinFailure) {
++            m_toldKWinFailure = true;
++            qCWarning(PlasmaKeyboard) << "KWin cannot keep the field typed into clear of this keyboard:" << reply.error().name() << reply.error().message();
++        }
++    });
++}
++
+ void FcitxBridge::askKWinWhetherToShow()
+ {
+     // KWin's own rule for showing a keyboard on the active text field: the last input came from a touch screen or a pen,
+@@ -353,6 +379,7 @@ void FcitxBridge::updateVisible()
+     if (m_visible != visible) {
+         m_visible = visible;
+         qCDebug(PlasmaKeyboard) << "Fcitx 5 keyboard visible:" << visible;
++        tellKWinShown(visible);
+         Q_EMIT visibleChanged();
+     }
+ }
+@@ -458,7 +485,7 @@ void FcitxBridge::fcitxPreeditArea(const QString &text)
+ 
+ void FcitxBridge::fcitxCandidateArea(const QStringList &candidates, bool hasPrev, bool hasNext, int pageIndex, int globalCursorIndex)
+ {
+-    Q_UNUSED(pageIndex)
++    qCDebug(PlasmaKeyboard) << "Fcitx 5 candidates:" << candidates << "page" << pageIndex << "previous" << hasPrev << "next" << hasNext;
+     m_candidates = candidates;
+     m_hasPrev = hasPrev;
+     m_hasNext = hasNext;
+diff --git a/src/fcitx/fcitxbridge.h b/src/fcitx/fcitxbridge.h
+index 20d7ba7..254d131 100644
+--- a/src/fcitx/fcitxbridge.h
++++ b/src/fcitx/fcitxbridge.h
+@@ -124,6 +124,7 @@ Q_SIGNALS:
+ 
+ private Q_SLOTS:
+     void kwinActiveChanged();
++    void kwinShowRequested();
+ 
+ private:
+     void askFcitxToShow();
+@@ -138,6 +139,7 @@ private:
+     void readCurrentInputMethod();
+     void updateLayoutLocale();
+     void updateVisible();
++    void tellKWinShown(bool shown);
+     uint keycodeFor(uint keysym) const;
+ 
+     QDBusConnection m_bus;
+@@ -148,6 +150,7 @@ private:
+     bool m_kwinWants = false;
+     bool m_fcitxShown = false;
+     bool m_visible = false;
++    bool m_toldKWinFailure = false;
+     bool m_plainTyping = false;
+     bool m_backendAvailable = false;
+     QString m_problem;
+diff --git a/src/qml/FcitxCandidateBar.qml b/src/qml/FcitxCandidateBar.qml
+index 760b09c..ba01418 100644
+--- a/src/qml/FcitxCandidateBar.qml
++++ b/src/qml/FcitxCandidateBar.qml
+@@ -28,6 +28,35 @@ Item {
+     implicitHeight: Kirigami.Units.gridUnit * 3
+     height: implicitHeight
+ 
++    // the system's negative-text colour, moved away from the keyboard's background just enough to be read there: a
++    // contrast of 4.5:1 or more (WCAG 2.x, the relative luminance of sRGB)
++    readonly property color problemColor: readableOn(Kirigami.Theme.negativeTextColor, PlasmaKeyboard.BreezeConstants.keyboardBackgroundColor)
++
++    function luminance(c) {
++        function channel(v) {
++            return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
++        }
++        return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
++    }
++    function contrast(a, b) {
++        const la = luminance(a);
++        const lb = luminance(b);
++        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
++    }
++    function readableOn(foreground, background) {
++        // towards white on a dark keyboard, towards black on a light one
++        const target = luminance(background) < 0.18 ? 1 : 0;
++        for (let step = 0; step <= 20; ++step) {
++            const t = step / 20;
++            const c = Qt.rgba(foreground.r + (target - foreground.r) * t, foreground.g + (target - foreground.g) * t,
++                              foreground.b + (target - foreground.b) * t, 1);
++            if (contrast(c, background) >= 4.5) {
++                return c;
++            }
++        }
++        return target ? "white" : "black";
++    }
++
+     component BarButton: Rectangle {
+         id: button
+ 
+@@ -83,7 +112,7 @@ Item {
+             verticalAlignment: Text.AlignVCenter
+             elide: Text.ElideRight
+             text: bar.bridge.problem
+-            color: Kirigami.Theme.negativeTextColor
++            color: bar.problemColor
+             font.pixelSize: bar.height * 0.3
+         }
+ 
