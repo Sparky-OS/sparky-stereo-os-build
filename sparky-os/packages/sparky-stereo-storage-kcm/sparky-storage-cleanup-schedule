@@ -110,10 +110,11 @@ def install_choice(user, period):
     account = pwd.getpwnam(user)
     if account.pw_uid < 1000 or not os.path.isabs(account.pw_dir):
         raise ValueError('Installer consent requires the new login account')
+    action = 'review' if period == 'manual' else 'automatic'
     # The target's account writes its own configuration with its own rights.
-    subprocess.run(['/usr/sbin/runuser', '-u', user, '--', SELF, 'set', period, 'automatic', '@home'],
+    subprocess.run(['/usr/sbin/runuser', '-u', user, '--', SELF, 'set', period, action, '@home'],
                    env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'}, check=True)
-    set_schedule(period, 'automatic', '/')
+    set_schedule(period, action, '/')
 
 
 def month_after(anchor, months):

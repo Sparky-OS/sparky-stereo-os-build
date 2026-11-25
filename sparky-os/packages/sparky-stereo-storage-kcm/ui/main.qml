@@ -66,7 +66,7 @@ KCM.SimpleKCM {
                 ]
                 currentIndex: Math.max(0, indexOfValue(kcm.period))
                 enabled: !kcm.busy
-                onActivated: kcm.setSchedule(currentValue, kcm.scheduledAction)
+                onActivated: kcm.setSchedule(currentValue, currentValue === "manual" ? "review" : kcm.scheduledAction)
                 Accessible.name: i18n("Period")
             }
 
