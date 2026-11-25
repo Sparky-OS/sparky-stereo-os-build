@@ -3,6 +3,7 @@
 #include "saverskcm.h"
 
 #include "saverpreview.h"
+#include "showstore.h"
 
 #include <KConfigGroup>
 #include <KLocalizedString>
@@ -19,20 +20,7 @@ K_PLUGIN_CLASS_WITH_JSON(SaversKcm, "kcm_sparkystereo_screensavers.json")
 
 namespace
 {
-// The show's own file and defaults (gl-stereo-show: /etc/xdg/stereoshowrc, stereoshow.kcfg)
-const QString SHOW = QStringLiteral("stereoshowrc");
-const int IDLE = 8100, CYCLE = 600;
-
-QStringList names(const QString &value)
-{
-    QStringList out;
-    for (const QString &name : value.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
-        out << name.trimmed();
-    }
-    out.removeAll(QString());
-    out.sort();
-    return out;
-}
+const int IDLE = ShowStore::IDLE, CYCLE = ShowStore::CYCLE;
 
 QString wallpaperFile(const QString &plugin)
 {
@@ -54,7 +42,7 @@ void SaversKcm::changed()
 {
     setNeedsSave(m_enabled != m_savedEnabled || m_idleSeconds != m_savedIdle || m_cycleSeconds != m_savedCycle || m_model.disabled() != m_savedDisabled
                  || m_model.flat() != m_savedFlat);
-    QStringList allTicked; // the defaults: the show on, its two times, every catalogue saver and no 2D one
+    // the defaults: the show on, its two times, every catalogue saver and no 2D one
     setRepresentsDefaults(m_enabled && m_idleSeconds == IDLE && m_cycleSeconds == CYCLE && m_model.disabled().isEmpty() && m_model.flat().isEmpty());
 }
 
@@ -89,15 +77,12 @@ void SaversKcm::setChangeMinutes(int minutes)
 
 void SaversKcm::load()
 {
-    auto config = KSharedConfig::openConfig(SHOW, KConfig::FullConfig);
-    config->reparseConfiguration();
-    const KConfigGroup general(config, QStringLiteral("General"));
-    m_enabled = m_savedEnabled = general.readEntry("Enabled", true);
-    m_idleSeconds = m_savedIdle = qBound(60, general.readEntry("IdleSeconds", IDLE), 86400);
-    m_cycleSeconds = m_savedCycle = qBound(60, general.readEntry("CycleSeconds", CYCLE), 86400);
-    // one comma-separated value each, as the show's controller reads them (savers/preferences.py)
-    m_savedDisabled = names(general.readEntry("DisabledSavers", QString()));
-    m_savedFlat = names(general.readEntry("FlatSavers", QString()));
+    const ShowStore store = ShowStore::read();
+    m_enabled = m_savedEnabled = store.enabled;
+    m_idleSeconds = m_savedIdle = store.idleSeconds;
+    m_cycleSeconds = m_savedCycle = store.cycleSeconds;
+    m_savedDisabled = store.disabled;
+    m_savedFlat = store.flat;
     m_model.setStore(m_savedDisabled, m_savedFlat);
     refreshOtherPages();
     Q_EMIT settingsChanged();
@@ -106,20 +91,13 @@ void SaversKcm::load()
 
 void SaversKcm::save()
 {
-    auto config = KSharedConfig::openConfig(SHOW, KConfig::FullConfig);
-    KConfigGroup general(config, QStringLiteral("General"));
-    // the notify flag: a running show and the Screen Locking page follow at once (KConfigWatcher)
-    general.writeEntry("Enabled", m_enabled, KConfig::Notify);
-    general.writeEntry("IdleSeconds", m_idleSeconds, KConfig::Notify);
-    general.writeEntry("CycleSeconds", m_cycleSeconds, KConfig::Notify);
-    general.writeEntry("DisabledSavers", m_model.disabled().join(QLatin1Char(',')), KConfig::Notify);
-    const QString flat = m_model.flat().join(QLatin1Char(','));
-    if (flat.isEmpty() && !general.hasKey("FlatSavers")) {
-        // nothing ticked and nothing stored: the key is not created
-    } else {
-        general.writeEntry("FlatSavers", flat, KConfig::Notify);
-    }
-    config->sync();
+    ShowStore store;
+    store.enabled = m_enabled;
+    store.idleSeconds = m_idleSeconds;
+    store.cycleSeconds = m_cycleSeconds;
+    store.disabled = m_model.disabled();
+    store.flat = m_model.flat();
+    store.writeShow();
     load();
 }
 
@@ -135,28 +113,11 @@ void SaversKcm::defaults()
 
 void SaversKcm::refreshOtherPages()
 {
-    // Screen Locking's own values, shown here and edited there
-    KConfig lockFile(QStringLiteral("kscreenlockerrc"));
-    const KConfigGroup daemon(&lockFile, QStringLiteral("Daemon"));
-    m_autolock = daemon.readEntry("Autolock", true);
-    m_lockMinutes = daemon.readEntry("Timeout", 5);
-    const KConfigGroup greeter(&lockFile, QStringLiteral("Greeter"));
-    m_lockKind = greeter.readEntry("WallpaperPlugin", QStringLiteral("org.kde.image"));
-
-    // the desktop's wallpaper kind, one per desktop, as plasmashell keeps it
-    m_desktopKinds.clear();
-    KConfig desktop(QStringLiteral("plasma-org.kde.plasma.desktop-appletsrc"));
-    const KConfigGroup containments(&desktop, QStringLiteral("Containments"));
-    for (const QString &id : containments.groupList()) {
-        const KConfigGroup containment(&containments, id);
-        const QString kind = containment.readEntry("wallpaperplugin", QString());
-        if (!kind.isEmpty() && !m_desktopKinds.contains(kind)) {
-            m_desktopKinds << kind;
-        }
-    }
-    if (m_desktopKinds.isEmpty()) {
-        m_desktopKinds << QStringLiteral("org.kde.image"); // Plasma's own default before a desktop was ever configured
-    }
+    const ShowStore store = ShowStore::read();
+    m_autolock = store.autolock;
+    m_lockMinutes = store.lockMinutes;
+    m_lockKind = store.lockKind;
+    m_desktopKinds = store.desktopKinds;
 
     m_wallpaperKinds.clear();
     QStringList seen;
