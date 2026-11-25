@@ -3,19 +3,90 @@
   "machines": [
     {
       "id": "sony-vaio-duo-13",
-      "match": {"dmi_product": ["SVD132*"]},
+      "match": {
+        "dmi_product": [
+          "SVD132*"
+        ]
+      },
       "corrections": [],
       "references": [
-        {"id": "uvc-bulk-0bda-5722", "owner": "kernel", "reason": "Back-to-back bulk payloads; no userspace camera correction."},
-        {"id": "ORDER-572", "owner": "display-size-policy", "reason": "Panel timing blocks declare 344 x 193 mm; base size field declares 29 x 17 cm. The size policy belongs to ORDER 572."}
+        {
+          "id": "uvc-bulk-0bda-5722",
+          "owner": "kernel",
+          "reason": "Back-to-back bulk payloads; no userspace camera correction."
+        },
+        {
+          "id": "ORDER-572",
+          "owner": "display-size-policy",
+          "reason": "Panel timing blocks declare 344 x 193 mm; base size field declares 29 x 17 cm. The size policy belongs to ORDER 572."
+        }
       ]
     },
     {
       "id": "apple-macbookpro9-2",
-      "match": {"dmi_product": ["MacBookPro9,2"], "pci": ["14e4:4331"]},
+      "match": {
+        "dmi_product": [
+          "MacBookPro9,2"
+        ],
+        "pci": [
+          "14e4:4331"
+        ]
+      },
       "corrections": [],
       "references": [
-        {"id": "b43-bcm4331-connection-drops", "owner": "broadcom-wl", "card": "14e4:4331", "message": 97, "reason": "With the kernel's b43 driver the BCM4331 lost its Wi-Fi connection on some routers (deauthentications and firmware reloads, measured 2026-11-18); Hardware Setup names this in its offer of Broadcom's wl (row 728). On this HT-PHY chip b43 has no 5 GHz and no 802.11n features (linux-wireless docs, b43, Known issues)."}
+        {
+          "id": "b43-bcm4331-connection-drops",
+          "owner": "broadcom-wl",
+          "card": "14e4:4331",
+          "message": 97,
+          "reason": "With the kernel's b43 driver the BCM4331 lost its Wi-Fi connection on some routers (deauthentications and firmware reloads, measured 2026-11-18); Hardware Setup names this in its offer of Broadcom's wl (row 728). On this HT-PHY chip b43 has no 5 GHz and no 802.11n features (linux-wireless docs, b43, Known issues)."
+        }
+      ]
+    },
+    {
+      "id": "apple-macbookpro9-2-firmware",
+      "match": {
+        "dmi_product": [
+          "MacBookPro9,2"
+        ]
+      },
+      "corrections": [
+        {
+          "id": "mbp92-gfx0",
+          "kind": "acpi-table",
+          "table": "mbp92-gfx0.aml",
+          "message": 114
+        }
+      ],
+      "references": [
+        {
+          "id": "ec-q80-notify-gfx0",
+          "owner": "firmware",
+          "reason": "The firmware's EC query _Q80 ends in Notify (\\_SB.PCI0.P0P2.GFX0), the discrete GPU of the 15 inch MacBookPro9,1; the 13 inch model has no such device, so Linux aborts the method and logs two ACPI errors per event, 15 to 21 a second (measured 2026-11-17). The kernel has no quirk for it (drivers/acpi of 7.3.4 and of mainline 7.4-rc4 name this model only in video_detect.c, for the backlight); the table upgrade from the boot image is the kernel's own mechanism for a firmware table that is wrong."
+        }
+      ]
+    },
+    {
+      "id": "apple-imac14-1",
+      "match": {
+        "dmi_product": [
+          "iMac14,1"
+        ]
+      },
+      "corrections": [
+        {
+          "id": "imac141-gpe06",
+          "kind": "kernel-option",
+          "option": "acpi_mask_gpe=0x06",
+          "message": 115
+        }
+      ],
+      "references": [
+        {
+          "id": "gpe06-storm",
+          "owner": "firmware",
+          "reason": "GPE 06 fires about 4,600 times a second under Linux and keeps about half a processor core busy; masked, the rate is 0 (measured 2026-11-17). The same storm is reported on other Haswell-era Macs (kernel bugzilla 105781 and 117481; freedesktop drm/intel issue 30). The kernel's mechanism is the acpi_mask_gpe= parameter (Documentation/admin-guide/kernel-parameters.txt, drivers/acpi/sysfs.c); it has no table of machines for it."
+        }
       ]
     }
   ]

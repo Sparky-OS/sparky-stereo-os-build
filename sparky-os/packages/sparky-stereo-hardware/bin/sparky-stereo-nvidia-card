@@ -1,0 +1,209 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/25
+# Copyright 2026 under the GNU GPL3 License
+# NVIDIA's driver only where an NVIDIA graphics card is (ORDER 675; Daniel, 2026-11-18: "I agree on removing nvidia
+# from macs that do not have it"). The image carries NVIDIA's driver so that a live session and an installed system
+# with such a card work at once (Daniel, 2026-10-23: "user has not to configure, out of the box full experience,
+# including the drivers needed to"). On a machine without the card it is installed for nothing, its kernel module is
+# built for nothing at every kernel update, and the first start of a MacBookPro9,2 signed it for 13 minutes (ORDER 666).
+#   present  prints each NVIDIA display controller of the PCI bus ("ADDRESS 10de:DEVICE"); exit status 0 with one,
+#            1 with none, 2 when the bus cannot be read (nothing is ever decided on a bus that cannot be read)
+#   auto     the unit's step (sparky-stereo-hardware-nvidia-card.service: at every start, when the package is
+#            configured, and from udev when an NVIDIA display controller appears):
+#            - once per installed system (the mark nvidia-card-settled): with no card, NVIDIA's driver is removed, said
+#              in the journal and to the session; with a card, nothing changes. The cards seen are recorded.
+#            - afterwards: a card this machine has not shown before, with no NVIDIA driver installed and nouveau not
+#              chosen, gets the edition's driver through Hardware Setup (sparky-stereo-hardware --auto --nvidia-only),
+#              said to the session; on a metered connection nothing is downloaded and the problem is kept with its
+#              Repair. A card that leaves later takes nothing with it: after the first settling nothing is removed.
+#   remove   the removal alone (the Repair of a removal that failed)
+#   install  the installation alone (the Repair; sparky-stereo-hardware --nvidia-card)
+# What is removed: the driver's own packages by name (the driver, its kernel modules, the video decoding libraries, the
+# 32-bit libraries, both driver locks and the CUDA repository package, which are the driver's apt configuration and come
+# back first when a card is found), then what only they needed and is NVIDIA's by name. apt's plan is read first: if
+# it would take anything that is not NVIDIA's, nothing is removed and that is said and kept. Never an autoremove.
+# Purged, not removed: a removed package's configuration files stay active (the module blacklist among them).
+# firmware-nvidia-graphics (nouveau's firmware) stays, so a card that appears has a picture at once.
+set -uo pipefail
+export LC_ALL=C.UTF-8
+PKG=sparky-stereo-hardware
+KEY=nvidia-card
+NOTICE=nvidia-card-told
+UNIT=sparky-stereo-hardware-nvidia-card.service
+SELF=/usr/lib/sparky-stereo-hardware/nvidia-card
+R=${SPARKY_STEREO_ROOT:-}
+STATE=$R/var/lib/sparky-stereo-hardware
+SETTLED=$STATE/nvidia-card-settled
+SEEN=$STATE/nvidia-cards-seen
+CHOICE=$STATE/nvidia-choice
+STORE=$R/var/lib/sparky-stereo-problems
+SYS=${SPARKY_STEREO_SYSFS:-/sys}
+SETUP=${SPARKY_STEREO_HARDWARE_SETUP:-/usr/bin/sparky-stereo-hardware}
+REPAIR_REMOVE="[\"$SELF\",\"remove\"]"
+REPAIR_INSTALL='["sparky-stereo-hardware","--nvidia-card"]'
+ROOTS=(nvidia-driver nvidia-driver-cuda nvidia-driver-libs nvidia-kernel-open-dkms-stereo3d nvidia-kernel-open-dkms
+	nvidia-legacy-580xx-kernel-dkms nvidia-kernel-dkms nvidia-kernel-support libnvcuvid1 libcuda1 nvidia-vaapi-driver
+	nvidia-settings nvidia-xconfig nvidia-persistenced nvidia-modprobe xserver-xorg-video-nvidia
+	sparky-stereo-nvidia-driver-lock sparky-stereo-nvidia-legacy-580xx-driver-lock sparky-stereo-cuda-repo)
+
+say() { logger -t "$PKG" -- "$1" 2>/dev/null || true; echo "$PKG: $1" >&2; }
+
+# each NVIDIA display controller (class 03xx) of the PCI bus: "ADDRESS 10de:DEVICE"
+cards() {
+	local d class
+	[[ -d $SYS/bus/pci/devices ]] || return 2
+	for d in "$SYS"/bus/pci/devices/*; do
+		[[ -r $d/vendor && -r $d/class && -r $d/device ]] || continue
+		[[ $(<"$d/vendor") == 0x10de ]] || continue
+		class=$(<"$d/class")
+		[[ $class == 0x03* ]] || continue
+		printf '%s 10de:%s\n' "${d##*/}" "$(sed 's/^0x//' "$d/device")"
+	done
+	return 0
+}
+ids() { awk '{print $2}' | sort -u; }
+
+# a package of NVIDIA's driver by its name; nouveau's firmware is not
+nvidia_name() {
+	local name=${1%%:*}
+	[[ $name == firmware-nvidia-graphics ]] && return 1
+	[[ $name == sparky-stereo-cuda-repo || $name =~ nvidia || $name =~ ^(libcuda|libnvcuvid|libnvoptix|libnvfbc|libnvjpeg) ]]
+}
+# the installed packages of ROOTS, every architecture, as dpkg names them
+roots() {
+	dpkg-query -W -f '${binary:Package}\t${db:Status-Abbrev}\n' "${ROOTS[@]}" 2>/dev/null | awk -F '\t' '$2 ~ /^ii/ {print $1}'
+}
+driver_installed() {
+	[[ -n $(dpkg-query -W -f '${db:Status-Abbrev}\n' nvidia-driver nvidia-driver-libs nvidia-kernel-open-dkms-stereo3d \
+		nvidia-legacy-580xx-kernel-dkms 2>/dev/null | grep '^ii') ]]
+}
+unneeded() { apt-get --simulate --purge autoremove 2>/dev/null | sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' | sort -u; }
+planned() { sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' | sort -u; }
+wait_for_dpkg() { apt-get -q -o DPkg::Lock::Timeout=-1 check >/dev/null 2>&1 || true; }
+notice() { sparky-stereo-problems keep --boot --severity notice --quiet "$PKG" "$NOTICE" "$@" >/dev/null 2>&1 || true; }
+clear_problem() {
+	[[ -e $STORE/${PKG}_$KEY.json ]] || return 0
+	sparky-stereo-problems clear "$PKG" "$KEY" >/dev/null 2>&1 || true
+}
+# purge_checked PACKAGE...: apt's plan first; only NVIDIA's packages may leave
+purge_checked() {
+	local plan extra
+	plan=$(apt-get -s -q -o Debug::NoLocking=true purge "$@" 2>&1) || {
+		sparky-stereo-problems keep --repair "$REPAIR_REMOVE" --output "$(tail -n 40 <<<"$plan")" "$PKG" "$KEY" LOCAL122 'apt-get --simulate purge' 100 >/dev/null 2>&1 || true
+		say "apt cannot plan the removal of NVIDIA's driver; nothing was removed"
+		return 1
+	}
+	extra=$(planned <<<"$plan" | while read -r p; do nvidia_name "$p" || printf '%s ' "$p"; done)
+	if [[ -n $extra ]]; then
+		sparky-stereo-problems keep --repair "$REPAIR_REMOVE" "$PKG" "$KEY" LOCAL121 "${extra% }" >/dev/null 2>&1 || true
+		say "NVIDIA's driver was not removed: the removal would also take ${extra% }, which is not part of the driver"
+		return 1
+	fi
+	grep -E '^(Remv|Purg) ' <<<"$plan"
+	sparky-stereo-problems run --repair "$REPAIR_REMOVE" "$PKG" "$KEY" LOCAL122 -- \
+		env DEBIAN_FRONTEND=noninteractive apt-get -y -q purge "$@"
+}
+remove() {
+	local -a r left
+	local closure before count=0
+	wait_for_dpkg
+	mapfile -t r < <(roots)
+	if ((${#r[@]} == 0)); then
+		clear_problem
+		return 0
+	fi
+	closure=$(apt-cache depends --installed --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces \
+		--no-enhances "${r[@]}" 2>/dev/null | sed -n 's/^\([^ <|][^ ]*\)$/\1/p' | sort -u)
+	before=$(unneeded)
+	purge_checked "${r[@]}" || return 1
+	count=${#r[@]}
+	# what only the driver needed, and is NVIDIA's by name
+	mapfile -t left < <(comm -12 <(unneeded) <(printf '%s\n' "$closure") | comm -23 - <(printf '%s\n' "$before") |
+		while read -r p; do nvidia_name "$p" && printf '%s\n' "$p"; done)
+	if ((${#left[@]})); then
+		purge_checked "${left[@]}" || return 1
+		count=$((count + ${#left[@]}))
+	fi
+	clear_problem
+	say "NVIDIA's driver was removed ($count packages): this computer has no NVIDIA graphics card. Hardware Setup installs it again by itself when one is found"
+	notice LOCAL120 "$count"
+	return 0
+}
+metered() {
+	local value
+	value=$(busctl get-property org.freedesktop.NetworkManager /org/freedesktop/NetworkManager org.freedesktop.NetworkManager Metered 2>/dev/null) || return 1
+	[[ $value == 'u 1' || $value == 'u 3' ]]
+}
+record_seen() { mkdir -p "$STATE" && cards | ids >"$SEEN.new" && mv "$SEEN.new" "$SEEN"; }
+install() {
+	local list
+	list=$(cards | ids | paste -sd' ' -)
+	if [[ -z $list ]]; then
+		say "no NVIDIA graphics card is on this computer: nothing to install"
+		clear_problem
+		return 0
+	fi
+	wait_for_dpkg
+	if sparky-stereo-problems run --repair "$REPAIR_INSTALL" "$PKG" "$KEY" LOCAL123 "$list" -- "$SETUP" --auto --nvidia-only; then
+		record_seen
+		if driver_installed; then
+			say "an NVIDIA graphics card was found ($list) and its driver was installed; restart the computer to use it"
+			notice LOCAL124 "$list"
+		fi
+		return 0
+	fi
+	return 1
+}
+auto() {
+	local list rc new
+	list=$(cards)
+	rc=$?
+	if ((rc == 2)); then
+		say "the PCI bus cannot be read ($SYS/bus/pci/devices), so nothing is decided about NVIDIA's driver"
+		return 0
+	fi
+	mkdir -p "$STATE"
+	if [[ ! -e $SETTLED ]]; then
+		if [[ -z $list ]]; then
+			remove || return 1
+		fi
+		record_seen
+		: >"$SETTLED"
+		return 0
+	fi
+	new=$(comm -23 <(ids <<<"$list") <(sort -u "$SEEN" 2>/dev/null))
+	if [[ -z $new ]]; then
+		[[ -z $list ]] || ! driver_installed || clear_problem
+		return 0
+	fi
+	new=$(paste -sd' ' - <<<"$new")
+	if driver_installed; then
+		record_seen
+		clear_problem
+		return 0
+	fi
+	if [[ $(cat "$CHOICE" 2>/dev/null) == nouveau ]]; then
+		record_seen
+		say "an NVIDIA graphics card was found ($new); nouveau stays, as chosen in Hardware Setup"
+		return 0
+	fi
+	if metered; then
+		sparky-stereo-problems keep --repair "$REPAIR_INSTALL" "$PKG" "$KEY" LOCAL125 "$new" >/dev/null 2>&1 || true
+		say "an NVIDIA graphics card was found ($new); its driver is not downloaded by itself on a metered connection"
+		return 0
+	fi
+	install
+}
+case ${1:-} in
+present)
+	list=$(cards)
+	rc=$?
+	((rc == 2)) && exit 2
+	[[ -n $list ]] || exit 1
+	printf '%s\n' "$list"
+	;;
+auto) auto ;;
+remove) remove ;;
+install) install ;;
+*) echo "usage: ${0##*/} present|auto|remove|install" >&2; exit 2 ;;
+esac

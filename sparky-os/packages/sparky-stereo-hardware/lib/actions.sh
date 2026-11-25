@@ -76,7 +76,8 @@ load_strings() {
 }
 
 # plan_answer CODE: what the plan window's exit code means. yad gives the number of the button pressed (0 install, 2
-# install but keep nouveau, 4 ask about wl again, 6 use Broadcom's wl, 8 back to the kernel's Wi-Fi driver, 1 Cancel) and 252
+# install but keep nouveau, 4 ask about wl again, 6 use Broadcom's wl, 8 back to the kernel's Wi-Fi driver, 10 and 12 turn a
+# known machine's correction off or on, 1 Cancel) and 252
 # for a closed window; any other code is the window's own failure, never an
 # answer of the person's.
 plan_answer() {
@@ -86,6 +87,8 @@ plan_answer() {
 		4) echo wl-again ;;
 		6) echo wl-swap ;;
 		8) echo wl-back ;;
+		10) echo known-off ;;
+		12) echo known-on ;;
 		1|252) echo cancel ;;
 		*) echo window-failed ;;
 	esac

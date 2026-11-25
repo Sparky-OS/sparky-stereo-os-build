@@ -1,15 +1,51 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/14
 # Copyright 2026 under the GNU GPL3 License
-"""Match the documented machine table; print JSON for inspection and the journal."""
+# Last update 2026/11/25
+"""The documented machine table: which entries match this computer, and their corrections.
+
+  --list             the matching entries and each correction (what it is, on or off, in effect now), as JSON
+  --apply            put the corrections that are on into the boot images and GRUB's menu, when they are not there
+                     yet, and say so (sparky-stereo-known-machines.service at every start; nothing is done when
+                     everything is in place)
+  --off ID, --on ID  the person's switch for one correction, then --apply; it takes effect at the next restart
+  --acpi-tables      the firmware tables that are on for this computer, one path per line (the initramfs hook)
+  --kernel-options   the kernel options that are on for this computer, on one line (the boot option file)
+
+Daniel, 2026-11-14: "then we should include in our hardware detection, these type of things"; "for systems that are
+well known and documented". A correction is applied only on its model (DMI product name), is listed, and can be
+turned off. Two kinds have a handler (ORDER 665 and 669):
+  acpi-table     a small firmware table of the package (compiled at build time from its source beside it), put into
+                 the early part of every boot image, where the kernel adds it before it reads the firmware's own
+                 tables (Documentation/admin-guide/acpi/initrd_table_override.rst, CONFIG_ACPI_TABLE_UPGRADE)
+  kernel-option  one option on the kernel line of every Linux entry of GRUB's menu
+                 (/etc/default/grub.d/40-sparky-stereo-known-machines.cfg)
+The table never names a command: a correction is a file name of the package or one option of a fixed shape.
+"""
 import argparse
 import fnmatch
 import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
 
-TABLE = Path('/usr/share/sparky/sparky-stereo-hardware/known-machines.json')
+ROOT = Path(os.environ.get('SPARKY_STEREO_ROOT') or '/')
+SHARE = Path('/usr/share/sparky/sparky-stereo-hardware')
+TABLE = SHARE / 'known-machines.json'
+TABLES = SHARE / 'acpi-tables'
+OFF = ROOT / 'etc/sparky-stereo-hardware/known-machines.off'
+IMAGES = ROOT / 'var/lib/sparky-stereo-hardware/known-machines-boot-images'
+BOOT = ROOT / 'boot'
+PACKAGE = 'sparky-stereo-hardware'
+KEY = 'known-machines'
+NOTICE = 'known-machines-applied'
+REPAIR = '["/usr/bin/sparky-stereo-known-machines","--apply"]'
+NAME = re.compile('[a-z0-9]+(?:-[a-z0-9]+)*')
+OPTION = re.compile('[a-z][a-z0-9_.]*=[A-Za-z0-9_,.:-]+')
+KINDS = ('acpi-table', 'kernel-option')
 
 
 def read_optional(path):
@@ -46,42 +82,240 @@ def matches(rule, ids):
     return True
 
 
-def inspect(table, ids):
+def check_correction(correction, tables, seen):
+    """A correction is one of the reviewed kinds, in its fixed shape; anything else is refused by name."""
+    if not isinstance(correction, dict) or correction.get('kind') not in KINDS:
+        raise ValueError('machine correction has no reviewed handler')
+    name = correction.get('id', '')
+    if not isinstance(name, str) or not NAME.fullmatch(name) or name in seen:
+        raise ValueError('invalid or duplicate correction id')
+    seen.add(name)
+    if not isinstance(correction.get('message'), int):
+        raise ValueError('machine correction needs the number of its sentence')
+    if correction['kind'] == 'acpi-table':
+        table = correction.get('table', '')
+        if set(correction) != {'id', 'kind', 'table', 'message'} or not isinstance(table, str) or \
+                not table.endswith('.aml') or not NAME.fullmatch(table[:-4]):
+            raise ValueError('an acpi-table correction names one table file of the package')
+        if not (tables / table).is_file():
+            raise ValueError('machine correction names a table that is not in the package: %s' % table)
+    else:
+        option = correction.get('option', '')
+        if set(correction) != {'id', 'kind', 'option', 'message'} or not isinstance(option, str) or \
+                not OPTION.fullmatch(option):
+            raise ValueError('a kernel-option correction is one option of the form name=value')
+
+
+def inspect(table, ids, tables=TABLES):
     if table.get('version') != 1 or not isinstance(table.get('machines'), list):
         raise ValueError('unsupported machine table')
     found = []
     seen = set()
+    corrections = set()
     for entry in table['machines']:
         name = entry.get('id', '')
         if not re.fullmatch('[a-z0-9]+(?:-[a-z0-9]+)*', name) or name in seen:
             raise ValueError('invalid or duplicate machine id')
         seen.add(name)
-        # No machine-specific write is authorised yet. A future action needs
-        # an idempotent handler, a fixture and a problems-engine change record.
-        if entry.get('corrections') != []:
+        if not isinstance(entry.get('corrections'), list):
             raise ValueError('machine correction has no reviewed handler')
+        for correction in entry['corrections']:
+            check_correction(correction, tables, corrections)
         if matches(entry.get('match'), ids):
             found.append(entry)
     return found
 
 
+def switched_off():
+    try:
+        lines = OFF.read_text().splitlines()
+    except FileNotFoundError:
+        return set()
+    return {line.strip() for line in lines if line.strip() and not line.lstrip().startswith('#')}
+
+
+def table_id(path):
+    """The OEM table ID of an ACPI table file (ACPI 6.5, 5.2.6: bytes 16 to 23 of the header)."""
+    try:
+        with open(path, 'rb') as handle:
+            return handle.read(24)[16:24]
+    except OSError:
+        return None
+
+
+def in_effect(correction, tables, sysfs, cmdline):
+    """Whether the running system has the correction: True, False, or None when it cannot be read (the firmware
+    tables in /sys are root's)."""
+    if correction['kind'] == 'kernel-option':
+        try:
+            return correction['option'] in cmdline.read_text().split()
+        except OSError:
+            return None
+    want = table_id(tables / correction['table'])
+    folder = sysfs / 'firmware/acpi/tables'
+    try:
+        names = sorted(p for p in folder.iterdir() if p.is_file())
+    except OSError:
+        return None
+    seen = False
+    for path in names:
+        got = table_id(path)
+        if got is None:
+            continue
+        seen = True
+        if got == want:
+            return True
+    return False if seen else None
+
+
+def corrections_of(found, tables, sysfs, cmdline):
+    off = switched_off()
+    result = []
+    for entry in found:
+        for correction in entry['corrections']:
+            row = dict(correction, machine=entry['id'], on=correction['id'] not in off)
+            row['in_effect'] = in_effect(correction, tables, sysfs, cmdline)
+            result.append(row)
+    return result
+
+
+def wanted(rows):
+    return (sorted(r['table'] for r in rows if r['kind'] == 'acpi-table' and r['on']),
+            sorted(r['option'] for r in rows if r['kind'] == 'kernel-option' and r['on']))
+
+
+def all_options(table):
+    return {c['option'] for e in table['machines'] for c in e['corrections'] if c['kind'] == 'kernel-option'}
+
+
+def boot_images_behind(tables):
+    """The kernels whose boot image was not written with exactly these tables: the initramfs hook records, per
+    kernel, the tables it put in (IMAGES/RELEASE). A boot image with no record was written before the hook existed:
+    it holds no table of ours, so it is behind only when one is wanted."""
+    behind = []
+    for image in sorted(BOOT.glob('initrd.img-*')):
+        release = image.name[len('initrd.img-'):]
+        try:
+            got = sorted((IMAGES / release).read_text().split())
+        except OSError:
+            got = []
+        if got != tables:
+            behind.append(release)
+    return behind
+
+
+def menu_behind(options, every):
+    """GRUB's menu is behind when a wanted option is on no Linux line of it, or an option of the table that is not
+    wanted is on one. No menu (no GRUB here): nothing to write."""
+    try:
+        text = (BOOT / 'grub/grub.cfg').read_text(errors='replace')
+    except OSError:
+        return False
+    words = set()
+    for line in text.splitlines():
+        parts = line.split()
+        if parts and parts[0] in ('linux', 'linuxefi', 'linux16'):
+            words.update(parts[1:])
+    return any(o not in words for o in options) or any(o in words for o in every - set(options))
+
+
+def engine(*arguments):
+    if shutil.which('sparky-stereo-problems') is None:
+        return 127
+    return subprocess.run(['sparky-stereo-problems', *arguments], stdin=subprocess.DEVNULL,
+                          stdout=sys.stderr).returncode
+
+
+def apply(rows, table, dry_run):
+    """Writes the boot images and the menu again when they do not hold what is on now. Returns the changes made."""
+    tables, options = wanted(rows)
+    steps = []
+    if boot_images_behind(tables):
+        steps.append(('boot-image', ['update-initramfs', '-u', '-k', 'all']))
+    if menu_behind(options, all_options(table)):
+        steps.append(('boot-menu', ['update-grub']))
+    names = ', '.join(r['id'] for r in rows) or '-'
+    if not steps:
+        if os.path.exists(ROOT / 'var/lib/sparky-stereo-problems' / ('%s_%s.json' % (PACKAGE, KEY))):
+            engine('clear', PACKAGE, KEY)
+        return []
+    if dry_run:
+        return [{'step': step, 'would_run': command} for step, command in steps]
+    # an apt or dpkg run in progress writes boot images itself: wait until it has ended
+    if shutil.which('apt-get') and os.geteuid() == 0 and not os.environ.get('SPARKY_STEREO_ROOT'):
+        subprocess.run(['apt-get', '-q', '-o', 'DPkg::Lock::Timeout=-1', 'check'], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    changes = []
+    for step, command in steps:
+        status = engine('run', '--repair', REPAIR, PACKAGE, KEY, 'LOCAL118', names, '--', *command)
+        if status != 0:
+            raise RuntimeError('%s exited %s; the correction is not in place' % (' '.join(command), status))
+        changes.append({'step': step, 'ran': command})
+    if boot_images_behind(tables) or menu_behind(options, all_options(table)):
+        engine('keep', '--repair', REPAIR, PACKAGE, KEY, 'LOCAL118', ' '.join(steps[-1][1]), 'incomplete', names)
+        raise RuntimeError('the boot images or the menu still do not hold the corrections that are on')
+    engine('keep', '--boot', '--severity', 'notice', '--quiet', PACKAGE, NOTICE, 'LOCAL117', names)
+    return changes
+
+
+def switch(name, on, rows):
+    if name not in {r['id'] for r in rows}:
+        raise ValueError('no correction named %s applies to this computer' % name)
+    off = switched_off()
+    if on:
+        off.discard(name)
+    else:
+        off.add(name)
+    OFF.parent.mkdir(parents=True, exist_ok=True)
+    if off:
+        OFF.write_text('# Corrections for this computer that were turned off (sparky-stereo-known-machines --on ID '
+                       'turns one on again)\n' + ''.join(n + '\n' for n in sorted(off)))
+    else:
+        OFF.unlink(missing_ok=True)
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--sysfs-root', type=Path, default=Path('/sys'))
     parser.add_argument('--table', type=Path, default=TABLE)
+    parser.add_argument('--tables', type=Path, default=TABLES)
+    parser.add_argument('--cmdline', type=Path, default=Path('/proc/cmdline'))
     parser.add_argument('--list', action='store_true')
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--acpi-tables', action='store_true')
+    parser.add_argument('--kernel-options', action='store_true')
+    parser.add_argument('--off', metavar='ID')
+    parser.add_argument('--on', metavar='ID')
     args = parser.parse_args()
+    if (args.off or args.on) and os.geteuid() != 0 and not os.environ.get('SPARKY_STEREO_ROOT'):
+        # the person's switch changes the boot images and the menu: asked for through polkit
+        os.execvp('pkexec', ['pkexec', '/usr/bin/sparky-stereo-known-machines', *sys.argv[1:]])
     table = json.loads(args.table.read_text())
     ids = identifiers(args.sysfs_root)
-    found = inspect(table, ids)
-    print(json.dumps({'matched': found, 'changes': []}, ensure_ascii=False))
+    found = inspect(table, ids, args.tables)
+    rows = corrections_of(found, args.tables, args.sysfs_root, args.cmdline)
+    if args.acpi_tables:
+        for name in wanted(rows)[0]:
+            print(args.tables / name)
+        return 0
+    if args.kernel_options:
+        print(' '.join(wanted(rows)[1]))
+        return 0
+    changes = []
+    if args.off or args.on:
+        switch(args.off or args.on, bool(args.on), rows)
+        rows = corrections_of(found, args.tables, args.sysfs_root, args.cmdline)
+    if args.apply or args.off or args.on:
+        changes = apply(rows, table, args.dry_run)
+    print(json.dumps({'matched': found, 'corrections': rows, 'changes': changes,
+                      'restart_needed': bool(changes) and not args.dry_run}, ensure_ascii=False))
     return 0
 
 
 if __name__ == '__main__':
     try:
         sys.exit(main())
-    except (OSError, ValueError, TypeError) as error:
+    except (OSError, ValueError, TypeError, RuntimeError) as error:
         print(f'known-machines: {error}', file=sys.stderr)
         sys.exit(1)

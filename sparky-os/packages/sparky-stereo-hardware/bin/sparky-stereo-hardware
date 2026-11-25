@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/03
+# Last update 2026/11/25
 # Nothing is replaced by something else behind the person's back: a step that fails says what failed, why and what to do
 # (ERROR lines, a summary at the end, the same in a window when the menu started it) and the setup exits non-zero; another
 # path, nouveau instead of the edition's NVIDIA driver, is only the person's own choice (--nvidia nouveau, or the plan
@@ -21,6 +21,8 @@ rig_driver=
 nvidia_choice=edition
 wl_option=
 kernel_choice=
+nvidia_only=false
+nvidia_said=false
 while (($#)); do
 	case "$1" in
 		--auto) auto=true ;;
@@ -29,13 +31,19 @@ while (($#)); do
 		--rig-driver) shift; rig_driver=${1:?Missing rig driver package} ;;
 		--broadcom-wl) shift; wl_option=${1:?Missing --broadcom-wl value: ask, yes, no, repair, reset, swap or back} ;;
 		--kernel) shift; kernel_choice=${1:?Missing --kernel value: v3 or base} ;;
-		--nvidia) shift; nvidia_choice=${1:?Missing NVIDIA choice: edition or nouveau} ;;
+		--nvidia) shift; nvidia_choice=${1:?Missing NVIDIA choice: edition or nouveau}; nvidia_said=true ;;
+		# only the NVIDIA step of the run: the edition's driver for a card this machine has not shown before (ORDER 675)
+		--nvidia-only) nvidia_only=true ;;
+		# the same, kept and said by the engine (the Repair of the problem the card's step keeps)
+		--nvidia-card) exec "$LIB/nvidia-card" install ;;
 		# NVIDIA's i386 libraries at the installed driver's version, for i386 enabled after the driver (the Repair of the
 		# problem dpkg's hook keeps; ORDER 363)
 		--nvidia-i386) exec "$LIB/nvidia-i386" install ;;
 		# packages built for a processor level above this one's, installed again so apt takes the baseline build (the Repair of the notice, ORDER 108)
 		--variants) exec "$LIB/variant-check" repair ;;
-		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-i386] [--broadcom-wl ask|yes|no|repair|reset|swap|back] [--kernel v3|base] [--variants]'
+		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-only] [--nvidia-card] [--nvidia-i386] [--broadcom-wl ask|yes|no|repair|reset|swap|back] [--kernel v3|base] [--variants]'
+			echo '  --nvidia-card: the edition'"'"'s NVIDIA driver for an NVIDIA graphics card found on this computer, kept and said by sparky-stereo-problems; on a computer without such a card NVIDIA'"'"'s driver is not installed (the image'"'"'s copy is removed once, at the first start)'
+			echo '  --auto --nvidia-only: only the NVIDIA step of the setup'
 			echo '  --variants: install again the packages built for an x86-64 level above this processor, so apt takes the baseline build'
 			echo '  --kernel base: keep the baseline kernel only on an x86-64-v3 processor (the choice is kept for this machine; nothing is removed); --kernel v3: install the x86-64-v3 kernel again, the default on such a processor'
 			echo '  --nvidia edition (the default): the edition'"'"'s NVIDIA driver for the card: its open modules with HDMI 3D on Turing and newer, NVIDIA'"'"'s 580 driver on Maxwell, Pascal and Volta'
@@ -159,9 +167,27 @@ else
 		fi
 	fi
 	cat "$WORK/isenkram.log"
-	nvidia-detect >"$FACTS/nvidia-detect" 2>&1 || log 'nvidia-detect could not recommend a driver; use the edition compatibility table'
+	# NVIDIA's own report, when its tool is there (it comes with NVIDIA's driver); the plan never reads it: which driver a
+	# card gets is decided from NVIDIA's tables of supported cards (share/nvidia-open.ids, nvidia-legacy-580xx.ids)
+	if command -v nvidia-detect >/dev/null 2>&1; then
+		nvidia-detect >"$FACTS/nvidia-detect" 2>&1 || log 'nvidia-detect could not recommend a driver; use the edition compatibility table'
+	else
+		echo "nvidia-detect is not installed (it comes with NVIDIA's driver); the plan above is the edition's own detection" >"$FACTS/nvidia-detect"
+	fi
+	# the corrections of the known-machines table that apply to this computer, each with its state (ORDER 665, 669)
+	/usr/bin/sparky-stereo-known-machines --list >"$FACTS/known-machines" 2>"$WORK/known-machines.log" || { cat "$WORK/known-machines.log"; : >"$FACTS/known-machines"; }
 fi
 python3 "$LIB/detect.py" "$FACTS" "$SHARE" >"$WORK/plan"
+# known_corrections: "ID<TAB>MESSAGE<TAB>on|off<TAB>KIND<TAB>VALUE" for each correction of this computer
+known_corrections() {
+	[[ -s $FACTS/known-machines ]] || return 0
+	python3 -I -c 'import json,sys
+for r in json.load(open(sys.argv[1])).get("corrections", []):
+    print("\t".join([r["id"], str(r["message"]), "on" if r["on"] else "off", r["kind"], r.get("table") or r.get("option")]))' "$FACTS/known-machines"
+}
+while IFS=$'\t' read -r km_id km_message km_state km_kind km_value; do
+	printf 'fact\tknown-machine\t%s\t%s\t%s\t%s\n' "$km_id" "$km_state" "$km_kind" "$km_value" >>"$WORK/plan"
+done < <(known_corrections)
 if [[ -n "$rig_driver" ]]; then
 	if ! awk -F '\t' -v package="$rig_driver" '($1 == "candidate" || $1 == "package") && $2 == package {found=1} END {exit !found}' "$WORK/plan"; then
 		log "No detected rig matches $rig_driver"; exit 2
@@ -250,6 +276,20 @@ if $wl_only; then
 fi
 if ! $auto; then
 	load_strings
+	# A known machine's corrections, in the person's language, each with what it does and its switch (ORDER 665, 669).
+	# The first one gets the window's button; every one has the command (sparky-stereo-known-machines --off ID, --on ID).
+	km_button= km_switch= km_switch_id=
+	while IFS=$'\t' read -r km_id km_message km_state km_kind km_value; do
+		km_what=$(render_message "$km_message")
+		if [[ $km_state == on ]]; then
+			text=$(render_message 116 "$km_what" "$km_id")
+			[[ -n $km_button ]] || { km_button=--button="$LOCAL118:10"; km_switch=--off; km_switch_id=$km_id; }
+		else
+			text=$(render_message 117 "$km_what" "$km_id")
+			[[ -n $km_button ]] || { km_button=--button="$LOCAL119:12"; km_switch=--on; km_switch_id=$km_id; }
+		fi
+		printf 'note\tknown-machine\t%s\n' "$text" >>"$WORK/plan"
+	done < <(known_corrections)
 	# Not now was chosen before: the plan says so, and has a button to be asked again
 	wl_again=false
 	if grep -Fxq $'action\tbroadcom-wl' "$WORK/plan" && wl_declined; then
@@ -281,6 +321,7 @@ if ! $auto; then
 	buttons=(--button="$LOCAL2:1")
 	if $wl_again; then buttons+=(--button="$LOCAL66:4"); fi
 	if [[ -n $wl_swap_button ]]; then buttons+=("$wl_swap_button"); fi
+	if [[ -n $km_button ]]; then buttons+=("$km_button"); fi
 	if grep -Eq $'^action\tnvidia-(open|legacy-580xx)$' "$WORK/plan"; then buttons+=(--button="$LOCAL4:2"); fi
 	buttons+=(--button="$LOCAL3:0")
 	# A Maxwell, Pascal or Volta card has two drivers that give different results: both are said above the plan, in the
@@ -298,7 +339,16 @@ if ! $auto; then
 		wl-again) wl_reset ;;
 		wl-swap) wl_choice=swap ;;
 		wl-back) wl_choice=back ;;
-		nouveau) nvidia_choice=nouveau ;;
+		nouveau) nvidia_choice=nouveau; nvidia_said=true ;;
+		known-off|known-on)
+			# the person's switch for this computer's correction: the boot images or the menu are written again now, and it
+			# applies at the next restart; nothing else of the setup runs
+			if run /usr/bin/sparky-stereo-known-machines "$km_switch" "$km_switch_id"; then
+				log "$(render_message 120 "$km_switch_id")"
+				yad --info --title="$LOCAL1" --text="$(render_message 120 "$km_switch_id")" --button="$LOCAL7:0" || true
+				exit 0
+			fi
+			err 121 "$km_switch_id"; stop_run ;;
 		cancel) log 'Hardware Setup cancelled; nothing was changed'; exit 0 ;;
 		*) err 52 "$answer"; stop_run ;;
 	esac
@@ -312,6 +362,30 @@ if ! $auto; then
 	exec env SHELL=/bin/bash SPARKY_STEREO_HARDWARE_GUI=1 sparky-xterm "/usr/bin/sparky-stereo-hardware --auto --nvidia $nvidia_choice ${rig_driver:+--rig-driver $rig_driver} ${wl_ask:+--broadcom-wl $wl_ask}"
 fi
 failed=0
+# The person's own choice between the edition's NVIDIA driver and nouveau is kept for the machine (ORDER 675): a card that
+# appears later gets the driver by itself only where nouveau was not chosen. Said choices only (--nvidia, the window's buttons).
+NVIDIA_CHOICE_FILE=/var/lib/sparky-stereo-hardware/nvidia-choice
+if $nvidia_said && grep -Eq $'^action\tnvidia-(open|legacy-580xx)$' "$WORK/plan"; then
+	mkdir -p "${NVIDIA_CHOICE_FILE%/*}"
+	if [[ $nvidia_choice == nouveau ]]; then echo nouveau >"$NVIDIA_CHOICE_FILE"; else rm -f "$NVIDIA_CHOICE_FILE"; fi
+fi
+if $nvidia_only; then
+	# only the NVIDIA step (the card's step runs this for a card the machine has not shown before)
+	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then
+		install_only() { apt_install "$@" || { err 47 "$*"; failed=1; }; }
+		install_only firmware-nvidia-graphics
+		setup_nvidia || failed=1
+	elif grep -Fxq $'action\tnvidia-legacy-580xx' "$WORK/plan"; then
+		install_only() { apt_install "$@" || { err 47 "$*"; failed=1; }; }
+		install_only firmware-nvidia-graphics
+		setup_nvidia legacy-580xx || failed=1
+	else
+		log "NVIDIA: no driver of the edition's is installed for this computer (no NVIDIA card, or a card that keeps nouveau: the plan above says which)"
+	fi
+	trap - ERR
+	finish_run "$LOG" "$failed"
+	exit
+fi
 # the Wi-Fi driver of a Broadcom card no kernel driver drives: the licence and the person's yes first, then the checks
 setup_broadcom_wl "$wl_option" || failed=1
 # a card the kernel's driver and wl both drive: told, or moved to wl or back when the person chose that (row 728)

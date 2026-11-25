@@ -1,0 +1,5 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/25
+# Copyright 2026 under the GNU GPL3 License
+# An NVIDIA display controller that appears (a card put in, an external one plugged in) starts the step that installs
+# the edition's driver for a card the machine has not shown before (sparky-stereo-hardware-nvidia-card.service; ORDER 675).
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x03*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="sparky-stereo-hardware-nvidia-card.service"
