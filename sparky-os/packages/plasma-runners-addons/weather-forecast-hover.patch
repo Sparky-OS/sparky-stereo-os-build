@@ -4,19 +4,7 @@
  
              Kirigami.Icon {
                  weatherTheme: true
-+                weatherHovered: conditionHover.hovered
++                weatherHovered: iconToolTip.containsMouse
                  Layout.fillWidth: true
                  Layout.preferredHeight: preferredIconSize
                  Layout.preferredWidth: preferredIconSize
-@@ -137,6 +138,11 @@
-                 source: model.conditionIcon
-                 fallback: Util.unknownWeatherIcon
- 
-+                HoverHandler {
-+                    id: conditionHover
-+                    blocking: false
-+                }
-+
-                 PlasmaCore.ToolTipArea {
-                     id: iconToolTip
-                     anchors.fill: parent
