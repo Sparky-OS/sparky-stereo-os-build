@@ -280,10 +280,10 @@ KERNEL_PROVIDES = {
 META = {
     'sparky-stereo-desktop': (
         'Sparky Stereo desktop',
-        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory, Camera and Throw pages in System Settings (Throw: the desktop and its sound sent to a Google Cast device, which becomes one more screen), the notifications of what failed on the computer until it is repaired, time synchronisation, high fidelity sound defaults (the sound system follows the rate of what plays), the Dolphin menus (convert audio, and the stereo integration packs), VLC Stereo as the video player, and the applications beyond the KDE edition.',
+        'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory, Camera, Storage Cleanup and Throw pages in System Settings (Throw: the desktop and its sound sent to a Google Cast device, which becomes one more screen), the notifications of what failed on the computer until it is repaired, time synchronisation, high fidelity sound defaults (the sound system follows the rate of what plays), the Dolphin menus (convert audio, and the stereo integration packs), VLC Stereo as the video player, and the applications beyond the KDE edition.',
         # sparky-stereo-problems-plasma: the person is told what failed (ORDER 350; a designed feature's dependency is a
         # Depends, memory design-check-every-default)
-        ['sparky-stereo-audio', 'sparky-stereo-audio-convert', 'sparky-stereo-camera', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-integrations', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-problems-plasma', 'sparky-stereo-throw', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
+        ['sparky-stereo-audio', 'sparky-stereo-audio-convert', 'sparky-stereo-camera', 'sparky-stereo-cec', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-integrations', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-problems-plasma', 'sparky-stereo-storage-kcm', 'sparky-stereo-throw', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
         [p for p in lst('apps') if p not in ROLED] + lst('image') + OURS_PLAYER_OUTPUT),
     'sparky-stereo-integrations': (
         'Sparky Stereo integrations',

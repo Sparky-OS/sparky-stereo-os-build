@@ -1,0 +1,945 @@
+Description: Expose a per-item JSON preview and confirmation for a mounted filesystem
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-25
+
+diff --git a/bleachbit/CLI.py b/bleachbit/CLI.py
+index 5675e93..0ee8ab6 100644
+--- a/bleachbit/CLI.py
++++ b/bleachbit/CLI.py
+@@ -9,8 +9,10 @@ Command line interface
+ """
+ 
+ import errno
++import json
+ import logging
+ import optparse
++import re
+ import sys
+ 
+ from bleachbit.Cleaner import backends, create_simple_cleaner, register_cleaners
+@@ -239,6 +241,17 @@ def parse_cmd_line(argv=None):
+                       # TRANSLATORS: Help for the --preview command on the CLI,
+                       # and 'preview' is a verb
+                       help=_("preview files to be deleted and other changes"))
++    parser.add_option("--json", action="store_true",
++                      help=_("output a machine-readable result"))
++    if sys.platform.startswith('linux'):
++        parser.add_option("--volume", metavar="MOUNT",
++                          help=_("limit preview and cleaning to the mounted filesystem"))
++        parser.add_option("--approved-stdin", action="store_true",
++                          help=_("read a JSON array of approved preview item IDs from standard input"))
++        parser.add_option("--temporary-age-days", type="int", default=7,
++                          help=_("minimum age of temporary files in days"))
++        parser.add_option("--set-option", metavar="CLEANER.OPTION",
++                          help=_("set one option in the saved cleaner selection"))
+     parser.add_option("-c", "--clean", action="store_true",
+                       # TRANSLATORS: Help for the --clean command on the CLI
+                       help=_("run cleaners to delete files and make other permanent changes"))
+@@ -357,6 +370,60 @@ def process_cmd_line():
+               '--preview, --clean, --shred'))
+         sys.exit(1)
+ 
++    if options.json:
++        if not sys.platform.startswith('linux'):
++            parser.error(_("Structured mode requires Linux."))
++        from bleachbit import Structured
++        if options.list_cleaners and not args:
++            list(register_cleaners())
++            print(json.dumps({'schema': 1, 'cleaners': Structured.catalog()}))
++            return
++        if options.set_option:
++            if cmd_count or args not in (['true'], ['false']):
++                parser.error(_("Supply true or false to set the selected cleaner option."))
++            list(register_cleaners())
++            name, separator, key = options.set_option.partition('.')
++            if not separator or name not in backends or key not in dict(backends[name].get_options()):
++                parser.error(_("Unknown cleaner option."))
++            Options.options.set_tree(name, key, args == ['true'])
++            Options.options.close()
++            print(json.dumps({'schema': 1, 'cleaners': Structured.catalog()}))
++            return
++        if not options.volume or not (options.preview or options.clean):
++            parser.error(_("Specify a mounted volume and a preview or clean operation."))
++        if bool(options.approved_stdin) != bool(options.clean):
++            parser.error(_("Scoped cleaning requires approved preview items from standard input."))
++        if options.debug_log or options.gui or options.overwrite:
++            parser.error(_("Structured mode does not support these options."))
++        try:
++            approved = None
++            if options.clean:
++                encoded = sys.stdin.read(16 * 1024 * 1024 + 1)
++                if len(encoded) > 16 * 1024 * 1024:
++                    raise ValueError(_("Too many approved preview items."))
++                approved = json.loads(encoded)
++                if not isinstance(approved, list) or any(
++                        not isinstance(item, str) or not re.fullmatch(r'[0-9a-f]{64}', item)
++                        for item in approved):
++                    raise ValueError(_("Expected an array of approved preview item IDs."))
++                approved = set(approved)
++            if not 1 <= options.temporary_age_days <= 365:
++                raise ValueError(_("Temporary file age must be between 1 and 365 days."))
++            mode = Structured.Structured(options.volume, approved, options.temporary_age_days)
++            operations = args_to_operations(args, options.preset, options.all_but_warning, excludes)
++            if operations:
++                for _step in Worker.Worker(CliCallback(quiet=True), options.clean,
++                                           operations, structured=mode).run():
++                    pass
++            result = mode.result()
++        except (OSError, ValueError, RuntimeError) as error:
++            print(json.dumps({'schema': 1, 'error': str(error)}))
++            sys.exit(1)
++        print(json.dumps(result))
++        sys.exit(1 if options.clean and result['errors'] else 0)
++    if any(getattr(options, key, None) for key in ('volume', 'approved_stdin', 'set_option')):
++        parser.error(_("Use these options with --json."))
++
+     did_something = False
+     if options.debug:
+         # Debug is set in __init__ so it takes effect earlier.
+diff --git a/bleachbit/Command.py b/bleachbit/Command.py
+index 45141c7..0587506 100755
+--- a/bleachbit/Command.py
++++ b/bleachbit/Command.py
+@@ -70,6 +70,10 @@ class Delete:
+     def __str__(self):
+         return f'Command to {"shred" if self.shred else "delete"} {self.path}'
+ 
++    def execute_scoped(self, parent, name, fd):
++        """Remove the reviewed name relative to the open parent directory."""
++        os.unlink(name, dir_fd=parent)
++
+     def execute(self, really_delete):
+         """Make changes and return results"""
+         if FileUtilities.whitelisted(self.path):
+@@ -309,6 +313,10 @@ class Truncate(Delete):
+     def __str__(self):
+         return f'Command to truncate {self.path}'
+ 
++    def execute_scoped(self, parent, name, fd):
++        """Truncate the reviewed inode through its open file descriptor."""
++        os.ftruncate(fd, 0)
++
+     def execute(self, really_delete):
+         """Make changes and return results"""
+ 
+diff --git a/bleachbit/DeepScan.py b/bleachbit/DeepScan.py
+index 90892c8..abaa16b 100755
+--- a/bleachbit/DeepScan.py
++++ b/bleachbit/DeepScan.py
+@@ -50,7 +50,7 @@ def normalized_walk(top, **kwargs):
+ 
+ 
+ Search = namedtuple(
+-    'Search', ['command', 'regex', 'nregex', 'wholeregex', 'nwholeregex'])
++    'Search', ['command', 'regex', 'nregex', 'wholeregex', 'nwholeregex', 'operation'])
+ Search.__new__.__defaults__ = (None,) * len(Search._fields)
+ 
+ 
+@@ -76,6 +76,7 @@ class CompiledSearch:
+ 
+     def __init__(self, search):
+         self.command = search.command
++        self.operation = search.operation
+ 
+         def re_compile(regex):
+             return re.compile(regex, FS_SCAN_RE_FLAGS) if regex else None
+@@ -145,9 +146,14 @@ class DeepScan:
+                             continue
+                         # fixme: support other commands
+                         if c.command == 'delete':
+-                            yield Command.Delete(full_name)
++                            cmd = Command.Delete(full_name)
+                         elif c.command == 'shred':
+-                            yield Command.Shred(full_name)
++                            cmd = Command.Shred(full_name)
++                        else:
++                            continue
++                        if c.operation:
++                            cmd.operation = c.operation
++                        yield cmd
+ 
+                 if time.time() - yield_time > 0.25:
+                     # allow GTK+ to process the idle loop
+diff --git a/bleachbit/Structured.py b/bleachbit/Structured.py
+new file mode 100644
+index 0000000..9b20623
+--- /dev/null
++++ b/bleachbit/Structured.py
+@@ -0,0 +1,265 @@
++# SPDX-License-Identifier: GPL-3.0-or-later
++"""Volume-specific preview and confirmation for BleachBit frontends."""
++
++from contextlib import contextmanager
++import hashlib
++import json
++import os
++import shlex
++import subprocess
++import stat
++import time
++
++from bleachbit import Command, FileUtilities, Options
++from bleachbit.Cleaner import backends
++from bleachbit.Language import get_text as _
++
++PROTECTED_EVIDENCE = ('/var/log/journal', '/run/log/journal', '/var/lib/systemd/coredump',
++                      '/var/crash')
++
++
++@contextmanager
++def open_path(path, parent=None, extra_flags=0):
++    fd = os.open(path, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC | extra_flags,
++                 dir_fd=parent)
++    try:
++        yield fd
++    finally:
++        os.close(fd)
++
++
++@contextmanager
++def open_directory(path):
++    fd = os.open('/', os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
++    try:
++        for name in path.split('/')[1:]:
++            if name:
++                next_fd = os.open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
++                                  dir_fd=fd)
++                os.close(fd)
++                fd = next_fd
++        yield fd
++    finally:
++        os.close(fd)
++
++
++def mount_id(fd):
++    with open(f'/proc/self/fdinfo/{fd}', encoding='ascii') as info:
++        for line in info:
++            if line.startswith('mnt_id:'):
++                return int(line.split()[1])
++    raise OSError(_('The filesystem of this item could not be identified.'))
++
++
++def mount_types():
++    with open('/proc/self/mountinfo', encoding='utf-8', errors='surrogateescape') as info:
++        for line in info:
++            mount, filesystem = line.split(' - ', 1)
++            yield int(mount.split()[0]), filesystem.split()[0]
++
++
++def identity(info):
++    return [info.st_dev, info.st_ino, info.st_uid, info.st_mode, info.st_nlink,
++            info.st_size, info.st_blocks, info.st_ctime_ns, info.st_mtime_ns]
++
++
++def catalog():
++    """Return the same options and selection as BleachBit's own window."""
++    options = Options.options
++    return [{
++        'id': cleaner.get_id(), 'label': cleaner.get_name(),
++        'description': cleaner.get_description(),
++        'options': [{
++            'id': name, 'label': label,
++            'description': dict(cleaner.get_option_descriptions()).get(label, ''),
++            'warning': cleaner.get_warning(name) or '',
++            'checked': options.get_tree(cleaner.get_id(), name),
++        } for name, label in cleaner.get_options()],
++    } for cleaner in sorted(backends.values(), key=lambda item: item.get_name().casefold())]
++
++
++class Structured:
++    """Filter the real Worker commands before allowing any changes."""
++
++    def __init__(self, volume, approved=None, temporary_age=7):
++        self.volume = os.path.normpath(volume)
++        self.approved = approved
++        self.temporary_age = temporary_age
++        self.items = []
++        self.errors = []
++        self.seen = set()
++        if not self.volume.startswith('/') or self.volume.startswith('//'):
++            raise ValueError(_('Provide an absolute path to a mounted volume.'))
++        with open_directory(self.volume) as fd:
++            self.mount = mount_id(fd)
++            if self.volume != '/':
++                with open_directory(os.path.dirname(self.volume)) as parent:
++                    if mount_id(parent) == self.mount:
++                        raise ValueError(_('Provide an absolute path to a mounted volume.'))
++            self.read_only = bool(os.fstatvfs(fd).f_flag & os.ST_RDONLY)
++        fs_type = dict(mount_types()).get(self.mount)
++        self.estimated = fs_type not in ('ext2', 'ext3', 'ext4', 'tmpfs')
++
++    def blocked(self, operation, reason):
++        if operation not in self.seen:
++            self.seen.add(operation)
++            self.errors.append({'operation': operation, 'reason': reason})
++
++    def temporary_commands(self):
++        """Pass eligible top-level temporary files to the same BleachBit command."""
++        directories = {'/tmp', '/var/tmp'}
++        private = os.environ.get('TMPDIR')
++        if private and os.path.isabs(private):
++            private = os.path.normpath(private)
++            home = os.path.normpath(os.path.expanduser('~'))
++            preserved = [os.path.join(home, name) for name in ('Documents', 'Downloads', 'Desktop',
++                         'Pictures', 'Music', 'Videos', '.config', '.local')]
++            if private != home and not any(private == path or private.startswith(path + '/')
++                                          for path in preserved):
++                try:
++                    with open_directory(private) as folder:
++                        info = os.fstat(folder)
++                        if info.st_uid == os.getuid() and info.st_mode & 0o777 == 0o700:
++                            directories.add(private)
++                except OSError as error:
++                    self.blocked('system.tmp', str(error))
++        for path in sorted(directories):
++            try:
++                with open_directory(path) as folder:
++                    if mount_id(folder) != self.mount:
++                        continue
++                    fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY, dir_fd=folder)
++                    try:
++                        for name in sorted(os.listdir(fd)):
++                            self.process(Command.Delete(os.path.join(path, name)), 'system.tmp')
++                    finally:
++                        os.close(fd)
++            except OSError as error:
++                self.blocked('system.tmp', str(error))
++
++    def apt_commands(self, option):
++        """Expand APT's configured cache and list directories under its own locks."""
++        import fcntl
++
++        operation = f'apt.{option}'
++        key = 'Dir::State::lists/d' if option == 'package_lists' else 'Dir::Cache::archives/d'
++        try:
++            output = subprocess.check_output(['apt-config', 'shell', 'directory', key], text=True)
++            first, = shlex.split(output)
++            prefix, directory = first.split('=', 1)
++            if prefix != 'directory' or not directory.startswith('/'):
++                raise ValueError(_('APT did not report an absolute cache directory.'))
++            directory = os.path.normpath(directory)
++            with open_directory(directory) as parent:
++                if mount_id(parent) != self.mount:
++                    return
++                fd = os.open('lock', os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
++                try:
++                    try:
++                        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++                    except BlockingIOError as error:
++                        raise OSError(_('APT is using this directory.')) from error
++                    for path in (directory, os.path.join(directory, 'partial')):
++                        with open_directory(path) as folder:
++                            if mount_id(folder) != self.mount:
++                                continue
++                            read_fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY, dir_fd=folder)
++                            try:
++                                for name in sorted(os.listdir(read_fd)):
++                                    if name != 'lock':
++                                        self.process(Command.Delete(os.path.join(path, name)),
++                                                     operation)
++                            finally:
++                                os.close(read_fd)
++                finally:
++                    os.close(fd)
++        except (OSError, ValueError, subprocess.SubprocessError) as error:
++            self.blocked(operation, str(error))
++
++    def process(self, cmd, operation):
++        """Expose or execute a single command generated by a BleachBit cleaner."""
++        path = getattr(cmd, 'path', None)
++        if not path or not os.path.isabs(path):
++            message = _('This action does not expose individual paths for a volume preview.')
++            if operation == 'journald.clean':
++                message = _('Archived journals can contain logs from the current boot.')
++            self.blocked(operation, message)
++            return
++        if type(cmd) not in (Command.Delete, Command.Truncate) or cmd.shred:
++            self.blocked(operation, _('This action cannot be confined to the selected item.'))
++            return
++        path = os.path.normpath(path)
++        if any(path == directory or path.startswith(directory + '/') for directory in PROTECTED_EVIDENCE):
++            self.blocked(operation, _('Logs and crash evidence are protected.'))
++            return
++        if path in ('/', self.volume) or (operation, path) in self.seen:
++            return
++        self.seen.add((operation, path))
++        parent_path, name = os.path.split(path)
++        try:
++            with open_directory(parent_path) as parent, open_path(name, parent) as fd:
++                if mount_id(fd) != self.mount or FileUtilities.whitelisted(path):
++                    return
++                info = os.fstat(fd)
++                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
++                    return
++                cleaner, option = operation.split('.', 1)
++                record = [self.mount, operation, path, identity(info), type(cmd).__name__]
++                token = hashlib.sha256(json.dumps(record).encode('ascii')).hexdigest()
++                if self.approved is not None and token not in self.approved:
++                    return
++                if operation == 'system.tmp':
++                    if os.getuid() != 0 and info.st_uid != os.getuid():
++                        return
++                    cutoff = time.time() - self.temporary_age * 24 * 3600
++                    if max(info.st_atime, info.st_mtime, info.st_ctime) > cutoff:
++                        return
++                result = {
++                    'id': token, 'cleaner': cleaner, 'option': option, 'path': path,
++                    'bytes': info.st_blocks * 512, 'estimated': self.estimated,
++                    'label': _('Delete') if type(cmd) is Command.Delete else _('Truncate'),
++                }
++                if operation == 'system.tmp' or self.approved is not None:
++                    self._locked_command(cmd, parent, name, info)
++                self.items.append(result)
++        except FileNotFoundError:
++            return
++        except OSError as error:
++            self.errors.append({'operation': operation, 'path': path, 'reason': str(error)})
++
++    def _locked_command(self, cmd, parent, name, info):
++        """Hold a Linux write lease across the final check and removal."""
++        import fcntl
++        import signal
++
++        is_truncate = isinstance(cmd, Command.Truncate)
++        mode = os.O_WRONLY if is_truncate else os.O_RDONLY
++        fd = os.open(name, mode | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOATIME,
++                     dir_fd=parent)
++        previous = signal.signal(signal.SIGIO, lambda *_: None)
++        try:
++            if identity(os.fstat(fd)) != identity(info) or mount_id(fd) != self.mount:
++                raise OSError(_('This item changed since the preview.'))
++            try:
++                fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_WRLCK)
++            except BlockingIOError as error:
++                raise OSError(_('This item is currently open or mapped.')) from error
++            if self.approved is None:
++                return
++            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
++            if identity(current) != identity(info):
++                raise OSError(_('This item changed since the preview.'))
++            if fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_WRLCK:
++                raise OSError(_('This item is currently open or mapped.'))
++            cmd.execute_scoped(parent, name, fd)
++        finally:
++            os.close(fd)
++            signal.signal(signal.SIGIO, previous)
++
++    def result(self):
++        if self.approved is not None:
++            completed = {item['id'] for item in self.items}
++            for token in sorted(self.approved - completed):
++                self.errors.append({'id': token, 'reason': _('The approved item could not be cleaned.')})
++        return {'schema': 1, 'volume': self.volume, 'read_only': self.read_only,
++                'items': self.items, 'errors': self.errors}
+diff --git a/bleachbit/Worker.py b/bleachbit/Worker.py
+index 0f5319d..3366963 100755
+--- a/bleachbit/Worker.py
++++ b/bleachbit/Worker.py
+@@ -50,7 +50,7 @@ class Worker:
+ 
+     """Perform the preview or delete operations"""
+ 
+-    def __init__(self, ui, really_delete, operations):
++    def __init__(self, ui, really_delete, operations, structured=None):
+         """Create a Worker
+ 
+         ui: an instance with methods
+@@ -64,6 +64,7 @@ class Worker:
+             operation-id are values
+         """
+         self.ui = ui
++        self.structured = structured
+         self.really_delete = really_delete
+         assert isinstance(operations, dict)
+         self.operations = operations
+@@ -91,10 +92,15 @@ class Worker:
+             % {'operation': operation, 'msg': str(sys.exc_info()[1])}
+ 
+         logger.error(err, exc_info=True)
++        if self.structured is not None:
++            self.structured.blocked(operation, err)
+         self.total_errors += 1
+ 
+     def execute(self, cmd, operation_option):
+         """Execute or preview the command"""
++        if self.structured is not None:
++            self.structured.process(cmd, operation_option)
++            return
+         ret = None
+         try:
+             for ret in cmd.execute(self.really_delete):
+@@ -184,6 +190,9 @@ class Worker:
+             # TRANSLATORS: %s expands to a name such as 'Firefox' or 'System'.
+             err = _("%s cannot be cleaned because it is currently running.  Close it, and try again.") \
+                 % backends[operation].get_name()
++            if self.structured is not None:
++                for option in operation_options:
++                    self.structured.blocked(f'{operation}.{option}', err)
+             self.ui.append_text(err + "\n", 'error')
+             self.total_errors += 1
+             return
+@@ -193,6 +202,15 @@ class Worker:
+         for option_id in operation_options:
+             self.size = 0
+             assert isinstance(option_id, str)
++            if (self.structured is not None and operation == 'apt'
++                    and option_id in ('clean', 'package_lists')):
++                self.structured.apt_commands(option_id)
++                yield True
++                continue
++            if self.structured is not None and (operation, option_id) == ('system', 'tmp'):
++                self.structured.temporary_commands()
++                yield True
++                continue
+             # normal scan
+             for cmd in backends[operation].get_commands(option_id):
+                 for ret in self.execute(cmd, '%s.%s' % (operation, option_id)):
+@@ -221,7 +239,8 @@ class Worker:
+                         'Deep scan only supports deleting or shredding now')
+                 if path not in self.deepscans:
+                     self.deepscans[path] = []
+-                self.deepscans[path].append(search)
++                self.deepscans[path].append(
++                    search._replace(operation=f'{operation}.{option_id}'))
+         self.ui.update_item_size(operation, -1, total_size)
+ 
+     def run_delayed_op(self, operation, option_id):
+@@ -385,7 +404,7 @@ class Worker:
+             if cmd is True:
+                 yield True
+                 continue
+-            for _ret in self.execute(cmd, 'deepscan'):
++            for _ret in self.execute(cmd, getattr(cmd, 'operation', 'deepscan')):
+                 yield True
+ 
+     def run_operations(self, my_operations):
+diff --git a/po/de.po b/po/de.po
+index 9116f86..cf60eb9 100644
+--- a/po/de.po
++++ b/po/de.po
+@@ -3629,3 +3629,39 @@ msgstr "_Über BleachBit"
+ 
+ #~ msgid "Warning"
+ #~ msgstr "Warnung"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "Archivierte Journale können Einträge des aktuellen Systemstarts enthalten."
++
++msgid "Logs and crash evidence are protected."
++msgstr "Protokolle und Absturzdaten sind geschützt."
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "Diese Aktion liefert keine einzelnen Pfade für die Datenträgervorschau."
++
++msgid "This action cannot be confined to the selected item."
++msgstr "Diese Aktion lässt sich nicht auf den ausgewählten Eintrag beschränken."
++
++msgid "This item changed since the preview."
++msgstr "Dieser Eintrag hat sich seit der Vorschau geändert."
++
++msgid "This item is currently open or mapped."
++msgstr "Dieser Eintrag ist geöffnet oder in den Speicher eingeblendet."
++
++msgid "The approved item could not be cleaned."
++msgstr "Der bestätigte Eintrag konnte nicht bereinigt werden."
++
++msgid "APT is using this directory."
++msgstr "APT verwendet dieses Verzeichnis."
++
++msgid "This action works on the whole system."
++msgstr "Diese Aktion betrifft das gesamte System."
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "Geben Sie den absoluten Pfad eines eingehängten Datenträgers an."
++
++msgid "The filesystem of this item could not be identified."
++msgstr "Das Dateisystem dieses Eintrags konnte nicht bestimmt werden."
++
++msgid "APT did not report an absolute cache directory."
++msgstr "APT hat keinen absoluten Pfad für den Zwischenspeicher gemeldet."
+diff --git a/po/es.po b/po/es.po
+index f647831..52730d8 100644
+--- a/po/es.po
++++ b/po/es.po
+@@ -3647,3 +3647,39 @@ msgstr "Acerca _de BleachBit"
+ 
+ #~ msgid "Warning"
+ #~ msgstr "Aviso"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "Los diarios archivados pueden contener registros del arranque actual."
++
++msgid "Logs and crash evidence are protected."
++msgstr "Los registros y las pruebas de fallos están protegidos."
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "Esta acción no muestra rutas individuales para la vista previa del volumen."
++
++msgid "This action cannot be confined to the selected item."
++msgstr "Esta acción no se puede limitar al elemento seleccionado."
++
++msgid "This item changed since the preview."
++msgstr "Este elemento cambió desde la vista previa."
++
++msgid "This item is currently open or mapped."
++msgstr "Este elemento está abierto o asignado en memoria."
++
++msgid "The approved item could not be cleaned."
++msgstr "No se pudo limpiar el elemento aprobado."
++
++msgid "APT is using this directory."
++msgstr "APT está usando este directorio."
++
++msgid "This action works on the whole system."
++msgstr "Esta acción afecta a todo el sistema."
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "Indica la ruta absoluta de un volumen montado."
++
++msgid "The filesystem of this item could not be identified."
++msgstr "No se pudo identificar el sistema de archivos de este elemento."
++
++msgid "APT did not report an absolute cache directory."
++msgstr "APT no informó de una ruta absoluta para la caché."
+diff --git a/po/fr.po b/po/fr.po
+index c4ecafa..5fb658e 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -3631,3 +3631,39 @@ msgstr "_À propos de BleachBit"
+ 
+ #~ msgid "Warning"
+ #~ msgstr "Avertissement"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "Les journaux archivés peuvent contenir des entrées du démarrage en cours."
++
++msgid "Logs and crash evidence are protected."
++msgstr "Les journaux et les traces de plantage sont protégés."
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "Cette action ne fournit pas les chemins individuels pour l’aperçu du volume."
++
++msgid "This action cannot be confined to the selected item."
++msgstr "Cette action ne peut pas être limitée à l’élément sélectionné."
++
++msgid "This item changed since the preview."
++msgstr "Cet élément a changé depuis l’aperçu."
++
++msgid "This item is currently open or mapped."
++msgstr "Cet élément est ouvert ou mappé en mémoire."
++
++msgid "The approved item could not be cleaned."
++msgstr "L’élément approuvé n’a pas pu être nettoyé."
++
++msgid "APT is using this directory."
++msgstr "APT utilise ce répertoire."
++
++msgid "This action works on the whole system."
++msgstr "Cette action concerne tout le système."
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "Indiquez le chemin absolu d’un volume monté."
++
++msgid "The filesystem of this item could not be identified."
++msgstr "Impossible d’identifier le système de fichiers de cet élément."
++
++msgid "APT did not report an absolute cache directory."
++msgstr "APT n’a pas fourni le chemin absolu du cache."
+diff --git a/po/ja.po b/po/ja.po
+index 5d20b70..31402d3 100644
+--- a/po/ja.po
++++ b/po/ja.po
+@@ -3567,3 +3567,39 @@ msgstr "BleachBit について(_A)"
+ 
+ #~ msgid "Warning"
+ #~ msgstr "警告"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "アーカイブ済みジャーナルに今回の起動時のログが含まれることがあります。"
++
++msgid "Logs and crash evidence are protected."
++msgstr "ログとクラッシュの証跡は保護されています。"
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "この操作ではボリュームのプレビュー用に個別のパスを取得できません。"
++
++msgid "This action cannot be confined to the selected item."
++msgstr "この操作は選択した項目だけに限定できません。"
++
++msgid "This item changed since the preview."
++msgstr "この項目はプレビュー後に変更されました。"
++
++msgid "This item is currently open or mapped."
++msgstr "この項目は現在開かれているかメモリにマップされています。"
++
++msgid "The approved item could not be cleaned."
++msgstr "確認済みの項目をクリーンアップできませんでした。"
++
++msgid "APT is using this directory."
++msgstr "APT がこのディレクトリを使用しています。"
++
++msgid "This action works on the whole system."
++msgstr "この操作はシステム全体に適用されます。"
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "マウント済みボリュームの絶対パスを指定してください。"
++
++msgid "The filesystem of this item could not be identified."
++msgstr "この項目のファイルシステムを特定できませんでした。"
++
++msgid "APT did not report an absolute cache directory."
++msgstr "APT からキャッシュの絶対パスが返されませんでした。"
+diff --git a/po/ko.po b/po/ko.po
+index b9ba885..cf9da41 100644
+--- a/po/ko.po
++++ b/po/ko.po
+@@ -3517,3 +3517,39 @@ msgstr "BleachBit 정보(_A)"
+ 
+ #~ msgid "_Diagnostics"
+ #~ msgstr "진단(_D)"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "보관된 저널에 현재 부팅의 로그가 포함될 수 있습니다."
++
++msgid "Logs and crash evidence are protected."
++msgstr "로그와 충돌 기록은 보호됩니다."
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "이 작업은 볼륨 미리 보기에 개별 경로를 제공하지 않습니다."
++
++msgid "This action cannot be confined to the selected item."
++msgstr "이 작업은 선택한 항목에만 적용할 수 없습니다."
++
++msgid "This item changed since the preview."
++msgstr "이 항목은 미리 보기 이후 변경되었습니다."
++
++msgid "This item is currently open or mapped."
++msgstr "이 항목은 현재 열려 있거나 메모리에 매핑되어 있습니다."
++
++msgid "The approved item could not be cleaned."
++msgstr "승인한 항목을 정리할 수 없습니다."
++
++msgid "APT is using this directory."
++msgstr "APT가 이 디렉터리를 사용하고 있습니다."
++
++msgid "This action works on the whole system."
++msgstr "이 작업은 시스템 전체에 적용됩니다."
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "마운트된 볼륨의 절대 경로를 입력하세요."
++
++msgid "The filesystem of this item could not be identified."
++msgstr "이 항목의 파일 시스템을 식별할 수 없습니다."
++
++msgid "APT did not report an absolute cache directory."
++msgstr "APT가 캐시의 절대 경로를 제공하지 않았습니다."
+diff --git a/po/pl.po b/po/pl.po
+index 982002e..f69f4cc 100644
+--- a/po/pl.po
++++ b/po/pl.po
+@@ -3572,3 +3572,39 @@ msgstr "_O programie BleachBit"
+ 
+ #~ msgid "Warning"
+ #~ msgstr "Ostrzeżenie"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "Zarchiwizowane dzienniki mogą zawierać wpisy z bieżącego rozruchu."
++
++msgid "Logs and crash evidence are protected."
++msgstr "Dzienniki i ślady awarii są chronione."
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "Ta czynność nie udostępnia osobnych ścieżek do podglądu woluminu."
++
++msgid "This action cannot be confined to the selected item."
++msgstr "Tej czynności nie można ograniczyć do wybranego elementu."
++
++msgid "This item changed since the preview."
++msgstr "Ten element zmienił się od czasu podglądu."
++
++msgid "This item is currently open or mapped."
++msgstr "Ten element jest otwarty lub odwzorowany w pamięci."
++
++msgid "The approved item could not be cleaned."
++msgstr "Nie udało się oczyścić zatwierdzonego elementu."
++
++msgid "APT is using this directory."
++msgstr "APT używa tego katalogu."
++
++msgid "This action works on the whole system."
++msgstr "Ta czynność dotyczy całego systemu."
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "Podaj ścieżkę bezwzględną do zamontowanego woluminu."
++
++msgid "The filesystem of this item could not be identified."
++msgstr "Nie udało się rozpoznać systemu plików tego elementu."
++
++msgid "APT did not report an absolute cache directory."
++msgstr "APT nie podał ścieżki bezwzględnej do pamięci podręcznej."
+diff --git a/po/pt_BR.po b/po/pt_BR.po
+index a749b9a..6e9f1dc 100644
+--- a/po/pt_BR.po
++++ b/po/pt_BR.po
+@@ -3605,3 +3605,39 @@ msgstr "_Sobre o BleachBit"
+ 
+ #~ msgid "_Diagnostics"
+ #~ msgstr "_Diagnóstico"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "Os registros arquivados podem conter mensagens da inicialização atual."
++
++msgid "Logs and crash evidence are protected."
++msgstr "Os registros e as evidências de falhas estão protegidos."
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "Esta ação não informa caminhos individuais para a prévia do volume."
++
++msgid "This action cannot be confined to the selected item."
++msgstr "Não é possível limitar esta ação ao item selecionado."
++
++msgid "This item changed since the preview."
++msgstr "Este item mudou desde a prévia."
++
++msgid "This item is currently open or mapped."
++msgstr "Este item está aberto ou mapeado na memória."
++
++msgid "The approved item could not be cleaned."
++msgstr "Não foi possível limpar o item aprovado."
++
++msgid "APT is using this directory."
++msgstr "O APT está usando este diretório."
++
++msgid "This action works on the whole system."
++msgstr "Esta ação afeta todo o sistema."
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "Informe o caminho absoluto de um volume montado."
++
++msgid "The filesystem of this item could not be identified."
++msgstr "Não foi possível identificar o sistema de arquivos deste item."
++
++msgid "APT did not report an absolute cache directory."
++msgstr "O APT não informou um caminho absoluto para o cache."
+diff --git a/po/zh_CN.po b/po/zh_CN.po
+index 62e7ad0..c64b7d9 100644
+--- a/po/zh_CN.po
++++ b/po/zh_CN.po
+@@ -3475,3 +3475,39 @@ msgstr "关于 BleachBit (_A)"
+ 
+ #~ msgid "Warning"
+ #~ msgstr "警告"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "归档日志可能包含本次启动的日志。"
++
++msgid "Logs and crash evidence are protected."
++msgstr "日志和崩溃证据受到保护。"
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "此操作不提供用于卷预览的单独路径。"
++
++msgid "This action cannot be confined to the selected item."
++msgstr "此操作无法限定在所选项目。"
++
++msgid "This item changed since the preview."
++msgstr "此项目在预览后发生了变化。"
++
++msgid "This item is currently open or mapped."
++msgstr "此项目当前已打开或映射到内存。"
++
++msgid "The approved item could not be cleaned."
++msgstr "无法清理已确认的项目。"
++
++msgid "APT is using this directory."
++msgstr "APT 正在使用此目录。"
++
++msgid "This action works on the whole system."
++msgstr "此操作会影响整个系统。"
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "请输入已挂载卷的绝对路径。"
++
++msgid "The filesystem of this item could not be identified."
++msgstr "无法识别此项目的文件系统。"
++
++msgid "APT did not report an absolute cache directory."
++msgstr "APT 未返回缓存目录的绝对路径。"
+diff --git a/po/zh_TW.po b/po/zh_TW.po
+index 92e327f..b5f1abc 100644
+--- a/po/zh_TW.po
++++ b/po/zh_TW.po
+@@ -3457,3 +3457,39 @@ msgstr "關於 BleachBit (_A)"
+ 
+ #~ msgid "Warning"
+ #~ msgstr "警告"
++
++msgid "Archived journals can contain logs from the current boot."
++msgstr "封存的日誌可能包含本次開機的記錄。"
++
++msgid "Logs and crash evidence are protected."
++msgstr "日誌與當機證據受到保護。"
++
++msgid "This action does not expose individual paths for a volume preview."
++msgstr "此動作不提供磁碟區預覽所需的個別路徑。"
++
++msgid "This action cannot be confined to the selected item."
++msgstr "此動作無法限定於所選項目。"
++
++msgid "This item changed since the preview."
++msgstr "此項目在預覽後已有變更。"
++
++msgid "This item is currently open or mapped."
++msgstr "此項目目前已開啟或映射到記憶體。"
++
++msgid "The approved item could not be cleaned."
++msgstr "無法清理已確認的項目。"
++
++msgid "APT is using this directory."
++msgstr "APT 正在使用此目錄。"
++
++msgid "This action works on the whole system."
++msgstr "此動作會影響整個系統。"
++
++msgid "Provide an absolute path to a mounted volume."
++msgstr "請輸入已掛載磁碟區的絕對路徑。"
++
++msgid "The filesystem of this item could not be identified."
++msgstr "無法識別此項目的檔案系統。"
++
++msgid "APT did not report an absolute cache directory."
++msgstr "APT 未回報快取目錄的絕對路徑。"
+diff --git a/tests/TestCLI.py b/tests/TestCLI.py
+index 7be34ab..194f7c3 100644
+--- a/tests/TestCLI.py
++++ b/tests/TestCLI.py
+@@ -634,3 +634,28 @@ class CLITestCase(common.BleachbitTestCase):
+         # Is the application still running?
+         opened_windows_titles = common.get_opened_windows_titles()
+         self.assertNotIn('BleachBit', opened_windows_titles)
++
++
++class StructuredPreviewTestCase(common.BleachbitTestCase):
++    @pytest.mark.skipif(not sys.platform.startswith('linux'), reason='Linux mount IDs')
++    def test_scoped_json_accounting(self):
++        """A real cleaner supplies the file, option, mount and allocated bytes."""
++        import json
++        with tempfile.TemporaryDirectory() as home:
++            env = dict(os.environ, HOME=home, BLEACHBIT_TEST_OPTIONS_DIR=home)
++            path = os.path.join(home, '.cache', 'sparse')
++            os.mkdir(os.path.dirname(path))
++            with open(path, 'wb') as file:
++                file.write(b'x')
++                file.truncate(2 * 1024 * 1024)
++            command = [sys.executable, 'bleachbit.py', '--preview', '--json',
++                       '--volume', '/', 'system.cache']
++            code, stdout, stderr = run_external(command, env=env, clean_env=False, timeout=30)
++            self.assertEqual(code, 0, stderr)
++            rows = json.loads(stdout)['items']
++            rows = [row for row in rows if row['path'] == path]
++            self.assertEqual(len(rows), 1)
++            self.assertEqual(rows[0]['cleaner'], 'system')
++            self.assertEqual(rows[0]['option'], 'cache')
++            self.assertEqual(rows[0]['bytes'], os.stat(path).st_blocks * 512)
++            self.assertTrue(os.path.exists(path))

@@ -1,0 +1,24 @@
+#!/usr/bin/python3 -Es
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+import configparser
+import json
+import os
+from pathlib import Path
+import subprocess
+
+package = 'sparky-stereo-storage-kcm'
+rc = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'sparky-storage-cleanuprc'
+config = configparser.ConfigParser(interpolation=None)
+config.read(rc)
+mode = config.getint('General', 'scheduleMode', fallback=2)
+if mode in (1, 3):
+    mount = config.get('General', 'scheduleMount', fallback='/')
+    message = 'LOCAL7' if mode == 3 else 'LOCAL6'
+    command = ['/usr/bin/sparky-stereo-problems', 'keep', '--person',
+               '--severity', 'notice', '--action', json.dumps({
+                   'id': 'storage-cleanup', 'label': ['LOCAL2'],
+                   'command': ['/usr/bin/sparky-open-storage-cleanup', mount, 'caches' if mode == 3 else 'preview'],
+               }), package, 'weekly', message, mount]
+    # Both weekly choices request review before any change.
+    subprocess.run(command, check=True)
