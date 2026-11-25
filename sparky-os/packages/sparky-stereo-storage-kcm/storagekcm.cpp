@@ -17,6 +17,36 @@
 
 using namespace Qt::StringLiterals;
 
+// Some BleachBit definitions use the internal ID as their label and
+// provide the human-readable, translated text as their description.
+static void useDisplayDescription(QVariantMap &entry)
+{
+    const auto label = entry.value(u"label"_s).toString();
+    const auto description = entry.value(u"description"_s).toString();
+    if (label == entry.value(u"id"_s).toString() && !description.isEmpty()) {
+        entry.insert(u"label"_s, description);
+        entry.remove(u"description"_s);
+    }
+}
+
+static QVariantList displayCatalogue(const QJsonArray &catalogue)
+{
+    auto groups = catalogue.toVariantList();
+    for (auto &entry : groups) {
+        auto group = entry.toMap();
+        useDisplayDescription(group);
+        auto options = group.value(u"options"_s).toList();
+        for (auto &choice : options) {
+            auto option = choice.toMap();
+            useDisplayDescription(option);
+            choice = option;
+        }
+        group.insert(u"options"_s, options);
+        entry = group;
+    }
+    return groups;
+}
+
 static QString configPath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + u"/sparky-storage-cleanuprc"_s;
@@ -290,7 +320,7 @@ void StorageKcm::runBleachBit(const QStringList &args, const QString &field, con
             }
             m_errors = {QVariantMap{{u"reason"_s, reason}}};
         } else if (field == u"cleaners"_s) {
-            m_cleaners = result.value("cleaners"_L1).toArray().toVariantList();
+            m_cleaners = displayCatalogue(result.value("cleaners"_L1).toArray());
         } else if (startedVolume == m_volume) {
             m_readOnly = result.value("read_only"_L1).toBool();
             m_errors.clear();
