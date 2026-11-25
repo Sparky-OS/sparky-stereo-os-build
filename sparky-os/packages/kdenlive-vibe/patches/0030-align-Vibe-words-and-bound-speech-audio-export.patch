@@ -1,0 +1,1236 @@
+Description: Align Vibe cues with speech and feed the same words to the Speech Editor
+ Export the audio for speech in the existing Kdenlive renderer process and stop
+ the export after a bounded interval without audio. Import Vibe word timing
+ into the timeline and the existing Speech Editor edit model.
+Origin: vendor
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+Last-Update: 2026-11-25
+
+--- a/renderer/kdenlive_render.cpp
++++ b/renderer/kdenlive_render.cpp
+@@ -19,6 +19,8 @@
+ #include <QTemporaryFile>
+ #include <QtGlobal>
+ 
++#include <memory>
++
+ QString getCIMltRepositoryPath()
+ {
+     for (auto varname : {"CRAFT_ROOT", "KDEROOT"}) {
+@@ -42,6 +44,81 @@
+         return repositoryPath;
+     }
+     return {};
++}
++
++static int exportSpeechAudio(const QStringList &args)
++{
++    if (args.size() != 9) {
++        return 1;
++    }
++    bool ok = false;
++    const int in = args.at(3).toInt(&ok);
++    if (!ok || in < 0) {
++        return 1;
++    }
++    const int out = args.at(4).toInt(&ok);
++    if (!ok || out < in) {
++        return 1;
++    }
++    const int tracksCount = args.at(5).toInt(&ok);
++    if (!ok || tracksCount < 0) {
++        return 1;
++    }
++    const int trackPos = args.at(6).toInt(&ok);
++    if (!ok) {
++        return 1;
++    }
++    const bool mono = args.at(7) == QStringLiteral("mono");
++    const bool timeline = tracksCount > 0;
++    const QString repoPath = getCIMltRepositoryPath();
++    Mlt::Factory::init(repoPath.isEmpty() ? nullptr : repoPath.toUtf8().constData());
++    LocaleHandling::resetAllLocale();
++
++    const QString profilePath = args.at(8);
++    Mlt::Profile profile(profilePath.isEmpty() ? nullptr : profilePath.toUtf8().constData());
++    Mlt::Producer producer(profile, timeline ? "xml" : nullptr, args.at(1).toUtf8().constData());
++    if (!producer.is_valid()) {
++        return 1;
++    }
++    if (timeline) {
++        auto service = std::make_unique<Mlt::Service>(producer);
++        for (int i = 0; i < 10; ++i) {
++            service.reset(service->producer());
++            if (!service || !service->is_valid()) {
++                break;
++            }
++            if (service->type() != mlt_service_multitrack_type) {
++                continue;
++            }
++            Mlt::Multitrack tracks(*service);
++            if (tracks.count() != tracksCount) {
++                continue;
++            }
++            for (int track = 0; track < tracksCount; ++track) {
++                std::unique_ptr<Mlt::Producer> input(tracks.track(track));
++                if (input && (input->get_int("hide") == 1 || track == 0 || (trackPos >= 0 && track != trackPos))) {
++                    input->set("hide", 3);
++                }
++            }
++            break;
++        }
++    }
++    Mlt::Consumer consumer(profile, "avformat", args.at(2).toUtf8().constData());
++    if (!consumer.is_valid()) {
++        return 1;
++    }
++    consumer.set("terminate_on_pause", 1);
++    consumer.set("properties", "WAV");
++    if (mono) {
++        consumer.set("ar", 16000);
++        consumer.set("ac", 1);
++        consumer.set("acodec", "pcm_s16le");
++    }
++    producer.set_in_and_out(in, out);
++    if (consumer.connect(producer) != 0) {
++        return 1;
++    }
++    return consumer.run();
+ }
+ 
+ int main(int argc, char **argv)
+@@ -65,6 +142,9 @@
+     QStringList args = parser.positionalArguments();
+     const QString mode = args.isEmpty() ? QString() : args.first();
+ 
++    if (mode == QStringLiteral("speech-audio")) {
++        return exportSpeechAudio(args);
++    }
+     if (mode == "preview-chunks") {
+ 
+         parser.clearPositionalArguments();
+--- a/src/dialogs/CMakeLists.txt
++++ b/src/dialogs/CMakeLists.txt
+@@ -16,7 +16,9 @@
+   dialogs/renderwidget.cpp
+   dialogs/renderpresetdialog.cpp
+   dialogs/speechdialog.cpp
++  speech/speechaudiojob.cpp
+   speech/vibespeechjob.cpp
++  speech/vibetiming.cpp
+   dialogs/subtitleedit.cpp
+   dialogs/subtitlestyleedit.cpp
+   dialogs/textbasededit.cpp
+--- a/src/dialogs/speechdialog.cpp
++++ b/src/dialogs/speechdialog.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "speechdialog.h"
+ #include "speech/vibespeechjob.h"
++#include "speech/speechaudiojob.h"
+ 
+ #include "bin/model/subtitlemodel.hpp"
+ #include "core.h"
+@@ -15,7 +16,6 @@
+ #include "pythoninterfaces/speechtotextvosk.h"
+ #include "pythoninterfaces/speechtotextwhisper.h"
+ 
+-#include "mlt++/MltConsumer.h"
+ #include "mlt++/MltProfile.h"
+ #include "mlt++/MltTractor.h"
+ 
+@@ -38,6 +38,8 @@
+     , m_tid(-1)
+ 
+ {
++    m_audioExport = std::make_unique<SpeechAudioJob>(this);
++    connect(m_audioExport.get(), &SpeechAudioJob::finished, this, &SpeechDialog::finishAudioExport);
+     setFont(QFontDatabase::systemFont(QFontDatabase::SmallestReadableFont));
+     setupUi(this);
+     speech_info->setWordWrap(true);
+@@ -314,100 +316,52 @@
+     speech_info->setMessageType(KMessageWidget::Information);
+     speech_info->setText(i18n("Starting audio export"));
+     speech_info->show();
+-    qApp->processEvents();
+-    QString sceneList;
+-    QString audio;
+-    QTemporaryFile tmpPlaylist(QDir::temp().absoluteFilePath(QStringLiteral("XXXXXX.mlt")));
++    m_tmpPlaylist.remove();
++    m_tmpPlaylist.setFileTemplate(QDir::temp().absoluteFilePath(QStringLiteral("XXXXXX.mlt")));
+     m_tmpAudio = std::make_unique<QTemporaryFile>(QDir::temp().absoluteFilePath(QStringLiteral("XXXXXX.wav")));
+-    if (tmpPlaylist.open()) {
+-        sceneList = tmpPlaylist.fileName();
+-    }
+-    tmpPlaylist.close();
+-    if (m_tmpAudio->open()) {
+-        audio = m_tmpAudio->fileName();
+-    }
++    if (!m_tmpPlaylist.open() || !m_tmpAudio->open()) {
++        finishAudioExport(i18n("Audio export failed"));
++        return;
++    }
++    const QString sceneList = m_tmpPlaylist.fileName();
++    const QString audio = m_tmpAudio->fileName();
++    m_tmpPlaylist.close();
+     m_tmpAudio->close();
+-    QString speech = QFileInfo(audio).completeBaseName();
+-    speech.append(QStringLiteral(".srt"));
+-    m_tmpSrtPath = QDir::temp().absoluteFilePath(speech);
++    m_tmpSrtPath = QDir::temp().absoluteFilePath(QFileInfo(audio).completeBaseName() + QStringLiteral(".srt"));
+     m_timeline->sceneList(QDir::temp().absolutePath(), sceneList);
+-    // TODO: do the rendering in another thread to not block the UI
+-    QReadLocker lock(&pCore->xmlMutex);
+-    Mlt::Producer producer(m_timeline->tractor()->get_profile(), "xml", sceneList.toUtf8().constData());
+-    // Don't keep the lock while processing events below, an autosave would wait for it forever
+-    lock.unlock();
+-    int tracksCount = m_timeline->tractor()->count();
+-    std::shared_ptr<Mlt::Service> s(new Mlt::Service(producer));
+-    std::shared_ptr<Mlt::Multitrack> multi = nullptr;
+-    bool multitrackFound = false;
+-    for (int i = 0; i < 10; i++) {
+-        s.reset(s->producer());
+-        if (s == nullptr || !s->is_valid()) {
+-            break;
+-        }
+-        if (s->type() == mlt_service_multitrack_type) {
+-            multi.reset(new Mlt::Multitrack(*s.get()));
+-            if (multi->count() == tracksCount) {
+-                // Match
+-                multitrackFound = true;
+-                break;
+-            }
+-        }
+-    }
+-    if (multitrackFound) {
+-        int trackPos = -1;
+-        if (m_tid > -1) {
+-            trackPos = m_timeline->getTrackMltIndex(m_tid);
+-        }
+-        int tid = 0;
+-        for (int i = 0; i < multi->count(); i++) {
+-            std::shared_ptr<Mlt::Producer> tk(multi->track(i));
+-            if (tk->get_int("hide") == 1) {
+-                // Video track, hide it
+-                tk->set("hide", 3);
+-            } else if (tid == 0 || (trackPos > -1 && trackPos != tid)) {
+-                // We only want a specific audio track
+-                tk->set("hide", 3);
+-            }
+-            tid++;
+-        }
+-    }
+-    Mlt::Consumer xmlConsumer(m_timeline->tractor()->get_profile(), "avformat", audio.toUtf8().constData());
+-    if (!xmlConsumer.is_valid() || !producer.is_valid()) {
+-        qDebug() << "=== STARTING CONSUMER ERROR";
+-        if (!producer.is_valid()) {
+-            qDebug() << "=== PRODUCER INVALID";
+-        }
+-        speech_info->setMessageType(KMessageWidget::Warning);
+-        speech_info->setText(i18n("Audio export failed"));
+-        qApp->processEvents();
+-        return;
+-    }
+-    speech_progress->setValue(0);
++
++    m_duration = m_zone.y() - m_zone.x();
+     m_errorLog.clear();
+     logOutput->clear();
+-    speech_info->clearActions();
+-    frame_progress->setVisible(true);
+-    buttonBox->button(QDialogButtonBox::Apply)->setEnabled(false);
+-    qApp->processEvents();
+-    xmlConsumer.set("terminate_on_pause", 1);
+-    xmlConsumer.set("properties", "WAV");
+-    if (m_vibeJob) {
+-        xmlConsumer.set("ar", 16000);
+-        xmlConsumer.set("ac", 1);
+-    }
+-    producer.set_in_and_out(m_zone.x(), m_zone.y());
+-    xmlConsumer.connect(producer);
+-
+-    qDebug() << "=== STARTING RENDER C, IN:" << m_zone.x() << " - " << m_zone.y();
+-    m_duration = m_zone.y() - m_zone.x();
+-    qApp->processEvents();
+-    xmlConsumer.run();
+-    qApp->processEvents();
+-    qDebug() << "=== STARTING RENDER D";
++    frame_progress->show();
++    speech_progress->setRange(0, 0);
++    for (auto *button : m_buttonGroup->buttons()) {
++        button->setEnabled(false);
++    }
++    m_audioExport->start(
++        {QStringLiteral("speech-audio"), sceneList, audio, QString::number(m_zone.x()), QString::number(m_zone.y()),
++         QString::number(m_timeline->tractor()->count()), QString::number(m_tid >= 0 ? m_timeline->getTrackMltIndex(m_tid) : -1),
++         m_vibeJob ? QStringLiteral("mono") : QStringLiteral("native"), pCore->getCurrentProfilePath()},
++        audio);
++}
++
++void SpeechDialog::finishAudioExport(const QString &error)
++{
++    m_tmpPlaylist.remove();
++    for (auto *button : m_buttonGroup->buttons()) {
++        button->setEnabled(true);
++    }
++    speech_progress->setRange(0, 100);
++    if (!error.isEmpty()) {
++        frame_progress->hide();
++        speech_info->setMessageType(KMessageWidget::Warning);
++        speech_info->setText(error);
++        buttonBox->button(QDialogButtonBox::Apply)->setEnabled(true);
++        return;
++    }
++    const QString audio = m_tmpAudio->fileName();
+     speech_info->setMessageType(KMessageWidget::Information);
+     speech_info->setText(i18n("Starting speech recognition"));
+-    qApp->processEvents();
+     if (m_vibeJob) {
+         for (auto *button : m_buttonGroup->buttons()) {
+             button->setEnabled(false);
+--- a/src/dialogs/speechdialog.h
++++ b/src/dialogs/speechdialog.h
+@@ -18,6 +18,7 @@
+ class QAction;
+ class QButtonGroup;
+ class VibeSpeechJob;
++class SpeechAudioJob;
+ 
+ /**
+  * @class SpeechDialog
+@@ -36,6 +37,7 @@
+ private:
+     std::unique_ptr<QProcess> m_speechJob;
+     std::unique_ptr<VibeSpeechJob> m_vibeJob;
++    std::unique_ptr<SpeechAudioJob> m_audioExport;
+     const QString m_engine;
+     const std::shared_ptr<TimelineItemModel> m_timeline;
+     QButtonGroup *m_buttonGroup;
+@@ -44,11 +46,13 @@
+     int m_duration;
+     std::unique_ptr<QTemporaryFile> m_tmpAudio;
+     QString m_tmpSrtPath;
++    QTemporaryFile m_tmpPlaylist;
+     QAction *m_speechConfig;
+     QAction *m_logAction;
+     QString m_errorLog;
+     SpeechToText *m_stt{nullptr};
+     void importSpeechSubtitles();
++    void finishAudioExport(const QString &error);
+     void fillSeamlessLanguages();
+ 
+ private Q_SLOTS:
+--- a/src/dialogs/textbasededit.cpp
++++ b/src/dialogs/textbasededit.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include "textbasededit.h"
+ #include "speech/vibespeechjob.h"
++#include "speech/speechaudiojob.h"
+ #include "bin/bin.h"
+ #include "bin/projectclip.h"
+ #include "bin/projectitemmodel.h"
+@@ -733,7 +734,11 @@
+     connect(button_start, &QPushButton::clicked, this, &TextBasedEdit::startRecognition);
+     frame_progress->setVisible(false);
+     connect(button_abort, &QToolButton::clicked, this, [this]() {
+-        if (m_speechJob && m_speechJob->state() == QProcess::Running) {
++        if (m_audioExport && m_audioExport->isRunning()) {
++            m_audioExport->cancel();
++        } else if (m_vibeJob && m_vibeJob->isRunning()) {
++            m_vibeJob->cancel();
++        } else if (m_speechJob && m_speechJob->state() == QProcess::Running) {
+             m_speechJob->kill();
+         } else if (m_tCodeJob && m_tCodeJob->state() == QProcess::Running) {
+             m_tCodeJob->kill();
+@@ -935,13 +940,53 @@
+ 
+ void TextBasedEdit::updateEngine()
+ {
++    if (m_audioExport && m_audioExport->isRunning()) {
++        m_audioExport->cancel();
++    }
++    if (m_vibeJob && m_vibeJob->isRunning()) {
++        m_vibeJob->cancel();
++    }
+     delete m_stt;
+     m_stt = nullptr;
+     if (VibeSpeechJob::isVibeEngine(KdenliveSettings::speechEngine())) {
+         m_modelsMenu->clear();
+         language_box->hide();
+-        button_start->setEnabled(false);
+-        showMessage(i18n("Vibe is available in Automatic Subtitling. Choose VOSK or Whisper to use the Speech Editor."), KMessageWidget::Information, m_speechConfig);
++        info_message->hide();
++        button_start->setEnabled(!m_binId.isEmpty());
++        if (!m_vibeJob) {
++            m_audioExport = std::make_unique<SpeechAudioJob>(this);
++            m_vibeJob = std::make_unique<VibeSpeechJob>(this);
++            connect(m_audioExport.get(), &SpeechAudioJob::finished, this, [this](const QString &error) {
++                if (error.isEmpty()) {
++                    m_vibeJob->start(m_playlistWav.fileName(), {}, KdenliveSettings::speechEngine() == QLatin1String("system-default"));
++                } else {
++                    frame_progress->hide();
++                    button_start->setEnabled(true);
++                    showMessage(error, KMessageWidget::Warning);
++                }
++            });
++            connect(m_vibeJob.get(), &VibeSpeechJob::phaseChanged, this,
++                    [this](const QString &phase) { showMessage(phase, KMessageWidget::Information); });
++            connect(m_vibeJob.get(), &VibeSpeechJob::finished, this, [this](const QString &error) {
++                m_playlistWav.remove();
++                speech_progress->setRange(0, 100);
++                if (!error.isEmpty()) {
++                    frame_progress->hide();
++                    button_start->setEnabled(true);
++                    showMessage(error, KMessageWidget::Warning, m_speechConfig);
++                    return;
++                }
++                for (const auto &cue : m_vibeJob->cues()) {
++                    QJsonArray words;
++                    for (const auto &word : cue) {
++                        words.append(QJsonObject{{QStringLiteral("start"), word.start}, {QStringLiteral("end"), word.end},
++                                                 {QStringLiteral("word"), word.text.trimmed()}});
++                    }
++                    insertSpeechWords(words);
++                }
++                slotProcessSpeechStatus(0, QProcess::NormalExit);
++            });
++        }
+         return;
+     }
+     if (KdenliveSettings::speechEngine() == QLatin1String("whisper")) {
+@@ -1069,8 +1114,8 @@
+ 
+ void TextBasedEdit::startRecognition()
+ {
+-    if (!m_stt) {
+-        showMessage(i18n("Vibe is available in Automatic Subtitling. Choose VOSK or Whisper to use the Speech Editor."), KMessageWidget::Information, m_speechConfig);
++    const bool vibe = VibeSpeechJob::isVibeEngine(KdenliveSettings::speechEngine());
++    if (vibe && (m_audioExport->isRunning() || m_vibeJob->isRunning())) {
+         return;
+     }
+     if (m_speechJob && m_speechJob->state() != QProcess::NotRunning) {
+@@ -1084,11 +1129,13 @@
+     m_errorString.clear();
+     m_visualEditor->cleanup();
+     // m_visualEditor->insertHtml(QStringLiteral("<body>"));
+-    m_stt->checkDependencies(false);
++    if (!vibe) {
++        m_stt->checkDependencies(false);
++    }
+     QString modelDirectory;
+     QString language;
+     QString modelName;
+-    if (KdenliveSettings::speechEngine() == QLatin1String("whisper")) {
++    if (!vibe && KdenliveSettings::speechEngine() == QLatin1String("whisper")) {
+         // Whisper engine
+         if (!KdenliveSettings::speech_system_python() && (!m_stt->checkSetup() || !m_stt->missingDependencies({QStringLiteral("openai-whisper")}).isEmpty())) {
+             showMessage(i18n("Please configure speech to text."), KMessageWidget::Warning, m_speechConfig);
+@@ -1101,7 +1148,7 @@
+         if (KdenliveSettings::whisperDisableFP16()) {
+             language.append(QStringLiteral(" fp16=False"));
+         }
+-    } else {
++    } else if (!vibe) {
+         // VOSK engine
+         if (!KdenliveSettings::speech_system_python() && (!m_stt->checkSetup() || !m_stt->missingDependencies({QStringLiteral("vosk")}).isEmpty())) {
+             showMessage(i18n("Please configure speech to text."), KMessageWidget::Warning, m_speechConfig);
+@@ -1124,9 +1171,11 @@
+         return;
+     }
+ 
+-    m_speechJob = std::make_unique<QProcess>(this);
+-    showMessage(i18n("Starting speech recognition"), KMessageWidget::Information);
+-    qApp->processEvents();
++    if (!vibe) {
++        m_speechJob = std::make_unique<QProcess>(this);
++        showMessage(i18n("Starting speech recognition"), KMessageWidget::Information);
++        qApp->processEvents();
++    }
+ 
+     m_sourceUrl.clear();
+     QString clipName;
+@@ -1170,6 +1219,10 @@
+         return;
+     }
+     clipNameLabel->setText(clipName);
++    if (vibe) {
++        startVibeRecognition(endPos);
++        return;
++    }
+     if (clip->clipType() == ClipType::Playlist) {
+         // We need to extract audio first
+         m_playlistWav.remove();
+@@ -1308,6 +1361,27 @@
+     }
+ }
+ 
++void TextBasedEdit::startVibeRecognition(double endPos)
++{
++    m_playlistWav.remove();
++    m_playlistWav.setFileTemplate(QDir::temp().absoluteFilePath(QStringLiteral("kdenlive-XXXXXX.wav")));
++    if (!m_playlistWav.open()) {
++        showMessage(i18n("Cannot create temporary file."), KMessageWidget::Warning);
++        return;
++    }
++    m_playlistWav.close();
++    const double fps = pCore->getCurrentFps();
++    const int first = GenTime(m_clipOffset).frames(fps);
++    const int last = std::max(first, first + GenTime(endPos > 0 ? endPos : m_clipDuration).frames(fps) - 1);
++    enableEditActions(false, false);
++    showMessage(i18n("Starting audio export"), KMessageWidget::Information);
++    speech_progress->setRange(0, 0);
++    frame_progress->show();
++    m_audioExport->start({QStringLiteral("speech-audio"), m_sourceUrl, m_playlistWav.fileName(), QString::number(first), QString::number(last),
++                          QStringLiteral("0"), QStringLiteral("-1"), QStringLiteral("mono"), pCore->getCurrentProfilePath()},
++                         m_playlistWav.fileName());
++}
++
+ void TextBasedEdit::slotProcessSpeechStatus(int, QProcess::ExitStatus status)
+ {
+     m_tmpCutWav.remove();
+@@ -1456,75 +1530,48 @@
+     QJsonParseError error;
+     auto loadDoc = QJsonDocument::fromJson(saveData.toUtf8(), &error);
+     qDebug() << "===JSON ERROR: " << error.errorString();
++    insertSpeechWords(loadDoc.object().value(QStringLiteral("result")).toArray());
++}
++
++void TextBasedEdit::insertSpeechWords(const QJsonArray &words)
++{
++    if (words.isEmpty()) {
++        return;
++    }
+     QTextCursor cursor = m_visualEditor->textCursor();
+     QTextCharFormat fmt = cursor.charFormat();
+-    // fmt.setForeground(palette().text().color());
+-    if (loadDoc.isObject()) {
+-        QJsonObject obj = loadDoc.object();
+-        if (!obj.isEmpty()) {
+-            // QString itemText = obj["text"].toString();
+-            bool textFound = false;
+-            QPair<double, double> sentenceZone;
+-            if (obj["result"].isArray()) {
+-                const QJsonArray obj2 = obj.value("result").toArray();
+-
+-                // Get start time for first word
+-                QJsonValue val = obj2.first();
+-                if (val.isObject() && val.toObject().keys().contains("start")) {
+-                    double ms = val.toObject().value("start").toDouble() + m_clipOffset;
+-                    GenTime startPos(ms);
+-                    sentenceZone.first = ms;
+-                    if (startPos.frames(pCore->getCurrentFps()) > m_lastPosition + 1) {
+-                        // Insert space
+-                        GenTime silenceStart(m_lastPosition, pCore->getCurrentFps());
+-                        m_visualEditor->moveCursor(QTextCursor::End);
+-                        fmt.setAnchorHref(QStringLiteral("%1#%2:%3")
+-                                              .arg(m_binId)
+-                                              .arg(silenceStart.seconds())
+-                                              .arg(GenTime(startPos.frames(pCore->getCurrentFps()) - 1, pCore->getCurrentFps()).seconds()));
+-                        fmt.setAnchor(true);
+-                        cursor.insertText(i18n("No speech"), fmt);
+-                        m_visualEditor->textCursor().insertBlock(cursor.blockFormat());
+-                        m_visualEditor->speechZones << QPair<double, double>(
+-                            silenceStart.seconds(), GenTime(startPos.frames(pCore->getCurrentFps()) - 1, pCore->getCurrentFps()).seconds());
+-                    }
+-                    val = obj2.last();
+-                    if (val.isObject() && val.toObject().keys().contains("end")) {
+-                        ms = val.toObject().value("end").toDouble() + m_clipOffset;
+-                        sentenceZone.second = ms;
+-                        m_lastPosition = GenTime(ms).frames(pCore->getCurrentFps());
+-                        if (m_clipDuration > 0.) {
+-                            speech_progress->setValue(static_cast<int>(100 * ms / (+m_clipOffset + m_clipDuration)));
+-                        }
+-                    }
+-                }
+-                // Store words with their start/end time
+-                for (const QJsonValue &v : obj2) {
+-                    textFound = true;
+-                    fmt.setAnchor(true);
+-                    fmt.setAnchorHref(QStringLiteral("%1#%2:%3")
+-                                          .arg(m_binId)
+-                                          .arg(v.toObject().value("start").toDouble() + m_clipOffset)
+-                                          .arg(v.toObject().value("end").toDouble() + m_clipOffset));
+-                    cursor.insertText(v.toObject().value("word").toString(), fmt);
+-                    fmt.setAnchor(false);
+-                    cursor.insertText(QStringLiteral(" "), fmt);
+-                }
+-            } else {
+-                // Last empty object - no speech detected
+-            }
+-            if (textFound) {
+-                if (sentenceZone.second < m_clipOffset + m_clipDuration) {
+-                    m_visualEditor->textCursor().insertBlock(cursor.blockFormat());
+-                }
+-                m_visualEditor->speechZones << sentenceZone;
+-            }
+-        }
+-    } else if (loadDoc.isEmpty()) {
+-        qDebug() << "==== EMPTY OBJECT DOC";
+-    }
+-    qDebug() << "==== GOT BLOCKS: " << m_document.blockCount();
+-    qDebug() << "=== LINES: " << m_document.firstBlock().lineCount();
++    const double first = words.first().toObject().value(QStringLiteral("start")).toDouble() + m_clipOffset;
++    const double last = words.last().toObject().value(QStringLiteral("end")).toDouble() + m_clipOffset;
++    const double fps = pCore->getCurrentFps();
++    const int firstFrame = GenTime(first).frames(fps);
++    if (firstFrame > m_lastPosition + 1) {
++        const double silenceStart = GenTime(m_lastPosition, fps).seconds();
++        const double silenceEnd = GenTime(firstFrame - 1, fps).seconds();
++        m_visualEditor->moveCursor(QTextCursor::End);
++        fmt.setAnchor(true);
++        fmt.setAnchorHref(QStringLiteral("%1#%2:%3").arg(m_binId).arg(silenceStart).arg(silenceEnd));
++        cursor.insertText(i18n("No speech"), fmt);
++        m_visualEditor->textCursor().insertBlock(cursor.blockFormat());
++        m_visualEditor->speechZones << qMakePair(silenceStart, silenceEnd);
++    }
++    m_lastPosition = GenTime(last).frames(fps);
++    if (m_clipDuration > 0. && speech_progress->maximum() != 0) {
++        speech_progress->setValue(static_cast<int>(100 * last / (m_clipOffset + m_clipDuration)));
++    }
++    for (const auto &entry : words) {
++        const auto word = entry.toObject();
++        fmt.setAnchor(true);
++        fmt.setAnchorHref(QStringLiteral("%1#%2:%3").arg(m_binId)
++                              .arg(word.value(QStringLiteral("start")).toDouble() + m_clipOffset)
++                              .arg(word.value(QStringLiteral("end")).toDouble() + m_clipOffset));
++        cursor.insertText(word.value(QStringLiteral("word")).toString(), fmt);
++        fmt.setAnchor(false);
++        cursor.insertText(QStringLiteral(" "), fmt);
++    }
++    if (last < m_clipOffset + m_clipDuration) {
++        m_visualEditor->textCursor().insertBlock(cursor.blockFormat());
++    }
++    m_visualEditor->speechZones << qMakePair(first, last);
+     m_visualEditor->repaintLines();
+ }
+ 
+@@ -1719,7 +1766,8 @@
+ 
+ void TextBasedEdit::openClip(std::shared_ptr<ProjectClip> clip)
+ {
+-    if (m_speechJob && m_speechJob->state() == QProcess::Running) {
++    if ((m_speechJob && m_speechJob->state() == QProcess::Running) || (m_vibeJob && m_vibeJob->isRunning())
++        || (m_audioExport && m_audioExport->isRunning())) {
+         // TODO: ask for job cancellation
+         return;
+     }
+@@ -1766,6 +1814,7 @@
+         m_visualEditor->rebuildZones();
+         enableEditActions(true);
+     } else {
++        m_binId.clear();
+         enableEditActions(false, false);
+         clipNameLabel->clear();
+         m_visualEditor->cleanup();
+@@ -1805,5 +1854,5 @@
+     button_delete->setEnabled(enable);
+     button_remove_silence->setEnabled(enable);
+     button_search->setEnabled(enable);
+-    button_start->setEnabled(enableStart && m_stt);
+-}
++    button_start->setEnabled(enableStart && (m_stt || VibeSpeechJob::isVibeEngine(KdenliveSettings::speechEngine())));
++}
+--- a/src/dialogs/textbasededit.h
++++ b/src/dialogs/textbasededit.h
+@@ -15,6 +15,9 @@
+ #include <QTemporaryFile>
+ 
+ class SpeechToText;
++class SpeechAudioJob;
++class VibeSpeechJob;
++class QJsonArray;
+ class ProjectClip;
+ 
+ /**
+@@ -178,6 +181,8 @@
+ private:
+     std::unique_ptr<QProcess> m_speechJob;
+     std::unique_ptr<QProcess> m_tCodeJob;
++    std::unique_ptr<SpeechAudioJob> m_audioExport;
++    std::unique_ptr<VibeSpeechJob> m_vibeJob;
+     /** @brief Id of the master bin clip on which speech processing is done */
+     QString m_binId;
+     /** @brief Id of the playlist which is processed from the master clip */
+@@ -201,6 +206,8 @@
+     QAction *m_translateAction;
+     SpeechToText *m_stt;
+     void applyFontSize();
++    void startVibeRecognition(double endPos);
++    void insertSpeechWords(const QJsonArray &words);
+     void enableEditActions(bool enable, bool enableStart = true);
+     void buildWhisperModelsList(const QStringList whisperModels);
+     void buildVoskModelsList(const QStringList models);
+--- /dev/null
++++ b/src/speech/speechaudiojob.cpp
+@@ -0,0 +1,75 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++
++#include "speechaudiojob.h"
++
++#include "kdenlivesettings.h"
++
++#include <KLocalizedString>
++#include <QFileInfo>
++
++SpeechAudioJob::SpeechAudioJob(QObject *parent)
++    : QObject(parent)
++{
++    m_timer.setInterval(250);
++    connect(&m_timer, &QTimer::timeout, this, [this]() {
++        const qint64 size = QFileInfo(m_output).size();
++        if (size > m_size && size > 44) {
++            m_size = size;
++            m_progress.restart();
++        } else if (m_progress.hasExpired(idleSeconds * 1000)) {
++            complete(i18n("Audio export timed out after %1 seconds without audio.", idleSeconds));
++        }
++    });
++    connect(&m_renderer, &QProcess::errorOccurred, this, [this]() { complete(i18n("Audio export failed")); });
++    connect(&m_renderer, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
++        const bool success = exitCode == 0 && status == QProcess::NormalExit && QFileInfo(m_output).size() > 44;
++        complete(success ? QString() : i18n("Audio export failed"));
++    });
++}
++
++SpeechAudioJob::~SpeechAudioJob()
++{
++    if (m_renderer.state() != QProcess::NotRunning) {
++        m_renderer.disconnect(this);
++        m_renderer.kill();
++        m_renderer.waitForFinished(1000);
++    }
++}
++
++void SpeechAudioJob::start(const QStringList &arguments, const QString &output)
++{
++    Q_ASSERT(!m_running);
++    m_running = true;
++    m_output = output;
++    m_size = 0;
++    m_progress.start();
++    m_timer.start();
++    m_renderer.setStandardOutputFile(QProcess::nullDevice());
++    m_renderer.setStandardErrorFile(QProcess::nullDevice());
++    m_renderer.start(KdenliveSettings::kdenliverendererpath(), arguments);
++}
++
++void SpeechAudioJob::cancel()
++{
++    complete(i18n("Speech recognition aborted."));
++}
++
++bool SpeechAudioJob::isRunning() const
++{
++    return m_running;
++}
++
++void SpeechAudioJob::complete(const QString &error)
++{
++    if (!m_running) {
++        return;
++    }
++    m_running = false;
++    m_timer.stop();
++    if (m_renderer.state() != QProcess::NotRunning) {
++        m_renderer.kill();
++        m_renderer.waitForFinished(1000);
++    }
++    Q_EMIT finished(error);
++}
+--- /dev/null
++++ b/src/speech/speechaudiojob.h
+@@ -0,0 +1,35 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++
++#pragma once
++
++#include <QElapsedTimer>
++#include <QProcess>
++#include <QTimer>
++
++class SpeechAudioJob : public QObject
++{
++    Q_OBJECT
++
++public:
++    explicit SpeechAudioJob(QObject *parent = nullptr);
++    ~SpeechAudioJob() override;
++
++    void start(const QStringList &arguments, const QString &output);
++    void cancel();
++    bool isRunning() const;
++
++Q_SIGNALS:
++    void finished(const QString &error);
++
++private:
++    void complete(const QString &error);
++
++    static constexpr int idleSeconds = 20;
++    QProcess m_renderer;
++    QTimer m_timer;
++    QElapsedTimer m_progress;
++    QString m_output;
++    qint64 m_size{0};
++    bool m_running{false};
++};
+--- a/src/speech/vibespeechjob.cpp
++++ b/src/speech/vibespeechjob.cpp
+@@ -4,6 +4,7 @@
+ #include "vibespeechjob.h"
+ 
+ #include <KLocalizedString>
++#include <QDir>
+ #include <QFile>
+ #include <QFileInfo>
+ #include <QHttpMultiPart>
+@@ -26,10 +27,15 @@
+     return info.isAbsolute() && info.isFile() && info.isReadable();
+ }
+ 
++QDir vibeData()
++{
++    const QString data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
++    return QDir(data + u"/github.com.thewh1teagle.vibe"_s);
++}
++
+ QJsonObject vibeStore()
+ {
+-    const QString data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+-    QFile file(data + u"/github.com.thewh1teagle.vibe/app_config.json"_s);
++    QFile file(vibeData().filePath(u"app_config.json"_s));
+     return file.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(file.readAll()).object() : QJsonObject{};
+ }
+ 
+@@ -76,12 +82,19 @@
+     return m_running;
+ }
+ 
++const VibeCues &VibeSpeechJob::cues() const
++{
++    return m_cues;
++}
++
+ void VibeSpeechJob::start(const QString &audioPath, const QString &subtitlePath, bool systemDefault)
+ {
+     if (m_running) {
+         return;
+     }
+     m_running = true;
++    m_cues.clear();
++    m_vadModel.clear();
+     m_audioPath = audioPath;
+     m_subtitlePath = subtitlePath;
+     m_serverProgram = QStandardPaths::findExecutable(u"vibe-server"_s);
+@@ -160,6 +173,15 @@
+     if (m_language.compare("auto"_L1, Qt::CaseInsensitive) == 0) {
+         m_language.clear();
+     }
++    const QDir models(settings.value("models_folder"_L1).toString(vibeData().absolutePath()));
++    const QString vad = models.filePath(u"ggml-silero-v6.2.0.bin"_s);
++    if (readableModel(vad)) {
++        m_vadModel = vad;
++    } else if (settings.value("transcription.stableTimestamps"_L1).toBool()) {
++        complete(i18n("Install the Stable Timestamps model in Vibe (%1), or turn off Stable Timestamps in Vibe.",
++                      QLocale().formattedDataSize(885098)));
++        return;
++    }
+     m_serverOutput.clear();
+     m_server.setProcessEnvironment(environment);
+     Q_EMIT phaseChanged(i18n("Starting Vibe's speech server"));
+@@ -203,13 +225,20 @@
+     audio.setRawHeader("Content-Type", "audio/wav");
+     audio.setBodyDevice(file);
+     multipart->append(audio);
+-    multipart->append(field("response_format", "srt"));
++    multipart->append(field("response_format", "verbose_json"));
++    multipart->append(field("word_timestamps", "true"));
++    if (!m_vadModel.isEmpty()) {
++        multipart->append(field("stable_timestamps", "true"));
++        multipart->append(field("vad_model", m_vadModel.toUtf8()));
++    }
+     // In Vibe 3.3.5 detect_language requests detection without transcription.
+     if (!m_language.isEmpty()) {
+         multipart->append(field("language", m_language.toUtf8()));
+     }
+ 
++    m_timer.stop();
+     QNetworkRequest request(QUrl(u"http://127.0.0.1:%1/v1/audio/transcriptions"_s.arg(port)));
++    request.setTransferTimeout(20 * 60 * 1000);
+     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+     m_reply = m_network.post(request, multipart);
+     multipart->setParent(m_reply);
+@@ -227,12 +256,18 @@
+         complete(i18n("Vibe could not recognize the speech: %1", message.isEmpty() ? m_reply->errorString() : message));
+         return;
+     }
+-    if (!result.contains(" --> ")) {
++    m_cues = vibeTimedWords(result, m_audioPath, !m_vadModel.isEmpty());
++    if (m_cues.isEmpty()) {
+         complete(i18n("Vibe returned no timed subtitles."));
+         return;
+     }
++    if (m_subtitlePath.isEmpty()) {
++        complete({});
++        return;
++    }
++    const QByteArray data = vibeSubtitles(m_cues);
+     QSaveFile subtitles(m_subtitlePath);
+-    if (!subtitles.open(QIODevice::WriteOnly) || subtitles.write(result) != result.size() || !subtitles.commit()) {
++    if (!subtitles.open(QIODevice::WriteOnly) || subtitles.write(data) != data.size() || !subtitles.commit()) {
+         complete(i18n("Could not save Vibe's subtitles: %1", subtitles.errorString()));
+         return;
+     }
+--- a/src/speech/vibespeechjob.h
++++ b/src/speech/vibespeechjob.h
+@@ -2,6 +2,8 @@
+ // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ 
+ #pragma once
++
++#include "vibetiming.h"
+ 
+ #include <QNetworkAccessManager>
+ #include <QPointer>
+@@ -20,6 +22,7 @@
+     void start(const QString &audioPath, const QString &subtitlePath, bool systemDefault);
+     void cancel();
+     bool isRunning() const;
++    const VibeCues &cues() const;
+ 
+     static bool isVibeEngine(const QString &engine);
+ 
+@@ -46,6 +49,8 @@
+     QString m_audioPath;
+     QString m_subtitlePath;
+     QString m_language;
++    QString m_vadModel;
++    VibeCues m_cues;
+     bool m_running{false};
+     bool m_resolving{false};
+ };
+--- /dev/null
++++ b/src/speech/vibetiming.cpp
+@@ -0,0 +1,296 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++
++#include "vibetiming.h"
++
++#include <QFile>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QtEndian>
++
++#include <algorithm>
++#include <cmath>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++struct Span
++{
++    double start;
++    double end;
++};
++
++struct AudioActivity
++{
++    double duration{0};
++    QList<Span> spans;
++};
++
++constexpr double frameSeconds = 0.020;
++constexpr double pauseSeconds = 1.0;
++
++AudioActivity speechActivity(const QString &path)
++{
++    QFile wav(path);
++    if (!wav.open(QIODevice::ReadOnly)) {
++        return {};
++    }
++    const QByteArray riff = wav.read(12);
++    if (riff.size() != 12 || riff.first(4) != "RIFF" || riff.last(4) != "WAVE") {
++        return {};
++    }
++    bool formatOk = false;
++    while (wav.pos() + 8 <= wav.size()) {
++        const QByteArray header = wav.read(8);
++        if (header.size() != 8) {
++            return {};
++        }
++        const auto size = qFromLittleEndian<quint32>(header.constData() + 4);
++        const qint64 offset = wav.pos();
++        if (offset + size > wav.size()) {
++            return {};
++        }
++        if (header.startsWith("fmt ") && size >= 16) {
++            const QByteArray format = wav.read(16);
++            formatOk = format.size() == 16 && qFromLittleEndian<quint16>(format.constData()) == 1
++                && qFromLittleEndian<quint16>(format.constData() + 2) == 1
++                && qFromLittleEndian<quint32>(format.constData() + 4) == 16000
++                && qFromLittleEndian<quint16>(format.constData() + 14) == 16;
++        } else if (header.startsWith("data") && formatOk) {
++            constexpr int samplesPerFrame = 320;
++            constexpr int bytesPerFrame = samplesPerFrame * 2;
++            QList<double> energy;
++            energy.reserve(size / bytesPerFrame);
++            int previous = 0;
++            for (qint64 remaining = size; remaining >= bytesPerFrame; remaining -= bytesPerFrame) {
++                const QByteArray samples = wav.read(bytesPerFrame);
++                if (samples.size() != bytesPerFrame) {
++                    return {};
++                }
++                double sum = 0;
++                for (int i = 0; i < bytesPerFrame; i += 2) {
++                    const int sample = qFromLittleEndian<qint16>(samples.constData() + i);
++                    const double difference = sample - previous;
++                    sum += difference * difference;
++                    previous = sample;
++                }
++                energy.append(std::sqrt(sum / samplesPerFrame));
++            }
++            AudioActivity result{size / 32000.0, {}};
++            if (energy.isEmpty()) {
++                return result;
++            }
++            auto levels = energy;
++            std::sort(levels.begin(), levels.end());
++            const double floor = levels.at(levels.size() / 10);
++            const double loud = levels.at(levels.size() * 95 / 100);
++            // A quiet background is useful evidence only when the recording has
++            // enough contrast. Differencing rejects steady low-frequency energy.
++            if (loud < 2 * std::max(2.0, floor)) {
++                return result;
++            }
++            const double threshold = std::max({4.0, floor * 1.65, loud * 0.005});
++            qsizetype first = -1;
++            qsizetype last = -1;
++            auto append = [&]() {
++                if (last - first >= 4) {
++                    result.spans.append({first * frameSeconds, (last + 1) * frameSeconds});
++                }
++            };
++            for (qsizetype i = 0; i < energy.size(); ++i) {
++                if (energy.at(i) < threshold) {
++                    continue;
++                }
++                if (first < 0 || (i - last) * frameSeconds >= 0.45) {
++                    if (first >= 0) {
++                        append();
++                    }
++                    first = i;
++                }
++                last = i;
++            }
++            if (first >= 0) {
++                append();
++            }
++            return result;
++        }
++        if (!wav.seek(offset + size + (size & 1))) {
++            break;
++        }
++    }
++    return {};
++}
++
++Span extent(const QList<VibeWord> &words)
++{
++    return {words.first().start, words.last().end};
++}
++
++double intersection(const Span &a, const Span &b)
++{
++    return std::max(0.0, std::min(a.end, b.end) - std::max(a.start, b.start));
++}
++
++void adjustEdges(VibeCues &cues, const QList<Span> &activity)
++{
++    QList<QList<Span>> spansByCue(cues.size());
++    qsizetype firstPossible = 0;
++    for (const auto &span : activity) {
++        while (firstPossible < cues.size() && cues.at(firstPossible).last().end < span.start) {
++            ++firstPossible;
++        }
++        qsizetype owner = -1;
++        double best = 0;
++        for (qsizetype i = firstPossible; i < cues.size(); ++i) {
++            const double overlap = intersection(span, extent(cues.at(i)));
++            if (overlap > best) {
++                owner = i;
++                best = overlap;
++            }
++            if (cues.at(i).first().start > span.end) {
++                break;
++            }
++        }
++        if (owner >= 0 && best >= (span.end - span.start) * 0.60) {
++            spansByCue[owner].append(span);
++        }
++    }
++    for (qsizetype i = 0; i < cues.size(); ++i) {
++        const auto &spans = spansByCue.at(i);
++        if (spans.isEmpty()) {
++            continue;
++        }
++        auto &words = cues[i];
++        const auto rough = extent(words);
++        double start = rough.start;
++        double end = rough.end;
++        if (spans.first().start >= rough.start - 0.30
++            && (i == 0 || spans.first().start >= cues.at(i - 1).last().end)) {
++            start = spans.first().start;
++        }
++        if (spans.last().end <= rough.end + 0.30
++            && (i + 1 == cues.size() || spans.last().end <= cues.at(i + 1).first().start + 0.30)) {
++            end = spans.last().end;
++        }
++        if (start < end) {
++            words.first().start = start;
++            words.last().end = end;
++        }
++    }
++}
++
++bool sentenceEnd(const QString &text)
++{
++    static const QString terminal = u".!?。！？…"_s;
++    const QString word = text.trimmed();
++    return !word.isEmpty() && terminal.contains(word.back());
++}
++
++void normalizeWords(QList<VibeWord> &words, double start, double end)
++{
++    // Preserve timings inside the cue. Redistribute only the words for which
++    // the recognizer left no usable positive interval inside its speech.
++    double position = start;
++    const double minimum = std::min(0.020, (end - start) / words.size());
++    for (qsizetype i = 0; i < words.size(); ++i) {
++        auto &word = words[i];
++        const double remaining = (words.size() - i - 1) * minimum;
++        const double latest = std::max(position, end - remaining - minimum);
++        word.start = std::clamp(word.start, position, latest);
++        word.end = std::clamp(word.end, std::min(end - remaining, word.start + minimum), end - remaining);
++        position = word.end;
++    }
++    words.first().start = start;
++    words.last().end = end;
++}
++
++QString srtTime(double seconds)
++{
++    const qint64 ms = qRound64(seconds * 1000);
++    return u"%1:%2:%3,%4"_s.arg(ms / 3600000, 2, 10, u'0').arg(ms / 60000 % 60, 2, 10, u'0')
++        .arg(ms / 1000 % 60, 2, 10, u'0').arg(ms % 1000, 3, 10, u'0');
++}
++}
++
++VibeCues vibeTimedWords(const QByteArray &reply, const QString &audioPath, bool voiceActivity)
++{
++    const auto parsed = QJsonDocument::fromJson(reply);
++    const auto segments = parsed.object().value("segments"_L1).toArray();
++    const auto audio = speechActivity(audioPath);
++    if (audio.duration <= 0) {
++        return {};
++    }
++    VibeCues cues;
++    for (const auto &entry : segments) {
++        const QJsonObject segment = entry.toObject();
++        const Span bounds{std::clamp(segment.value("start"_L1).toDouble(-1), 0.0, audio.duration),
++                          std::clamp(segment.value("end"_L1).toDouble(-1), 0.0, audio.duration)};
++        QList<VibeWord> cue;
++        for (const auto &value : segment.value("words"_L1).toArray()) {
++            const QJsonObject item = value.toObject();
++            const double start = item.value("start"_L1).toDouble(-1);
++            const double end = item.value("end"_L1).toDouble(-1);
++            const QString text = item.value("text"_L1).toString();
++            if (start < 0 || end < start || start >= audio.duration || text.trimmed().isEmpty()) {
++                continue;
++            }
++            if (!cue.isEmpty() && sentenceEnd(cue.last().text)) {
++                const double previous = cue.last().end;
++                const auto &spans = audio.spans;
++                bool pause = start - previous >= pauseSeconds;
++                for (qsizetype i = 1; !pause && i < spans.size(); ++i) {
++                    const double before = spans.at(i - 1).end;
++                    const double after = spans.at(i).start;
++                    const double boundary = (previous + start) / 2;
++                    if (before > boundary) {
++                        break;
++                    }
++                    pause = after - before >= pauseSeconds && boundary <= after;
++                }
++                if (pause) {
++                    cues.append(cue);
++                    cue.clear();
++                }
++            }
++            cue.append({text, start, std::min(end, audio.duration)});
++        }
++        if (!cue.isEmpty()) {
++            // Stable timestamps provides VAD windows. Whisper can still
++            // return word times from before that window.
++            if (voiceActivity && bounds.start < bounds.end) {
++                cue.first().start = std::clamp(cue.first().start, bounds.start, bounds.end);
++                cue.last().end = std::clamp(cue.last().end, bounds.start, bounds.end);
++            }
++            cues.append(cue);
++        }
++    }
++    adjustEdges(cues, audio.spans);
++    VibeCues result;
++    double previous = 0;
++    for (auto &cue : cues) {
++        const double start = std::max(previous, cue.first().start);
++        const double end = cue.last().end;
++        if (end > start) {
++            normalizeWords(cue, start, end);
++            result.append(cue);
++            previous = end;
++        }
++    }
++    return result;
++}
++
++QByteArray vibeSubtitles(const VibeCues &cues)
++{
++    QString subtitles;
++    for (qsizetype i = 0; i < cues.size(); ++i) {
++        const auto &words = cues.at(i);
++        QString text;
++        for (const auto &word : words) {
++            text += word.text;
++        }
++        subtitles += u"%1\n%2 --> %3\n%4\n\n"_s.arg(i + 1).arg(srtTime(words.first().start), srtTime(words.last().end), text.trimmed());
++    }
++    return subtitles.toUtf8();
++}
+--- /dev/null
++++ b/src/speech/vibetiming.h
+@@ -0,0 +1,19 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++
++#pragma once
++
++#include <QList>
++#include <QString>
++
++struct VibeWord
++{
++    QString text;
++    double start;
++    double end;
++};
++
++using VibeCues = QList<QList<VibeWord>>;
++
++VibeCues vibeTimedWords(const QByteArray &reply, const QString &audioPath, bool voiceActivity);
++QByteArray vibeSubtitles(const VibeCues &cues);
