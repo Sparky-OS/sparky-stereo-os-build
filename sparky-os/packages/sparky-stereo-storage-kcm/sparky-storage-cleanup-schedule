@@ -24,7 +24,7 @@ PROBLEMS = '/usr/bin/sparky-stereo-problems'
 SELF = '/usr/libexec/sparky-storage-cleanup-schedule'
 PERIODS = ('manual', 'weekly', 'fortnightly', 'monthly')
 ACTIONS = ('review', 'automatic')
-MAX_APPROVED = 12000
+MAX_APPROVED = 200000
 SYSTEM = os.geteuid() == 0
 HOME = Path.home()
 SYSTEM_CONFIG = Path('/etc/sparky-storage-cleanup.conf')
@@ -194,7 +194,10 @@ def automatic(settings):
     if preview.get('read_only'):
         raise OSError('The scheduled volume is read-only')
     approved = list(dict.fromkeys(item['id'] for item in preview['items']))
-    errors = {(row.get('operation'), row.get('id'), row['reason']) for row in preview['errors']}
+    def item_errors(rows):
+        return {(row.get('operation'), row.get('id') or row.get('path'), row['reason']) for row in rows}
+
+    errors = item_errors(preview['errors'])
     cleaned = {}
     for start in range(0, len(approved), MAX_APPROVED):
         try:
@@ -202,7 +205,7 @@ def automatic(settings):
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             errors.add((None, None, str(error)))
             break
-        errors.update((row.get('operation'), row.get('id'), row['reason']) for row in result['errors'])
+        errors.update(item_errors(result['errors']))
         cleaned.update((item['id'], item) for item in result['items'])
     # The same overlap can be found by more than one cleaner. Count its space once.
     by_path = {item['path']: item for item in cleaned.values()}
@@ -210,7 +213,7 @@ def automatic(settings):
         print(f'{label or BLEACHBIT}: {reason}', file=sys.stderr)
     return {'bytes': sum(item['bytes'] for item in by_path.values()),
             'estimated': any(item['estimated'] for item in by_path.values()),
-            'kinds': dict(Counter(item.get('operation', item['cleaner']) for item in by_path.values())),
+            'kinds': dict(Counter(item['cleaner'] + '.' + item['option'] for item in by_path.values())),
             'aptDeferred': sum(bool(label and label.startswith('apt.')) for label, _, _ in errors),
             'failures': len(errors)}
 
@@ -241,12 +244,15 @@ def run():
             caches = settings.get('legacyCaches')
             notice('weekly', 'LOCAL7' if caches else 'LOCAL6', mount, 'caches' if caches else route, mount)
             record.update(outcome='review', bytes=0, failures=0, kinds={})
+            add_record(record, records)
         else:
             try:
                 record.update(outcome='cleaned', **automatic(effective))
             except (KeyError, OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
                 print(error, file=sys.stderr)
                 record.update(outcome='failed', bytes=0, failures=1, kinds={})
+            # Save the result before sending it to the Problems service.
+            add_record(record, records)
             if record['outcome'] == 'failed':
                 notice('scheduled-start', 'LOCAL12', mount, route, mount)
             else:
@@ -255,7 +261,6 @@ def run():
                 notice('scheduled-items', 'LOCAL10', mount, route, record['failures'], mount)
             else:
                 problem('clear', 'scheduled-items')
-        add_record(record, records)
 
 
 def main():
