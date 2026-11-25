@@ -13,7 +13,8 @@ the connection, heartbeat, receiver and media namespaces. Added for the proof:
   its cast-local-authorization-token;
 - SET_VOLUME on the receiver namespace changes and reports the volume;
 - modes for the red rows: launch-error (LAUNCH answered with LAUNCH_ERROR), load-failed (LOAD answered with
-  LOAD_FAILED), no-pong (the heartbeat goes unanswered), never-plays (it fetches the stream and stays BUFFERING).
+  LOAD_FAILED), no-pong (the heartbeat goes unanswered), never-plays (it fetches the stream and stays BUFFERING), false-start (it says PLAYING once at its time 0, then BUFFERING
+  at time 0 for ever, as a real Chromecast did with E-AC-3 and Vorbis).
 - with --player chromium (part D) it is a receiver that plays like one: on LOAD a headless Chromium plays the stream in
   a media element (relayed from the device's own address), and the media status says what that player does: PLAYING
   only while its current time advances, BUFFERING while it waits, IDLE with ERROR or FINISHED; currentTime is the
@@ -59,6 +60,8 @@ class Session:
         self.session_id = "7E2F0E77-0000-0000-0000-000000000081"
         self.media = None
         self.player = None
+        self.loaded_at = None  # when the LOAD came: a normal device's time runs from it
+        self.false_start_said = False
         self.volume = {"controlType": "attenuation", "level": 0.5, "muted": False, "stepInterval": 0.05}
         self.lock = threading.Lock()
 
@@ -78,6 +81,16 @@ class Session:
             state, idle_reason, current = self.player.cast_state()
         elif self.media is not None and args.mode == "never-plays":
             state = "BUFFERING"
+        elif self.media is not None and args.mode == "false-start":
+            # as a real Chromecast did with E-AC-3 and Vorbis (row 81, part D2): PLAYING once, at its time 0, then
+            # BUFFERING at time 0 for ever
+            if state == "PLAYING" and not self.false_start_said:
+                self.false_start_said = True
+            else:
+                state = "BUFFERING"
+        elif self.media is not None and state == "PLAYING" and self.loaded_at is not None:
+            # a playing device's time runs from its LOAD
+            current = round(time.monotonic() - self.loaded_at, 2)
         if self.media is not None:
             entry = {"mediaSessionId": 1, "playbackRate": 1, "playerState": state, "currentTime": current,
                      "supportedMediaCommands": 274447, "media": self.media}
@@ -384,6 +397,7 @@ def handle(conn, peer, session):
                 send(conn, "receiver-0", msg.source_id, NS_RECEIVER, session.receiver_status(rid))
             elif msg.namespace == NS_MEDIA and mtype == "LOAD":
                 session.media = payload.get("media")
+                session.loaded_at, session.false_start_said = time.monotonic(), False
                 log({"event": "load", "contentId": session.media.get("contentId"), "contentType": session.media.get("contentType"),
                      "streamType": session.media.get("streamType")})
                 if args.mode == "load-failed":
@@ -464,7 +478,7 @@ def main():
     parser.add_argument("--cert", required=True)
     parser.add_argument("--key", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--mode", default="normal", choices=["normal", "launch-error", "load-failed", "no-pong", "never-plays"])
+    parser.add_argument("--mode", default="normal", choices=["normal", "launch-error", "load-failed", "no-pong", "never-plays", "false-start"])
     parser.add_argument("--name", default="Living room TV")
     parser.add_argument("--model", default="Chromecast")
     parser.add_argument("--udn", default="5d7a9c4e-81ab-4c3d-9e2f-000000000081")

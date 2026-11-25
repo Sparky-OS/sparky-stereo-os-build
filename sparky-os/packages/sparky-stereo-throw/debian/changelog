@@ -8,6 +8,14 @@ sparky-stereo-throw (0.3.0) unstable; urgency=medium
     played, or did not start playing, is kept for it by its identity.
   * A Throw the device does not play within 60 seconds is ended and said with what the device reported, never left
     as "throwing" before a loading screen; every Cast message is in the debug log, the stream's token taken out.
+  * The device plays once its time has run past a second: a real Chromecast says PLAYING at its time 0 and then
+    buffers there with some sounds, which is not playing (with E-AC-3 and Vorbis it never started).
+  * The sound's name and what it means are in the person's language on the page, in the notices and in what the
+    problems engine keeps (a bit depth is words; a format's own name stays); the page says how long the device took
+    to start with that sound and that its picture stays about that far behind the screen.
+  * The status gives the times a person lives with: the LOAD, the first playing, the device's last status and the
+    stream's time 0 on this computer's clock, so the delay of the television behind the screen can be read.
+  * Built against KPipeWire 6.7.4-1+stereo3d10 (its constant frame rate, after ORDER 740's +stereo3d9).
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 25 Nov 2026 18:00:00 +0000
 

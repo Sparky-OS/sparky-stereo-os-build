@@ -156,7 +156,7 @@ KCM.SimpleKCM {
                 let words = page.current.soundAbout || ""
                 if (page.current.soundStart >= 0) {
                     words += " " + i18ndc("sparky-stereo-throw", "@info how long this device took to start with this sound; %1 seconds",
-                                          "On this device it started %1 s after the Throw began; until then the television shows its own loading screen.",
+                                          "On this device it started %1 s after the Throw began: until then the television shows its own loading screen, and then its picture stays about that far behind this screen.",
                                           Math.round(page.current.soundStart))
                 }
                 return words.trim()

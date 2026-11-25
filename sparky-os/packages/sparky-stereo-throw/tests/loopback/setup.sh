@@ -44,7 +44,7 @@ devices=(
     "10.81.0.5 cast-den.local|Den TV|Google TV Streamer|normal|5d7a9c4e81ab4c3d9e2f000000000085"
     "10.81.0.6 cast-kitchen.local|Kitchen speaker|Google Nest Mini|normal|5d7a9c4e81ab4c3d9e2f000000000086"
     "10.81.0.7 cast-player.local|Player TV|Chromecast|chromium|5d7a9c4e81ab4c3d9e2f000000000087"
-    "10.81.0.8 cast-stuck.local|Stuck TV|Chromecast|never-plays|5d7a9c4e81ab4c3d9e2f000000000088"
+    "10.81.0.8 cast-stuck.local|Stuck TV|Chromecast|false-start|5d7a9c4e81ab4c3d9e2f000000000088"
 )
 for entry in "${devices[@]}"; do
     IFS='|' read -r addrhost name model mode id <<< "$entry"
