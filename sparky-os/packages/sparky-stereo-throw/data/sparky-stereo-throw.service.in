@@ -1,0 +1,14 @@
+[Unit]
+Description=Throw to Google Cast devices (sparky-stereo-throw)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.sparky.Throw
+ExecStart=@KDE_INSTALL_FULL_LIBEXECDIR@/sparky-stereo-throwd
+Restart=on-failure
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target

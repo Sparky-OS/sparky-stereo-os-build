@@ -1,0 +1,66 @@
+{
+  "about": "One row per Cast model name (the md of its DNS-SD record, compared without case). Video limits from Google's 'Supported Media for Google Cast' (developers.google.com/cast/docs/media, last updated 2024-09-18) and the 'Chromecast & Google TV Streamer specifications' page (support.google.com/chromecast/answer/3046409, read 2026-10-14); model names from pychromecast 14.1.1 const.py CAST_TYPES. This milestone sends H.264 only, so a device's mode is the largest H.264 mode it lists, at 30 frames a second.",
+  "unknown": {
+    "generation": "not in the table: the first Chromecast's limits",
+    "mode": {"width": 1920, "height": 1080, "refresh": 30},
+    "codec": "H264",
+    "level": "4.1",
+    "source": "row 81's review: a model not in the table gets the first generation's limits and the person is told once"
+  },
+  "models": [
+    {
+      "md": "Chromecast",
+      "generation": "Chromecast, first, second or third generation (the model name does not tell them apart)",
+      "mode": {"width": 1920, "height": 1080, "refresh": 30},
+      "codec": "H264",
+      "level": "4.1",
+      "source": "first and second generation: H.264 High up to level 4.1, 1080p30; third: level 4.2, 1080p60; the first's limits hold for all three"
+    },
+    {
+      "md": "Chromecast Ultra",
+      "generation": "Chromecast Ultra",
+      "mode": {"width": 1920, "height": 1080, "refresh": 30},
+      "codec": "H264",
+      "level": "4.2",
+      "source": "H.264 High up to level 4.2 (1080p60); 4K only in HEVC and VP9, not sent in this milestone"
+    },
+    {
+      "md": "Chromecast HD",
+      "generation": "Chromecast with Google TV (HD)",
+      "mode": {"width": 1920, "height": 1080, "refresh": 30},
+      "codec": "H264",
+      "level": "4.2",
+      "source": "the specifications page: up to 1080p HDR, 60 fps; no separate row on the media page"
+    },
+    {
+      "md": "Google TV Streamer",
+      "generation": "Google TV Streamer",
+      "mode": {"width": 3840, "height": 2160, "refresh": 30},
+      "codec": "H264",
+      "level": "5.2",
+      "source": "H.264 High up to level 5.2 (4Kx2K/60fps)"
+    },
+    {
+      "md": "Google Nest Hub",
+      "generation": "Google Nest Hub (display)",
+      "mode": {"width": 1280, "height": 720, "refresh": 30},
+      "codec": "H264",
+      "level": "4.1",
+      "source": "H.264 High up to level 4.1 (720p/60fps)"
+    },
+    {
+      "md": "Google Nest Hub Max",
+      "generation": "Google Nest Hub Max (display)",
+      "mode": {"width": 1280, "height": 720, "refresh": 30},
+      "codec": "H264",
+      "level": "4.1",
+      "source": "H.264 High up to level 4.1 (720p/30fps)"
+    },
+    {"md": "Chromecast Audio", "generation": "Chromecast Audio (speaker, no screen)", "video": false, "codec": "", "level": "", "mode": {"width": 0, "height": 0, "refresh": 0}, "source": "audio only"},
+    {"md": "Google Home", "generation": "Google Home (speaker, no screen)", "video": false, "codec": "", "level": "", "mode": {"width": 0, "height": 0, "refresh": 0}, "source": "audio only"},
+    {"md": "Google Home Mini", "generation": "Google Home Mini (speaker, no screen)", "video": false, "codec": "", "level": "", "mode": {"width": 0, "height": 0, "refresh": 0}, "source": "audio only"},
+    {"md": "Google Nest Mini", "generation": "Google Nest Mini (speaker, no screen)", "video": false, "codec": "", "level": "", "mode": {"width": 0, "height": 0, "refresh": 0}, "source": "audio only"},
+    {"md": "Nest Audio", "generation": "Nest Audio (speaker, no screen)", "video": false, "codec": "", "level": "", "mode": {"width": 0, "height": 0, "refresh": 0}, "source": "audio only"},
+    {"md": "Google Cast Group", "generation": "a group of speakers", "video": false, "codec": "", "level": "", "mode": {"width": 0, "height": 0, "refresh": 0}, "source": "a group: the next milestone (sound)"}
+  ]
+}

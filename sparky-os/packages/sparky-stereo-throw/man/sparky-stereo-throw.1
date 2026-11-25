@@ -1,0 +1,38 @@
+.TH SPARKY-STEREO-THROW 1 2026-11-25 "sparky-stereo-throw 0.1.0" "Sparky Stereo OS"
+.SH NAME
+sparky-stereo-throw \- throw the desktop to Google Cast devices
+.SH SYNOPSIS
+.B sparky-stereo-throw list
+.br
+.B sparky-stereo-throw throw
+.I id
+.RB [ \-\-wait
+.IR seconds ]
+.br
+.B sparky-stereo-throw stop
+.I id
+.br
+.B sparky-stereo-throw info
+.I id
+.br
+.B sparky-stereo-throw volume
+.I id
+.IR level | \-
+.RB [ mute | unmute ]
+.SH DESCRIPTION
+The command of the Throw service (org.sparky.Throw on the session bus). \fBlist\fR prints the Cast devices found on
+the network as JSON: identity, name, model, what the model name tells, address, the mode a Throw uses and the state of
+its Throw. \fBthrow\fR starts a Throw: the device becomes one more screen of KWin and plays its picture; with
+\fB\-\-wait\fR the command waits for the device to play (exit 0) or for the failure (exit 1, the reason printed).
+\fBstop\fR ends it. \fBinfo\fR prints what the device says about itself without an account (its setup information and
+its receiver's status). \fBvolume\fR sets the device's volume (0 to 1, or \- to leave it) and mute, read back from the
+device.
+.SH FILES
+.TP
+.I ~/.config/sparky-stereo-throwrc
+[Device][\fIid\fR] Mode=\fIW\fRx\fIH\fR@\fIHz\fR overrides the mode of the device table for that device.
+.TP
+.I /usr/share/sparky-stereo-throw/devices.json
+The device table: what each model plays.
+.SH SEE ALSO
+The Throw page in System Settings; the 3D format and eye swap of a network screen are in Display Settings.

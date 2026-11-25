@@ -1,0 +1,22 @@
+Source: sparky-stereo-throw
+Section: video
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, gettext, ninja-build, pkgconf, qt6-base-dev, qt6-declarative-dev, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6dnssd-dev, libkf6notifications-dev, libkf6kcmutils-dev, libkpipewire-dev, libavformat-dev, libavcodec-dev, libavutil-dev, libwayland-dev, plasma-wayland-protocols (>= 1.21.0-1+stereo3d12), sparky-stereo-problems (>= 0.2.4), python3, python3-pychromecast
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-stereo-throw
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, kwin-wayland (>= 4:6.7.4-2+stereo3d66+lc1), avahi-daemon, sparky-stereo-problems (>= 0.2.4), systemsettings, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-layouts
+Description: Throw the desktop to Google Cast devices
+ Throw finds the Chromecasts, Google TVs and TVs with Google Cast built in on
+ the network, each as it names itself, and throws the desktop to one of them:
+ the device becomes one more screen of Stereo KWin, at its own mode, with the
+ 3D formats and eye swap of a monitor in Display Settings, and the device plays
+ that screen's picture as a live stream. A Throw page in System Settings lists
+ the devices, shows what each says about itself and sets its volume; a command,
+ sparky-stereo-throw, does the same from a terminal. Every failure is said and
+ kept until a Throw to that device works again.
