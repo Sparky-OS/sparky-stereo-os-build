@@ -23,9 +23,9 @@ Last-Update: 2026-11-25
 +    if (access && access->isAccessible() && !access->filePath().isEmpty() && !launcher.isEmpty()) {
 +        auto action = menu->addAction(QIcon::fromTheme(QStringLiteral("drive-harddisk")),
 +                                      i18nd("kcm_sparkystereo_storage_cleanup", "Clean up…"));
-+        connect(action, &QAction::triggered, menu, [launcher, path = access->filePath()] {
++        connect(action, &QAction::triggered, menu, [launcher, path = access->filePath(), parentWindow = window()] {
 +            auto job = new KIO::CommandLauncherJob(launcher, {path});
-+            job->setUiDelegate(new KDialogJobUiDelegate(KJobUiDelegate::AutoErrorHandlingEnabled));
++            job->setUiDelegate(new KDialogJobUiDelegate(KJobUiDelegate::AutoErrorHandlingEnabled, parentWindow));
 +            job->start();
 +        });
 +    }
