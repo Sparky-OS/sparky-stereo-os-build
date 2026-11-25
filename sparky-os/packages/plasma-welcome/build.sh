@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS: builds plasma-welcome 6.7.4-1+stereo3d1+lc1 from Debian's 6.7.4-1 source package (ORDER 63 and 720).
+# Sparky Stereo OS: builds plasma-welcome 6.7.4-1+stereo3d2+lc1 from Debian's 6.7.4-1 source package (ORDER 63 and 720).
 # Created by Daniel Ramos (Capitain Jack) 2026/11/25
 # Copyright 2026 under the GNU GPL3 License
 # Source package once (the patch after Debian's own, the changelog entry), then the Lean Code source, then the build with
