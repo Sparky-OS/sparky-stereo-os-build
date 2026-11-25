@@ -1,0 +1,323 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 01:10:00 +0000
+Subject: [PATCH] screencast: the stream of a networked output is that output's picture
+
+A network screen in one of its 3D formats streams what that format sends: each eye drawn at the device
+raster, squeezed into its half for side by side half and top and bottom, mixed with the Dubois
+matrices for the anaglyph twins, the eyes in the order the output's swap gives; in 2D one view, as before.
+The matrices move into opengl/anaglyphmatrix.h, which the DRM layer now uses too: one copy.
+
+Assisted-by: Claude Opus 5.5
+---
+diff --git a/src/backends/drm/drm_egl_layer_surface.cpp b/src/backends/drm/drm_egl_layer_surface.cpp
+index 4aaa7e5..89dfa6b 100644
+--- a/src/backends/drm/drm_egl_layer_surface.cpp
++++ b/src/backends/drm/drm_egl_layer_surface.cpp
+@@ -7,6 +7,7 @@
+     SPDX-License-Identifier: GPL-2.0-or-later
+ */
+ #include "drm_egl_layer_surface.h"
++#include "opengl/anaglyphmatrix.h"
+ 
+ #include "config-kwin.h"
+ 
+@@ -292,18 +293,9 @@ static GLVertexBuffer *uploadStereoGeometry(std::span<const RectF> eyes)
+     return vbo;
+ }
+ 
+-// Dubois least-squares matrices for red/cyan glasses (REEL3D No. 7003): the CRT set as
+-// given by Sanders and McAllister, the modern-screen set as given by Zhang and McAllister
+-// (coefficients as collected at http://chrisjones.id.au/Dubois/Dubois.html); rows are the
+-// output's red, green and blue, columns the eye's.
+ static QMatrix4x4 duboisMatrix(StereoLayout layout, bool leftEye)
+ {
+-    if (layout == StereoLayout::AnaglyphModern) {
+-        return leftEye ? QMatrix4x4(0.4154, 0.4710, 0.1669, 0, -0.0458, -0.0484, -0.0257, 0, -0.0547, -0.0615, 0.0128, 0, 0, 0, 0, 0)
+-                       : QMatrix4x4(-0.0109, -0.0364, -0.0060, 0, 0.3756, 0.7333, 0.0111, 0, -0.0651, -0.1287, 1.2971, 0, 0, 0, 0, 0);
+-    }
+-    return leftEye ? QMatrix4x4(0.456, 0.500, 0.176, 0, -0.040, -0.038, -0.016, 0, -0.015, -0.021, -0.005, 0, 0, 0, 0, 0)
+-                   : QMatrix4x4(-0.043, -0.088, -0.002, 0, 0.378, 0.734, -0.018, 0, -0.072, -0.113, 1.226, 0, 0, 0, 0, 0);
++    return duboisAnaglyphMatrix(layout == StereoLayout::AnaglyphModern, leftEye);
+ }
+ 
+ bool EglGbmLayerSurface::drawAnaglyph(const QSize &fboSize, const Region &repaint)
+diff --git a/src/opengl/anaglyphmatrix.h b/src/opengl/anaglyphmatrix.h
+new file mode 100644
+index 0000000..c5e39b8
+--- /dev/null
++++ b/src/opengl/anaglyphmatrix.h
+@@ -0,0 +1,28 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++
++#include <QMatrix4x4>
++
++namespace KWin
++{
++
++// Dubois least-squares matrices for red/cyan glasses (REEL3D No. 7003): the CRT set as
++// given by Sanders and McAllister, the modern-screen set as given by Zhang and McAllister
++// (coefficients as collected at http://chrisjones.id.au/Dubois/Dubois.html); rows are the
++// output's red, green and blue, columns the eye's. One copy for every output that draws an
++// anaglyph: a screen's own layer and a network screen's stream.
++inline QMatrix4x4 duboisAnaglyphMatrix(bool modernScreen, bool leftEye)
++{
++    if (modernScreen) {
++        return leftEye ? QMatrix4x4(0.4154, 0.4710, 0.1669, 0, -0.0458, -0.0484, -0.0257, 0, -0.0547, -0.0615, 0.0128, 0, 0, 0, 0, 0)
++                       : QMatrix4x4(-0.0109, -0.0364, -0.0060, 0, 0.3756, 0.7333, 0.0111, 0, -0.0651, -0.1287, 1.2971, 0, 0, 0, 0, 0);
++    }
++    return leftEye ? QMatrix4x4(0.456, 0.500, 0.176, 0, -0.040, -0.038, -0.016, 0, -0.015, -0.021, -0.005, 0, 0, 0, 0, 0)
++                   : QMatrix4x4(-0.043, -0.088, -0.002, 0, 0.378, 0.734, -0.018, 0, -0.072, -0.113, 1.226, 0, 0, 0, 0, 0);
++}
++
++} // namespace KWin
+diff --git a/src/plugins/screencast/outputscreencastsource.cpp b/src/plugins/screencast/outputscreencastsource.cpp
+index 19fb297..f1ecc28 100644
+--- a/src/plugins/screencast/outputscreencastsource.cpp
++++ b/src/plugins/screencast/outputscreencastsource.cpp
+@@ -26,6 +26,8 @@
+ #include "opengl/eglswapchain.h"
+ #include "opengl/glshadermanager.h"
+ #include "opengl/glshader.h"
++#include "opengl/anaglyphmatrix.h"
++#include "opengl/glvertexbuffer.h"
+ #include "kwinscreencast_logging.h"
+ #include "utils/stereoreplicaproblems.h"
+ #include "opengl/glframebuffer.h"
+@@ -99,6 +101,26 @@ static bool isSplitEyeCapture(BackendOutput *output)
+     return output->isSplitEyeDisplay();
+ }
+ 
++// A network screen in one of its 3D formats: what it sends is that output's picture, the two eyes
++// packed as the format packs them.
++static std::optional<OutputModeline::Flag> networkFormat(BackendOutput *output)
++{
++    using Flag = OutputModeline::Flag;
++    if (!output->offersNetworkFormats() || !output->currentMode()) {
++        return std::nullopt;
++    }
++    const auto flags = output->currentMode()->flags();
++    if (!(flags & Flag::VirtualStereo)) {
++        return std::nullopt;
++    }
++    for (const Flag layout : {Flag::Stereo3DSideBySideHalf, Flag::Stereo3DTopAndBottom, Flag::Stereo3DAnaglyphModern, Flag::Stereo3DAnaglyphCrt}) {
++        if (flags.testFlag(layout)) {
++            return layout;
++        }
++    }
++    return std::nullopt;
++}
++
+ BackendOutput *OutputScreenCastSource::backendOutput() const
+ {
+     return m_panel ? m_panel.data() : m_output->backendOutput();
+@@ -186,6 +208,9 @@ Region OutputScreenCastSource::render(GLFramebuffer *target, const Region &buffe
+     if (isSplitEyeCapture(backendOutput())) {
+         return renderStereo(target);
+     }
++    if (const auto layout = networkFormat(backendOutput())) {
++        return renderNetworkFormat(target, *layout);
++    }
+     m_layer->setFramebuffer(target, bufferRepair & Rect(QPoint(), target->size()));
+     if (!m_layer->preparePresentationTest()) {
+         return Region{};
+@@ -339,6 +364,138 @@ Region OutputScreenCastSource::renderStereo(GLFramebuffer *target)
+     return Rect(QPoint(), target->size());
+ }
+ 
++Region OutputScreenCastSource::renderNetworkFormat(GLFramebuffer *target, OutputModeline::Flag layout)
++{
++    using Flag = OutputModeline::Flag;
++    updateView();
++    // each eye is the whole desktop at the device's raster, as on a screen in that format; the format
++    // then squeezes the two into the frame (side by side, top and bottom) or mixes them (anaglyph)
++    const QSize eyeSize = backendOutput()->viewSize();
++    const QSize frameSize = target->size();
++    if (frameSize != textureSize() || eyeSize.isEmpty()) {
++        return Region{};
++    }
++    const bool anaglyph = layout == Flag::Stereo3DAnaglyphModern || layout == Flag::Stereo3DAnaglyphCrt;
++    const auto allocate = [&eyeSize](std::unique_ptr<GLTexture> &texture, std::unique_ptr<GLFramebuffer> &framebuffer) {
++        if (!texture || texture->size() != eyeSize) {
++            framebuffer.reset();
++            texture = GLTexture::allocate(GL_RGBA8, eyeSize);
++            if (!texture) {
++                return false;
++            }
++            framebuffer = std::make_unique<GLFramebuffer>(texture.get());
++        }
++        return framebuffer->valid();
++    };
++    if (!allocate(m_eyeTexture, m_eyeFramebuffer) || (anaglyph && !allocate(m_firstEyeTexture, m_firstEyeFramebuffer))) {
++        return Region{};
++    }
++    if (anaglyph && !m_anaglyphShader && !m_anaglyphShaderFailed) {
++        m_anaglyphShader = ShaderManager::instance()->generateShaderFromFile(ShaderTrait::MapTexture, QString(), QStringLiteral(":/opengl/anaglyph.frag"));
++        if (!m_anaglyphShader) {
++            m_anaglyphShaderFailed = true;
++            qCWarning(KWIN_SCREENCAST, "Failed to load the anaglyph shader: the stream of %s cannot show its format", qPrintable(backendOutput()->name()));
++        }
++    }
++    if (anaglyph && !m_anaglyphShader) {
++        return Region{};
++    }
++    const OutputTransform storage = target->colorAttachment()->contentTransform();
++    m_eyeTexture->setContentTransform(backendOutput()->transform().combine(storage));
++    if (m_firstEyeTexture) {
++        m_firstEyeTexture->setContentTransform(backendOutput()->transform().combine(storage));
++    }
++    const Region eyeDamage(Rect(QPoint(), eyeSize));
++    m_layer->setFramebuffer(m_eyeFramebuffer.get(), eyeDamage);
++    if (!m_layer->preparePresentationTest()) {
++        return Region{};
++    }
++    const auto beginInfo = m_layer->beginFrame();
++    if (!beginInfo) {
++        return Region{};
++    }
++    auto renderer = kwinApp()->scene()->renderer();
++    const auto previousEye = renderer->stereoEye();
++    const bool previousCapture = renderer->stereoCapture();
++    const auto restoreRenderer = qScopeGuard([&] {
++        renderer->setStereoEye(previousEye);
++        renderer->setStereoCapture(previousCapture);
++    });
++    renderer->setStereoCapture(true);
++    m_sceneView->prePaint();
++    m_layer->resetRepaints();
++    // where each eye goes in the frame, as the person sees it, then as the frame stores it
++    const int w = frameSize.width();
++    const int h = frameSize.height();
++    const std::array<Rect, 2> places = layout == Flag::Stereo3DSideBySideHalf
++        ? std::array<Rect, 2>{Rect(0, 0, w / 2, h), Rect(w / 2, 0, w - w / 2, h)}
++        : std::array<Rect, 2>{Rect(0, 0, w, h / 2), Rect(0, h / 2, w, h - h / 2)};
++    qCDebug(KWIN_SCREENCAST, "network screen %s: stream in its 3D format, scene passes 2", qPrintable(backendOutput()->name()));
++    for (int eye = 0; eye < 2; ++eye) {
++        // the first place takes the left eye, or the right one when the output swaps its eyes
++        renderer->setStereoEye((eye == 0) != backendOutput()->stereoSwapEyes() ? StereoEye::Left : StereoEye::Right);
++        m_sceneView->paint(beginInfo->renderTarget, m_sceneView->renderOffset(), eyeDamage);
++        GLFramebuffer::pushFramebuffer(m_eyeFramebuffer.get());
++        if (anaglyph) {
++            if (eye == 0) {
++                m_firstEyeFramebuffer->blitFromFramebuffer(Rect(QPoint(), eyeSize), Rect(QPoint(), eyeSize), GL_NEAREST);
++            }
++        } else {
++            target->blitFromFramebuffer(Rect(QPoint(), eyeSize), storage.map(places[eye], frameSize), GL_LINEAR);
++        }
++        GLFramebuffer::popFramebuffer();
++    }
++    if (anaglyph) {
++        // the anaglyph a screen's own layer draws: its red from the first eye, its green and blue from the second
++        GLFramebuffer::pushFramebuffer(target);
++        ShaderBinder binder(m_anaglyphShader.get());
++        GLShader *shader = binder.shader();
++        shader->setColorspaceUniforms(beginInfo->renderTarget.colorDescription(), beginInfo->renderTarget.colorDescription(), RenderingIntent::AbsoluteColorimetricNoAdaptation);
++        shader->setUniform("leftEye", 0);
++        shader->setUniform("rightEye", 1);
++        const bool modern = layout == Flag::Stereo3DAnaglyphModern;
++        shader->setUniform("leftMatrix", duboisAnaglyphMatrix(modern, true));
++        shader->setUniform("rightMatrix", duboisAnaglyphMatrix(modern, false));
++        // as a screen's own layer draws it: storage rows onto storage rows
++        QMatrix4x4 projection;
++        projection.scale(1, -1);
++        projection.ortho(QRectF(QPointF(), frameSize));
++        shader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, projection);
++        GLVertexBuffer *vbo = GLVertexBuffer::streamingBuffer();
++        vbo->reset();
++        vbo->setAttribLayout(std::span(GLVertexBuffer::GLVertex2DLayout), sizeof(GLVertex2D));
++        if (const auto map = vbo->map<GLVertex2D>(6)) {
++            // the whole frame samples the whole of each eye, texel for texel in storage order
++            const float x1 = w;
++            const float y1 = h;
++            (*map)[0] = GLVertex2D{.position = QVector2D(0, 0), .texcoord = QVector2D(0, 0)};
++            (*map)[1] = GLVertex2D{.position = QVector2D(x1, y1), .texcoord = QVector2D(1, 1)};
++            (*map)[2] = GLVertex2D{.position = QVector2D(0, y1), .texcoord = QVector2D(0, 1)};
++            (*map)[3] = GLVertex2D{.position = QVector2D(0, 0), .texcoord = QVector2D(0, 0)};
++            (*map)[4] = GLVertex2D{.position = QVector2D(x1, 0), .texcoord = QVector2D(1, 0)};
++            (*map)[5] = GLVertex2D{.position = QVector2D(x1, y1), .texcoord = QVector2D(1, 1)};
++            vbo->unmap();
++            vbo->setVertexCount(6);
++            glDisable(GL_BLEND);
++            glActiveTexture(GL_TEXTURE1);
++            m_eyeTexture->bind();
++            glActiveTexture(GL_TEXTURE0);
++            m_firstEyeTexture->bind();
++            vbo->render(GL_TRIANGLES);
++            m_firstEyeTexture->unbind();
++            glActiveTexture(GL_TEXTURE1);
++            m_eyeTexture->unbind();
++            glActiveTexture(GL_TEXTURE0);
++        }
++        GLFramebuffer::popFramebuffer();
++    }
++    m_sceneView->postPaint();
++    if (!m_layer->endFrame(eyeDamage, eyeDamage, nullptr)) {
++        return Region{};
++    }
++    return Rect(QPoint(), frameSize);
++}
++
+ std::chrono::nanoseconds OutputScreenCastSource::clock() const
+ {
+     return backendOutput()->renderLoop()->lastPresentationTimestamp();
+@@ -419,11 +576,15 @@ void OutputScreenCastSource::pause()
+     m_cursorView.reset();
+     m_sceneView.reset();
+     m_layer.reset();
+-    if (m_eyeFramebuffer) {
++    if (m_eyeFramebuffer || m_firstEyeFramebuffer || m_anaglyphShader) {
+         static_cast<EglBackend *>(Compositor::self()->backend())->openglContext()->makeCurrent();
+     }
+     m_eyeFramebuffer.reset();
+     m_eyeTexture.reset();
++    m_firstEyeFramebuffer.reset();
++    m_firstEyeTexture.reset();
++    m_anaglyphShader.reset();
++    m_anaglyphShaderFailed = false;
+ 
+     m_active = false;
+ }
+diff --git a/src/plugins/screencast/outputscreencastsource.h b/src/plugins/screencast/outputscreencastsource.h
+index edb82ab..cac7ac0 100644
+--- a/src/plugins/screencast/outputscreencastsource.h
++++ b/src/plugins/screencast/outputscreencastsource.h
+@@ -7,6 +7,7 @@
+ #pragma once
+ 
+ #include "screencastsource.h"
++#include "core/output.h"
+ 
+ #include <QPointer>
+ 
+@@ -15,6 +16,7 @@ namespace KWin
+ 
+ class BackendOutput;
+ class FilteredSceneView;
++class GLShader;
+ class ItemTreeView;
+ class LogicalOutput;
+ class RenderTarget;
+@@ -49,6 +51,7 @@ public:
+ 
+ private:
+     Region renderStereo(GLFramebuffer *target);
++    Region renderNetworkFormat(GLFramebuffer *target, OutputModeline::Flag layout);
+     bool copyStereoEyes(const RenderTarget &target, GLFramebuffer *streamTarget);
+     BackendOutput *backendOutput() const;
+     RectF captureViewport() const;
+@@ -65,6 +68,11 @@ private:
+     std::unique_ptr<ItemTreeView> m_cursorView;
+     std::unique_ptr<GLTexture> m_eyeTexture;
+     std::unique_ptr<GLFramebuffer> m_eyeFramebuffer;
++    // the first eye of a network screen's anaglyph, kept while the second eye is drawn
++    std::unique_ptr<GLTexture> m_firstEyeTexture;
++    std::unique_ptr<GLFramebuffer> m_firstEyeFramebuffer;
++    std::unique_ptr<GLShader> m_anaglyphShader;
++    bool m_anaglyphShaderFailed = false;
+     bool m_active = false;
+     bool m_resumeOnRebind = false;
+     bool m_renderCursor = false;
