@@ -19,13 +19,13 @@ test -z "$(git -C "$tree" status --porcelain -- sparky-os tools/https-only-apt.s
     exit 1
 }
 case "$component" in
-    stereo-layer|kf6-kiconthemes|kf6-kirigami|plasma-runners-addons|sparky-stereo-weather-icons) ;;
+    stereo-layer|kf6-kiconthemes|kf6-kirigami|plasma-runners-addons|sparky-stereo-weather-icons|sparky-stereo-hardware|sparky-stereo-weather-settings|stereo-advanced-weather-widget) ;;
     *) exit 64 ;;
 esac
 [[ "$threads" =~ ^[1-4]$ ]]
 mkdir "$work"
 mkdir "$work/recipe"
-git -C "$tree" archive "$commit" sparky-os/repo sparky-os/lean sparky-os/packages/dpkg-stereo \
+git -C "$tree" archive "$commit" sparky-os/repo sparky-os/lean sparky-os/packages/dpkg-stereo tools/copy-recipe.py \
     "sparky-os/packages/$component" tools/https-only-apt.sh | tar -xf - -C "$work/recipe"
 export SOURCE_DATE_EPOCH
 SOURCE_DATE_EPOCH=$(git -C "$tree" log -1 --format=%ct "$commit" -- "sparky-os/packages/$component" sparky-os/repo/build-weather-cohort.sh sparky-os/repo/build-weather-cohort-inner.sh)

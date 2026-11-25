@@ -1,0 +1,122 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Choose and write the machine's weather look."""
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+
+PACKAGE = "sparky-stereo-hardware"
+PROBLEM = "weather-look"
+MIB = 1024 * 1024
+
+
+def attribute(path):
+    try:
+        return path.read_text().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def pci_id(path):
+    return attribute(path).removeprefix("0x").lower()
+
+
+def card_classes(sysfs, data):
+    open_ids = set((data / "nvidia-open.ids").read_text().splitlines())
+    old_nvidia = set((data / "nvidia-legacy-580xx.ids").read_text().splitlines())
+    old_nvidia.update(line.split()[0] for line in (data / "nvidia-legacy-older.tsv").read_text().splitlines()
+                      if line and not line.startswith("#"))
+    for card in sorted((sysfs / "bus/pci/devices").glob("*")):
+        if not attribute(card / "class").startswith("0x03"):
+            continue
+        vendor, device = (pci_id(card / field) for field in ("vendor", "device"))
+        subsystem = " ".join([device, pci_id(card / "subsystem_vendor"), pci_id(card / "subsystem_device")])
+        if vendor == "10de":
+            if device in open_ids or subsystem in open_ids:
+                yield "capable"
+            elif device in old_nvidia or subsystem in old_nvidia:
+                yield "lighter"
+            else:
+                yield "unknown"
+        elif vendor == "1002":
+            vram = attribute(card / "mem_info_vram_total")
+            if device in {"9874", "6660"}:  # Carrizo and Hainan in the measured A10 record.
+                yield "lighter"
+            elif device == "1638" or (vram.isdecimal() and int(vram) >= 4096 * MIB):
+                yield "capable"
+            elif vram.isdecimal() and int(vram) > 0:
+                yield "lighter"
+            else:
+                yield "unknown"
+        else:
+            yield "unknown"
+
+
+def choose(sysfs, procfs, data):
+    memory = next((line.split()[1] for line in attribute(procfs / "meminfo").splitlines()
+                   if line.startswith("MemTotal:") and len(line.split()) >= 2), "")
+    classes = set(card_classes(sysfs, data))
+    if memory.isdecimal() and 0 < int(memory) < 7 * 1024 * 1024:
+        return "Photoreal", True
+    if memory.isdecimal() and int(memory) >= 7 * 1024 * 1024 and "capable" in classes:
+        return "RealWeather", True
+    if classes == {"lighter"}:
+        return "Photoreal", True
+    return "Photoreal", False
+
+
+def replace(path, contents, mode):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(contents)
+            stream.flush()
+            os.fchmod(stream.fileno(), mode)
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def owned(config, receipt):
+    return (config.is_file() and not config.is_symlink()
+            and hashlib.sha256(config.read_bytes()).hexdigest() == attribute(receipt))
+
+
+def report_problem(classified):
+    problem = ["clear", PACKAGE, PROBLEM] if classified else ["keep", PACKAGE, PROBLEM, "LOCAL115"]
+    subprocess.run(["sparky-stereo-problems", *problem], check=True)
+
+
+def main():
+    sysfs = Path(os.environ.get("SPARKY_STEREO_SYSFS", "/sys"))
+    procfs = Path(os.environ.get("SPARKY_STEREO_PROCFS", "/proc"))
+    data = Path(os.environ.get("SPARKY_STEREO_HARDWARE_DATA", "/usr/share/sparky/sparky-stereo-hardware"))
+    config = Path(os.environ.get("SPARKY_STEREO_WEATHER_CONF", "/etc/xdg/sparky-stereo-weatherrc"))
+    state = Path(os.environ.get("SPARKY_STEREO_HARDWARE_STATE", "/var/lib/sparky-stereo-hardware"))
+    state.mkdir(parents=True, exist_ok=True)
+    receipt = state / "weather-default.sha256"
+    with (state / "weather-default.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if (config.exists() or config.is_symlink()) and not owned(config, receipt):
+            print(f"{config}: administrator's weather settings")
+            report_problem(True)
+            return
+        look, classified = choose(sysfs, procfs, data)
+        contents = f"# Written by sparky-stereo-hardware\n[Weather]\nHardwareLook={look}\n".encode()
+        if not config.exists() or config.read_bytes() != contents:
+            replace(config, contents, 0o644)
+            replace(receipt, hashlib.sha256(contents).hexdigest().encode() + b"\n", 0o644)
+        print(f"HardwareLook={look}")
+        report_problem(classified)
+
+
+if __name__ == "__main__":
+    main()

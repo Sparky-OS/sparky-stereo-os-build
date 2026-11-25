@@ -1,0 +1,11 @@
+[Unit]
+Description=Weather icon look for this machine
+After=systemd-udevd.service systemd-modules-load.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-weather-default
+
+[Install]
+WantedBy=graphical.target

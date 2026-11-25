@@ -7,6 +7,9 @@ set -e
 if [ "$1" = configure ]; then
 	deb-systemd-helper unmask sparky-stereo-opengl-default.service >/dev/null || true
 	deb-systemd-helper enable sparky-stereo-opengl-default.service >/dev/null || true
+	deb-systemd-helper unmask sparky-stereo-weather-default.service >/dev/null
+	deb-systemd-helper enable sparky-stereo-weather-default.service >/dev/null
+	sparky-stereo-weather-default
 	deb-systemd-helper unmask sparky-stereo-hardware-bt-voice.service >/dev/null || true
 	deb-systemd-helper enable sparky-stereo-hardware-bt-voice.service >/dev/null || true
 	deb-systemd-helper enable sparky-stereo-hardware-variant-check.service >/dev/null || true
