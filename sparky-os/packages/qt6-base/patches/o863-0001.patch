@@ -1,0 +1,96 @@
+From: David Edmundson <davidedmundson@kde.org>
+Date: Sun, 25 May 2025 19:15:06 +0000
+Subject: wayland: Avoid using expose events to commit parents on subsurfaces moves
+
+When a subsurface moves the update is double buffered with that parent
+window committing a change.
+
+We need to force a redraw on the offchance that the application is not
+also rendering a frame, but we do not need to force that to happen
+early, it's best if it's in line with the normal frame callback cycle.
+As such the expose event is not the right tool for the job,
+requestUpdate is better.
+
+This massively improves performance when a window has mulitple
+subsurfaces.
+
+Change-Id: If6eb3b12053eab49a4b9077c289bfcc74f331863
+Reviewed-by: David Redondo <qt@david-redondo.de>
+Origin: upstream, https://code.qt.io/cgit/qt/qtbase.git/commit/?id=d6d2a75cdbfe2a97ef211af09b71dd1a6bd00392
+Applied-Upstream: dev (committed 2026-07-09, Qt 6.13), not in 6.11.3 or 6.12.1
+Comment: Carried for queue row 863: a stereo window of its own moved during the backing store's flush made the parent
+ repaint synchronously from inside that flush, which freed the texture list the flush was reading. The hunk of
+ qwaylandwindow_p.h is adapted to 6.11.2 (its context differs); the change is upstream's.
+Forwarded: not-needed
+Last-Update: 2026-11-24
+---
+diff --git a/src/plugins/platforms/wayland/qwaylandwindow.cpp b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+index f5c0bf7e..7c5d93bc 100644
+--- a/src/plugins/platforms/wayland/qwaylandwindow.cpp
++++ b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+@@ -483,10 +483,8 @@ void QWaylandWindow::setGeometry_helper(const QRect &rect)
+         mSubSurfaceWindow->set_position(rect.x() + m.left(), rect.y() + m.top());
+ 
+         QWaylandWindow *parentWindow = mSubSurfaceWindow->parent();
+-        if (parentWindow && parentWindow->isExposed()) {
+-            QRect parentExposeGeometry(QPoint(), parentWindow->geometry().size());
+-            parentWindow->sendExposeEvent(parentExposeGeometry);
+-        }
++        if (parentWindow)
++            parentWindow->requestForcedUpdate();
+     }
+ }
+ 
+@@ -1231,7 +1229,7 @@ bool QWaylandWindow::createDecoration()
+         // size and are not redrawn, leaving the new buffer empty. As a simple
+         // work-around, we trigger a full extra update whenever the client-side
+         // window decorations are toggled while the window is showing.
+-        window()->requestUpdate();
++        requestForcedUpdate();
+     }
+ 
+     return mWindowDecoration.get();
+@@ -1860,10 +1858,23 @@ void QWaylandWindow::handleUpdate()
+     }
+ }
+ 
++void QWaylandWindow::requestForcedUpdate()
++{
++    mPendingForcedUpdate = true;
++    window()->requestUpdate();
++}
++
+ void QWaylandWindow::deliverUpdateRequest()
+ {
+     qCDebug(lcWaylandBackingstore) << "deliverUpdateRequest";
+     QPlatformWindow::deliverUpdateRequest();
++
++    // an update request doesn't always force a commit if the window isn't damaged, so also force it
++    if (mPendingForcedUpdate) {
++        mPendingForcedUpdate = false;
++        QRect exposeGeometry(QPoint(), geometry().size());
++        QWindowSystemInterface::handleExposeEvent<QWindowSystemInterface::SynchronousDelivery>(window(), exposeGeometry);
++    }
+ }
+ 
+ void QWaylandWindow::addAttachOffset(const QPoint point)
+diff --git a/src/plugins/platforms/wayland/qwaylandwindow_p.h b/src/plugins/platforms/wayland/qwaylandwindow_p.h
+index 259f1673..d159d1b1 100644
+--- a/src/plugins/platforms/wayland/qwaylandwindow_p.h
++++ b/src/plugins/platforms/wayland/qwaylandwindow_p.h
+@@ -232,6 +232,7 @@ public:
+     void timerEvent(QTimerEvent *event) override;
+     void requestUpdate() override;
+     void handleUpdate();
++    void requestForcedUpdate();
+     void deliverUpdateRequest() override;
+ 
+     void setXdgActivationToken(const QString &token);
+@@ -317,6 +318,7 @@ protected:
+     std::atomic_bool mFrameCallbackTimedOut = false; // Whether the frame callback has timed out
+     int mFrameCallbackCheckIntervalTimerId = -1;
+     QAtomicInt mWaitingForUpdateDelivery = false;
++    bool mPendingForcedUpdate = false; // The window should force a redraw at the next fame callback
+ 
+     bool mWaitingForFrameCallback = false; // Protected by mFrameSyncMutex
+     QElapsedTimer mFrameCallbackElapsedTimer; // Protected by mFrameSyncMutex
