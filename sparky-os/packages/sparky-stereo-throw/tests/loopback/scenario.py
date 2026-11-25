@@ -983,6 +983,74 @@ def dependent_rows():
         (os.path.exists(rec) and count > 0, 0 < count < 10))
 
 
+def cpu_seconds(pid):
+    """The processor time of a process so far (user and system), in seconds."""
+    try:
+        fields = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()
+        return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def gpu_sample():
+    """What the host's GPUs say this instant: NVIDIA's encoder and GPU use (nvidia-smi), the AMD card's busy share (its sysfs
+    file); every GPU here also serves the station, so these are contended figures."""
+    out = {}
+    rc, text, _ = run("nvidia-smi", "--query-gpu=utilization.encoder,utilization.gpu", "--format=csv,noheader,nounits", timeout=10)
+    if rc == 0 and text.strip():
+        enc, gpu = [x.strip() for x in text.strip().splitlines()[0].split(",")]
+        out.update(nvencPercent=float(enc), nvidiaPercent=float(gpu))
+    import glob
+    for f in glob.glob("/sys/class/drm/card*/device/gpu_busy_percent"):
+        try:
+            if open(os.path.join(os.path.dirname(f), "vendor")).read().strip() == "0x1002":
+                out["amdBusyPercent"] = float(open(f).read())
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def cost_rows():
+    """Part D, second half (step 4): the cost of a still screen. A Throw of the still screen to a software device that fetches
+    the stream (no player decoding beside it) runs 35 s; between 10 s and 30 s the daemon's and KWin's processor time and
+    the GPUs are sampled, then the pictures a second of the stream the device fetched are counted. The encoder is the one
+    KPIPEWIRE_FORCE_ENCODER names (h264_vaapi, h264_nvenc, libx264), else KPipeWire's own choice."""
+    encoder = os.environ.get("KPIPEWIRE_FORCE_ENCODER", "KPipeWire's choice")
+    daemon = name_owner_pid()
+    kwin_pid = next((p for p in os.listdir("/proc") if p.isdigit() and
+                     open(f"/proc/{p}/comm").read().strip() == "kwin_wayland"), None)
+    n = len(loads(LIVING)) + 1
+    rc, _ = throw(LIVING, 40)
+    time.sleep(10)
+    d0, k0, w0 = cpu_seconds(daemon), cpu_seconds(kwin_pid), time.monotonic()
+    samples = []
+    while time.monotonic() - w0 < 20:
+        samples.append(gpu_sample())
+        time.sleep(1)
+    d1, k1, w1 = cpu_seconds(daemon), cpu_seconds(kwin_pid), time.monotonic()
+    time.sleep(5)
+    stop(LIVING)
+    wait_for(lambda: probe_info(LIVING, n), 60)
+    cap = capture(LIVING, n)
+    rate, count = picture_rate(cap) if cap else (0.0, 0)
+    span = w1 - w0
+
+    def mean(key):
+        vals = [s[key] for s in samples if key in s]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    cost = {"encoder": encoder, "throw": rc, "pictures": count, "picturesPerSecond": round(rate, 1),
+            "daemonCpuPercent": round(100 * (d1 - d0) / span, 1) if d0 is not None and d1 is not None else None,
+            "kwinCpuPercent": round(100 * (k1 - k0) / span, 1) if k0 is not None and k1 is not None else None,
+            "nvencPercent": mean("nvencPercent"), "nvidiaPercent": mean("nvidiaPercent"), "amdBusyPercent": mean("amdBusyPercent"),
+            "load": open("/proc/loadavg").read().split()[0]}
+    with open(os.path.join(OUT, "cost.json"), "w") as f:
+        json.dump(cost, f, indent=1)
+    log(f"CK1 {json.dumps(cost)}")
+    row("CK1", f"a Throw of a still screen with {encoder}: it ran, and the stream's pictures a second (the cost is in cost.json)",
+        (0, True), (rc, rate >= 20))
+
+
 def make_pair():
     from PIL import Image
     pair = Image.new("RGB", (3840, 1080), (255, 0, 0))
@@ -1001,7 +1069,10 @@ try:
             True, "executable /usr/lib/x86_64-linux-gnu/libexec/sparky-stereo-throwd" in text)
     make_pair()
     # a file "only-partd" beside this script runs part D's rows alone (a development loop)
-    if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "only-partd")):
+    if os.environ.get("THROW_ROWS") == "cost":
+        # the cost of a still screen alone (step 4 of part D's second half; the lane's encoder rows)
+        cost_rows()
+    elif os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "only-partd")):
         partd()
     else:
         main()
