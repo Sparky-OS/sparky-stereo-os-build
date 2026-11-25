@@ -1,0 +1,691 @@
+Description: GtkGLArea: the views of an X11 stereo area drawn on their window with OpenGL
+ On X11 the two views were read back from the area's framebuffer and put
+ into the declared child window through the X server (XPutImage), a copy
+ through main memory for every frame. The child window now has an EGL or GLX
+ surface of the display's own configuration, and the area's context draws the
+ two views on it with a blit and swaps it: nothing leaves the graphics card.
+ Measured for the same work (two 1920x1080 views a frame, row 137): about 58
+ frames a second at 2.8 ms of processor a frame against 18 at 19 ms on zink,
+ 60 at 1.7 against 26 to 33 at 16 on NVIDIA's own libraries; on a software
+ renderer both ways are slow (12 to 15 frames a second). The OpenGL way is
+ the default; the readback stays for a display that gives the window no
+ OpenGL surface, said in the log, and behind GDK_X11_STEREO_READBACK=1.
+ The first frames are repeated until the window manager has taken the
+ declaration (its _KDE_NET_WM_STEREO_DEPTH_LIMITS on the child, version 11 of
+ _KDE_NET_WM_STEREO_CONTENT_SUPPORTED) instead of for a fixed second.
+ An area that a parent clips (a scrolled window) cannot be a child window of
+ its own: it says so with stereo-error and draws its left view alone. A
+ stereo-asking area on X11 does not export its picture as a dma-buf (nothing
+ takes it there, and GSK's GL renderer shows nothing for such a texture on
+ zink).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, milestone 3)
+Forwarded: no
+Last-Update: 2026-11-25
+---
+diff --git a/gdk/x11/gdkx11stereochild-private.h b/gdk/x11/gdkx11stereochild-private.h
+index daecc73d736d52dc96bba9c05770ae11511a8e0d..16ca1a04dc64e9a9215a53aff61493835f40e0f5 100644
+--- a/gdk/x11/gdkx11stereochild-private.h
++++ b/gdk/x11/gdkx11stereochild-private.h
+@@ -25,6 +25,17 @@ gboolean            gdk_x11_stereo_child_present   (GdkX11StereoChild  *child,
+                                                     int                 view_height,
+                                                     const guint8       *rgba,
+                                                     GError            **error);
++gboolean            gdk_x11_stereo_child_present_gl (GdkX11StereoChild *child,
++                                                    guint               framebuffer,
++                                                    int                 x,
++                                                    int                 y,
++                                                    int                 place_width,
++                                                    int                 place_height,
++                                                    int                 view_width,
++                                                    int                 view_height,
++                                                    GError            **error);
++gboolean            gdk_x11_stereo_child_acknowledges (GdkX11StereoChild *child);
++gboolean            gdk_x11_stereo_child_get_taken (GdkX11StereoChild  *child);
+ void                gdk_x11_stereo_child_hide      (GdkX11StereoChild  *child);
+ 
+ G_END_DECLS
+diff --git a/gdk/x11/gdkx11stereochild.c b/gdk/x11/gdkx11stereochild.c
+index 20e00b91f9032dd2883a648ba471791bbb81fe33..d6b712c006938adc3980243ef0947f5730db724a 100644
+--- a/gdk/x11/gdkx11stereochild.c
++++ b/gdk/x11/gdkx11stereochild.c
+@@ -15,6 +15,12 @@
+  * size), and the window manager resizes each view once. X clips it to the
+  * frame.
+  *
++ * The two views reach that window through OpenGL: a window surface of the
++ * display's EGL or GLX configuration on it, drawn with the context that
++ * rendered the views, so the picture never leaves the graphics card. Where no
++ * such surface can be made, the picture is read back and put with XPutImage,
++ * which shows the same picture and costs a copy through memory.
++ *
+  * SPDX-License-Identifier: LGPL-2.1-or-later
+  */
+ 
+@@ -25,9 +31,14 @@
+ #include <glib/gi18n-lib.h>
+ #include <gdk/x11/gdkx11display.h>
+ #include <gdk/x11/gdkx11surface.h>
++#include "gdkdisplay-x11.h"
++#include "gdkdisplayprivate.h"
+ #include <X11/Xlib.h>
+ #include <X11/Xutil.h>
+ #include <gmodule.h>
++#include <epoxy/gl.h>
++#include <epoxy/egl.h>
++#include <epoxy/glx.h>
+ 
+ #include <errno.h>
+ #include <string.h>
+@@ -40,6 +51,13 @@
+  * one view is shown at from a child that holds its views at full width. */
+ #define NEEDED_SUPPORT 8
+ 
++/* From support version 11 the window manager writes
++ * _KDE_NET_WM_STEREO_DEPTH_LIMITS on a declared child once it holds the child
++ * (its request to redirect the child is on the connection before the
++ * property), so the property's arrival says that what is drawn on the child
++ * from now on is kept whole. */
++#define TAKEN_SUPPORT 11
++
+ typedef struct
+ {
+   GModule *module;
+@@ -101,6 +119,14 @@ struct _GdkX11StereoChild
+   int x, y, place_width, place_height, view_width, view_height;
+   gboolean mapped;
+   gboolean declared;
++
++  unsigned support;
++  gboolean taken;
++
++  /* The window surface on the window that holds both views */
++  gboolean gl_tried;
++  EGLSurface egl_surface;
++  GLXWindow glx_window;
+ };
+ 
+ GdkX11StereoChild *
+@@ -140,10 +166,46 @@ gdk_x11_stereo_child_new (GdkSurface  *surface,
+   child->xdisplay = xdisplay;
+   child->toplevel = gdk_x11_surface_get_xid (surface);
+   child->lib = lib;
++  child->support = support;
++  child->egl_surface = EGL_NO_SURFACE;
+ 
+   return child;
+ }
+ 
++/* Whether the window manager says when it holds a declared child */
++gboolean
++gdk_x11_stereo_child_acknowledges (GdkX11StereoChild *child)
++{
++  return child->support >= TAKEN_SUPPORT;
++}
++
++/* Whether the window manager holds the child: what is drawn on it is kept
++ * whole from then on. Always %FALSE with a window manager that does not say. */
++gboolean
++gdk_x11_stereo_child_get_taken (GdkX11StereoChild *child)
++{
++  Atom type = None;
++  int format;
++  unsigned long n_items, after;
++  unsigned char *data = NULL;
++
++  if (child->taken || child->own == None || child->support < TAKEN_SUPPORT)
++    return child->taken;
++
++  gdk_x11_display_error_trap_push (child->display);
++  if (XGetWindowProperty (child->xdisplay, child->own,
++                          gdk_x11_get_xatom_by_name_for_display (child->display, "_KDE_NET_WM_STEREO_DEPTH_LIMITS"),
++                          0, 2, False, AnyPropertyType,
++                          &type, &format, &n_items, &after, &data) == Success &&
++      type != None)
++    child->taken = TRUE;
++  if (data != NULL)
++    XFree (data);
++  gdk_x11_display_error_trap_pop_ignored (child->display);
++
++  return child->taken;
++}
++
+ static void
+ child_create_windows (GdkX11StereoChild *child)
+ {
+@@ -187,6 +249,10 @@ gdk_x11_stereo_child_free (GdkX11StereoChild *child)
+     return;
+ 
+   gdk_x11_display_error_trap_push (child->display);
++  if (child->egl_surface != EGL_NO_SURFACE)
++    eglDestroySurface (gdk_display_get_egl_display (child->display), child->egl_surface);
++  if (child->glx_window != None)
++    glXDestroyWindow (child->xdisplay, child->glx_window);
+   if (child->declared)
+     child->lib->remove (child->xdisplay, child->toplevel, child->own);
+   if (child->gc)
+@@ -199,29 +265,21 @@ gdk_x11_stereo_child_free (GdkX11StereoChild *child)
+   g_free (child);
+ }
+ 
+-/* @rgba holds the two views side by side, 2 * view_width samples wide and
+- * view_height high, four bytes a sample with red first, the top row first.
+- * One view is shown at place_width x place_height, at x, y in the toplevel. */
+-gboolean
+-gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
+-                              int                 x,
+-                              int                 y,
+-                              int                 place_width,
+-                              int                 place_height,
+-                              int                 view_width,
+-                              int                 view_height,
+-                              const guint8       *rgba,
+-                              GError            **error)
++/* The windows at their place and size, declared and mapped. Called with an
++ * error trap pushed; on failure the trap is still pushed. */
++static gboolean
++child_prepare (GdkX11StereoChild  *child,
++               int                 x,
++               int                 y,
++               int                 place_width,
++               int                 place_height,
++               int                 view_width,
++               int                 view_height,
++               GError            **error)
+ {
+-  XWindowAttributes attributes;
+-  XImage *image;
+-  guint8 *data;
+-  gsize n = (gsize) 2 * view_width * view_height;
+   gboolean resized, placed;
+   int result;
+ 
+-  gdk_x11_display_error_trap_push (child->display);
+-
+   if (child->frame == None)
+     child_create_windows (child);
+ 
+@@ -251,7 +309,6 @@ gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
+       if (result < 0)
+         {
+           XSync (child->xdisplay, False);
+-          gdk_x11_display_error_trap_pop_ignored (child->display);
+           g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
+                        "libstereo-declare could not declare the child: %s", g_strerror (-result));
+           return FALSE;
+@@ -268,6 +325,219 @@ gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
+       child->mapped = TRUE;
+     }
+ 
++  return TRUE;
++}
++
++/* A window surface on the window that holds both views, of the configuration
++ * the display's contexts have: the window was made with the toplevel's visual,
++ * which is that configuration's. */
++static gboolean
++child_ensure_gl_surface (GdkX11StereoChild  *child,
++                         GError            **error)
++{
++  EGLDisplay egl_display = gdk_display_get_egl_display (child->display);
++
++  if (child->egl_surface != EGL_NO_SURFACE || child->glx_window != None)
++    return TRUE;
++
++  if (child->gl_tried)
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                           "No OpenGL surface could be made on the window");
++      return FALSE;
++    }
++  child->gl_tried = TRUE;
++
++  if (egl_display != EGL_NO_DISPLAY)
++    {
++      child->egl_surface = eglCreateWindowSurface (egl_display,
++                                                   gdk_display_get_egl_config (child->display, GDK_MEMORY_U8),
++                                                   (EGLNativeWindowType) child->own,
++                                                   NULL);
++      if (child->egl_surface == EGL_NO_SURFACE)
++        {
++          g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                       "eglCreateWindowSurface failed on the window (EGL error 0x%x)", eglGetError ());
++          return FALSE;
++        }
++    }
++  else
++    {
++      GdkX11Display *display_x11 = GDK_X11_DISPLAY (child->display);
++
++      if (display_x11->glx_config == NULL)
++        {
++          g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                               "The display has neither EGL nor GLX");
++          return FALSE;
++        }
++
++      child->glx_window = glXCreateWindow (child->xdisplay, display_x11->glx_config, child->own, NULL);
++      XSync (child->xdisplay, False);
++      if (child->glx_window == None)
++        {
++          g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                               "glXCreateWindow failed on the window");
++          return FALSE;
++        }
++    }
++
++  return TRUE;
++}
++
++/* A context that was first made current with no window has no draw buffer for
++ * the window it gets later (OpenGL 4.6, section 17.4.1: the initial draw
++ * buffer is NONE when the context has no default framebuffer), and a blit
++ * then draws nothing. */
++static void
++child_draw_to_back_buffer (void)
++{
++  if (epoxy_is_desktop_gl ())
++    glDrawBuffer (GL_BACK);
++  else
++    {
++      GLenum buffer = GL_BACK;
++
++      glDrawBuffers (1, &buffer);
++    }
++}
++
++/* @framebuffer holds the two views side by side, 2 * view_width samples wide
++ * and view_height high, in the OpenGL context that is current. They are
++ * copied to the window with one blit and a swap that does not wait, and the
++ * context is given back as it was. One view is shown at
++ * place_width x place_height, at x, y in the toplevel. Fails, with nothing
++ * changed, where no OpenGL surface can be made on the window. */
++gboolean
++gdk_x11_stereo_child_present_gl (GdkX11StereoChild  *child,
++                                 guint               framebuffer,
++                                 int                 x,
++                                 int                 y,
++                                 int                 place_width,
++                                 int                 place_height,
++                                 int                 view_width,
++                                 int                 view_height,
++                                 GError            **error)
++{
++  GLboolean scissor;
++  gboolean result = FALSE;
++
++  gdk_x11_display_error_trap_push (child->display);
++
++  if (!child_prepare (child, x, y, place_width, place_height, view_width, view_height, error) ||
++      !child_ensure_gl_surface (child, error))
++    {
++      gdk_x11_display_error_trap_pop_ignored (child->display);
++      return FALSE;
++    }
++
++  scissor = glIsEnabled (GL_SCISSOR_TEST);
++
++  if (child->egl_surface != EGL_NO_SURFACE)
++    {
++      EGLDisplay egl_display = gdk_display_get_egl_display (child->display);
++      EGLContext context = eglGetCurrentContext ();
++      EGLSurface draw = eglGetCurrentSurface (EGL_DRAW);
++      EGLSurface read = eglGetCurrentSurface (EGL_READ);
++
++      if (eglMakeCurrent (egl_display, child->egl_surface, child->egl_surface, context))
++        {
++          eglSwapInterval (egl_display, 0);
++          glBindFramebuffer (GL_DRAW_FRAMEBUFFER, 0);
++          child_draw_to_back_buffer ();
++          glBindFramebuffer (GL_READ_FRAMEBUFFER, framebuffer);
++          glReadBuffer (GL_COLOR_ATTACHMENT0);
++          glDisable (GL_SCISSOR_TEST);
++          glBlitFramebuffer (0, 0, 2 * view_width, view_height,
++                             0, 0, 2 * view_width, view_height,
++                             GL_COLOR_BUFFER_BIT, GL_NEAREST);
++          result = eglSwapBuffers (egl_display, child->egl_surface);
++          eglMakeCurrent (egl_display, draw, read, context);
++        }
++      if (!result)
++        g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                     "The views could not be drawn on the window (EGL error 0x%x)", eglGetError ());
++    }
++  else
++    {
++      GLXContext context = glXGetCurrentContext ();
++      GLXDrawable draw = glXGetCurrentDrawable ();
++      GLXDrawable read = glXGetCurrentReadDrawable ();
++
++      if (glXMakeContextCurrent (child->xdisplay, child->glx_window, child->glx_window, context))
++        {
++          if (epoxy_has_glx_extension (child->xdisplay, DefaultScreen (child->xdisplay), "GLX_EXT_swap_control"))
++            glXSwapIntervalEXT (child->xdisplay, child->glx_window, 0);
++          glBindFramebuffer (GL_DRAW_FRAMEBUFFER, 0);
++          child_draw_to_back_buffer ();
++          glBindFramebuffer (GL_READ_FRAMEBUFFER, framebuffer);
++          glReadBuffer (GL_COLOR_ATTACHMENT0);
++          glDisable (GL_SCISSOR_TEST);
++          glBlitFramebuffer (0, 0, 2 * view_width, view_height,
++                             0, 0, 2 * view_width, view_height,
++                             GL_COLOR_BUFFER_BIT, GL_NEAREST);
++          glXSwapBuffers (child->xdisplay, child->glx_window);
++          glXMakeContextCurrent (child->xdisplay, draw, read, context);
++          result = TRUE;
++        }
++      else
++        g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                             "The views could not be drawn on the window (glXMakeContextCurrent failed)");
++    }
++
++  if (scissor)
++    glEnable (GL_SCISSOR_TEST);
++
++  if (gdk_x11_display_error_trap_pop (child->display) && result)
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                           "The X server refused the OpenGL surface on the window");
++      result = FALSE;
++    }
++
++  if (!result)
++    {
++      /* the other route takes over, on a window with no surface of this one */
++      gdk_x11_display_error_trap_push (child->display);
++      if (child->egl_surface != EGL_NO_SURFACE)
++        eglDestroySurface (gdk_display_get_egl_display (child->display), child->egl_surface);
++      if (child->glx_window != None)
++        glXDestroyWindow (child->xdisplay, child->glx_window);
++      gdk_x11_display_error_trap_pop_ignored (child->display);
++      child->egl_surface = EGL_NO_SURFACE;
++      child->glx_window = None;
++    }
++
++  return result;
++}
++
++/* @rgba holds the two views side by side, 2 * view_width samples wide and
++ * view_height high, four bytes a sample with red first, the top row first.
++ * One view is shown at place_width x place_height, at x, y in the toplevel. */
++gboolean
++gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
++                              int                 x,
++                              int                 y,
++                              int                 place_width,
++                              int                 place_height,
++                              int                 view_width,
++                              int                 view_height,
++                              const guint8       *rgba,
++                              GError            **error)
++{
++  XWindowAttributes attributes;
++  XImage *image;
++  guint8 *data;
++  gsize n = (gsize) 2 * view_width * view_height;
++
++  gdk_x11_display_error_trap_push (child->display);
++
++  if (!child_prepare (child, x, y, place_width, place_height, view_width, view_height, error))
++    {
++      gdk_x11_display_error_trap_pop_ignored (child->display);
++      return FALSE;
++    }
++
+   XGetWindowAttributes (child->xdisplay, child->own, &attributes);
+ 
+   /* Xlib wants the samples as the visual lays them out: blue, green, red, then the unused or alpha byte */
+diff --git a/gtk/gtkglarea.c b/gtk/gtkglarea.c
+index 913bd5043e4db9730af925a353a1a89937a998cf..9bbe6e93640996c55a7cd21df2dcbe23264ab5f1 100644
+--- a/gtk/gtkglarea.c
++++ b/gtk/gtkglarea.c
+@@ -228,6 +228,7 @@ typedef struct {
+   gsize x11_size;
+   guint x11_repeat_id;
+   int x11_repeats;
++  gboolean x11_readback;
+ #endif
+   GdkFrameClock *frame_clock;
+   gulong after_paint_id;
+@@ -932,6 +933,33 @@ gtk_gl_area_stereo_fail (GtkGLArea *area,
+   gtk_widget_queue_draw (GTK_WIDGET (area));
+ }
+ 
++#ifdef GDK_WINDOWING_X11
++/* Whether no parent that clips its children (a scrolled window's viewport, a
++ * widget with hidden overflow, the window itself) cuts the area */
++static gboolean
++gtk_gl_area_x11_unclipped (GtkGLArea *area)
++{
++  GtkWidget *widget = GTK_WIDGET (area);
++  GtkWidget *parent;
++
++  for (parent = gtk_widget_get_parent (widget); parent != NULL; parent = gtk_widget_get_parent (parent))
++    {
++      graphene_rect_t bounds;
++
++      if (gtk_widget_get_overflow (parent) != GTK_OVERFLOW_HIDDEN && !GTK_IS_NATIVE (parent))
++        continue;
++
++      if (!gtk_widget_compute_bounds (widget, parent, &bounds) ||
++          bounds.origin.x < -0.5 || bounds.origin.y < -0.5 ||
++          bounds.origin.x + bounds.size.width > gtk_widget_get_width (parent) + 0.5 ||
++          bounds.origin.y + bounds.size.height > gtk_widget_get_height (parent) + 0.5)
++        return FALSE;
++    }
++
++  return TRUE;
++}
++#endif
++
+ /* Decides, for this frame, whether the area renders one view per eye and
+  * hands both to the compositor on a subsurface declared as stereo content.
+  * A stereo area that cannot is told apart from one that did not ask. */
+@@ -950,10 +978,27 @@ gtk_gl_area_prepare_stereo (GtkGLArea *area)
+     {
+       if (priv->subsurface != NULL)
+         gtk_gl_area_stereo_release (area);
++#ifdef GDK_WINDOWING_X11
++      if (priv->x11_child != NULL)
++        gtk_gl_area_stereo_release (area);
++#endif
+       return;
+     }
+ 
+ #ifdef GDK_WINDOWING_X11
++  if (priv->subsurface == NULL &&
++      GDK_IS_X11_SURFACE (gtk_widget_get_surface (widget)) &&
++      !gtk_gl_area_x11_unclipped (area))
++    {
++      /* The child window would show over what clips the area: on X11 nothing
++       * cuts it to a scrolled window's or another clipping parent's part */
++      gtk_gl_area_stereo_fail (area,
++                               g_error_new_literal (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                                                    "The area is not fully visible in its window "
++                                                    "(a scrolled window or another parent clips it)"));
++      return;
++    }
++
+   if (priv->x11_child == NULL && priv->subsurface == NULL &&
+       GDK_IS_X11_SURFACE (gtk_widget_get_surface (widget)))
+     {
+@@ -1166,28 +1211,31 @@ release_dmabuf_texture (gpointer data)
+ }
+ 
+ #ifdef GDK_WINDOWING_X11
+-/* The window manager takes the declared child out of the toplevel's clipping
+- * a little after the declaration, and what is drawn on the half of the child
+- * outside the frame before that is lost: the first frames are drawn again. */
++/* What is drawn on the half of the child outside the frame is lost until the
++ * window manager holds the declared child, a little after the declaration: the
++ * frame is drawn again until the window manager says it holds it, and once
++ * more then. A window manager that does not say gets ten frames in a second. */
+ static gboolean
+ gtk_gl_area_x11_repeat (gpointer data)
+ {
+   GtkGLArea *area = data;
+   GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  gboolean taken = priv->x11_child != NULL && gdk_x11_stereo_child_get_taken (priv->x11_child);
+ 
+   priv->needs_render = TRUE;
+   gtk_widget_queue_draw (GTK_WIDGET (area));
+ 
+-  if (--priv->x11_repeats > 0)
++  if (!taken && --priv->x11_repeats > 0)
+     return G_SOURCE_CONTINUE;
+ 
+   priv->x11_repeat_id = 0;
+   return G_SOURCE_REMOVE;
+ }
+ 
+-/* Reads the two views back and hands them to the stereo child window of the
+- * area, at the area's place in the toplevel's X window. The picture takes one
+- * copy through the CPU; the views stay at the resolution they were drawn at. */
++/* Hands the two views to the stereo child window of the area, at the area's
++ * place in the toplevel's X window, each view at the resolution it was drawn
++ * at. They go there through OpenGL; where the window cannot have an OpenGL
++ * surface they are read back and go through memory, the same picture. */
+ static gboolean
+ gtk_gl_area_x11_present (GtkGLArea *area,
+                          int        place_width,
+@@ -1200,53 +1248,74 @@ gtk_gl_area_x11_present (GtkGLArea *area,
+   GtkNative *native = gtk_widget_get_native (widget);
+   graphene_rect_t bounds;
+   double nx, ny;
+-  gsize stride = (gsize) 2 * width * 4;
+-  gsize size = stride * height;
++  int x, y;
+   int scale = gtk_widget_get_scale_factor (widget);
+   GError *error = NULL;
+ 
+-  if (size != priv->x11_size)
+-    {
+-      g_free (priv->x11_pixels);
+-      g_free (priv->x11_rows);
+-      priv->x11_pixels = g_malloc (size);
+-      priv->x11_rows = g_malloc (size);
+-      priv->x11_size = size;
+-    }
+-
+-  glBindFramebuffer (GL_READ_FRAMEBUFFER, priv->blit_frame_buffer);
+-  glReadBuffer (GL_COLOR_ATTACHMENT0);
+-  glPixelStorei (GL_PACK_ALIGNMENT, 1);
+-  glReadPixels (0, 0, 2 * width, height, GL_RGBA, GL_UNSIGNED_BYTE, priv->x11_pixels);
+-  glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
+-
+-  /* OpenGL's first row is the bottom one */
+-  for (int row = 0; row < height; row++)
+-    memcpy (priv->x11_rows + (gsize) row * stride,
+-            priv->x11_pixels + (gsize) (height - 1 - row) * stride,
+-            stride);
+-
+   if (!gtk_widget_compute_bounds (widget, GTK_WIDGET (native), &bounds))
+     return FALSE;
+   gtk_native_get_surface_transform (native, &nx, &ny);
++  x = (int) ((bounds.origin.x + nx) * scale);
++  y = (int) ((bounds.origin.y + ny) * scale);
+ 
+-  if (!gdk_x11_stereo_child_present (priv->x11_child,
+-                                     (int) ((bounds.origin.x + nx) * scale),
+-                                     (int) ((bounds.origin.y + ny) * scale),
+-                                     place_width, place_height,
+-                                     width, height, priv->x11_rows, &error))
++  if (!priv->x11_readback)
+     {
+-      gtk_gl_area_stereo_fail (area, error);
+-      return FALSE;
++      if (!gdk_x11_stereo_child_present_gl (priv->x11_child, priv->blit_frame_buffer,
++                                            x, y, place_width, place_height,
++                                            width, height, &error))
++        {
++          g_message ("GtkGLArea %p: the stereo picture goes to its window through memory: %s",
++                     area, error->message);
++          g_clear_error (&error);
++          priv->x11_readback = TRUE;
++        }
++      glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
++    }
++
++  if (priv->x11_readback)
++    {
++      gsize stride = (gsize) 2 * width * 4;
++      gsize size = stride * height;
++
++      if (size != priv->x11_size)
++        {
++          g_free (priv->x11_pixels);
++          g_free (priv->x11_rows);
++          priv->x11_pixels = g_malloc (size);
++          priv->x11_rows = g_malloc (size);
++          priv->x11_size = size;
++        }
++
++      glBindFramebuffer (GL_READ_FRAMEBUFFER, priv->blit_frame_buffer);
++      glReadBuffer (GL_COLOR_ATTACHMENT0);
++      glPixelStorei (GL_PACK_ALIGNMENT, 1);
++      glReadPixels (0, 0, 2 * width, height, GL_RGBA, GL_UNSIGNED_BYTE, priv->x11_pixels);
++      glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
++
++      /* OpenGL's first row is the bottom one */
++      for (int row = 0; row < height; row++)
++        memcpy (priv->x11_rows + (gsize) row * stride,
++                priv->x11_pixels + (gsize) (height - 1 - row) * stride,
++                stride);
++
++      if (!gdk_x11_stereo_child_present (priv->x11_child, x, y,
++                                         place_width, place_height,
++                                         width, height, priv->x11_rows, &error))
++        {
++          gtk_gl_area_stereo_fail (area, error);
++          return FALSE;
++        }
+     }
+ 
+   if (!priv->stereo_shown)
+     {
++      gboolean acknowledges = gdk_x11_stereo_child_acknowledges (priv->x11_child);
++
+       priv->stereo_shown = TRUE;
+       g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_SHOWN]);
+-      priv->x11_repeats = 10;
++      priv->x11_repeats = acknowledges ? 50 : 10;
+       if (priv->x11_repeat_id == 0)
+-        priv->x11_repeat_id = g_timeout_add (100, gtk_gl_area_x11_repeat, area);
++        priv->x11_repeat_id = g_timeout_add (acknowledges ? 20 : 100, gtk_gl_area_x11_repeat, area);
+     }
+ 
+   return TRUE;
+@@ -1351,7 +1420,10 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+ 
+       if (
+ #ifdef GDK_WINDOWING_X11
+-          priv->x11_child == NULL &&
++          /* On X11 nothing takes the picture of a stereo area as a dma-buf:
++           * its views go to the child window, and its left view alone is
++           * drawn by GTK from the texture itself. */
++          !(priv->stereo && GDK_IS_X11_SURFACE (gtk_widget_get_surface (widget))) &&
+ #endif
+           gdk_gl_context_export_dmabuf (priv->context,
+                                         gdk_gl_texture_builder_get_id (texture->builder),
+@@ -1612,8 +1684,8 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+    * export its picture as a dma-buf. On X11 it is a child window of the
+    * toplevel's window, declared with `libstereo-declare` (loaded when the
+    * first stereo area asks) to a window manager that announces version 8 of
+-   * `_KDE_NET_WM_STEREO_CONTENT_SUPPORTED`; the picture takes one copy
+-   * through the CPU, and a 2D widget drawn over the area is hidden by it.
++   * `_KDE_NET_WM_STEREO_CONTENT_SUPPORTED`; the picture is drawn on that
++   * window with OpenGL, and a 2D widget drawn over the area is hidden by it.
+    *
+    * If the picture cannot be shown per eye, the area says so: it logs
+    * the reason once, sets [property@Gtk.GLArea:stereo-error] and keeps
+@@ -1804,6 +1876,12 @@ gtk_gl_area_init (GtkGLArea *area)
+   priv->allowed_apis = GDK_GL_API_GL | GDK_GL_API_GLES;
+   priv->stereo_view_width = -1;
+   priv->stereo_view_height = -1;
++#ifdef GDK_WINDOWING_X11
++  /* GDK_X11_STEREO_READBACK keeps the stereo picture of an X11 area on its
++   * older way to the window, read back and put through memory, to compare the
++   * two ways or to tell them apart when a driver draws wrongly */
++  priv->x11_readback = g_getenv ("GDK_X11_STEREO_READBACK") != NULL;
++#endif
+ }
+ 
+ /**

@@ -19,7 +19,10 @@
 # SPARKY_LC_INSTALL_SIBLINGS=1 (optional, with SPARKY_LC_SIBLINGS_DIR): the siblings are also installed, and kept at their
 # version, before the build dependencies, for a source whose Build-Depends names a version the repository has not published yet
 # (a staged library of the round, ORDER 61f).
-# Last update 2026/11/21
+# SPARKY_DEB_BUILD_OPTIONS (optional): more words for DEB_BUILD_OPTIONS after parallel=4 (nocheck for a source whose own
+# test suite the recipe runs elsewhere); SPARKY_DEB_BUILD_PROFILES (optional): DEB_BUILD_PROFILES (noudeb for a source
+# whose installer package cannot share a link-gate root with its own library). Both are the recipe's to name and to say why.
+# Last update 2026/11/25
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../repo/build-provenance.sh"
@@ -48,12 +51,14 @@ docker run --ulimit core=1 --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTA
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	"${PREV_MOUNT[@]}" "${PREV_ENV[@]}" \
 	-e DSC="$(basename "$DSC")" -e FLAGS="$FLAGS" -e OWNER="$(id -u):$(id -g)" \
+	-e MORE_OPTIONS="${SPARKY_DEB_BUILD_OPTIONS:-}" -e PROFILES="${SPARKY_DEB_BUILD_PROFILES:-}" \
 	-v "$(dirname "$DSC")":/src:ro -v "$OUT":/work -v "$HERE/..":/toolkit:ro -v "$REPO":/repo:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMG" bash -c '
 	set -euo pipefail
 	trap "chown -R $OWNER /work" EXIT
 	sh /run/https-only-apt.sh
-	export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4 DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
+	export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="parallel=4${MORE_OPTIONS:+ $MORE_OPTIONS}" DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
+	[ -z "${PROFILES:-}" ] || export DEB_BUILD_PROFILES="$PROFILES"
 	cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/
 	printf "Types: deb\nURIs: file:/repo\nSuites: mashtabba\nComponents: main\nSigned-By: /usr/share/keyrings/sparky-stereo-repo.asc\n" > /etc/apt/sources.list.d/sparky.sources
 	printf "Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n" > /etc/apt/preferences.d/sparky

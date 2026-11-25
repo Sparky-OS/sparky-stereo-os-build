@@ -1,0 +1,172 @@
+Description: gdk/wayland: describe the pictures of subsurfaces, sRGB as gamma 2.2 where the compositor has no named sRGB
+ GDK used the compositor's color management (wp_color_manager_v1) only with
+ GDK_DEBUG=color-mgmt, and then only when the compositor listed the named sRGB
+ transfer function. Version 2 of the protocol deprecates that name as
+ ambiguous ("use gamma22 for video, motion picture and computer graphics"),
+ and KWin lists gamma22, bt1886, ext_linear and st2084_pq but not srgb, so on
+ KWin GDK dropped color management altogether ("Can't create srgb image
+ description") and a picture with a color state of its own could not be given
+ a subsurface ("No color-management, non-default color state").
+ sRGB is now described with gamma 2.2 where the compositor lists that and not
+ the named sRGB, and a description the compositor gives with gamma 2.2 is read
+ back as sRGB there. The color manager is always bound; without
+ GDK_DEBUG=color-mgmt GTK's own windows are left exactly as they were (no
+ description set, the compositor's preference not followed), and the RGB
+ pictures of subsurfaces are described, so that an offloaded picture in
+ Rec. 2100 PQ reaches the compositor as what it is. YUV pictures keep
+ upstream's opt-in. GDK_WAYLAND_DISABLE=wp_color_manager_v1 turns it off.
+ Searched first (2026-11-25): GTK's main branch still requires the named
+ sRGB transfer function and binds version 1; no merge request or issue
+ about it was found.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, milestone 3)
+Forwarded: no
+Last-Update: 2026-11-25
+---
+diff --git a/gdk/wayland/gdkdisplay-wayland.c b/gdk/wayland/gdkdisplay-wayland.c
+index 99f01a3479a6b51b2d3302efe7dd0fcc59277814..a9b2680fb8134cca30bd1443b645705d2fff45d5 100644
+--- a/gdk/wayland/gdkdisplay-wayland.c
++++ b/gdk/wayland/gdkdisplay-wayland.c
+@@ -183,9 +183,6 @@ init_skip_protocols (GdkWaylandDisplay *display_wayland)
+         p++;
+     }
+ 
+-  if (!GDK_DISPLAY_DEBUG_CHECK (GDK_DISPLAY (display_wayland), COLOR_MANAGEMENT))
+-    g_strv_builder_add (strv, wp_color_manager_v1_interface.name);
+-
+   if (help)
+     {
+       gdk_help_message ("%s can be set to a list of Wayland interfaces to disable.\n", variable);
+diff --git a/gdk/wayland/gdkwaylandcolor.c b/gdk/wayland/gdkwaylandcolor.c
+index 9c39f488323b9fa74f7b4a34eb9c47101aa75358..5b8db1b5d6470d940323db695bb1a0f51e1b4257 100644
+--- a/gdk/wayland/gdkwaylandcolor.c
++++ b/gdk/wayland/gdkwaylandcolor.c
+@@ -206,6 +206,10 @@ struct _GdkWaylandColor
+     unsigned int primaries;
+   } color_manager_supported;
+ 
++  /* The transfer function sRGB is described with: the named sRGB one, or
++   * gamma 2.2 for a compositor that does not list it. */
++  uint32_t srgb_transfer;
++
+   GHashTable *cs_to_desc; /* GdkColorState => wp_image_description_v1 or NULL */
+   GHashTable *id_to_cs; /* uint32 identifier => GdkColorState */
+ 
+@@ -517,6 +521,8 @@ create_image_desc (GdkWaylandColor *color,
+   gdk_cicp_normalize (cicp, &norm);
+   primaries = cicp_to_wl_primaries (norm.color_primaries);
+   tf = cicp_to_wl_transfer (norm.transfer_function);
++  if (tf == WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB)
++    tf = color->srgb_transfer;
+ 
+   if (((color->color_manager_supported.primaries & (1 << primaries)) == 0 &&
+        (color->color_manager_supported.features & (1 << WP_COLOR_MANAGER_V1_FEATURE_SET_PRIMARIES)) == 0) ||
+@@ -697,9 +703,19 @@ gdk_wayland_color_prepare (GdkWaylandColor *color)
+       g_clear_pointer (&color->color_manager, wp_color_manager_v1_destroy);
+     }
+ 
++  /* Version 2 of the protocol deprecates the named sRGB transfer function as
++   * ambiguous and says to use gamma 2.2 for computer graphics; a compositor
++   * may list gamma 2.2 and not sRGB (KWin does). sRGB is then described with
++   * gamma 2.2, which is also what such a compositor takes a surface without a
++   * description for. */
++  color->srgb_transfer = WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB;
++  if (!(color->color_manager_supported.transfers & (1 << WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB)) &&
++      (color->color_manager_supported.transfers & (1 << WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA22)))
++    color->srgb_transfer = WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA22;
++
+   if (color->color_manager &&
+       (!(color->color_manager_supported.features & (1 << WP_COLOR_MANAGER_V1_FEATURE_PARAMETRIC)) ||
+-       !(color->color_manager_supported.transfers & (1 << WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB)) ||
++       !(color->color_manager_supported.transfers & (1 << color->srgb_transfer)) ||
+        !((color->color_manager_supported.primaries & (1 << WP_COLOR_MANAGER_V1_PRIMARIES_SRGB)) ||
+          (color->color_manager_supported.features & (1 << WP_COLOR_MANAGER_V1_FEATURE_SET_PRIMARIES)))))
+ 
+@@ -819,14 +835,19 @@ struct _ImageDescription
+ };
+ 
+ static GdkColorState *
+-gdk_color_state_from_image_description_bits (ImageDescription *desc)
++gdk_color_state_from_image_description_bits (GdkWaylandColor  *color,
++                                             ImageDescription *desc)
+ {
+   if (desc->has_primaries_named && desc->has_tf_named)
+     {
+       GdkCicp cicp;
+ 
+       cicp.color_primaries = wl_to_cicp_primaries (desc->primaries);
+-      cicp.transfer_function = wl_to_cicp_transfer (desc->tf_named);
++      /* The compositor's name for sRGB, read back as sRGB */
++      if (desc->tf_named == color->srgb_transfer)
++        cicp.transfer_function = wl_to_cicp_transfer (WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB);
++      else
++        cicp.transfer_function = wl_to_cicp_transfer (desc->tf_named);
+       cicp.matrix_coefficients = 0;
+       cicp.range = GDK_CICP_RANGE_FULL;
+ 
+@@ -861,7 +882,7 @@ image_desc_info_done (void *data,
+ 
+   g_assert (self->current_desc == desc);
+ 
+-  cs = gdk_color_state_from_image_description_bits (desc);
++  cs = gdk_color_state_from_image_description_bits (self->color, desc);
+   if (cs)
+     {
+       g_hash_table_insert (self->color->id_to_cs,
+@@ -1124,7 +1145,12 @@ gdk_wayland_color_surface_new (GdkWaylandColor      *color,
+   self->color = color;
+   self->wl_surface = wl_surface;
+ 
+-  if (color->color_manager)
++  /* GTK's own windows are described, and follow what the compositor prefers,
++   * with GDK_DEBUG=color-mgmt only. The picture of a subsurface (which has no
++   * callback) is described whenever the compositor takes descriptions:
++   * a picture with a color state of its own cannot be offloaded otherwise. */
++  if (color->color_manager &&
++      (callback == NULL || GDK_DISPLAY_DEBUG_CHECK (GDK_DISPLAY (color->display), COLOR_MANAGEMENT)))
+     {
+       self->mgmt_surface = wp_color_manager_v1_get_surface (color->color_manager, wl_surface);
+       self->mgmt_feedback = wp_color_manager_v1_get_surface_feedback (color->color_manager, wl_surface);
+@@ -1151,6 +1177,19 @@ gdk_wayland_color_surface_free (GdkWaylandColorSurface *self)
+   g_free (self);
+ }
+ 
++/* Whether the picture of the surface gets an image description. Without
++ * GDK_DEBUG=color-mgmt it is the RGB pictures of subsurfaces that do; YUV
++ * pictures stay as they were. */
++static gboolean
++gdk_wayland_color_surface_describes (GdkWaylandColorSurface *self,
++                                     gboolean                is_yuv)
++{
++  if (!self->mgmt_surface)
++    return FALSE;
++
++  return !is_yuv || GDK_DISPLAY_DEBUG_CHECK (GDK_DISPLAY (self->color->display), COLOR_MANAGEMENT);
++}
++
+ static struct wp_image_description_v1 *
+ gdk_wayland_color_get_image_description (GdkWaylandColor *color,
+                                          GdkColorState   *cs)
+@@ -1219,7 +1258,12 @@ gdk_wayland_color_surface_set_color_state (GdkWaylandColorSurface *self,
+                                            uint32_t                fourcc,
+                                            gboolean                premultiplied)
+ {
+-  if (self->mgmt_surface)
++  GdkMemoryFormat described_format;
++  gboolean described_is_yuv = FALSE;
++
++  gdk_memory_format_find_by_dmabuf_fourcc (fourcc, premultiplied, &described_format, &described_is_yuv);
++
++  if (gdk_wayland_color_surface_describes (self, described_is_yuv))
+     {
+       struct wp_image_description_v1 *desc;
+ 
+@@ -1297,7 +1341,7 @@ gdk_wayland_color_surface_can_set_color_state (GdkWaylandColorSurface  *self,
+ 
+   default_cs = is_yuv ? GDK_COLOR_STATE_YUV : GDK_COLOR_STATE_SRGB;
+ 
+-  if (!self->mgmt_surface)
++  if (!gdk_wayland_color_surface_describes (self, is_yuv))
+     {
+       if (!gdk_color_state_equivalent (cs, default_cs))
+         {
