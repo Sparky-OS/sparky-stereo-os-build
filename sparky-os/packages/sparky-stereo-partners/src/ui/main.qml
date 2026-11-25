@@ -3,6 +3,7 @@
 
 import QtQuick
 import QtQuick.Controls as QQC2
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.kcmutils as KCM
@@ -95,6 +96,22 @@ KCM.SimpleKCM {
         return kcm.pending[key] !== undefined ? kcm.pending[key] : fallback
     }
 
+    FileDialog {
+        id: speechModelDialog
+        property string programId: ""
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["Vibe (*.bin *.gguf)"]
+        onAccepted: {
+            const path = decodeURIComponent(selectedFile.toString().replace(/^file:\/\//, ""))
+            if (programId) {
+                kcm.choose("program/" + programId + "/speech/model",
+                           ["program", programId, "speech", "own", "--interface", "vibe-local", "--model", path], path)
+            } else {
+                kcm.choose("default/speech/model", ["set-default", "speech", "--model", path], path)
+            }
+        }
+    }
+
     header: Kirigami.InlineMessage {
         visible: kcm.message.length > 0
         type: kcm.messageIsInfo ? Kirigami.MessageType.Information : Kirigami.MessageType.Warning
@@ -176,6 +193,27 @@ KCM.SimpleKCM {
                     currentIndex: Math.max(0, model.findIndex(o => o.value === current))
                     onActivated: kcm.choose("default/" + kindRow.kind + "/model",
                                             currentValue ? ["set-default", kindRow.kind, "--model", currentValue] : ["set-default", kindRow.kind, "--no-model"], currentValue)
+                }
+
+                Item { visible: kindRow.chosen === "vibe-local"; width: 1; height: 1 }
+                QQC2.Label { visible: kindRow.chosen === "vibe-local"; text: i18nc("@label", "Model") }
+                Flow {
+                    Layout.fillWidth: true
+                    visible: kindRow.chosen === "vibe-local"
+                    spacing: Kirigami.Units.smallSpacing
+                    readonly property string current: root.pending("default/speech/model", kindRow.modelData.model)
+                    QQC2.Button {
+                        text: parent.current ? parent.current.split("/").pop() : i18nc("@action:button", "Choose speech model…")
+                        onClicked: {
+                            speechModelDialog.programId = ""
+                            speechModelDialog.open()
+                        }
+                    }
+                    QQC2.Button {
+                        visible: !!parent.current
+                        text: i18nc("@action:button", "Use the model selected in Vibe")
+                        onClicked: kcm.choose("default/speech/model", ["set-default", "speech", "--no-model"], "")
+                    }
                 }
 
                 Item { visible: !!kindRow.chosenIface && kindRow.chosenIface.runs === "here"; width: 1; height: 1 }
@@ -500,6 +538,9 @@ KCM.SimpleKCM {
                         switch (programRow.modelData.note) {
                         case "own-services": lines.push(i18nc("@info", "It uses the services you sign in to in it; this page cannot choose for it.")); break
                         case "own-engines": lines.push(i18nc("@info", "It uses its own engines and models on this computer; this page cannot choose for it.")); break
+                        case "kdenlive-speech":
+                            lines.push(i18nc("@info", "Kdenlive follows this choice when you select Use the system default in Speech to Text."))
+                            break
                         case "kde-text-addons":
                             lines.push(i18nc("@info", "KDE's text add-ons follow this choice when you have set up no instance of your own in them."))
                             // what they can follow, said where it matters: their llama.cpp add-on is unfinished, and they know no provider's own address
@@ -541,6 +582,15 @@ KCM.SimpleKCM {
                             model: root.interfaceOptions(choiceRow.modelData.kind).filter(o => o.value !== "none")
                             currentIndex: Math.max(0, model.findIndex(o => o.value === choiceRow.modelData.interface))
                             onActivated: kcm.choose(choiceRow.pkey, ["program", programRow.modelData.id, choiceRow.modelData.kind, "own", "--interface", currentValue], currentValue)
+                        }
+                        QQC2.Button {
+                            visible: programRow.modelData.note === "kdenlive-speech" && choiceRow.own && ownCombo.currentValue === "vibe-local"
+                            readonly property string modelPath: root.pending(choiceRow.pkey + "/model", choiceRow.modelData.model)
+                            text: modelPath ? modelPath.split("/").pop() : i18nc("@action:button", "Choose speech model…")
+                            onClicked: {
+                                speechModelDialog.programId = programRow.modelData.id
+                                speechModelDialog.open()
+                            }
                         }
                     }
                 }
