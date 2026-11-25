@@ -113,6 +113,7 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
     void touchEvent(QTouchEvent *event) override;
     void exposeEvent(QExposeEvent *event) override;
+    bool event(QEvent *event) override;
 
 private:
     void start();

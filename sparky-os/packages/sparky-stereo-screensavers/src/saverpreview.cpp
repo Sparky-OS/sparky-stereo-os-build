@@ -453,12 +453,22 @@ void FullScreenPreview::touchEvent(QTouchEvent *)
     end();
 }
 
+bool FullScreenPreview::event(QEvent *event)
+{
+    // where the pointer is when the preview opens under it: the place a move is measured from
+    if (event->type() == QEvent::Enter && !m_haveFirst) {
+        m_first = static_cast<QEnterEvent *>(event)->position();
+        m_haveFirst = true;
+    }
+    return QRasterWindow::event(event);
+}
+
 void FullScreenPreview::mouseMoveEvent(QMouseEvent *event)
 {
     if (!m_haveFirst) {
-        m_first = event->globalPosition();
+        m_first = event->position();
         m_haveFirst = true;
-    } else if ((event->globalPosition() - m_first).manhattanLength() > HAND_REST) {
+    } else if ((event->position() - m_first).manhattanLength() > HAND_REST) {
         end();
     }
 }
