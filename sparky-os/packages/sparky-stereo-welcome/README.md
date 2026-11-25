@@ -25,22 +25,27 @@ Where the files go
 - `/usr/share/plasma/plasma-welcome/extra-pages/`: the pages after KDE's own, before its last page.
 - `/usr/share/sparky-stereo-welcome/pictures/`: the stereo pictures, full side by side PNG with the `sTER` chunk.
 - `/usr/bin/sparky-stereo-welcome-upgrade`: the SparkyLinux page's Upgrade, as Sparky Welcome's own handler runs it.
-- `/etc/xdg/plasma-workspace/env/sparky-stereo-welcome-touch.sh` and `/usr/share/sparky-stereo-welcome/touch-screen/xdg/`: where the hardware layer found a touch screen of the computer's own, `plasma-welcomerc [Distribution] TouchScreen=true` for the touch page's other condition (`Welcome.Distro.flag`, plasma-welcome 6.7.4-1+stereo3d2).
+- `/etc/xdg/plasma-workspace/env/sparky-stereo-welcome-touch.sh` and `/usr/share/sparky-stereo-welcome/touch-screen/xdg/`: where the hardware layer found a touch screen of the computer's own, `plasma-welcomerc [Distribution] TouchScreen=true` for the touch page's condition (`Welcome.Distro.flag`, plasma-welcome 6.7.4-1+stereo3d2).
+- `/etc/xdg/plasma-workspace/env/sparky-stereo-welcome-variety.sh` and `/usr/share/sparky-stereo-welcome/variety/xdg/`: where Stereo Variety is installed, `plasma-welcomerc [Distribution] Variety=true` for the wallpaper page's condition.
 - `/usr/share/locale/LANG/LC_MESSAGES/sparky-stereo-welcome.mo`: the words in pt_BR, es, fr, de, pl, ja, ko, zh_CN and zh_TW (from `po/`, made by `tools/extract-messages.sh`).
 
 The pages
 -------------
 - `00-SparkyStereoOS.qml`, the first page: the edition in one screen, the screens it shows 3D on, where Display Configuration is (a button opens it), the credit line.
 - `01-PointAndType.qml`: the window under the pointer gets the keys; why, in Daniel Ramos's words; how to change it (a button opens Window Behavior).
-- `extra-pages/01-TouchAndTabletMode.qml`: what a tap does where the mouse keeps its own click setting, as measured, and the on-screen keyboard and the panels in tablet mode; buttons for General Behavior and Virtual Keyboard. `show: true`; `show: Welcome.Distro.flag("TouchScreen")` shows it only on a computer with a touch screen of its own.
-- `extra-pages/02-SparkyWorld.qml`: every element of Sparky Welcome, with its own address or command.
-- `extra-pages/03-HelpTest.qml`: what the screens can do in 3D (`stereo-display-info`), copied; the edition's tracker.
+- `extra-pages/01-TouchAndTabletMode.qml`: what a tap does where the mouse keeps its own click setting, as measured, and the on-screen keyboard and the panels in tablet mode; buttons for General Behavior and Virtual Keyboard. Shown only on a computer with a touch screen of its own (`show: Welcome.Distro.flag("TouchScreen")`; Daniel, 2026-11-25: "Only with a touch screen").
+- `extra-pages/02-Your3DDepth.qml`: the person's depth limits, set in one place for the screen and kept whatever the size of a window, picture or icon (the edition's one separation setting); what they do on a 2D screen; a button opens 3D Depth.
+- `extra-pages/03-ChangingWallpaper.qml`: Stereo Variety as the published package does it (every five minutes once it runs, folders of the computer at first, online sources unticked, no rule for a metered connection), how to keep one picture or stop it; a button opens its Preferences. Shown only where Variety is installed (`show: Welcome.Distro.flag("Variety")`).
+- `extra-pages/04-WindowsKeysAndSessions.qml`: Ctrl+Alt+Del to System Monitor, Ctrl+Alt+Esc to the logout screen, an empty desktop at each login, no question at logout; why, in Daniel Ramos's words; buttons for Shortcuts and Desktop Session.
+- `extra-pages/05-SparkyWorld.qml`: every element of Sparky Welcome, with its own address or command.
+- `extra-pages/06-HelpTest.qml`: what the screens can do in 3D (`stereo-display-info`), copied; the edition's tracker.
 
 Depth on a 3D screen
 -------------
 The pages use stereo-layer's own element depth, inside the person's limits, and set no separation of their own.
 The picture of the first page is a stereo pair shown by `StereoPicture`, on a surface of its own below the window, its depth the artwork's.
 The drawing of two windows on the pointer page is drawn once per eye by the edition's Qt Quick: the window under the pointer at the screen, the other one layer back (`StereoDepth.depth: -0.2`, the layer Stereo KWin gives the first window beneath the active one).
+The drawing on the depth page is the desktop's three levels: the wallpaper at the person's sunk limit, the window at the screen, its menu at the popped limit (`StereoDepth.Sunk`, `Screen`, `Popped`).
 Words and buttons are the window's own, the same in both eyes.
 A 2D screen shows the pages as they are, flat.
 

@@ -13,8 +13,8 @@
 // - on a computer with a touch screen of its own, Plasma Keyboard is the on-screen keyboard in the session's language
 //   (sparky-stereo-hardware's has-tablet-mode) and shows in tablet mode (Stereo KWin's InputMethodTabletOnly);
 // - in tablet mode the panels hide and come back as they were (plasma-workspace, plasmarc [TabletMode] HidePanels).
-// The page's condition: `show: true` shows it on every computer; `show: Welcome.Distro.flag("TouchScreen")` shows it only
-// where the hardware layer found a touch screen of the computer's own (sparky-stereo-welcome-touch.sh sets the flag).
+// The page's condition (Daniel, 2026-11-25: "Only with a touch screen"): shown only where the hardware layer found a touch
+// screen of the computer's own (sparky-stereo-welcome-touch.sh sets the flag); `show: true` would show it on every computer.
 
 import QtQuick
 import QtQuick.Controls as QQC2
@@ -27,7 +27,7 @@ import org.kde.plasma.welcome as Welcome
 Welcome.Page {
     id: root
 
-    show: true
+    show: Welcome.Distro.flag("TouchScreen")
 
     heading: i18ndc("sparky-stereo-welcome", "@title:window", "Touch and Tablet Mode")
     description: xi18ndc("sparky-stereo-welcome", "@info:usagetip",
