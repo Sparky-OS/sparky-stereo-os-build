@@ -98,9 +98,12 @@ KCM.SimpleKCM {
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: kcm.kind === "protan" || kcm.kind === "deutan"
+            // what red-cyan glasses show each kind, no output ranked (red-cyan is a first-class output; tritan: not measured, no hint)
+            visible: kcm.kind === "protan" || kcm.kind === "deutan" || kcm.kind === "mono"
             type: Kirigami.MessageType.Information
-            text: i18nc("@info", "For 3D, red-cyan glasses are the last choice for you: they rebuild the picture's colours from red and cyan, and red and green already run together for you. A 3D television or another of the screen's 3D outputs keeps every colour.")
+            text: kcm.kind === "mono"
+                ? i18nc("@info red-cyan glasses for monochromacy", "With red-cyan glasses you see 3D pictures with all their depth, as anyone does: each eye gets its own picture through its lens, and the colours play no part.")
+                : i18nc("@info red-cyan glasses for protan and deutan colour vision", "With red-cyan glasses, 3D pictures keep all their depth for you, and fewer of their colours stay apart: the glasses rebuild the colours from red and cyan, and red and green already run together for you. A 3D television or another of the screen's 3D outputs keeps every colour.")
             actions: [
                 Kirigami.Action {
                     icon.name: "preferences-desktop-display"
