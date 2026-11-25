@@ -1,0 +1,324 @@
+#!/usr/bin/python3 -Es
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Consent, due dates and receipts for BleachBit's scoped cleanup."""
+
+import argparse
+import calendar
+from collections import Counter
+from contextlib import contextmanager
+import configparser
+from datetime import datetime, timedelta, timezone
+import fcntl
+import json
+import os
+from pathlib import Path
+import pwd
+import subprocess
+import sys
+import tempfile
+import time
+
+PACKAGE = 'sparky-stereo-storage-kcm'
+BLEACHBIT = '/usr/bin/bleachbit'
+PROBLEMS = '/usr/bin/sparky-stereo-problems'
+SELF = '/usr/libexec/sparky-storage-cleanup-schedule'
+PERIODS = ('manual', 'weekly', 'fortnightly', 'monthly')
+ACTIONS = ('review', 'automatic')
+MAX_APPROVED = 200000
+SYSTEM = os.geteuid() == 0
+HOME = Path.home()
+SYSTEM_CONFIG = Path('/etc/sparky-storage-cleanup.conf')
+SYSTEM_HISTORY = Path('/var/lib/sparky-storage-cleanup/runs.json')
+CONFIG = (SYSTEM_CONFIG if SYSTEM else
+          Path(os.environ.get('XDG_CONFIG_HOME') or HOME / '.config') / 'sparky-storage-cleanuprc')
+STATE = (Path('/var/lib/sparky-storage-cleanup') if SYSTEM else
+         Path(os.environ.get('XDG_STATE_HOME') or HOME / '.local/state') / 'sparky-storage-cleanup')
+HISTORY = STATE / 'runs.json'
+
+
+def config(path=CONFIG):
+    data = configparser.ConfigParser(interpolation=None)
+    data.optionxform = str
+    try:
+        with path.open(encoding='utf-8') as stream:
+            data.read_file(stream)
+    except FileNotFoundError:
+        pass
+    if 'General' not in data:
+        data.add_section('General')
+    return data
+
+
+def read_settings(path=CONFIG):
+    section = config(path)['General']
+    age = section.getint('temporaryAge', 7)
+    period = section.get('schedulePeriod')
+    if not 1 <= age <= 365:
+        raise ValueError('Invalid temporary-file age')
+    if period is None:
+        legacy = section.getint('scheduleMode', 2)
+        if legacy in (1, 3) and path != SYSTEM_CONFIG:
+            return {'period': 'weekly', 'action': 'review', 'legacyCaches': legacy == 3,
+                    'legacy': True, 'mount': section.get('scheduleMount', '/'),
+                    'since': int(path.stat().st_mtime), 'age': age}
+        return {'period': 'manual', 'action': 'review', 'age': age}
+    action = section.get('scheduleAction')
+    mount = section.get('scheduleMount', '')
+    since = section.getint('scheduleSince', 0)
+    if (period not in PERIODS or action not in ACTIONS or not (mount == '@home' or os.path.isabs(mount))
+            or since <= 0):
+        raise ValueError('Invalid storage cleanup settings')
+    return {'period': period, 'action': action, 'mount': mount,
+            'since': since, 'age': age}
+
+
+def store(path, writer, mode):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as out:
+        temporary = Path(out.name)
+        try:
+            os.fchmod(out.fileno(), mode)
+            writer(out)
+            out.flush()
+            os.fsync(out.fileno())
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def state_lock():
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o755 if SYSTEM else 0o700)
+    with (STATE / 'lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+
+
+def set_schedule(period, action, mount):
+    if (period not in PERIODS or action not in ACTIONS or not (mount == '@home' or os.path.isabs(mount))
+            or '\n' in mount or '\r' in mount):
+        raise ValueError('Invalid storage cleanup choice')
+    with state_lock():
+        data = config()
+        data['General'].update(schedulePeriod=period, scheduleAction=action, scheduleMount=mount,
+                               scheduleSince=str(int(time.time())))
+        data['General'].pop('scheduleMode', None)
+        store(CONFIG, data.write, 0o644 if SYSTEM else 0o600)
+
+
+def set_age(days):
+    if not 1 <= days <= 365:
+        raise ValueError('Invalid temporary-file age')
+    with state_lock():
+        data = config()
+        data['General']['temporaryAge'] = str(days)
+        store(CONFIG, data.write, 0o644 if SYSTEM else 0o600)
+
+
+def install_choice(user, period):
+    if not SYSTEM:
+        raise PermissionError('Installer consent requires administrator rights')
+    account = pwd.getpwnam(user)
+    if account.pw_uid < 1000 or not os.path.isabs(account.pw_dir):
+        raise ValueError('Installer consent requires the new login account')
+    action = 'review' if period == 'manual' else 'automatic'
+    # The target's account writes its own configuration with its own rights.
+    subprocess.run(['/usr/sbin/runuser', '-u', user, '--', SELF, 'set', period, action, '@home'],
+                   env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'}, check=True)
+    set_schedule(period, action, '/')
+
+
+def month_after(anchor, months):
+    year, month = divmod(anchor.year * 12 + anchor.month - 1 + months, 12)
+    month += 1
+    return anchor.replace(year=year, month=month, day=min(anchor.day, calendar.monthrange(year, month)[1]))
+
+
+def due(settings, now):
+    anchor = datetime.fromtimestamp(settings['since'], timezone.utc)
+    today = datetime.fromtimestamp(now, timezone.utc)
+    period = settings['period']
+    if settings.get('legacy'):
+        boundary = today.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=today.weekday())
+    elif period in ('weekly', 'fortnightly'):
+        length = timedelta(days=7 if period == 'weekly' else 14)
+        boundary = anchor + ((today - anchor) // length) * length
+    else:
+        months = (today.year - anchor.year) * 12 + today.month - anchor.month
+        boundary = month_after(anchor, months)
+        if boundary > today:
+            boundary = month_after(anchor, months - 1)
+    return int(boundary.timestamp()) if boundary > anchor else None
+
+
+def history(path=HISTORY):
+    try:
+        with path.open(encoding='utf-8') as stream:
+            result = json.load(stream)
+    except FileNotFoundError:
+        return []
+    if not isinstance(result, list):
+        raise ValueError('Invalid storage cleanup history')
+    return result
+
+
+def add_record(record, records):
+    store(HISTORY, lambda out: json.dump([record, *records[:9]], out),
+          0o644 if SYSTEM else 0o600)
+
+
+def problem(verb, key, *arguments):
+    scope = '--machine' if SYSTEM else '--person'
+    subprocess.run([PROBLEMS, verb, scope, *arguments, PACKAGE, key], check=True)
+
+
+def notice(key, body, mount, route='preview', *details):
+    action = {'id': 'storage-cleanup', 'label': ['LOCAL2'],
+              'command': ['/usr/bin/sparky-open-storage-cleanup', mount, route]}
+    scope = '--machine' if SYSTEM else '--person'
+    subprocess.run([PROBLEMS, 'keep', scope, '--severity', 'notice', '--action', json.dumps(action),
+                    PACKAGE, key, body, *map(str, details)], check=True)
+
+
+def bleachbit(mount, age, approved=None):
+    operation = ['--preview'] if approved is None else ['--clean', '--approved-stdin']
+    process = subprocess.run([BLEACHBIT, '--json', *operation, '--volume', mount, '--preset',
+                              '--temporary-age-days', str(age)],
+                             input='' if approved is None else json.dumps(approved),
+                             capture_output=True, text=True, timeout=900)
+    try:
+        data = json.loads(process.stdout)
+        if (data.get('schema') != 1 or data.get('error') or not isinstance(data.get('items'), list)
+                or not isinstance(data.get('errors'), list)):
+            raise ValueError(data.get('error') or 'Unexpected BleachBit response')
+        if process.returncode and not data['errors']:
+            raise ValueError('BleachBit did not complete')
+    except (AttributeError, ValueError) as error:
+        if process.stderr:
+            print(process.stderr.rstrip(), file=sys.stderr)
+        raise RuntimeError(str(error)) from error
+    return data
+
+
+def automatic(settings):
+    mount, age = settings['mount'], settings['age']
+    preview = bleachbit(mount, age)
+    if preview.get('read_only'):
+        raise OSError('The scheduled volume is read-only')
+    approved = list(dict.fromkeys(item['id'] for item in preview['items']))
+    def item_errors(rows):
+        return {(row.get('operation'), row.get('id') or row.get('path'), row['reason']) for row in rows}
+
+    errors = item_errors(preview['errors'])
+    cleaned = {}
+    for start in range(0, len(approved), MAX_APPROVED):
+        try:
+            result = bleachbit(mount, age, approved[start:start + MAX_APPROVED])
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            errors.add((None, None, str(error)))
+            break
+        errors.update(item_errors(result['errors']))
+        cleaned.update((item['id'], item) for item in result['items'])
+    # The same overlap can be found by more than one cleaner. Count its space once.
+    by_path = {item['path']: item for item in cleaned.values()}
+    for label, _, reason in sorted(errors, key=str):
+        print(f'{label or BLEACHBIT}: {reason}', file=sys.stderr)
+    return {'bytes': sum(item['bytes'] for item in by_path.values()),
+            'estimated': any(item['estimated'] for item in by_path.values()),
+            'kinds': dict(Counter(item['cleaner'] + '.' + item['option'] for item in by_path.values())),
+            'aptDeferred': sum(bool(label and label.startswith('apt.')) for label, _, _ in errors),
+            'failures': len(errors)}
+
+
+def run():
+    if Path('/run/live/medium').exists() or 'boot=live' in Path('/proc/cmdline').read_text().split():
+        return
+    now = int(time.time())
+    with state_lock():
+        settings = read_settings()
+        if settings['period'] == 'manual':
+            return
+        records = history()
+        boundary = due(settings, now)
+        identity = {key: value for key, value in settings.items() if key != 'age'}
+        if boundary is None or any(
+                entry.get('due') == boundary
+                and all(entry.get('settings', {}).get(key) == value for key, value in identity.items())
+                for entry in records):
+            return
+        mount = settings['mount']
+        effective = settings
+        if mount == '@home':
+            found = subprocess.check_output(['/usr/bin/findmnt', '--json', '--target', str(HOME),
+                                             '--output', 'TARGET'], text=True)
+            mount = json.loads(found)['filesystems'][0]['target']
+            effective = {**settings, 'mount': mount}
+        route = 'admin-preview' if SYSTEM else 'preview'
+        record = {'at': now, 'due': boundary, 'settings': settings, 'mount': mount}
+        if settings['action'] == 'review':
+            caches = settings.get('legacyCaches')
+            notice('weekly', 'LOCAL7' if caches else 'LOCAL6', mount, 'caches' if caches else route, mount)
+            record.update(outcome='review', bytes=0, failures=0, kinds={})
+            add_record(record, records)
+        else:
+            try:
+                record.update(outcome='cleaned', **automatic(effective))
+            except (KeyError, OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+                print(error, file=sys.stderr)
+                record.update(outcome='failed', bytes=0, failures=1, kinds={})
+            # Save the result before sending it to the Problems service.
+            add_record(record, records)
+            if record['outcome'] == 'failed':
+                notice('scheduled-start', 'LOCAL12', mount, route, mount)
+            else:
+                problem('clear', 'scheduled-start')
+            if record['outcome'] == 'cleaned' and record['failures']:
+                notice('scheduled-items', 'LOCAL10', mount, route, record['failures'], mount)
+            else:
+                problem('clear', 'scheduled-items')
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    subs = parser.add_subparsers(dest='command', required=True)
+    subs.add_parser('run')
+    subs.add_parser('show')
+    subs.add_parser('show-system')
+    edit = subs.add_parser('set')
+    edit.add_argument('period', choices=PERIODS)
+    edit.add_argument('action', choices=ACTIONS)
+    edit.add_argument('mount')
+    age = subs.add_parser('set-age')
+    age.add_argument('days', type=int)
+    installer = subs.add_parser('install')
+    installer.add_argument('account')
+    installer.add_argument('period', choices=PERIODS)
+    args = parser.parse_args()
+    if args.command == 'set':
+        set_schedule(args.period, args.action, args.mount)
+        problem('clear', 'weekly')
+    elif args.command == 'set-age':
+        set_age(args.days)
+    elif args.command == 'install':
+        install_choice(args.account, args.period)
+    elif args.command == 'show-system':
+        # This file contains counts and kinds only, with no per-item paths.
+        print(json.dumps({'settings': read_settings(SYSTEM_CONFIG), 'runs': history(SYSTEM_HISTORY)}))
+    elif args.command == 'show':
+        print(json.dumps({'settings': read_settings(), 'runs': history()}))
+    else:
+        run()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except BlockingIOError:
+        if sys.argv[1:] != ['run']:
+            print('A scheduled cleanup is already running', file=sys.stderr)
+            sys.exit(1)
+    except (KeyError, OSError, RuntimeError, ValueError, configparser.Error, subprocess.SubprocessError) as error:
+        print(error, file=sys.stderr)
+        if sys.argv[1:] == ['run']:
+            notice('scheduled-start', 'LOCAL12', '/', 'admin-preview' if SYSTEM else 'preview', '/')
+        sys.exit(1)

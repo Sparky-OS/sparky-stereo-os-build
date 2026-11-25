@@ -5,6 +5,7 @@
 #include <KLocalizedString>
 #include <KPluginFactory>
 #include <QDir>
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocale>
@@ -59,6 +60,11 @@ StorageKcm::StorageKcm(QObject *parent, const KPluginMetaData &data, const QVari
     connect(this, &KAbstractConfigModule::activationRequested, this, &StorageKcm::activate);
     activate(args);
     QTimer::singleShot(0, this, &StorageKcm::catalogue);
+    QTimer::singleShot(0, this, &StorageKcm::loadSchedule);
+    auto *refresh = new QTimer(this);
+    refresh->setInterval(15000);
+    connect(refresh, &QTimer::timeout, this, &StorageKcm::loadSchedule);
+    refresh->start();
 }
 
 void StorageKcm::activate(const QVariantList &args)
@@ -70,8 +76,17 @@ void StorageKcm::activate(const QVariantList &args)
     const auto url = QByteArray::fromBase64(activation.constFirst().toLatin1(), QByteArray::Base64UrlEncoding);
     const QString path = QString::fromUtf8(url);
     chooseVolume(path);
+    if (!path.isEmpty() && m_volume != path) {
+        m_unavailableVolume = path;
+        Q_EMIT changed();
+        return;
+    }
     if (m_volume == path && activation.size() == 2) {
         m_openPreview = activation.last();
+        if (m_openPreview == u"admin-preview"_s && !m_admin) {
+            chooseAdministrator(true);
+            return;
+        }
         if (!m_busy && !m_cleaners.isEmpty()) {
             m_cachesOnly = m_openPreview == u"caches"_s;
             m_openPreview.clear();
@@ -98,11 +113,6 @@ QVariantList StorageKcm::volumes() const
     return result;
 }
 
-int StorageKcm::schedule() const
-{
-    return QSettings(configPath(), QSettings::IniFormat).value(u"scheduleMode"_s, 2).toInt();
-}
-
 QString StorageKcm::formatSize(qint64 bytes) const
 {
     return KFormat().formatByteSize(bytes);
@@ -110,11 +120,18 @@ QString StorageKcm::formatSize(qint64 bytes) const
 
 int StorageKcm::temporaryAge() const
 {
-    return QSettings(configPath(), QSettings::IniFormat).value(u"temporaryAge"_s, 7).toInt();
+    const auto config = m_admin ? u"/etc/sparky-storage-cleanup.conf"_s : configPath();
+    return QSettings(config, QSettings::IniFormat).value(u"temporaryAge"_s, 7).toInt();
 }
 
 void StorageKcm::setTemporaryAge(int days)
 {
+    if (m_admin) {
+        m_items.clear();
+        m_previewed = false;
+        editSchedule({u"set-age"_s, QString::number(days)});
+        return;
+    }
     QSettings settings(configPath(), QSettings::IniFormat);
     settings.setValue(u"temporaryAge"_s, days);
     settings.sync();
@@ -133,6 +150,7 @@ void StorageKcm::chooseVolume(const QString &path)
         return;
     }
     m_volume = volume.rootPath();
+    m_unavailableVolume.clear();
     m_cachesOnly = false;
     m_readOnly = volume.isReadOnly();
     m_items.clear();
@@ -151,6 +169,7 @@ void StorageKcm::chooseAdministrator(bool admin)
     m_previewed = false;
     m_cleaners.clear();
     catalogue();
+    loadSchedule();
 }
 
 void StorageKcm::catalogue()
@@ -233,41 +252,63 @@ void StorageKcm::clean(const QStringList &approved)
     runBleachBit(args + selectedOperations() + confirm, u"clean"_s, input);
 }
 
-void StorageKcm::setSchedule(int mode)
+void StorageKcm::loadSchedule()
 {
-    if (mode < 0 || mode > 3 || mode == schedule() || m_busy) {
-        return;
-    }
-    QSettings settings(configPath(), QSettings::IniFormat);
-    const auto beforeMode = settings.value(u"scheduleMode"_s);
-    const auto beforeMount = settings.value(u"scheduleMount"_s);
-    settings.setValue(u"scheduleMode"_s, mode);
-    settings.setValue(u"scheduleMount"_s, m_volume);
-    settings.sync();
-    if (settings.status() != QSettings::NoError) {
-        m_errors = {QVariantMap{{u"reason"_s, i18n("Could not save the schedule.")}}};
-        Q_EMIT changed();
+    auto *job = new QProcess(this);
+    const bool system = m_admin;
+    connect(job, &QProcess::finished, this, [this, job, system](int status) {
+        if (system == m_admin) {
+            const auto result = QJsonDocument::fromJson(job->readAllStandardOutput()).object();
+            if (status == 0 && result.contains("settings"_L1)) {
+                const auto settings = result.value("settings"_L1).toObject();
+                m_period = settings.value("period"_L1).toString();
+                m_scheduledAction = settings.value("action"_L1).toString();
+                m_runs.clear();
+                for (const auto &entry : result.value("runs"_L1).toArray()) {
+                    auto run = entry.toObject().toVariantMap();
+                    const auto date = QDateTime::fromSecsSinceEpoch(run.value(u"at"_s).toLongLong());
+                    run.insert(u"date"_s, QLocale().toString(date, QLocale::ShortFormat));
+                    m_runs.append(run);
+                }
+            } else {
+                m_errors = {QVariantMap{{u"reason"_s, i18n("Could not read the cleanup schedule.")}}};
+            }
+            Q_EMIT changed();
+        }
+        job->deleteLater();
+    });
+    connect(job, &QProcess::errorOccurred, this, [this, job](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            m_errors = {QVariantMap{{u"reason"_s, i18n("Could not read the cleanup schedule.")}}};
+            Q_EMIT changed();
+            job->deleteLater();
+        }
+    });
+    job->start(u"/usr/libexec/sparky-storage-cleanup-schedule"_s,
+               {system ? u"show-system"_s : u"show"_s});
+}
+
+void StorageKcm::setSchedule(const QString &period, const QString &action)
+{
+    editSchedule({m_admin ? u"schedule-set"_s : u"set"_s, period, action, m_volume});
+}
+
+void StorageKcm::editSchedule(const QStringList &arguments)
+{
+    if (m_busy) {
         return;
     }
     auto *job = new QProcess(this);
     m_busy = true;
-    const bool weekly = mode == 1 || mode == 3;
-    const auto finish = [this, job, beforeMode, beforeMount](int status) {
+    const auto finish = [this, job](int status) {
         m_busy = false;
         if (status != 0) {
-            QSettings restore(configPath(), QSettings::IniFormat);
-            for (const auto &[key, value] : {std::pair{u"scheduleMode"_s, beforeMode},
-                                             std::pair{u"scheduleMount"_s, beforeMount}}) {
-                if (value.isValid()) {
-                    restore.setValue(key, value);
-                } else {
-                    restore.remove(key);
-                }
-            }
-            restore.sync();
             m_errors = {QVariantMap{{u"reason"_s, i18n("Could not save the schedule.") + u' ' +
                                                    QString::fromUtf8(job->readAllStandardError()).trimmed()}}};
+        } else {
+            m_errors.clear();
         }
+        loadSchedule();
         Q_EMIT changed();
         job->deleteLater();
     };
@@ -277,8 +318,13 @@ void StorageKcm::setSchedule(int mode)
             finish(-1);
         }
     });
-    job->start(u"/usr/bin/systemctl"_s,
-               {u"--user"_s, weekly ? u"enable"_s : u"disable"_s, u"--now"_s, u"sparky-storage-cleanup.timer"_s});
+    if (m_admin) {
+        const auto language = KLocalizedString::languages().join(u':');
+        job->start(u"/usr/bin/pkexec"_s, QStringList{u"/usr/libexec/sparky-storage-cleanup-admin"_s,
+                                         language} + arguments);
+    } else {
+        job->start(u"/usr/libexec/sparky-storage-cleanup-schedule"_s, arguments);
+    }
     Q_EMIT changed();
 }
 
