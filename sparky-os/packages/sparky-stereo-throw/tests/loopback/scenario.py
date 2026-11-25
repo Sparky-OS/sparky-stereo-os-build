@@ -208,8 +208,14 @@ def main():
          0 < int(s.get("level", 99)) <= 41))
 
     # --- the pair on the thrown network screen (B5): half side by side, then the same device comes back in it, then 2D
-    fixture = subprocess.Popen(["/tools/bin/capturefixture", os.path.join(OUT, "pair.png"), "1920", "1080", "stereo"],
-                               stdout=subprocess.DEVNULL, stderr=open(os.path.join(OUT, "fixture.log"), "w"))
+    # KWin's test fixture (a declared pair, left eye red, right eye blue) is a tool of the proof, not of the Throw: a
+    # session without it fails the pair rows instead of stopping
+    try:
+        fixture = subprocess.Popen(["/tools/bin/capturefixture", os.path.join(OUT, "pair.png"), "1920", "1080", "stereo"],
+                                   stdout=subprocess.DEVNULL, stderr=open(os.path.join(OUT, "fixture.log"), "w"))
+    except OSError as exc:
+        log(f"the capture fixture cannot start: {exc}")
+        fixture = None
     time.sleep(2)
     rc, out = throw(LIVING)
     time.sleep(2)
@@ -240,7 +246,8 @@ def main():
     left, right = means(frame) if frame else ((0, 0, 0), (0, 0, 0))
     row("P3", f"2D: one view, the left eye's red over the whole frame (means {left} {right})", (True, True),
         (near(left, (255, 0, 0)), near(right, (255, 0, 0))))
-    fixture.terminate()
+    if fixture:
+        fixture.terminate()
 
     # --- failures said (red rows on purpose)
     rc, out = throw(BEDROOM, 30)
@@ -347,6 +354,14 @@ def make_pair():
 
 
 try:
+    if CLI == "sparky-stereo-throw":
+        # the installed package only: the session bus started the daemon from its service file (session.sh)
+        try:
+            text = open(os.path.join(OUT, "activation.txt")).read()
+        except OSError:
+            text = ""
+        row("S1", "the session bus starts the installed daemon from its D-Bus service file (its executable)",
+            True, "executable /usr/lib/x86_64-linux-gnu/libexec/sparky-stereo-throwd" in text)
     make_pair()
     main()
     pages()

@@ -41,10 +41,8 @@ def write(path, lang):
         f.write("\n".join(out))
 
 
-# the daemon and the command translate in their own domain; the page's QML in the KCM's plugin id (KCMUtils' context),
-# so the same table is written under both names
-for domain in (DOMAIN, "kcm_sparkystereo_throw"):
-    write(os.path.join(PO, domain + ".pot"), None)
-    for lang in strings.LANGS:
-        write(os.path.join(PO, lang, domain + ".po"), lang)
+# one domain: the daemon, the command and the page (its QML names the domain with i18ndc)
+write(os.path.join(PO, DOMAIN + ".pot"), None)
+for lang in strings.LANGS:
+    write(os.path.join(PO, lang, DOMAIN + ".po"), lang)
 print("wrote", len(strings.LANGS), "catalogues and the template")

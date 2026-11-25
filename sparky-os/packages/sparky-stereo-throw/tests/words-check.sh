@@ -22,3 +22,13 @@ faults=$?
 cat "$BAD.out"
 rm -f "$BAD.out"
 [ "$faults" = 3 ] && echo "RESULT: the check fails the bad copy with 3 faults" || { echo "FAIL: the bad copy gave $faults faults, 3 expected"; exit 1; }
+# every sentence the code shows is in the table: the recipe passes, a copy whose page shows one more sentence fails
+python3 -I "$TOOLS/check-sources.py" "$HERE/.." || { echo "FAIL: a sentence of the sources is not in the table"; exit 1; }
+COPY=$(mktemp -d)
+trap 'rm -rf "$BAD" "$COPY"' EXIT
+cp -r "$HERE/../kcm" "$HERE/../src" "$COPY/"
+mkdir -p "$COPY/po" && ln -s "$TOOLS" "$COPY/po/tools"
+sed -i 's|text: i18ndc("sparky-stereo-throw", "@info no Cast device announced itself"|text: i18ndc("sparky-stereo-throw", "@info", "A sentence nobody translated.") + i18ndc("sparky-stereo-throw", "@info no Cast device announced itself"|' "$COPY/kcm/ui/main.qml"
+python3 -I "$TOOLS/check-sources.py" "$COPY"
+missing=$?
+[ "$missing" = 1 ] && echo "RESULT: the sources check fails the copy with 1 missing sentence" || { echo "FAIL: the copy gave $missing, 1 expected"; exit 1; }

@@ -32,6 +32,21 @@ KWIN_WAYLAND_NO_PERMISSION_CHECKS=${CHECKS} KWIN_SCREENSHOT_NO_PERMISSION_CHECKS
 for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/w0" ] && break; sleep 0.1; done
 export WAYLAND_DISPLAY=w0
 sleep 2
+if [ -z "$CHECKS" ]; then
+    # the installed package as a person's session starts it: the session bus has the session's environment (Plasma's
+    # login gives it), then starts the daemon from its D-Bus service file; the started executable is recorded, then it is
+    # ended and started again by hand only so that its log is kept for the rows
+    dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.UpdateActivationEnvironment \
+        dict:string:string:WAYLAND_DISPLAY,w0,XDG_RUNTIME_DIR,"$XDG_RUNTIME_DIR",HOME,"$HOME" > /dev/null 2>&1
+    if dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.StartServiceByName \
+        string:org.sparky.Throw uint32:0 > "$OUT/activation.txt" 2>&1; then
+        pid=$(dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.GetConnectionUnixProcessID \
+            string:org.sparky.Throw 2>/dev/null | awk '/uint32/ {print $2}')
+        echo "activated: pid $pid, executable $(readlink "/proc/$pid/exe" 2>/dev/null)" >> "$OUT/activation.txt"
+        [ -n "$pid" ] && kill "$pid"
+        for i in $(seq 1 50); do dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner string:org.sparky.Throw 2>/dev/null | grep -q true || break; sleep 0.2; done
+    fi
+fi
 QT_LOGGING_RULES='org.sparky.throw.debug=true' "$DAEMON" > "$OUT/throwd.log" 2>&1 &
 for i in $(seq 1 50); do dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner string:org.sparky.Throw 2>/dev/null | grep -q true && break; sleep 0.2; done
 echo "daemon $DAEMON, command $CLI, KWin permission checks $([ -n "$CHECKS" ] && echo off || echo on)" > "$OUT/session.txt"
