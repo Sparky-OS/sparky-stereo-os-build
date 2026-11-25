@@ -15,13 +15,17 @@ Last-Update: 2026-11-25
  
  #include <chrono>
  
-@@ -80,12 +83,35 @@
+@@ -80,12 +83,39 @@
          const int limit = qMin(fixedLimit, percLimit);
          const qint64 avail = available / (1024 * 1024); // to MiB
  
-+        const auto observe = [this](const QString &state) {
++        const auto observe = [this, available, size](const QString &state) {
 +            const auto helper = QStringLiteral("/usr/libexec/sparky-storage-cleanup-space");
-+            return QFileInfo(helper).isExecutable() && QProcess::startDetached(helper, {state, m_path});
++            QStringList arguments{state, m_path};
++            if (state == QStringLiteral("low")) {
++                arguments << QString::number(available) << QString::number(size);
++            }
++            return QFileInfo(helper).isExecutable() && QProcess::startDetached(helper, arguments);
 +        };
          if (avail >= limit) {
 +            observe(QStringLiteral("recovered"));

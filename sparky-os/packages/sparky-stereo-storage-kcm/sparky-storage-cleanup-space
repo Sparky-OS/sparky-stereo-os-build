@@ -5,14 +5,17 @@
 import configparser
 import hashlib
 import json
+import locale
 import os
 from pathlib import Path
 import subprocess
 import sys
 
-if len(sys.argv) != 3 or sys.argv[1] not in ('low', 'recovered') or not os.path.isabs(sys.argv[2]):
+if len(sys.argv) < 3 or sys.argv[1] not in ('low', 'recovered') or not os.path.isabs(sys.argv[2]):
     sys.exit(2)
-state, volume = sys.argv[1:]
+state, volume, *sample = sys.argv[1:]
+if sample and (state != 'low' or len(sample) != 2):
+    sys.exit(2)
 package = 'sparky-stereo-storage-kcm'
 key = 'volume-' + hashlib.sha256(os.fsencode(volume)).hexdigest()
 engine = ['/usr/bin/sparky-stereo-problems']
@@ -21,10 +24,41 @@ config = configparser.ConfigParser(interpolation=None)
 config.read(rc)
 if state == 'recovered' or config.getint('General', 'scheduleMode', fallback=2) != 2:
     sys.exit(subprocess.call([*engine, 'clear', '--person', package, key]))
+if sample:
+    available, total = map(int, sample)
+else:
+    # The earlier notifier supplied just the volume. Allow that caller
+    # during an upgrade, using the same filesystem's current figures.
+    stats = os.statvfs(volume)
+    available = stats.f_bavail * stats.f_frsize
+    total = stats.f_blocks * stats.f_frsize
+if not 0 <= available <= total:
+    sys.exit(2)
+
+locale.setlocale(locale.LC_NUMERIC, '')
+
+
+def format_size(size):
+    if size < 1024:
+        return f'{size} B'
+    units = ('KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB')
+    for exponent, unit in reversed(list(enumerate(units, 1))):
+        if size >= 1024 ** exponent:
+            number = locale.format_string('%.1f', size / 1024 ** exponent, grouping=True)
+            return f'{number} {unit}'
+
+
 action = {
     'id': 'storage-cleanup',
     'label': ['LOCAL2'],
     'command': ['/usr/bin/sparky-open-storage-cleanup', volume, 'preview'],
 }
+# The volume identifies the problem. Updated sample figures should keep its
+# generation and any dismissal until the detector reports recovery.
+details = {
+    'data': {'availableBytes': available, 'totalBytes': total},
+    'more': [['LOCAL8', format_size(available), format_size(total)]],
+}
 sys.exit(subprocess.call([*engine, 'keep', '--person', '--severity', 'notice', '--action',
-                          json.dumps(action), package, key, 'LOCAL1', volume]))
+                          json.dumps(action), '--details', json.dumps(details),
+                          package, key, 'LOCAL5', volume]))

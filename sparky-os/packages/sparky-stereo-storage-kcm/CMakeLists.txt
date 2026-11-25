@@ -24,5 +24,6 @@ find_program(SPARKY_PROBLEMS sparky-stereo-problems REQUIRED)
 add_custom_target(problem_catalogs ALL
     COMMAND ${SPARKY_PROBLEMS} catalog sparky-stereo-storage-kcm
         "${CMAKE_CURRENT_SOURCE_DIR}/lang" "${CMAKE_CURRENT_BINARY_DIR}/catalogs"
+        --subject LOCAL1=LOCAL5 --subject LOCAL3=LOCAL6 --subject LOCAL4=LOCAL7
     VERBATIM)
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/catalogs/" DESTINATION lib/systemd/catalog)
