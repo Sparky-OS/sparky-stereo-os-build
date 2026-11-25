@@ -21,10 +21,12 @@ namespace
 {
 const int HAND_REST = 10; // XScreenSaver's own pointer hysteresis, in pixels
 
+/* The screen's width in device pixels. At a fractional scale the screen reports the next whole ratio (2 at 125 %)
+ * while its size is in the desktop's own pixels and the window draws at the real ratio: the window's ratio is the one. */
 double screenWidth(const QWindow *window)
 {
     const QScreen *screen = window ? window->screen() : nullptr;
-    return screen ? screen->size().width() * screen->devicePixelRatio() : 0;
+    return screen ? screen->size().width() * window->devicePixelRatio() : 0;
 }
 }
 
