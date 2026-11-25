@@ -3,6 +3,7 @@
 #include "streamer.h"
 #include "logging.h"
 
+#include <QHash>
 #include <QRandomGenerator>
 #include <QTimer>
 #include <QUdpSocket>
@@ -84,6 +85,18 @@ AVCodecID videoCodecId(const QString &codec)
     return AV_CODEC_ID_H264;
 }
 
+AVCodecID soundCodecId(const QString &sound)
+{
+    static const QHash<QString, AVCodecID> ids = {
+        {QStringLiteral("pcm24"), AV_CODEC_ID_PCM_S24LE}, {QStringLiteral("pcm16"), AV_CODEC_ID_PCM_S16LE},
+        {QStringLiteral("flac"), AV_CODEC_ID_FLAC},       {QStringLiteral("opus"), AV_CODEC_ID_OPUS},
+        {QStringLiteral("aac"), AV_CODEC_ID_AAC},         {QStringLiteral("vorbis"), AV_CODEC_ID_VORBIS},
+        {QStringLiteral("mp3"), AV_CODEC_ID_MP3},         {QStringLiteral("ac3-5.1"), AV_CODEC_ID_AC3},
+        {QStringLiteral("eac3-5.1"), AV_CODEC_ID_EAC3},
+    };
+    return ids.value(sound, AV_CODEC_ID_FLAC);
+}
+
 QString averror(int code)
 {
     char text[AV_ERROR_MAX_STRING_SIZE] = {};
@@ -162,13 +175,18 @@ bool Muxer::begin(const QByteArray &keyFrame)
         st->time_base = AVRational{1, m_tracks.rate};
         AVCodecParameters *par = st->codecpar;
         par->codec_type = AVMEDIA_TYPE_AUDIO;
-        par->codec_id = m_tracks.audioCodec == QLatin1String("opus") ? AV_CODEC_ID_OPUS : AV_CODEC_ID_FLAC;
+        par->codec_id = soundCodecId(m_tracks.audioCodec);
         par->sample_rate = m_tracks.rate;
         av_channel_layout_default(&par->ch_layout, m_tracks.channels);
         par->frame_size = m_tracks.audioFrameSize;
         par->initial_padding = m_tracks.audioInitialPadding;
         if (par->codec_id == AV_CODEC_ID_FLAC) {
             par->bits_per_raw_sample = 24;
+        }
+        if (par->codec_id == AV_CODEC_ID_PCM_S24LE || par->codec_id == AV_CODEC_ID_PCM_S16LE) {
+            // Matroska's A_PCM/INT/LIT says its depth in BitDepth
+            par->bits_per_coded_sample = av_get_bits_per_sample(par->codec_id);
+            par->block_align = par->bits_per_coded_sample / 8 * m_tracks.channels;
         }
         if (!m_tracks.audioExtradata.isEmpty()) {
             par->extradata = static_cast<uint8_t *>(av_mallocz(m_tracks.audioExtradata.size() + AV_INPUT_BUFFER_PADDING_SIZE));
@@ -305,6 +323,10 @@ bool Streamer::start(const Plan &plan, quint64 objectSerial, quint32 node, const
         const bool vpx = plan.info.codec == QLatin1String("vp8") || plan.info.codec == QLatin1String("vp9");
         m_encoder->setEncodingPreference(vpx ? PipeWireBaseEncodedStream::NoPreference : PipeWireBaseEncodedStream::Speed);
         m_encoder->setMaxFramerate(quint32(plan.mode.hz), 1);
+        // KWin sends a frame only when the screen changes; a still screen gave a Cast receiver two pictures and then none,
+        // and its player waited for the next one for ever (row 81, part D, on a real Chromecast). KPipeWire encodes the last
+        // frame again at the mode's rate while no new one comes, as GNOME Network Displays' intervideosrc does.
+        m_encoder->setConstantFramerate(true);
         connect(m_encoder.get(), &PipeWireEncodedStream::newPacket, this, &Streamer::onVideoPacket);
         connect(m_encoder.get(), &PipeWireBaseEncodedStream::errorFound, this, [this](const QString &error) {
             qCWarning(THROW) << "encoder:" << error;
@@ -330,10 +352,10 @@ bool Streamer::start(const Plan &plan, quint64 objectSerial, quint32 node, const
 
 bool Streamer::openAudioEncoder()
 {
-    const bool opus = m_plan.info.audioCodec == QLatin1String("opus");
-    const AVCodec *codec = avcodec_find_encoder_by_name(opus ? "libopus" : "flac");
+    const Sound sound = Codecs::sound(m_plan.info.audioCodec);
+    const AVCodec *codec = avcodec_find_encoder_by_name(sound.encoder.toUtf8().constData());
     if (!codec) {
-        m_error = QStringLiteral("libavcodec has no %1 encoder").arg(opus ? QStringLiteral("Opus") : QStringLiteral("FLAC"));
+        m_error = QStringLiteral("libavcodec has no %1 encoder (%2)").arg(sound.label, sound.encoder);
         return false;
     }
     m_audio = avcodec_alloc_context3(codec);
@@ -341,16 +363,34 @@ bool Streamer::openAudioEncoder()
     av_channel_layout_default(&m_audio->ch_layout, m_plan.audioChannels);
     m_audio->time_base = AVRational{1, m_plan.audioRate};
     AVDictionary *options = nullptr;
-    if (opus) {
-        m_audio->sample_fmt = AV_SAMPLE_FMT_FLT;
-        m_audio->bit_rate = 256000;
+    // the sample layout the encoder takes, the deepest first: float, then 32, then 16 bit
+    const AVSampleFormat *formats = nullptr;
+    avcodec_get_supported_config(m_audio, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, reinterpret_cast<const void **>(&formats), nullptr);
+    AVSampleFormat chosen = AV_SAMPLE_FMT_NONE;
+    for (AVSampleFormat want : {AV_SAMPLE_FMT_FLT, AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_S32, AV_SAMPLE_FMT_S32P, AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_S16P}) {
+        for (const AVSampleFormat *f = formats; f && *f != AV_SAMPLE_FMT_NONE; ++f) {
+            if (*f == want) {
+                chosen = want;
+                break;
+            }
+        }
+        if (chosen != AV_SAMPLE_FMT_NONE) {
+            break;
+        }
+    }
+    m_audio->sample_fmt = chosen != AV_SAMPLE_FMT_NONE ? chosen : (formats ? formats[0] : AV_SAMPLE_FMT_FLT);
+    if (sound.bitRate > 0) {
+        m_audio->bit_rate = sound.bitRate;
+    }
+    if (sound.id == QLatin1String("opus")) {
         av_dict_set(&options, "application", "audio", 0);
         av_dict_set(&options, "frame_duration", "20", 0);
-    } else {
+    } else if (sound.id == QLatin1String("flac")) {
         // 24 bit lossless; the samples are given as 32-bit integers and the encoder keeps their top 24 bits
-        m_audio->sample_fmt = AV_SAMPLE_FMT_S32;
         m_audio->bits_per_raw_sample = 24;
         av_dict_set(&options, "compression_level", "5", 0);
+    } else if (sound.id == QLatin1String("pcm24")) {
+        m_audio->bits_per_raw_sample = 24;
     }
     const int ret = avcodec_open2(m_audio, codec, &options);
     av_dict_free(&options);
@@ -362,6 +402,7 @@ bool Streamer::openAudioEncoder()
     m_fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLT, m_plan.audioChannels, 8192);
     m_frame = av_frame_alloc();
     m_frame->format = m_audio->sample_fmt;
+    // PCM has no frame size of its own: 1024 samples (21 ms at 48 kHz) a block
     m_frame->nb_samples = m_audio->frame_size > 0 ? m_audio->frame_size : 1024;
     av_channel_layout_copy(&m_frame->ch_layout, &m_audio->ch_layout);
     m_frame->sample_rate = m_plan.audioRate;
@@ -401,13 +442,25 @@ void Streamer::encodeAudio()
             break;
         }
         const auto *in = reinterpret_cast<const float *>(block.constData());
-        if (m_audio->sample_fmt == AV_SAMPLE_FMT_FLT) {
-            memcpy(m_frame->data[0], in, size_t(frameSize) * channels * sizeof(float));
-        } else {
-            auto *out = reinterpret_cast<int32_t *>(m_frame->data[0]);
-            for (int i = 0; i < frameSize * channels; ++i) {
-                const double v = std::clamp(double(in[i]), -1.0, 1.0);
-                out[i] = int32_t(std::lrint(v * 2147483647.0));
+        const AVSampleFormat fmt = AVSampleFormat(m_frame->format);
+        const bool planar = av_sample_fmt_is_planar(fmt);
+        for (int i = 0; i < frameSize * channels; ++i) {
+            const int ch = i % channels, n = i / channels;
+            const double v = std::clamp(double(in[i]), -1.0, 1.0);
+            const int index = planar ? n : i;
+            uint8_t *plane = m_frame->data[planar ? ch : 0];
+            switch (av_get_packed_sample_fmt(fmt)) {
+            case AV_SAMPLE_FMT_FLT:
+                reinterpret_cast<float *>(plane)[index] = float(v);
+                break;
+            case AV_SAMPLE_FMT_S32:
+                reinterpret_cast<int32_t *>(plane)[index] = int32_t(std::lrint(v * 2147483647.0));
+                break;
+            case AV_SAMPLE_FMT_S16:
+                reinterpret_cast<int16_t *>(plane)[index] = int16_t(std::lrint(v * 32767.0));
+                break;
+            default:
+                break;
             }
         }
         m_frame->pts = m_samplesOut;

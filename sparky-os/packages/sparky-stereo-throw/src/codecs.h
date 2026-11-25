@@ -19,7 +19,7 @@ struct CodecInfo {
     int encoder = 0; // PipeWireBaseEncodedStream::Encoder, 0 none
     QString format; // libavformat muxer: matroska, mp4, webm, ogg
     QString mime; // what the device is asked to load
-    QString audioCodec; // flac or opus
+    QString audioCodec; // the sound: one of Codecs::sounds()' ids
 };
 
 // a sentence for the person: its translation context, its message with %1.., its arguments
@@ -35,12 +35,23 @@ struct Said {
     QString translated() const;
 };
 
+// a sound a Throw can carry: what plays it, and whether it keeps every bit of the source
+struct Sound {
+    QString id; // pcm24, flac, pcm16, opus, aac, vorbis, mp3, ac3-5.1, eac3-5.1
+    QString label;
+    QString encoder; // libavcodec's encoder
+    int channels = 2;
+    bool lossless = false;
+    int bitRate = 0; // the compressed ones
+};
+
 struct Plan {
     bool video = true;
     CodecInfo info;
     Mode mode;
     int audioRate = 48000;
     int audioChannels = 2;
+    QString soundChoice; // the person's sound for the device ("" for the table's pick)
     Said error; // why this Throw cannot be made as chosen (empty when it can)
     Said limited; // why the device gets less than it can show (empty when it gets its best)
 };
@@ -56,8 +67,21 @@ QString missing(const QString &codec);
 Plan plan(const ModelRow &row, const QString &chosenCodec, const QString &chosenMode);
 // the same, with the codecs this computer encodes given (tests)
 Plan plan(const ModelRow &row, const QString &chosenCodec, const QString &chosenMode, const QStringList &here);
+// the whole plan: the person's codec, mode and sound for the device ("" for the table's picks), the sounds that did not
+// start on this device, and the codecs this computer encodes
+Plan plan(const ModelRow &row, const QString &chosenCodec, const QString &chosenMode, const QString &chosenSound,
+          const QStringList &failedSounds, const QStringList &here);
 // the sound a plan carries (the device's page says it)
 Said soundWords(const Plan &plan);
+// every sound a Throw can carry, best first: lossless before compressed, stereo before the 5.1 ones (a 5.1 sound is the
+// person's choice; nothing is upmixed)
+const QList<Sound> &sounds();
+Sound sound(const QString &id);
+// the sounds a container carries, best first
+QStringList soundsFor(const QString &format);
+// the sound of a plan: the person's choice when the container carries it (else an error), otherwise the best stereo
+// sound the container carries that has not failed on this device
+void pickSound(Plan &plan, const QString &chosen, const QStringList &failedOnDevice);
 }
 
 } // namespace Throw

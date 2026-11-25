@@ -31,6 +31,10 @@ else
     CLI=/tools/bin/sparky-stereo-throw
     CHECKS=1
     export XDG_DATA_DIRS=/tools/share:/usr/share
+    # a development KPipeWire (part D: the constant frame rate) comes before the system's
+    [ -d /tools/lib ] && export LD_LIBRARY_PATH=/tools/lib
+    # its frame statistics in the daemon's log (frames processed each second)
+    [ -d /tools/lib ] && export THROW_DEV_LOGGING='kpipewire_record_framestatistics.debug=true;'
 fi
 KWIN_WAYLAND_NO_PERMISSION_CHECKS=${CHECKS} KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1 QT_LOGGING_RULES='kwin_screencast.debug=true;kwin_core.debug=false' \
     kwin_wayland --virtual --output-count 1 --width 1280 --height 1440 --socket=w0 > "$OUT/kwin.log" 2>&1 &
@@ -52,7 +56,7 @@ if [ -z "$CHECKS" ]; then
         for i in $(seq 1 50); do dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner string:org.sparky.Throw 2>/dev/null | grep -q true || break; sleep 0.2; done
     fi
 fi
-QT_LOGGING_RULES='org.sparky.throw.debug=true' "$DAEMON" > "$OUT/throwd.log" 2>&1 &
+QT_LOGGING_RULES="${THROW_DEV_LOGGING:-}org.sparky.throw.debug=true" "$DAEMON" > "$OUT/throwd.log" 2>&1 &
 COPY=$!
 # Nothing of this session is a client of the name before the scenario starts (PipeWire, WirePlumber, KWin and the
 # notification stand-in never ask for it), so nothing can make the bus start the daemon in the gap; and the scenario

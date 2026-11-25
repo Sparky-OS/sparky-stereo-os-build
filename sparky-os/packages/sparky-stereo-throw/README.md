@@ -16,9 +16,11 @@ The person throws the desktop to it from the Throw page in System Settings or wi
    A device that connects gets the current group of pictures at once, then the live packets, so a still screen shows too.
    The server listens on this computer's address that faces the device and answers that device only; a connection that sends no request within 5 seconds is closed.
    The picture and the sound travel unencrypted between this computer and the device, as the device's own player fetches them.
-5. **The sound:** a PipeWire sink named "Throw: <device>" exists while the Throw runs; the person chooses it as any output, and what plays into it travels in the same stream (FLAC, 24 bit, 48 kHz, lossless, in Matroska and MP4; Opus in WebM, which carries Opus or Vorbis only). A speaker or a group gets a Throw of the sound alone (FLAC in Ogg).
+5. **The sound:** a PipeWire sink named "Throw: <device>" exists while the Throw runs; the person chooses it as any output, and what plays into it travels in the same stream. Its format is a choice on the device's page: by default the best stereo sound the stream carries that has not failed on that device (24-bit PCM, lossless, in Matroska; FLAC in MP4; Opus in WebM, which carries Opus or Vorbis only), or PCM 16 bit, FLAC, Opus, AAC, Vorbis, MP3, Dolby Digital or Dolby Digital Plus 5.1 (a stereo source then plays on the front speakers; nothing is upmixed). What a device played, or did not start playing, is kept for it by its identity. A speaker or a group gets a Throw of the sound alone (FLAC in Ogg).
+   The picture keeps coming on a still screen: KPipeWire encodes the last frame again at the mode's rate, as a receiver's player waits for the next picture of a live stream.
 6. **The channel:** CASTv2 over TLS on the device's port, with no device authentication asked (as pychromecast and GNOME Network Displays send); `LAUNCH` of the Default Media Receiver (`CC1AD845`), `LOAD` of the stream as `LIVE`.
    The heartbeat is answered and watched: three missed PONGs and the device is gone, which is said.
+   A Throw the device does not play within 60 seconds is ended and said with what the device reported; every message of the channel is in the debug log (`QT_LOGGING_RULES=org.sparky.throw.debug=true`), the stream's token taken out.
 7. **Saying what happened:** a running Throw's events through KNotification (`sparkystereothrow.notifyrc`).
    Every failure is kept in the edition's problems engine under `throw:<id>` until a Throw to that device works again, in the person's language.
 

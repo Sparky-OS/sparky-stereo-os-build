@@ -14,7 +14,7 @@ mkdir -p "$OUT/devices"
 ip link set lo up
 ip link add dummy0 type dummy
 ip link set dummy0 multicast on
-for n in 1 2 3 4 5 6; do ip addr add 10.81.0.$n/24 dev dummy0; done
+for n in 1 2 3 4 5 6 7 8; do ip addr add 10.81.0.$n/24 dev dummy0; done
 ip link set dummy0 up
 ip -brief addr > "$OUT/net.txt"
 ip route >> "$OUT/net.txt"
@@ -42,6 +42,8 @@ devices=(
     "10.81.0.4 cast-hall.local|Hall TV|Chromecast|no-pong|5d7a9c4e81ab4c3d9e2f000000000084"
     "10.81.0.5 cast-den.local|Den TV|Google TV Streamer|normal|5d7a9c4e81ab4c3d9e2f000000000085"
     "10.81.0.6 cast-kitchen.local|Kitchen speaker|Google Nest Mini|normal|5d7a9c4e81ab4c3d9e2f000000000086"
+    "10.81.0.7 cast-player.local|Player TV|Chromecast|chromium|5d7a9c4e81ab4c3d9e2f000000000087"
+    "10.81.0.8 cast-stuck.local|Stuck TV|Chromecast|never-plays|5d7a9c4e81ab4c3d9e2f000000000088"
 )
 for entry in "${devices[@]}"; do
     IFS='|' read -r addrhost name model mode id <<< "$entry"
@@ -49,9 +51,12 @@ for entry in "${devices[@]}"; do
     host=${addrhost#* }
     dir="$OUT/devices/$id"
     mkdir -p "$dir"
+    # "chromium": a device whose player is a real one (part D's stand-in, Debian's Chromium in a media element)
+    player=none
+    [ "$mode" = chromium ] && { mode=normal; player=chromium; }
     chown 1000:1000 "$dir"
     setpriv --reuid=1000 --regid=1000 --clear-groups python3 -I "$T/fake-cast-device.py" --bind "$addr" --log "$dir/device.log" \
-        --cert "$OUT/devices/cert.pem" --key "$OUT/devices/key.pem" --out "$dir" --mode "$mode" --name "$name" --model "$model" \
+        --cert "$OUT/devices/cert.pem" --key "$OUT/devices/key.pem" --out "$dir" --mode "$mode" --player "$player" --name "$name" --model "$model" \
         --udn "$id" --seconds 900 > "$dir/stdout.log" 2>&1 &
     avahi-publish -a -R "$host" "$addr" > "$dir/avahi-address.log" 2>&1 &
     avahi-publish -s -H "$host" "$name" _googlecast._tcp 8009 "id=$id" "fn=$name" "md=$model" "ca=4101" "ve=05" "rs=" \

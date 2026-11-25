@@ -22,6 +22,8 @@ STUDY = "5d7a9c4e81ab4c3d9e2f000000000083"
 HALL = "5d7a9c4e81ab4c3d9e2f000000000084"
 DEN = "5d7a9c4e81ab4c3d9e2f000000000085"
 KITCHEN = "5d7a9c4e81ab4c3d9e2f000000000086"
+PLAYER = "5d7a9c4e81ab4c3d9e2f000000000087"  # its player is Chromium in a media element
+STUCK = "5d7a9c4e81ab4c3d9e2f000000000088"  # it fetches and never plays
 TONE_HZ = 997
 CATALOGUE = {"ja_JP": "ja"}  # a locale and the folder of its catalogues
 rows = []
@@ -366,9 +368,9 @@ def stop(id_):
 
 def main():
     # --- discovery
-    found = wait_for(lambda: (lambda d: d if len(d) >= 6 else None)(devices()), 30) or devices()
-    row("D1", "the six devices announced on the network are found by themselves (ids)",
-        sorted([LIVING, BEDROOM, STUDY, HALL, DEN, KITCHEN]), sorted(found))
+    found = wait_for(lambda: (lambda d: d if len(d) >= 8 else None)(devices()), 30) or devices()
+    row("D1", "the eight devices announced on the network are found by themselves (ids)",
+        sorted([LIVING, BEDROOM, STUDY, HALL, DEN, KITCHEN, PLAYER, STUCK]), sorted(found))
     d = found.get(LIVING, {})
     row("D2", "a device as it names itself: name, model, address", ("Living room TV", "Chromecast", "10.81.0.1"),
         (d.get("name"), d.get("model"), d.get("address")))
@@ -382,7 +384,7 @@ def main():
     except (json.JSONDecodeError, KeyError):
         names = []
     row("D4", "the devices are listed in the order of their names",
-        ["Bedroom TV", "Den TV", "Hall TV", "Kitchen speaker", "Living room TV", "Study screen"], names)
+        ["Bedroom TV", "Den TV", "Hall TV", "Kitchen speaker", "Living room TV", "Player TV", "Stuck TV", "Study screen"], names)
 
     # --- a Throw to a first-generation Chromecast
     name = f"Virtual-{LIVING}"
@@ -501,8 +503,8 @@ def main():
     info = probe_info(LIVING, n) or {}
     acodec = next((x.get("codec_name") for x in info.get("streams", []) if x.get("codec_type") == "audio"), None)
     samples = audio_pcm(cap) if cap else []
-    row("A2", f"a {TONE_HZ} Hz tone played into it is in the stream the device fetched, at that frequency (FLAC in Matroska)",
-        ("flac", True), (acodec, tone_at(samples, TONE_HZ)))
+    row("A2", f"a {TONE_HZ} Hz tone played into it is in the stream the device fetched, at that frequency (24-bit PCM in Matroska, the default sound since 0.3.0)",
+        ("pcm_s24le", True), (acodec, tone_at(samples, TONE_HZ)))
     a_on = audio_onset(samples)
     a_t = audio_start(cap) + a_on if a_on is not None else None
     v_t = video_red_onset(cap) if cap else None
@@ -595,7 +597,7 @@ def main():
     except OSError:
         fixture = None
     time.sleep(2)
-    for rid, dev, codec, mode, expect in (("E2", DEN, "h264", "1920x1080@30", ("h264", 1920, 1080, "video/x-matroska", "flac")),
+    for rid, dev, codec, mode, expect in (("E2", DEN, "h264", "1920x1080@30", ("h264", 1920, 1080, "video/x-matroska", "pcm_s24le")),
                                          ("E3", LIVING, "vp8", "1920x1080@30", ("vp8", 1920, 1080, "video/webm", "opus"))):
         choose(dev, codec, mode)
         k = len(loads(dev)) + 1
@@ -785,7 +787,7 @@ def restart_daemon(lang):
         f.write("\n".join(record) + "\n")
     log("restart " + "; ".join(record))
     if holds:
-        wait_for(lambda: (lambda d: d if len(d) >= 6 else None)(devices()), 30)
+        wait_for(lambda: (lambda d: d if len(d) >= 8 else None)(devices()), 30)
     return holds
 
 
@@ -837,7 +839,7 @@ def pages():
     row("C5", "the daemon's own words in the session's language (pt_BR): the process that owns its name was started in "
         "pt_BR, then the short words, the generation, the sound", (True, "1ª a 3ª geração", True, True),
         (in_pt, d.get("short"), d.get("generation", "").startswith("Chromecast, primeira"),
-         d.get("sound", "").startswith("FLAC, 24 bits")))
+         d.get("sound", "").startswith("PCM, 24 bit, 48 kHz, 2 canais (sem perdas)")))
     third = page("living-room-pt_BR", ["--args", f"device={LIVING}"], "pt_BR")
     row("C3", "the device's page in Brazilian Portuguese (caption \"Throw (jogar)\", setup requests) is captured",
         (True, True, True), (any(c.startswith("Throw (jogar)") for c in third["captions"]), third["asked"] > 0, third["captured"]))
@@ -849,6 +851,75 @@ def pages():
         (any(c.startswith("Throw (送る)") for c in fourth["captions"]), pages_ja["captured"], fourth["captured"], in_ja))
     # back to the session's language: nothing reads the daemon after it, so its check is logged (throwd-C.txt)
     log(f"back in the session's language: {restart_daemon(None)}")
+
+
+def status_of(id_):
+    rc, out, _ = run(CLI, "status", id_)
+    try:
+        return json.loads(out) if rc == 0 else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def picture_rate(path):
+    """Pictures a second in a captured stream: video packets over the span of their times."""
+    rc, out, _ = run("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", path)
+    times = [float(x) for x in out.split() if x.replace(".", "", 1).isdigit()]
+    if len(times) < 2 or times[-1] <= times[0]:
+        return 0.0, len(times)
+    return (len(times) - 1) / (times[-1] - times[0]), len(times)
+
+
+def partd():
+    """Part D: a receiver that plays like one, the picture that keeps coming, the sound by the table and by choice, the
+    device's messages in the log, and a Throw that does not play ended and said."""
+    rc, _ = throw(PLAYER, 40)
+    t0, first = time.monotonic(), None
+    while time.monotonic() - t0 < 45:
+        st = status_of(PLAYER)
+        if st.get("playerState") == "PLAYING" and (st.get("currentTime") or 0) > 2:
+            first = round(time.monotonic() - t0, 1)
+            break
+        time.sleep(1)
+    log(f"DP1 the stand-in played after {first} s; status {status_of(PLAYER)}")
+    row("DP1", "a receiver that plays like one (Chromium in a media element) plays a Throw of a still screen: PLAYING, its time "
+        "past 2 s, within 45 s", True, first is not None)
+    time.sleep(5)
+    stop(PLAYER)
+    wait_for(lambda: probe_info(PLAYER, 1), 60)
+    cap = capture(PLAYER, 1)
+    rate, count = picture_rate(cap) if cap else (0.0, 0)
+    log(f"DP2 {count} pictures, {rate:.1f} a second in {cap}")
+    row("DP2", "the picture keeps coming on a still screen: at least 20 pictures a second in the stream the device fetched", True, rate >= 20)
+    info = probe_info(PLAYER, 1) or {}
+    audio = next((x for x in info.get("streams", []) if x.get("codec_type") == "audio"), {})
+    row("DP3", "the sound is the table's pick: PCM 24 bit, 2 channels, in Matroska", ("pcm_s24le", 2, True),
+        (audio.get("codec_name"), audio.get("channels"), "matroska" in (info.get("format") or {}).get("format_name", "")))
+    text = open(os.path.join(OUT, "throwd.log")).read()
+    load = next(iter(loads(PLAYER)), {})
+    token = (load.get("contentId", "").rsplit("/", 1)[-1].split(".")[0]) if load else ""
+    row("DP4", "every Cast message is in the daemon's debug log (the device's MEDIA_STATUS in, the LOAD out), the stream's token taken out",
+        (True, True, False), ("cast in" in text and "MEDIA_STATUS" in text, "cast out" in text and '"type":"LOAD"' in text,
+                              bool(token) and token in text))
+    rc, _ = throw(STUCK, 40)
+    wait_for(lambda: (lambda d: d if d.get("state") == "failed" else None)(devices().get(STUCK, {})), 90)
+    d = devices().get(STUCK, {})
+    log(f"DP5 {d.get('state')}: {d.get('detail')}")
+    row("DP5", "a Throw the device does not play is ended within 60 s and said, with what the device said", ("failed", True),
+        (d.get("state"), "did not start playing within 60 seconds (it said BUFFERING" in (d.get("detail") or "")))
+    row("DP6", "the sound that did not start is kept for that device: its next Throw takes FLAC", "flac", d.get("soundId"))
+    run(CLI, "sound", LIVING, "ac3-5.1")
+    n = len(loads(LIVING)) + 1
+    throw_for(LIVING, 6)
+    wait_for(lambda: probe_info(LIVING, n), 60)
+    info = probe_info(LIVING, n) or {}
+    audio = next((x for x in info.get("streams", []) if x.get("codec_type") == "audio"), {})
+    run(CLI, "sound", LIVING, "-")
+    row("DP7", "Dolby Digital 5.1 chosen on the device's page: the stream carries AC-3 with 6 channels", ("ac3", 6),
+        (audio.get("codec_name"), audio.get("channels")))
+    rc, out, _ = run(CLI, "sound", DEN, "pcm24")
+    row("DP8", "PCM chosen for a stream that cannot carry it (HEVC in MP4) is refused, the choice unchanged", (1, ""),
+        (rc, devices().get(DEN, {}).get("choiceSound", "")))
 
 
 def make_pair():
@@ -868,8 +939,13 @@ try:
         row("S1", "the session bus starts the installed daemon from its D-Bus service file (its executable)",
             True, "executable /usr/lib/x86_64-linux-gnu/libexec/sparky-stereo-throwd" in text)
     make_pair()
-    main()
-    pages()
+    # a file "only-partd" beside this script runs part D's rows alone (a development loop)
+    if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "only-partd")):
+        partd()
+    else:
+        main()
+        partd()
+        pages()
 finally:
     with open(os.path.join(OUT, "rows.tsv"), "w") as f:
         f.write("row\tclaim\texpected\tmeasured\tresult\n")

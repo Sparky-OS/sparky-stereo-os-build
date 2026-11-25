@@ -1,3 +1,16 @@
+sparky-stereo-throw (0.3.0) unstable; urgency=medium
+
+  * A live stream a real receiver plays (queue row 81, part D, measured on a real Chromecast): the picture keeps
+    coming on a still screen (KPipeWire encodes the last frame again at the mode's rate; before, a still screen
+    gave two pictures and then none, and the receiver waited for ever); the sound is a choice on the device's page
+    (PCM 24 or 16 bit, FLAC, Opus, AAC, Vorbis, MP3, and Dolby Digital or Dolby Digital Plus 5.1), by default the
+    best stereo sound the stream carries that has not failed on that device, 24-bit PCM in Matroska; what a device
+    played, or did not start playing, is kept for it by its identity.
+  * A Throw the device does not play within 60 seconds is ended and said with what the device reported, never left
+    as "throwing" before a loading screen; every Cast message is in the debug log, the stream's token taken out.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 25 Nov 2026 18:00:00 +0000
+
 sparky-stereo-throw (0.2.0) unstable; urgency=medium
 
   * The sound (queue row 81, part C): a PipeWire sink "Throw: <device>" while a Throw runs, its sound in the

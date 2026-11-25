@@ -117,6 +117,29 @@ KCM.SimpleKCM {
             Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label the picture a Throw sends", "Throw mode:")
             text: i18ndc("sparky-stereo-throw", "@info %1 the mode, %2 the codec, %3 its level", "%1, %2 level %3", page.current.mode || "", page.current.codecLabel || "", page.current.level || "")
         }
+        QQC2.ComboBox {
+            // the sound is a choice as the codec and the mode are; Automatic is the best one the stream carries that has not
+            // failed on this device, and what this device did with each is said
+            Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label the sound format a Throw sends", "Sound format:")
+            textRole: "text"
+            valueRole: "value"
+            implicitContentWidthPolicy: QQC2.ComboBox.WidestText
+            model: {
+                const rows = [{value: "", text: i18ndc("sparky-stereo-throw", "@item the table's choice; %1 what it is", "Automatic (%1)", page.current.autoSoundLabel || "")}]
+                for (const s of (page.current.sounds || [])) {
+                    let text = s.label
+                    if (s.played) {
+                        text = i18ndc("sparky-stereo-throw", "@item a sound this device played; %1 its name", "%1 (played on this device)", s.label)
+                    } else if (s.failed) {
+                        text = i18ndc("sparky-stereo-throw", "@item a sound this device did not start playing; %1 its name", "%1 (did not start on this device)", s.label)
+                    }
+                    rows.push({value: s.id, text: text})
+                }
+                return rows
+            }
+            currentIndex: Math.max(0, indexOfValue(page.current.choiceSound || ""))
+            onActivated: kcm.setSound(page.current.id, currentValue)
+        }
         QQC2.Label {
             Kirigami.FormData.label: i18ndc("sparky-stereo-throw", "@label the sound a Throw sends", "Sound:")
             text: page.current.sound || ""

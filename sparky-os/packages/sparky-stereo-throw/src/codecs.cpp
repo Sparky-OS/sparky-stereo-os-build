@@ -122,6 +122,16 @@ Plan plan(const ModelRow &row, const QString &chosenCodec, const QString &chosen
     return plan(row, chosenCodec, chosenMode, row.video ? encodable() : QStringList());
 }
 
+Plan plan(const ModelRow &row, const QString &chosenCodec, const QString &chosenMode, const QString &chosenSound,
+          const QStringList &failedSounds, const QStringList &here)
+{
+    Plan p = plan(row, chosenCodec, chosenMode, here);
+    if (p.error.isEmpty()) {
+        pickSound(p, chosenSound, failedSounds);
+    }
+    return p;
+}
+
 Plan plan(const ModelRow &row, const QString &chosenCodec, const QString &chosenMode, const QStringList &here)
 {
     Plan p;
@@ -197,15 +207,103 @@ Plan plan(const ModelRow &row, const QString &chosenCodec, const QString &chosen
     return p;
 }
 
+const QList<Sound> &sounds()
+{
+    static const QList<Sound> all = {
+        {QStringLiteral("pcm24"), QStringLiteral("PCM, 24 bit"), QStringLiteral("pcm_s24le"), 2, true, 0},
+        {QStringLiteral("flac"), QStringLiteral("FLAC, 24 bit"), QStringLiteral("flac"), 2, true, 0},
+        {QStringLiteral("pcm16"), QStringLiteral("PCM, 16 bit"), QStringLiteral("pcm_s16le"), 2, true, 0},
+        {QStringLiteral("opus"), QStringLiteral("Opus"), QStringLiteral("libopus"), 2, false, 256000},
+        {QStringLiteral("aac"), QStringLiteral("AAC"), QStringLiteral("aac"), 2, false, 256000},
+        {QStringLiteral("vorbis"), QStringLiteral("Vorbis"), QStringLiteral("libvorbis"), 2, false, 256000},
+        {QStringLiteral("mp3"), QStringLiteral("MP3"), QStringLiteral("libmp3lame"), 2, false, 320000},
+        {QStringLiteral("ac3-5.1"), QStringLiteral("Dolby Digital (AC-3), 5.1"), QStringLiteral("ac3"), 6, false, 640000},
+        {QStringLiteral("eac3-5.1"), QStringLiteral("Dolby Digital Plus (E-AC-3), 5.1"), QStringLiteral("eac3"), 6, false, 640000},
+    };
+    return all;
+}
+
+Sound sound(const QString &id)
+{
+    for (const Sound &s : sounds()) {
+        if (s.id == id) {
+            return s;
+        }
+    }
+    return {};
+}
+
+QStringList soundsFor(const QString &format)
+{
+    QStringList ids;
+    for (const Sound &s : sounds()) {
+        ids.append(s.id);
+    }
+    if (format == QLatin1String("webm")) {
+        // WebM carries Opus or Vorbis only
+        return {QStringLiteral("opus"), QStringLiteral("vorbis")};
+    }
+    if (format == QLatin1String("ogg")) {
+        return {QStringLiteral("flac"), QStringLiteral("opus"), QStringLiteral("vorbis")};
+    }
+    if (format == QLatin1String("mp4")) {
+        // no PCM in MP4 here: the receiver's player was not shown to take it
+        ids.removeAll(QStringLiteral("pcm24"));
+        ids.removeAll(QStringLiteral("pcm16"));
+        ids.removeAll(QStringLiteral("vorbis"));
+    }
+    return ids;
+}
+
+void pickSound(Plan &plan, const QString &chosen, const QStringList &failedOnDevice)
+{
+    const QStringList carried = soundsFor(plan.info.format);
+    plan.soundChoice = chosen;
+    QString id;
+    if (!chosen.isEmpty()) {
+        if (!carried.contains(chosen)) {
+            plan.error = {QStringLiteral("@info why a Throw cannot be made as chosen; %1 a sound, %2 a codec"),
+                          QStringLiteral("the stream of %2 cannot carry %1 sound"),
+                          {sound(chosen).label.isEmpty() ? chosen : sound(chosen).label, plan.video ? plan.info.label : QStringLiteral("Ogg")}};
+            return;
+        }
+        id = chosen;
+    } else {
+        for (const QString &c : carried) {
+            if (sound(c).channels == 2 && !failedOnDevice.contains(c)) {
+                id = c;
+                break;
+            }
+        }
+        if (id.isEmpty()) {
+            id = carried.value(0);
+        }
+    }
+    plan.info.audioCodec = id;
+    plan.audioChannels = sound(id).channels;
+}
+
 Said soundWords(const Plan &plan)
 {
-    if (plan.info.audioCodec == QLatin1String("opus")) {
-        return {QStringLiteral("@info the sound a Throw carries; %1 kilohertz, %2 channels"),
-                QStringLiteral("Opus, %1 kHz, %2 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"),
-                {QString::number(plan.audioRate / 1000), QString::number(plan.audioChannels)}};
+    const Sound s = sound(plan.info.audioCodec);
+    if (plan.info.format == QLatin1String("webm")) {
+        return {QStringLiteral("@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"),
+                QStringLiteral("%1, %2 kHz, %3 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"),
+                {s.label, QString::number(plan.audioRate / 1000), QString::number(plan.audioChannels)}};
     }
-    return {QStringLiteral("@info the sound a Throw carries; %1 kilohertz, %2 channels"), QStringLiteral("FLAC, 24 bit, %1 kHz, %2 channels (lossless)"),
-            {QString::number(plan.audioRate / 1000), QString::number(plan.audioChannels)}};
+    if (s.channels > 2) {
+        return {QStringLiteral("@info the sound a Throw carries; %1 a sound, %2 kilohertz"),
+                QStringLiteral("%1, %2 kHz (the device, or the television or receiver behind it, decodes it; a stereo source plays on the front speakers)"),
+                {s.label, QString::number(plan.audioRate / 1000)}};
+    }
+    if (s.lossless) {
+        return {QStringLiteral("@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"),
+                QStringLiteral("%1, %2 kHz, %3 channels (lossless)"),
+                {s.label, QString::number(plan.audioRate / 1000), QString::number(plan.audioChannels)}};
+    }
+    return {QStringLiteral("@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"),
+            QStringLiteral("%1, %2 kHz, %3 channels (compressed)"),
+            {s.label, QString::number(plan.audioRate / 1000), QString::number(plan.audioChannels)}};
 }
 
 } // namespace Codecs

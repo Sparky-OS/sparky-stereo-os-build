@@ -42,6 +42,7 @@ public Q_SLOTS:
     QString SetChoice(const QString &id, const QString &codec, const QString &mode);
     // JSON: the Throw's state, what the device reports (player state, buffering) and the bytes it fetched
     QString Status(const QString &id);
+    QString SetSound(const QString &id, const QString &sound);
 
 Q_SIGNALS:
     void DevicesChanged();

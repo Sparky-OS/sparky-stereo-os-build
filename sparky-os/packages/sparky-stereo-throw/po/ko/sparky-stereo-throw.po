@@ -60,8 +60,8 @@ msgid "%1 (model %2) is not in the device table. Its Throw uses the limits of th
 msgstr "%1(모델 %2)은(는) 기기 표에 없습니다. 이 기기로의 Throw는 1세대 Chromecast의 한도를 씁니다: 1920x1080, 초당 30프레임, H.264."
 
 msgctxt "@info:usage the command's help; keep the words in angle brackets' meaning"
-msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
-msgstr "사용법: sparky-stereo-throw list | throw <id> [--wait 초] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
+msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-] | sound <id> <sound|->\n"
+msgstr "사용법: sparky-stereo-throw list | throw <id> [--wait 초] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-] | sound <id> <sound|->\n"
 
 msgctxt "@title notification the subject of a kept Throw problem"
 msgid "A Throw could not go on"
@@ -131,14 +131,6 @@ msgctxt "@info a device gets less than it can show; %1 and %3 sizes, %2 codecs, 
 msgid "It shows up to %1 in %2; this computer has no encoder for it, so it gets %3 in %4."
 msgstr "%2에서 최대 %1까지 표시하지만, 이 컴퓨터에는 그 인코더가 없어서 %4의 %3을(를) 받습니다."
 
-msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
-msgid "Opus, %1 kHz, %2 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"
-msgstr "Opus, %1 kHz, %2채널 (압축: 기기가 받는 WebM 스트림은 Opus 또는 Vorbis만 담습니다)"
-
-msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
-msgid "FLAC, 24 bit, %1 kHz, %2 channels (lossless)"
-msgstr "FLAC, 24비트, %1 kHz, %2채널 (무손실)"
-
 msgctxt "@info a Throw cannot start as chosen; %1 is the Cast device's name, %2 why"
 msgid "The Throw to %1 cannot start as chosen: %2. Choose another codec or mode on its page."
 msgstr "%1(으)로의 Throw를 선택한 대로 시작할 수 없습니다: %2. 해당 페이지에서 다른 코덱이나 모드를 선택하세요."
@@ -166,6 +158,30 @@ msgstr "스피커 그룹"
 msgctxt "@info a Cast model in a few words, from the device table"
 msgid "not in the table"
 msgstr "표에 없음"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"
+msgstr "%1, %2 kHz, %3채널 (압축: 기기가 받는 WebM 스트림은 Opus 또는 Vorbis만 담습니다)"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (lossless)"
+msgstr "%1, %2 kHz, %3채널 (무손실)"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (compressed)"
+msgstr "%1, %2 kHz, %3채널 (압축)"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz"
+msgid "%1, %2 kHz (the device, or the television or receiver behind it, decodes it; a stereo source plays on the front speakers)"
+msgstr "%1, %2 kHz (기기 또는 그 뒤의 TV나 리시버가 디코딩합니다. 스테레오 소스는 앞쪽 스피커에서 재생됩니다)"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a sound, %2 a codec"
+msgid "the stream of %2 cannot carry %1 sound"
+msgstr "%2 스트림은 %1 소리를 담을 수 없습니다"
+
+msgctxt "@info a Throw ended; %1 the Cast device's name, %2 seconds, %3 the device's player state, %4 its time in seconds, %5 a sound"
+msgid "%1 did not start playing within %2 seconds (it said %3, at %4 s). The Throw has ended. It carried %5 sound; the next Throw to it takes another one, or choose one on its page."
+msgstr "%1이(가) %2초 안에 재생을 시작하지 않았습니다 (%3, %4초 시점). Throw가 끝났습니다. %5 소리를 담고 있었습니다. 다음 Throw는 다른 형식을 쓰며, 해당 페이지에서 고를 수도 있습니다."
 
 msgctxt "@info a Cast device's model and what the model name tells; %1 model, %2 generation"
 msgid "%1 — %2"
@@ -330,3 +346,15 @@ msgstr "모드:"
 msgctxt "@label the sound a Throw sends"
 msgid "Sound:"
 msgstr "소리:"
+
+msgctxt "@label the sound format a Throw sends"
+msgid "Sound format:"
+msgstr "소리 형식:"
+
+msgctxt "@item a sound this device played; %1 its name"
+msgid "%1 (played on this device)"
+msgstr "%1 (이 기기에서 재생됨)"
+
+msgctxt "@item a sound this device did not start playing; %1 its name"
+msgid "%1 (did not start on this device)"
+msgstr "%1 (이 기기에서 시작되지 않음)"

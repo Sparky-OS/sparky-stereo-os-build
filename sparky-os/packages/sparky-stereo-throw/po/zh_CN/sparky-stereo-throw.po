@@ -60,8 +60,8 @@ msgid "%1 (model %2) is not in the device table. Its Throw uses the limits of th
 msgstr "%1（型号 %2）不在设备表中。到它的 Throw 使用第一代 Chromecast 的上限：1920x1080，每秒 30 帧，H.264。"
 
 msgctxt "@info:usage the command's help; keep the words in angle brackets' meaning"
-msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
-msgstr "用法：sparky-stereo-throw list | throw <id> [--wait 秒数] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
+msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-] | sound <id> <sound|->\n"
+msgstr "用法：sparky-stereo-throw list | throw <id> [--wait 秒数] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-] | sound <id> <sound|->\n"
 
 msgctxt "@title notification the subject of a kept Throw problem"
 msgid "A Throw could not go on"
@@ -131,14 +131,6 @@ msgctxt "@info a device gets less than it can show; %1 and %3 sizes, %2 codecs, 
 msgid "It shows up to %1 in %2; this computer has no encoder for it, so it gets %3 in %4."
 msgstr "它在 %2 下最高可显示 %1；这台电脑没有相应的编码器，因此它收到的是 %4 的 %3。"
 
-msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
-msgid "Opus, %1 kHz, %2 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"
-msgstr "Opus，%1 kHz，%2 声道（有损压缩：设备支持的 WebM 流只能携带 Opus 或 Vorbis）"
-
-msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
-msgid "FLAC, 24 bit, %1 kHz, %2 channels (lossless)"
-msgstr "FLAC，24 位，%1 kHz，%2 声道（无损）"
-
 msgctxt "@info a Throw cannot start as chosen; %1 is the Cast device's name, %2 why"
 msgid "The Throw to %1 cannot start as chosen: %2. Choose another codec or mode on its page."
 msgstr "到 %1 的 Throw 无法按所选方式开始：%2。请在它的页面上选择其他编解码器或模式。"
@@ -166,6 +158,30 @@ msgstr "扬声器组"
 msgctxt "@info a Cast model in a few words, from the device table"
 msgid "not in the table"
 msgstr "不在表中"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"
+msgstr "%1，%2 kHz，%3 声道（有损压缩：设备支持的 WebM 流只能携带 Opus 或 Vorbis）"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (lossless)"
+msgstr "%1，%2 kHz，%3 声道（无损）"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (compressed)"
+msgstr "%1，%2 kHz，%3 声道（有损压缩）"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz"
+msgid "%1, %2 kHz (the device, or the television or receiver behind it, decodes it; a stereo source plays on the front speakers)"
+msgstr "%1，%2 kHz（由设备或其后的电视、功放解码；立体声音源在前置扬声器播放）"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a sound, %2 a codec"
+msgid "the stream of %2 cannot carry %1 sound"
+msgstr "%2 流无法携带 %1 声音"
+
+msgctxt "@info a Throw ended; %1 the Cast device's name, %2 seconds, %3 the device's player state, %4 its time in seconds, %5 a sound"
+msgid "%1 did not start playing within %2 seconds (it said %3, at %4 s). The Throw has ended. It carried %5 sound; the next Throw to it takes another one, or choose one on its page."
+msgstr "%1 在 %2 秒内没有开始播放（它报告 %3，位于 %4 秒）。Throw 已结束。它携带的是 %5 声音；下一次 Throw 会换用另一种，或在它的页面上选择。"
 
 msgctxt "@info a Cast device's model and what the model name tells; %1 model, %2 generation"
 msgid "%1 — %2"
@@ -330,3 +346,15 @@ msgstr "模式："
 msgctxt "@label the sound a Throw sends"
 msgid "Sound:"
 msgstr "声音："
+
+msgctxt "@label the sound format a Throw sends"
+msgid "Sound format:"
+msgstr "声音格式："
+
+msgctxt "@item a sound this device played; %1 its name"
+msgid "%1 (played on this device)"
+msgstr "%1（已在此设备上播放）"
+
+msgctxt "@item a sound this device did not start playing; %1 its name"
+msgid "%1 (did not start on this device)"
+msgstr "%1（未在此设备上开始）"

@@ -3,6 +3,8 @@
 #include "castchannel.h"
 #include "logging.h"
 
+#include <QJsonDocument>
+#include <QRegularExpression>
 #include <QSslConfiguration>
 
 namespace Throw
@@ -79,11 +81,24 @@ void CastChannel::close()
     m_socket.disconnectFromHost();
 }
 
+namespace
+{
+// a message as the log shows it: compact JSON with the stream's address token taken out of any URL, since the token is
+// what lets a reader fetch the stream
+QString logged(const QJsonObject &payload)
+{
+    static const QRegularExpression token(QStringLiteral("(https?://[^/\"]+/)[^/\".]+(\\.[A-Za-z0-9]+)"));
+    QString text = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    return text.replace(token, QStringLiteral("\\1(token)\\2"));
+}
+} // namespace
+
 void CastChannel::send(const QString &destination, const QString &nameSpace, QJsonObject payload, int requestId)
 {
     if (requestId) {
         payload.insert(QStringLiteral("requestId"), requestId);
     }
+    qCDebug(THROW).noquote() << "cast out" << destination << nameSpace << logged(payload);
     m_socket.write(CastMessage::json(Sender, destination, nameSpace, payload).frame());
 }
 
@@ -167,6 +182,7 @@ void CastChannel::onMessage(const CastMessage &message)
         return;
     }
     const QJsonObject payload = message.payloadJson();
+    qCDebug(THROW).noquote() << "cast in" << message.sourceId << message.nameSpace << logged(payload);
     const QString type = payload.value(QStringLiteral("type")).toString();
     const int requestId = payload.value(QStringLiteral("requestId")).toInt();
     if (message.nameSpace == NsHeartbeat) {

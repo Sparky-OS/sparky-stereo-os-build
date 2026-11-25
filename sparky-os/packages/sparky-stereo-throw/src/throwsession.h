@@ -52,6 +52,9 @@ public:
 Q_SIGNALS:
     void stateChanged(const QString &state, const QString &detail);
     void finished();
+    // the device played the stream with this sound, or did not start playing with it in time
+    void soundPlayed(const QString &sound);
+    void soundNotStarted(const QString &sound);
 
 private:
     void fail(const QString &context, const QString &message, const QStringList &args, const QString &english);
@@ -69,6 +72,8 @@ private:
     CastChannel m_channel;
     QTimer m_fetchTimeout;
     QTimer m_poll;
+    QTimer m_playTimeout;
+    bool m_played = false;
     QString m_transportId;
     QString m_sessionId;
     bool m_loadSent = false;

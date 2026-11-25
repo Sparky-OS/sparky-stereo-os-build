@@ -99,8 +99,13 @@ bool AudioSink::start(const QString &nodeName, const QString &description, int r
     info.format = SPA_AUDIO_FORMAT_F32;
     info.rate = uint32_t(rate);
     info.channels = uint32_t(channels);
-    info.position[0] = SPA_AUDIO_CHANNEL_FL;
-    info.position[1] = SPA_AUDIO_CHANNEL_FR;
+    // stereo, or 5.1 in FFmpeg's default order for six channels (front left and right, centre, LFE, side left and right):
+    // a stereo source played into a 5.1 output stays on the front speakers, nothing upmixed
+    static const uint32_t order[] = {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR, SPA_AUDIO_CHANNEL_FC,
+                                     SPA_AUDIO_CHANNEL_LFE, SPA_AUDIO_CHANNEL_SL, SPA_AUDIO_CHANNEL_SR};
+    for (int i = 0; i < channels && i < 6; ++i) {
+        info.position[i] = order[i];
+    }
     const spa_pod *params[1] = {spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info)};
     const int res = pw_stream_connect(m_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
                                       pw_stream_flags(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS), params, 1);

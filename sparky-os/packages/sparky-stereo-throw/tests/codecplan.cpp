@@ -51,6 +51,23 @@ int main(int argc, char **argv)
     p = Codecs::plan(speaker, QString(), QString(), all);
     row("a speaker: the sound alone, FLAC in Ogg", QStringLiteral("false ogg flac audio/ogg"),
         QStringLiteral("%1 %2 %3 %4").arg(p.video ? QStringLiteral("true") : QStringLiteral("false"), p.info.format, p.info.audioCodec, p.info.mime));
+    // the sound (part D): the best stereo sound the stream carries that has not failed on the device, or the person's own
+    const QStringList none;
+    p = Codecs::plan(first, QString(), QString(), QString(), none, all);
+    row("H.264 in Matroska: PCM 24 bit, stereo (lossless; the first to start on a real Chromecast)", QStringLiteral("matroska pcm24 2"),
+        QStringLiteral("%1 %2 %3").arg(p.info.format, p.info.audioCodec).arg(p.audioChannels));
+    p = Codecs::plan(first, QString(), QString(), QString(), {QStringLiteral("pcm24")}, all);
+    row("PCM 24 bit did not start on this device: FLAC next", QStringLiteral("flac"), p.info.audioCodec);
+    p = Codecs::plan(first, QStringLiteral("vp8"), QString(), QString(), none, all);
+    row("VP8 in WebM: Opus (WebM carries Opus or Vorbis only)", QStringLiteral("webm opus"), QStringLiteral("%1 %2").arg(p.info.format, p.info.audioCodec));
+    p = Codecs::plan(first, QStringLiteral("vp8"), QString(), QStringLiteral("pcm24"), none, all);
+    row("PCM chosen for a WebM stream: refused", QStringLiteral("the stream of VP8 cannot carry PCM, 24 bit sound"), p.error.english());
+    p = Codecs::plan(first, QString(), QString(), QStringLiteral("ac3-5.1"), none, all);
+    row("Dolby Digital 5.1 chosen: six channels", QStringLiteral("ac3-5.1 6"), QStringLiteral("%1 %2").arg(p.info.audioCodec).arg(p.audioChannels));
+    p = Codecs::plan(streamer, QString(), QString(), QString(), none, all);
+    row("HEVC in MP4: FLAC (no PCM in MP4)", QStringLiteral("mp4 flac"), QStringLiteral("%1 %2").arg(p.info.format, p.info.audioCodec));
+    p = Codecs::plan(speaker, QString(), QString(), QString(), none, all);
+    row("a speaker: FLAC in Ogg", QStringLiteral("ogg flac"), QStringLiteral("%1 %2").arg(p.info.format, p.info.audioCodec));
     out << (failed ? "RESULT: FAIL" : "RESULT: PASS") << " (" << failed << " rows not as expected)\n";
     return failed;
 }

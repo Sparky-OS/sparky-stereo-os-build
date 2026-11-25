@@ -13,7 +13,11 @@ the connection, heartbeat, receiver and media namespaces. Added for the proof:
   its cast-local-authorization-token;
 - SET_VOLUME on the receiver namespace changes and reports the volume;
 - modes for the red rows: launch-error (LAUNCH answered with LAUNCH_ERROR), load-failed (LOAD answered with
-  LOAD_FAILED), no-pong (the heartbeat goes unanswered).
+  LOAD_FAILED), no-pong (the heartbeat goes unanswered), never-plays (it fetches the stream and stays BUFFERING).
+- with --player chromium (part D) it is a receiver that plays like one: on LOAD a headless Chromium plays the stream in
+  a media element (relayed from the device's own address), and the media status says what that player does: PLAYING
+  only while its current time advances, BUFFERING while it waits, IDLE with ERROR or FINISHED; currentTime is the
+  player's own. Without it the device says PLAYING at LOAD, which proves nothing about a real player.
 Every message and event is a JSON line in the log.
 
 Usage: fake-cast-device.py --bind ADDR --log FILE --cert PEM --key PEM --out DIR [--mode MODE] [--name N] [--model M]
@@ -54,6 +58,7 @@ class Session:
         self.app_running = False
         self.session_id = "7E2F0E77-0000-0000-0000-000000000081"
         self.media = None
+        self.player = None
         self.volume = {"controlType": "attenuation", "level": 0.5, "muted": False, "stepInterval": 0.05}
         self.lock = threading.Lock()
 
@@ -68,8 +73,13 @@ class Session:
 
     def media_status(self, request_id, state="PLAYING", idle_reason=None):
         status = []
+        current = 0.0
+        if self.media is not None and self.player is not None:
+            state, idle_reason, current = self.player.cast_state()
+        elif self.media is not None and args.mode == "never-plays":
+            state = "BUFFERING"
         if self.media is not None:
-            entry = {"mediaSessionId": 1, "playbackRate": 1, "playerState": state, "currentTime": 0.0,
+            entry = {"mediaSessionId": 1, "playbackRate": 1, "playerState": state, "currentTime": current,
                      "supportedMediaCommands": 274447, "media": self.media}
             if idle_reason:
                 entry["idleReason"] = idle_reason
@@ -134,6 +144,11 @@ def fetch(url, content_type):
     except OSError as exc:
         error = str(exc)
     log({"event": "fetch-end", "status": status, "bytes": total, "error": error, "contentType": content_type})
+    probe_file(out)
+
+
+def probe_file(out):
+    """What ffprobe reads from a capture, logged as the "probe" event the rows read."""
     probe = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-count_frames", "-of", "json", out],
                            capture_output=True, text=True)
     try:
@@ -141,6 +156,160 @@ def fetch(url, content_type):
     except json.JSONDecodeError:
         info = {"error": probe.stderr[-400:]}
     log({"event": "probe", "file": out, "info": info})
+
+
+PLAYER_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>player</title></head>
+<body style="margin:0;background:#000"><video id="v" autoplay playsinline style="width:100vw;height:100vh"></video>
+<script>
+const v = document.getElementById("v");
+let waiting = false, events = [];
+for (const e of ["loadstart", "loadedmetadata", "loadeddata", "canplay", "canplaythrough", "playing", "waiting", "stalled",
+                 "pause", "ended", "error"]) {
+  v.addEventListener(e, () => { events.push([e, Math.round(performance.now())]); if (e === "waiting") waiting = true;
+                                if (e === "playing") waiting = false; });
+}
+v.src = "/relay";
+function report() {
+  const b = v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0;
+  const body = {readyState: v.readyState, networkState: v.networkState, currentTime: v.currentTime, paused: v.paused,
+    waiting, ended: v.ended, buffered: b, width: v.videoWidth, height: v.videoHeight, events: events.splice(0),
+    error: v.error ? (v.error.code + " " + v.error.message) : null};
+  fetch("/report", {method: "POST", body: JSON.stringify(body)}).catch(() => {});
+}
+setInterval(report, 250);
+</script></body></html>"""
+
+
+class Player:
+    """A real player for the stand-in: Debian's Chromium in headless mode plays the stream in a media element. The
+    stream reaches it through the device's own relay, so the PC's server still sees the device's address."""
+
+    def __init__(self, url, number, capture):
+        # the player's own fetch is the device's one reader: the stream's server answers the newest connection of a
+        # device, so a second fetch beside it would cut it; the bytes are kept as they pass (capture-N) and probed
+        self.url, self.lock, self.last, self.capture, self.captured = url, threading.Lock(), {}, capture, False
+        self.advanced_at, self.last_time, self.started = 0.0, None, time.monotonic()
+        player = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                if self.path == "/player.html":
+                    data = PLAYER_PAGE.encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                elif self.path == "/relay":
+                    player.relay(self)
+                else:
+                    self.send_error(404)
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                try:
+                    player.report(json.loads(body))
+                except json.JSONDecodeError:
+                    pass
+
+        self.server = http.server.ThreadingHTTPServer((args.bind, 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        page = f"http://{args.bind}:{self.server.server_address[1]}/player.html"
+        profile = f"{args.out}/chromium-{number}"
+        import os
+        home = f"{args.out}/chromium-home"
+        os.makedirs(home, exist_ok=True)
+        # Chromium needs a home it can write and no crash reporter (crashpad wants a database it cannot make here)
+        self.proc = subprocess.Popen(["chromium", "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+                                      "--disable-crash-reporter", "--disable-breakpad", "--no-first-run",
+                                      "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required",
+                                      f"--user-data-dir={profile}", page],
+                                     stdout=subprocess.DEVNULL, stderr=open(f"{args.out}/chromium-{number}.log", "w"),
+                                     env=dict(os.environ, HOME=home))
+        log({"event": "player-start", "page": page, "pid": self.proc.pid})
+
+    def relay(self, handler):
+        import http.client
+        from urllib.parse import urlsplit
+        parts = urlsplit(self.url)
+        log({"event": "player-request", "headers": {k: v for k, v in handler.headers.items() if k.lower() != "user-agent"}})
+        try:
+            conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=30, source_address=(args.bind, 0))
+            conn.request("GET", parts.path)
+            resp = conn.getresponse()
+        except OSError as exc:
+            log({"event": "player-relay-failed", "error": str(exc)})
+            handler.send_error(502)
+            return
+        handler.send_response(resp.status)
+        handler.send_header("Content-Type", resp.getheader("Content-Type", "application/octet-stream"))
+        handler.send_header("Cache-Control", "no-cache")
+        handler.send_header("Connection", "close")
+        handler.end_headers()
+        total = 0
+        keep = None if self.captured else open(self.capture, "wb")
+        self.captured = True
+        try:
+            while not stop_event.is_set():
+                chunk = resp.read1(65536)
+                if not chunk:
+                    break
+                if keep:
+                    keep.write(chunk)
+                handler.wfile.write(chunk)
+                total += len(chunk)
+        except OSError:
+            pass
+        log({"event": "player-relay-end", "bytes": total})
+        conn.close()
+        if keep:
+            keep.close()
+            log({"event": "fetch-end", "status": resp.status, "bytes": total, "error": "", "contentType": "player"})
+            probe_file(self.capture)
+
+    def report(self, state):
+        now = time.monotonic()
+        with self.lock:
+            ct = state.get("currentTime") or 0.0
+            if self.last_time is not None and ct > self.last_time + 0.01:
+                self.advanced_at = now
+            self.last_time = ct
+            changed = {k: state.get(k) for k in ("readyState", "paused", "waiting", "error", "ended")} != \
+                {k: self.last.get(k) for k in ("readyState", "paused", "waiting", "error", "ended")}
+            self.last = state
+        if changed or state.get("events"):
+            log({"event": "player", "t": round(now - self.started, 2), **{k: state.get(k) for k in
+                 ("readyState", "networkState", "currentTime", "paused", "waiting", "ended", "buffered", "width", "height",
+                  "error", "events")}})
+
+    def cast_state(self):
+        """The Cast player state of what the player does: PLAYING only while its time advances."""
+        with self.lock:
+            st, advanced = dict(self.last), time.monotonic() - self.advanced_at < 1.5
+        if st.get("error"):
+            return "IDLE", "ERROR", st.get("currentTime") or 0.0
+        if st.get("ended"):
+            return "IDLE", "FINISHED", st.get("currentTime") or 0.0
+        if advanced and not st.get("paused") and not st.get("waiting"):
+            return "PLAYING", None, st.get("currentTime") or 0.0
+        return "BUFFERING", None, st.get("currentTime") or 0.0
+
+    def stop(self):
+        try:
+            self.proc.terminate()
+            self.proc.wait(10)
+        except (subprocess.TimeoutExpired, OSError):
+            self.proc.kill()
+        self.server.shutdown()
+        log({"event": "player-stop"})
 
 
 def handle(conn, peer, session):
@@ -177,6 +346,9 @@ def handle(conn, peer, session):
                 log({"event": "stop", "sessionId": payload.get("sessionId")})
                 session.app_running = False
                 session.media = None
+                if session.player is not None:
+                    session.player.stop()
+                    session.player = None
                 send(conn, "receiver-0", msg.source_id, NS_RECEIVER, session.receiver_status(rid))
             elif msg.namespace == NS_RECEIVER and mtype == "SET_VOLUME":
                 vol = payload.get("volume", {})
@@ -193,9 +365,18 @@ def handle(conn, peer, session):
                 if args.mode == "load-failed":
                     send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, {"type": "LOAD_FAILED", "requestId": rid})
                     continue
+                if args.player == "chromium":
+                    if session.player is not None:
+                        session.player.stop()
+                    fetches[0] += 1
+                    capture = f"{args.out}/capture-{fetches[0]}.{EXT.get(session.media.get('contentType'), 'bin')}"
+                    log({"event": "fetch-start", "url": session.media.get("contentId"), "file": capture})
+                    session.player = Player(session.media.get("contentId"), fetches[0], capture)
                 send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, session.media_status(rid, "BUFFERING"))
-                threading.Thread(target=fetch, args=(session.media.get("contentId"), session.media.get("contentType")), daemon=True).start()
-                send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, session.media_status(0, "PLAYING"))
+                if session.player is None:
+                    threading.Thread(target=fetch, args=(session.media.get("contentId"), session.media.get("contentType")), daemon=True).start()
+                if session.player is None and args.mode != "never-plays":
+                    send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, session.media_status(0, "PLAYING"))
             elif msg.namespace == NS_MEDIA and mtype == "GET_STATUS":
                 send(conn, TRANSPORT_ID, msg.source_id, NS_MEDIA, session.media_status(rid))
             else:
@@ -259,11 +440,12 @@ def main():
     parser.add_argument("--cert", required=True)
     parser.add_argument("--key", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--mode", default="normal", choices=["normal", "launch-error", "load-failed", "no-pong"])
+    parser.add_argument("--mode", default="normal", choices=["normal", "launch-error", "load-failed", "no-pong", "never-plays"])
     parser.add_argument("--name", default="Living room TV")
     parser.add_argument("--model", default="Chromecast")
     parser.add_argument("--udn", default="5d7a9c4e-81ab-4c3d-9e2f-000000000081")
     parser.add_argument("--capture-seconds", type=int, default=30)
+    parser.add_argument("--player", default="none", choices=["none", "chromium"])
     parser.add_argument("--seconds", type=int, default=300)
     args = parser.parse_args()
     serve_eureka()
