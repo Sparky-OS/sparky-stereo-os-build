@@ -53,12 +53,17 @@ void StorageKcm::activate(const QVariantList &args)
 QVariantList StorageKcm::volumes() const
 {
     QVariantList result;
+    bool hasActiveVolume = false;
     for (const auto &volume : QStorageInfo::mountedVolumes()) {
         if (volume.isValid() && volume.isReady() && volume.bytesTotal() > 0
             && !volume.rootPath().startsWith(u"/proc/"_s) && !volume.rootPath().startsWith(u"/sys/"_s)) {
+            hasActiveVolume |= volume.rootPath() == m_volume;
             result.append(QVariantMap{{u"path"_s, volume.rootPath()},
                                       {u"label"_s, volume.rootPath() == u"/"_s ? i18n("System volume") : volume.rootPath()}});
         }
+    }
+    if (!hasActiveVolume) {
+        result.append(QVariantMap{{u"path"_s, m_volume}, {u"label"_s, m_volume}});
     }
     return result;
 }

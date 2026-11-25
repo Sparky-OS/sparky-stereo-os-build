@@ -8,7 +8,7 @@
 class StorageKcm : public KQuickConfigModule
 {
     Q_OBJECT
-    Q_PROPERTY(QVariantList volumes READ volumes CONSTANT)
+    Q_PROPERTY(QVariantList volumes READ volumes NOTIFY changed)
     Q_PROPERTY(QString volume MEMBER m_volume NOTIFY changed)
     Q_PROPERTY(QVariantList cleaners MEMBER m_cleaners NOTIFY changed)
     Q_PROPERTY(QVariantList items MEMBER m_items NOTIFY changed)
