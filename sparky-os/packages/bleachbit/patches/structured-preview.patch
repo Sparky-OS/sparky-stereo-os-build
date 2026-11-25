@@ -1,0 +1,533 @@
+Description: Expose a per-item JSON preview and confirmation for a mounted filesystem
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-25
+
+diff --git a/bleachbit/CLI.py b/bleachbit/CLI.py
+index 5675e93..4be7135 100644
+--- a/bleachbit/CLI.py
++++ b/bleachbit/CLI.py
+@@ -9,8 +9,10 @@ Command line interface
+ """
+ 
+ import errno
++import json
+ import logging
+ import optparse
++import re
+ import sys
+ 
+ from bleachbit.Cleaner import backends, create_simple_cleaner, register_cleaners
+@@ -239,6 +241,15 @@ def parse_cmd_line(argv=None):
+                       # TRANSLATORS: Help for the --preview command on the CLI,
+                       # and 'preview' is a verb
+                       help=_("preview files to be deleted and other changes"))
++    parser.add_option("--json", action="store_true",
++                      help=_("output a machine-readable result"))
++    if sys.platform.startswith('linux'):
++        parser.add_option("--volume", metavar="MOUNT",
++                          help=_("limit preview and cleaning to the mounted filesystem"))
++        parser.add_option("--approved-stdin", action="store_true",
++                          help=_("read a JSON array of approved preview item IDs from standard input"))
++        parser.add_option("--set-option", metavar="CLEANER.OPTION",
++                          help=_("set one option in the saved cleaner selection"))
+     parser.add_option("-c", "--clean", action="store_true",
+                       # TRANSLATORS: Help for the --clean command on the CLI
+                       help=_("run cleaners to delete files and make other permanent changes"))
+@@ -357,6 +368,55 @@ def process_cmd_line():
+               '--preview, --clean, --shred'))
+         sys.exit(1)
+ 
++    if options.json:
++        if not sys.platform.startswith('linux'):
++            parser.error(_("Structured mode requires Linux."))
++        from bleachbit import Structured
++        if options.list_cleaners and not args:
++            list(register_cleaners())
++            print(json.dumps({'schema': 1, 'cleaners': Structured.catalog()}))
++            return
++        if options.set_option:
++            if cmd_count or args not in (['true'], ['false']):
++                parser.error(_("Supply true or false to set the selected cleaner option."))
++            list(register_cleaners())
++            name, separator, key = options.set_option.partition('.')
++            if not separator or name not in backends or key not in dict(backends[name].get_options()):
++                parser.error(_("Unknown cleaner option."))
++            Options.options.set_tree(name, key, args == ['true'])
++            Options.options.close()
++            print(json.dumps({'schema': 1, 'cleaners': Structured.catalog()}))
++            return
++        if not options.volume or not (options.preview or options.clean):
++            parser.error(_("Specify a mounted volume and a preview or clean operation."))
++        if bool(options.approved_stdin) != bool(options.clean):
++            parser.error(_("Scoped cleaning requires approved preview items from standard input."))
++        if options.debug_log or options.gui or options.overwrite:
++            parser.error(_("Structured mode does not support these options."))
++        try:
++            approved = None
++            if options.clean:
++                approved = json.loads(sys.stdin.read(16 * 1024 * 1024 + 1))
++                if not isinstance(approved, list) or any(
++                        not isinstance(item, str) or not re.fullmatch(r'[0-9a-f]{64}', item)
++                        for item in approved):
++                    raise ValueError(_("Expected an array of approved preview item IDs."))
++                approved = set(approved)
++            mode = Structured.Structured(options.volume, approved)
++            operations = args_to_operations(args, options.preset, options.all_but_warning, excludes)
++            if operations:
++                for _step in Worker.Worker(CliCallback(quiet=True), options.clean,
++                                           operations, structured=mode).run():
++                    pass
++            result = mode.result()
++        except (OSError, ValueError, RuntimeError) as error:
++            print(json.dumps({'schema': 1, 'error': str(error)}))
++            sys.exit(1)
++        print(json.dumps(result))
++        sys.exit(1 if options.clean and result['errors'] else 0)
++    if any(getattr(options, key, None) for key in ('volume', 'approved_stdin', 'set_option')):
++        parser.error(_("Use these options with --json."))
++
+     did_something = False
+     if options.debug:
+         # Debug is set in __init__ so it takes effect earlier.
+diff --git a/bleachbit/Command.py b/bleachbit/Command.py
+index 45141c7..0587506 100755
+--- a/bleachbit/Command.py
++++ b/bleachbit/Command.py
+@@ -70,6 +70,10 @@ class Delete:
+     def __str__(self):
+         return f'Command to {"shred" if self.shred else "delete"} {self.path}'
+ 
++    def execute_scoped(self, parent, name, fd):
++        """Remove the reviewed name relative to the open parent directory."""
++        os.unlink(name, dir_fd=parent)
++
+     def execute(self, really_delete):
+         """Make changes and return results"""
+         if FileUtilities.whitelisted(self.path):
+@@ -309,6 +313,10 @@ class Truncate(Delete):
+     def __str__(self):
+         return f'Command to truncate {self.path}'
+ 
++    def execute_scoped(self, parent, name, fd):
++        """Truncate the reviewed inode through its open file descriptor."""
++        os.ftruncate(fd, 0)
++
+     def execute(self, really_delete):
+         """Make changes and return results"""
+ 
+diff --git a/bleachbit/DeepScan.py b/bleachbit/DeepScan.py
+index 90892c8..abaa16b 100755
+--- a/bleachbit/DeepScan.py
++++ b/bleachbit/DeepScan.py
+@@ -50,7 +50,7 @@ def normalized_walk(top, **kwargs):
+ 
+ 
+ Search = namedtuple(
+-    'Search', ['command', 'regex', 'nregex', 'wholeregex', 'nwholeregex'])
++    'Search', ['command', 'regex', 'nregex', 'wholeregex', 'nwholeregex', 'operation'])
+ Search.__new__.__defaults__ = (None,) * len(Search._fields)
+ 
+ 
+@@ -76,6 +76,7 @@ class CompiledSearch:
+ 
+     def __init__(self, search):
+         self.command = search.command
++        self.operation = search.operation
+ 
+         def re_compile(regex):
+             return re.compile(regex, FS_SCAN_RE_FLAGS) if regex else None
+@@ -145,9 +146,14 @@ class DeepScan:
+                             continue
+                         # fixme: support other commands
+                         if c.command == 'delete':
+-                            yield Command.Delete(full_name)
++                            cmd = Command.Delete(full_name)
+                         elif c.command == 'shred':
+-                            yield Command.Shred(full_name)
++                            cmd = Command.Shred(full_name)
++                        else:
++                            continue
++                        if c.operation:
++                            cmd.operation = c.operation
++                        yield cmd
+ 
+                 if time.time() - yield_time > 0.25:
+                     # allow GTK+ to process the idle loop
+diff --git a/bleachbit/Structured.py b/bleachbit/Structured.py
+new file mode 100644
+index 0000000..7480d24
+--- /dev/null
++++ b/bleachbit/Structured.py
+@@ -0,0 +1,256 @@
++# SPDX-License-Identifier: GPL-3.0-or-later
++"""Volume-specific preview and confirmation for BleachBit frontends."""
++
++from contextlib import contextmanager
++import hashlib
++import json
++import os
++import shlex
++import subprocess
++import stat
++import time
++
++from bleachbit import Command, FileUtilities, Options
++from bleachbit.Cleaner import backends
++from bleachbit.Language import get_text as _
++
++PROTECTED_EVIDENCE = ('/var/log/journal', '/run/log/journal', '/var/lib/systemd/coredump',
++                      '/var/crash')
++
++
++@contextmanager
++def open_path(path, parent=None, extra_flags=0):
++    fd = os.open(path, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC | extra_flags,
++                 dir_fd=parent)
++    try:
++        yield fd
++    finally:
++        os.close(fd)
++
++
++@contextmanager
++def open_directory(path):
++    fd = os.open('/', os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
++    try:
++        for name in path.split('/')[1:]:
++            if name:
++                next_fd = os.open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
++                                  dir_fd=fd)
++                os.close(fd)
++                fd = next_fd
++        yield fd
++    finally:
++        os.close(fd)
++
++
++def mount_id(fd):
++    with open(f'/proc/self/fdinfo/{fd}', encoding='ascii') as info:
++        for line in info:
++            if line.startswith('mnt_id:'):
++                return int(line.split()[1])
++    raise OSError(_('The filesystem of this item could not be identified.'))
++
++
++def mount_types():
++    with open('/proc/self/mountinfo', encoding='utf-8', errors='surrogateescape') as info:
++        for line in info:
++            mount, filesystem = line.split(' - ', 1)
++            yield int(mount.split()[0]), filesystem.split()[0]
++
++
++def identity(info):
++    return [info.st_dev, info.st_ino, info.st_uid, info.st_mode, info.st_nlink,
++            info.st_size, info.st_blocks, info.st_ctime_ns, info.st_mtime_ns]
++
++
++def catalog():
++    """Return the same options and selection as BleachBit's own window."""
++    options = Options.options
++    return [{
++        'id': cleaner.get_id(), 'label': cleaner.get_name(),
++        'description': cleaner.get_description(),
++        'options': [{
++            'id': name, 'label': label,
++            'description': dict(cleaner.get_option_descriptions()).get(label, ''),
++            'warning': cleaner.get_warning(name) or '',
++            'checked': options.get_tree(cleaner.get_id(), name),
++        } for name, label in cleaner.get_options()],
++    } for cleaner in sorted(backends.values(), key=lambda item: item.get_name().casefold())]
++
++
++class Structured:
++    """Filter the real Worker commands before allowing any changes."""
++
++    def __init__(self, volume, approved=None):
++        self.volume = os.path.normpath(volume)
++        self.approved = approved
++        self.items = []
++        self.errors = []
++        self.seen = set()
++        if not self.volume.startswith('/') or self.volume.startswith('//'):
++            raise ValueError(_('Provide an absolute path to a mounted volume.'))
++        with open_directory(self.volume) as fd:
++            self.mount = mount_id(fd)
++            if self.volume != '/':
++                with open_directory(os.path.dirname(self.volume)) as parent:
++                    if mount_id(parent) == self.mount:
++                        raise ValueError(_('Provide an absolute path to a mounted volume.'))
++            self.read_only = bool(os.fstatvfs(fd).f_flag & os.ST_RDONLY)
++        fs_type = dict(mount_types()).get(self.mount)
++        self.estimated = fs_type not in ('ext2', 'ext3', 'ext4', 'tmpfs')
++
++    def blocked(self, operation, reason):
++        if operation not in self.seen:
++            self.seen.add(operation)
++            self.errors.append({'operation': operation, 'reason': reason})
++
++    def temporary_commands(self):
++        """Pass eligible top-level temporary files to the same BleachBit command."""
++        directories = {'/tmp', '/var/tmp'}
++        private = os.environ.get('TMPDIR')
++        if private and os.path.isabs(private):
++            private = os.path.normpath(private)
++            with open_directory(private) as folder:
++                info = os.fstat(folder)
++                if info.st_uid == os.getuid() and info.st_mode & 0o777 == 0o700:
++                    directories.add(private)
++        for path in sorted(directories):
++            try:
++                with open_directory(path) as folder:
++                    if mount_id(folder) != self.mount:
++                        continue
++                    fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY, dir_fd=folder)
++                    try:
++                        for name in sorted(os.listdir(fd)):
++                            self.process(Command.Delete(os.path.join(path, name)), 'system.tmp')
++                    finally:
++                        os.close(fd)
++            except OSError as error:
++                self.blocked('system.tmp', str(error))
++
++    def apt_commands(self, option):
++        """Expand APT's configured cache and list directories under its own locks."""
++        import fcntl
++
++        operation = f'apt.{option}'
++        key = 'Dir::State::lists/d' if option == 'package_lists' else 'Dir::Cache::archives/d'
++        try:
++            output = subprocess.check_output(['apt-config', 'shell', 'directory', key], text=True)
++            first, = shlex.split(output)
++            prefix, directory = first.split('=', 1)
++            if prefix != 'directory' or not directory.startswith('/'):
++                raise ValueError(_('APT did not report an absolute cache directory.'))
++            directory = os.path.normpath(directory)
++            with open_directory(directory) as parent:
++                if mount_id(parent) != self.mount:
++                    return
++                fd = os.open('lock', os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
++                try:
++                    try:
++                        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++                    except BlockingIOError as error:
++                        raise OSError(_('APT is using this directory.')) from error
++                    for path in (directory, os.path.join(directory, 'partial')):
++                        with open_directory(path) as folder:
++                            if mount_id(folder) != self.mount:
++                                continue
++                            read_fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY, dir_fd=folder)
++                            try:
++                                for name in sorted(os.listdir(read_fd)):
++                                    if name != 'lock':
++                                        self.process(Command.Delete(os.path.join(path, name)),
++                                                     operation)
++                            finally:
++                                os.close(read_fd)
++                finally:
++                    os.close(fd)
++        except (OSError, ValueError, subprocess.SubprocessError) as error:
++            self.blocked(operation, str(error))
++
++    def process(self, cmd, operation):
++        """Expose or execute a single command generated by a BleachBit cleaner."""
++        path = getattr(cmd, 'path', None)
++        if not path or not os.path.isabs(path):
++            message = _('This action does not expose individual paths for a volume preview.')
++            if operation == 'journald.clean':
++                message = _('Archived journals can contain logs from the current boot.')
++            self.blocked(operation, message)
++            return
++        if type(cmd) not in (Command.Delete, Command.Truncate) or cmd.shred:
++            self.blocked(operation, _('This action cannot be confined to the selected item.'))
++            return
++        path = os.path.normpath(path)
++        if any(path == directory or path.startswith(directory + '/') for directory in PROTECTED_EVIDENCE):
++            self.blocked(operation, _('Logs and crash evidence are protected.'))
++            return
++        if path in ('/', self.volume) or (operation, path) in self.seen:
++            return
++        self.seen.add((operation, path))
++        parent_path, name = os.path.split(path)
++        try:
++            with open_directory(parent_path) as parent, open_path(name, parent) as fd:
++                if mount_id(fd) != self.mount or FileUtilities.whitelisted(path):
++                    return
++                info = os.fstat(fd)
++                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
++                    return
++                cleaner, option = operation.split('.', 1)
++                record = [self.mount, operation, path, identity(info), type(cmd).__name__]
++                token = hashlib.sha256(json.dumps(record).encode('ascii')).hexdigest()
++                if self.approved is not None and token not in self.approved:
++                    return
++                if operation == 'system.tmp':
++                    if os.getuid() != 0 and info.st_uid != os.getuid():
++                        return
++                    cutoff = time.time() - 7 * 24 * 3600
++                    if max(info.st_atime, info.st_mtime, info.st_ctime) > cutoff:
++                        return
++                result = {
++                    'id': token, 'cleaner': cleaner, 'option': option, 'path': path,
++                    'bytes': info.st_blocks * 512, 'estimated': self.estimated,
++                    'label': _('Delete') if type(cmd) is Command.Delete else _('Truncate'),
++                }
++                if operation == 'system.tmp' or self.approved is not None:
++                    self._locked_command(cmd, parent, name, info)
++                self.items.append(result)
++        except FileNotFoundError:
++            return
++        except OSError as error:
++            self.errors.append({'operation': operation, 'path': path, 'reason': str(error)})
++
++    def _locked_command(self, cmd, parent, name, info):
++        """Hold a Linux write lease across the final check and removal."""
++        import fcntl
++        import signal
++
++        is_truncate = isinstance(cmd, Command.Truncate)
++        mode = os.O_WRONLY if is_truncate else os.O_RDONLY
++        fd = os.open(name, mode | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOATIME,
++                     dir_fd=parent)
++        previous = signal.signal(signal.SIGIO, lambda *_: None)
++        try:
++            if identity(os.fstat(fd)) != identity(info) or mount_id(fd) != self.mount:
++                raise OSError(_('This item changed since the preview.'))
++            try:
++                fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_WRLCK)
++            except BlockingIOError as error:
++                raise OSError(_('This item is currently open or mapped.')) from error
++            if self.approved is None:
++                return
++            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
++            if identity(current) != identity(info):
++                raise OSError(_('This item changed since the preview.'))
++            if fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_WRLCK:
++                raise OSError(_('This item is currently open or mapped.'))
++            cmd.execute_scoped(parent, name, fd)
++        finally:
++            os.close(fd)
++            signal.signal(signal.SIGIO, previous)
++
++    def result(self):
++        if self.approved is not None:
++            completed = {item['id'] for item in self.items}
++            for token in sorted(self.approved - completed):
++                self.errors.append({'id': token, 'reason': _('The approved item could not be cleaned.')})
++        return {'schema': 1, 'volume': self.volume, 'read_only': self.read_only,
++                'items': self.items, 'errors': self.errors}
+diff --git a/bleachbit/Worker.py b/bleachbit/Worker.py
+index 0f5319d..3366963 100755
+--- a/bleachbit/Worker.py
++++ b/bleachbit/Worker.py
+@@ -50,7 +50,7 @@ class Worker:
+ 
+     """Perform the preview or delete operations"""
+ 
+-    def __init__(self, ui, really_delete, operations):
++    def __init__(self, ui, really_delete, operations, structured=None):
+         """Create a Worker
+ 
+         ui: an instance with methods
+@@ -64,6 +64,7 @@ class Worker:
+             operation-id are values
+         """
+         self.ui = ui
++        self.structured = structured
+         self.really_delete = really_delete
+         assert isinstance(operations, dict)
+         self.operations = operations
+@@ -91,10 +92,15 @@ class Worker:
+             % {'operation': operation, 'msg': str(sys.exc_info()[1])}
+ 
+         logger.error(err, exc_info=True)
++        if self.structured is not None:
++            self.structured.blocked(operation, err)
+         self.total_errors += 1
+ 
+     def execute(self, cmd, operation_option):
+         """Execute or preview the command"""
++        if self.structured is not None:
++            self.structured.process(cmd, operation_option)
++            return
+         ret = None
+         try:
+             for ret in cmd.execute(self.really_delete):
+@@ -184,6 +190,9 @@ class Worker:
+             # TRANSLATORS: %s expands to a name such as 'Firefox' or 'System'.
+             err = _("%s cannot be cleaned because it is currently running.  Close it, and try again.") \
+                 % backends[operation].get_name()
++            if self.structured is not None:
++                for option in operation_options:
++                    self.structured.blocked(f'{operation}.{option}', err)
+             self.ui.append_text(err + "\n", 'error')
+             self.total_errors += 1
+             return
+@@ -193,6 +202,15 @@ class Worker:
+         for option_id in operation_options:
+             self.size = 0
+             assert isinstance(option_id, str)
++            if (self.structured is not None and operation == 'apt'
++                    and option_id in ('clean', 'package_lists')):
++                self.structured.apt_commands(option_id)
++                yield True
++                continue
++            if self.structured is not None and (operation, option_id) == ('system', 'tmp'):
++                self.structured.temporary_commands()
++                yield True
++                continue
+             # normal scan
+             for cmd in backends[operation].get_commands(option_id):
+                 for ret in self.execute(cmd, '%s.%s' % (operation, option_id)):
+@@ -221,7 +239,8 @@ class Worker:
+                         'Deep scan only supports deleting or shredding now')
+                 if path not in self.deepscans:
+                     self.deepscans[path] = []
+-                self.deepscans[path].append(search)
++                self.deepscans[path].append(
++                    search._replace(operation=f'{operation}.{option_id}'))
+         self.ui.update_item_size(operation, -1, total_size)
+ 
+     def run_delayed_op(self, operation, option_id):
+@@ -385,7 +404,7 @@ class Worker:
+             if cmd is True:
+                 yield True
+                 continue
+-            for _ret in self.execute(cmd, 'deepscan'):
++            for _ret in self.execute(cmd, getattr(cmd, 'operation', 'deepscan')):
+                 yield True
+ 
+     def run_operations(self, my_operations):
+diff --git a/tests/TestCLI.py b/tests/TestCLI.py
+index 7be34ab..194f7c3 100644
+--- a/tests/TestCLI.py
++++ b/tests/TestCLI.py
+@@ -634,3 +634,28 @@ class CLITestCase(common.BleachbitTestCase):
+         # Is the application still running?
+         opened_windows_titles = common.get_opened_windows_titles()
+         self.assertNotIn('BleachBit', opened_windows_titles)
++
++
++class StructuredPreviewTestCase(common.BleachbitTestCase):
++    @pytest.mark.skipif(not sys.platform.startswith('linux'), reason='Linux mount IDs')
++    def test_scoped_json_accounting(self):
++        """A real cleaner supplies the file, option, mount and allocated bytes."""
++        import json
++        with tempfile.TemporaryDirectory() as home:
++            env = dict(os.environ, HOME=home, BLEACHBIT_TEST_OPTIONS_DIR=home)
++            path = os.path.join(home, '.cache', 'sparse')
++            os.mkdir(os.path.dirname(path))
++            with open(path, 'wb') as file:
++                file.write(b'x')
++                file.truncate(2 * 1024 * 1024)
++            command = [sys.executable, 'bleachbit.py', '--preview', '--json',
++                       '--volume', '/', 'system.cache']
++            code, stdout, stderr = run_external(command, env=env, clean_env=False, timeout=30)
++            self.assertEqual(code, 0, stderr)
++            rows = json.loads(stdout)['items']
++            rows = [row for row in rows if row['path'] == path]
++            self.assertEqual(len(rows), 1)
++            self.assertEqual(rows[0]['cleaner'], 'system')
++            self.assertEqual(rows[0]['option'], 'cache')
++            self.assertEqual(rows[0]['bytes'], os.stat(path).st_blocks * 512)
++            self.assertTrue(os.path.exists(path))
