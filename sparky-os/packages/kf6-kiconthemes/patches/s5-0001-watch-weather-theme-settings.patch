@@ -1,15 +1,16 @@
 --- a/src/kiconloader.cpp
 +++ b/src/kiconloader.cpp
-@@ -12,6 +12,8 @@
+@@ -12,6 +12,9 @@
  
  #include <picture.h>
  #include <KConfig>
 +#include <QFileSystemWatcher>
++#include <array>
 +#include <map>
  #include <QRegularExpression>
  #include "kiconloader.h"
  #include "kiconloader_p.h"
-@@ -1076,6 +1078,85 @@
+@@ -1076,6 +1079,142 @@
      return true;
  }
  
@@ -26,11 +27,10 @@
 +        };
 +        QObject::connect(&watcher, &QFileSystemWatcher::fileChanged, &watcher, changed);
 +        QObject::connect(&watcher, &QFileSystemWatcher::directoryChanged, &watcher, [this, changed] {
-+            if (watcher.files().isEmpty() && QFileInfo::exists(file)) {
++            if (updateWatches()) {
 +                changed();
 +            }
 +        });
-+        watcher.addPath(QFileInfo(file).absolutePath());
 +        reload();
 +    }
 +
@@ -49,45 +49,103 @@
 +    bool animation = true;
 +
 +private:
-+    QString read(const KConfigGroup &group, const char *key, const QString &fallback, const QStringList &valid)
++    struct Entry {
++        const char *key;
++        QString fallback;
++        QStringList valid;
++    };
++
++    QString read(const KConfigGroup &group, const Entry &entry, const QString &source = {})
 +    {
-+        const auto value = group.readEntry(key, fallback);
-+        if (value == fallback || valid.contains(value)) {
++        const auto value = group.readEntry(entry.key, entry.fallback);
++        if (value == entry.fallback || entry.valid.contains(value)) {
 +            return value;
 +        }
-+        const QString warning = QString::fromLatin1(key) + QLatin1Char('=') + value;
-+        if (!warnings.contains(warning)) {
-+            warnings.insert(warning);
-+            qCWarning(KICONTHEMES).noquote() << "Invalid weather setting" << warning << "Valid values:" << valid.join(QLatin1String(", "))
-+                                             << "Default:" << (fallback.isEmpty() ? QStringLiteral("(unset)") : fallback);
++
++        if (!source.isEmpty()) {
++            const QString setting = QString::fromLatin1(entry.key) + QLatin1Char('=') + value;
++            const auto warning = qMakePair(source, setting);
++            if (!warnings.contains(warning)) {
++                warnings.insert(warning);
++                qCWarning(KICONTHEMES).noquote() << "Invalid weather setting" << setting << "in" << source
++                                                 << "Valid values:" << entry.valid.join(QLatin1String(", "))
++                                                 << "Default:" << (entry.fallback.isEmpty() ? QStringLiteral("(unset)") : entry.fallback);
++            }
 +        }
-+        return fallback;
++        return entry.fallback;
++    }
++
++    bool updateWatches()
++    {
++        QSet<QString> paths;
++        for (const auto &root : roots) {
++            const QDir directory(root);
++            const auto file = directory.filePath(name);
++            if (QFileInfo::exists(file)) {
++                paths.insert(file);
++            }
++
++            QDir ancestor = directory;
++            while (!ancestor.exists() && ancestor.cdUp()) {
++            }
++            if (ancestor.exists()) {
++                paths.insert(ancestor.absolutePath());
++            }
++        }
++
++        const auto watched = watcher.files() + watcher.directories();
++        const QSet<QString> current(watched.cbegin(), watched.cend());
++        const auto removed = (current - paths).values();
++        const auto added = (paths - current).values();
++        if (!removed.isEmpty()) {
++            watcher.removePaths(removed);
++        }
++        if (!added.isEmpty()) {
++            watcher.addPaths(added);
++        }
++        return !removed.isEmpty() || !added.isEmpty();
 +    }
 +
 +    void reload()
 +    {
-+        if (QFileInfo::exists(file) && !watcher.files().contains(file)) {
-+            watcher.addPath(file);
++        static const std::array entries{
++            Entry{"Look", QStringLiteral("Auto"),
++                  {QStringLiteral("Auto"), QStringLiteral("IconTheme"), QStringLiteral("Vector"),
++                   QStringLiteral("Photoreal"), QStringLiteral("RealWeather")}},
++            Entry{"HardwareLook", {}, {QStringLiteral("Photoreal"), QStringLiteral("RealWeather")}},
++            Entry{"PanelIcon", QStringLiteral("Colour"), {QStringLiteral("Colour"), QStringLiteral("OneColour")}},
++            Entry{"Shade", QStringLiteral("Present"), {QStringLiteral("Present"), QStringLiteral("Darker")}},
++            Entry{"Animation", QStringLiteral("true"), {QStringLiteral("true"), QStringLiteral("false")}},
++        };
++        updateWatches();
++
++        // Check each file for diagnostics, including entries masked by a higher priority source.
++        for (const auto &root : roots) {
++            const auto file = QDir(root).filePath(name);
++            if (QFileInfo::exists(file)) {
++                const KConfig source(file, KConfig::SimpleConfig);
++                const KConfigGroup group(&source, QStringLiteral("Weather"));
++                for (const auto &entry : entries) {
++                    read(group, entry, file);
++                }
++            }
 +        }
-+        const KConfig config(file, KConfig::SimpleConfig);
-+        const KConfigGroup group(&config, QStringLiteral("Weather"));
-+        look = read(group, "Look", QStringLiteral("Auto"), {QStringLiteral("Auto"), QStringLiteral("IconTheme"),
-+                    QStringLiteral("Vector"), QStringLiteral("Photoreal"), QStringLiteral("RealWeather")});
-+        const auto hardware = read(group, "HardwareLook", {}, {QStringLiteral("Photoreal"), QStringLiteral("RealWeather")});
++
++        const KConfig merged(name, KConfig::NoGlobals);
++        const KConfigGroup weather(&merged, QStringLiteral("Weather"));
++        look = read(weather, entries[0]);
 +        if (look == QLatin1String("Auto")) {
-+            look = hardware;
++            look = read(weather, entries[1]);
 +        }
-+        coloured = read(group, "PanelIcon", QStringLiteral("Colour"),
-+                        {QStringLiteral("Colour"), QStringLiteral("OneColour")}) == QLatin1String("Colour");
-+        darker = read(group, "Shade", QStringLiteral("Present"),
-+                      {QStringLiteral("Present"), QStringLiteral("Darker")}) == QLatin1String("Darker");
-+        animation = read(group, "Animation", QStringLiteral("true"),
-+                         {QStringLiteral("true"), QStringLiteral("false")}) == QLatin1String("true");
++        coloured = read(weather, entries[2]) == QLatin1String("Colour");
++        darker = read(weather, entries[3]) == QLatin1String("Darker");
++        animation = read(weather, entries[4]) == QLatin1String("true");
 +    }
 +
-+    const QString file = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/sparky-stereo-weatherrc");
++    const QString name = QStringLiteral("sparky-stereo-weatherrc");
++    const QStringList roots = QStandardPaths::standardLocations(QStandardPaths::GenericConfigLocation);
 +    QFileSystemWatcher watcher;
-+    QSet<QString> warnings;
++    QSet<QPair<QString, QString>> warnings;
 +    std::map<QString, std::unique_ptr<KIconTheme>> themes;
 +};
 +}
@@ -95,7 +153,7 @@
  KIconLoader::WeatherIconPaths KIconLoader::weatherIconPaths(const QString &requested, const QSize &size, qreal scale) const
  {
      static const QRegularExpression condition(QStringLiteral("^weather-[a-z0-9-]+$"));
-@@ -1083,36 +1164,31 @@
+@@ -1083,36 +1222,31 @@
          return {};
      }
  
@@ -145,7 +203,7 @@
                  const QString exact = theme.stereoIconPathByName(name, nativeSize, KIconLoader::MatchExact, 1);
                  if (!exact.isEmpty()) {
                      return exact;
-@@ -1123,16 +1199,18 @@
+@@ -1123,16 +1257,18 @@
      };
  
      WeatherIconPaths result;
