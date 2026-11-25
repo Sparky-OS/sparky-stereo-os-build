@@ -182,8 +182,11 @@ T = {
  'Muestra el salvapantallas seleccionado en toda la pantalla. Cualquier tecla o un movimiento del puntero lo termina.', '選択したスクリーンセーバーを画面全体に表示します。キーを押すかポインターを動かすと終了します。',
  '선택한 화면 보호기를 화면 전체에 표시합니다. 아무 키나 누르거나 포인터를 움직이면 끝납니다.', '在整个屏幕上显示所选的屏幕保护程序。按任意键或移动指针即可结束。', '在整個螢幕上顯示所選的螢幕保護程式。按任意鍵或移動指標即可結束。'],
 'Try Again': ['Spróbuj ponownie', 'Tentar novamente', 'Réessayer', 'Erneut versuchen', 'Intentar de nuevo', '再試行', '다시 시도', '重试', '再試一次'],
-'Drawn in 3D, within your depth limits.': ['Rysowany w 3D, w Twoich granicach głębi.', 'Desenhado em 3D, dentro dos seus limites de profundidade.', 'Dessiné en 3D, dans vos limites de profondeur.',
- 'In 3D gezeichnet, innerhalb Ihrer Tiefengrenzen.', 'Dibujado en 3D, dentro de sus límites de profundidad.', '奥行きの制限内で 3D 描画されます。', '깊이 한도 안에서 3D로 그려집니다.', '以 3D 绘制，在您的深度限制之内。', '以 3D 繪製，在您的深度限制之內。'],
+'Drawn in 3D: one view for each eye. Its far side stands at your depth limit.': [
+ 'Rysowany w 3D: jeden widok dla każdego oka. Jego dalsza strona stoi na Twojej granicy głębi.', 'Desenhado em 3D: uma vista para cada olho. O lado distante fica no seu limite de profundidade.',
+ 'Dessiné en 3D : une vue pour chaque œil. Son côté lointain se tient à votre limite de profondeur.', 'In 3D gezeichnet: eine Ansicht für jedes Auge. Seine ferne Seite steht an Ihrer Tiefengrenze.',
+ 'Dibujado en 3D: una vista para cada ojo. Su lado lejano queda en su límite de profundidad.', '3D 描画: 左右の目にそれぞれのビュー。奥側は奥行きの制限の位置になります。',
+ '3D로 그려집니다: 눈마다 하나의 시점. 먼 쪽은 설정한 깊이 한도에 놓입니다.', '以 3D 绘制：每只眼睛一个视图。其远端位于您的深度限制处。', '以 3D 繪製：每隻眼睛一個視圖。其遠端位於您的深度限制處。'],
 'Drawn in 2D: the same picture in both eyes, at the screen. It joins the show when ticked.': [
  'Rysowany w 2D: ten sam obraz w obu oczach, na płaszczyźnie ekranu. Dołącza do pokazu po zaznaczeniu.', 'Desenhado em 2D: a mesma imagem nos dois olhos, no plano da tela. Entra na apresentação quando marcado.',
  'Dessiné en 2D : la même image pour les deux yeux, au niveau de l’écran. Il rejoint le spectacle une fois coché.', 'In 2D gezeichnet: dasselbe Bild für beide Augen, auf der Bildschirmebene. Mit gesetztem Haken nimmt er an den Animationen teil.',

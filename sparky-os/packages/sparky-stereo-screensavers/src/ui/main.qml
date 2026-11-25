@@ -271,7 +271,7 @@ KCM.AbstractKCM {
                     visible: list.currentIndex >= 0
                     wrapMode: Text.WordWrap
                     text: root.current.offered !== true ? (root.current.reason ?? "")
-                        : root.current.stereo === true ? i18n("Drawn in 3D, within your depth limits.")
+                        : root.current.stereo === true ? i18n("Drawn in 3D: one view for each eye. Its far side stands at your depth limit.")
                         : i18n("Drawn in 2D: the same picture in both eyes, at the screen. It joins the show when ticked.")
                 }
                 QQC2.Label {
