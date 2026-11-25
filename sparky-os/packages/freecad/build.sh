@@ -1,8 +1,10 @@
 #!/bin/bash
-# Sparky Stereo OS, row 50 step 5: freecad 1.1.3+dfsg-3+stereo3d1+lc1, Debian testing's own source plus the patch of
-# patches/ (the 3D view in stereo: two cameras fitted to the person's depth limits, the viewport a declared 3D area,
-# Enable 3D and the desktop's display settings as its 3D options) and the ten-language sentences of
-# ../../translations/freecad-3d-view-stereo.ts.patch.  Every package of the source is built: freecad-common and freecad
+# Sparky Stereo OS, row 50 step 5: freecad 1.1.3+dfsg-3+stereo3d2+lc1, Debian testing's own source plus the patches of
+# patches/ (the 3D view in stereo: two cameras fitted to the person's depth limits, a translucent pixel at the weighted
+# mean of what it shows, the viewport a declared 3D area in every render type, Enable 3D and the desktop's display
+# settings as its 3D options) and the ten-language sentences of ../../translations/freecad-3d-view-stereo.ts.patch.
+# After the build, the stereo fit's unit test (FreeCAD's Gui_tests_run, View3DStereoFit) runs from the build tree; its
+# output is WORK/freecad-view3dstereofit-test.txt, and a failure fails the recipe.  Every package of the source is built: freecad-common and freecad
 # (all) depend on the exact version of freecad-python3 and libfreecad-python3.
 #   build.sh DEBIAN.dsc WORK   (disposable container with the build dependencies, libstereo-declare-dev (>= 1.12.2),
 #                               qt6-base-private-dev, pkgconf, bubblewrap, clang, python3, devscripts; TREE set)
@@ -48,14 +50,18 @@ r += ('\n# libfreecad-python3 depends on the Qt private ABI it was built with (l
       '\tdh_gencontrol -- "-Vqt6:private-abi=qt6-base-private-abi (= $(QT6_ABI))"\n')
 Path('debian/rules').write_text(r)
 PY
-VERSION=1.1.3+dfsg-3+stereo3d1
 DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" -R)
-n=0
-while IFS= read -r item; do
-	[ -n "$item" ] || continue
-	if [ $n = 0 ]; then dch --date "$DATE" -v "$VERSION" -D unstable --force-distribution "$item"; else dch --date "$DATE" -a "$item"; fi
-	n=$((n + 1))
-done < "$HERE/changelog/freecad.items"
+# one changelog entry per edition version: +stereo3d1 (freecad.items, staged and never published), +stereo3d2
+# (freecad-stereo3d2.items)
+for entry in 1:freecad.items 2:freecad-stereo3d2.items; do
+	VERSION=1.1.3+dfsg-3+stereo3d${entry%%:*}
+	n=0
+	while IFS= read -r item; do
+		[ -n "$item" ] || continue
+		if [ $n = 0 ]; then dch --date "$DATE" -v "$VERSION" -D unstable --force-distribution "$item"; else dch --date "$DATE" -a "$item"; fi
+		n=$((n + 1))
+	done < "$HERE/changelog/${entry#*:}"
+done
 export PYTHONPATH="$TREE${PYTHONPATH:+:$PYTHONPATH}"
 python3 -m lean.debian_prepare "$PWD" "$VERSION+lc1" --toolkit "$TREE"
 python3 "$TREE/repo/reproducible.py" normalize-tree "$SOURCE_DATE_EPOCH" "$PWD"
@@ -65,3 +71,9 @@ export DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-parallel=4 nocheck}
 export DEB_CFLAGS_MAINT_APPEND='-gz=zstd' DEB_CXXFLAGS_MAINT_APPEND='-gz=zstd'
 export DEB_LDFLAGS_MAINT_APPEND='-Wl,--compress-debug-sections=zstd'
 dpkg-buildpackage -us -uc -sa -j4
+# The stereo fit's unit test, from the build tree (the test binary is built with the packages; Debian's test step is
+# off here, and its failures are ignored where it runs)
+LD_LIBRARY_PATH="$PWD/obj-x86_64-linux-gnu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" xvfb-run -a \
+	obj-x86_64-linux-gnu/tests/Gui_tests_run --gtest_filter='View3DStereoFit.*' > "$WORK/freecad-view3dstereofit-test.txt" 2>&1 \
+	|| { tail -30 "$WORK/freecad-view3dstereofit-test.txt" >&2; echo "freecad: the stereo fit's unit test failed" >&2; exit 3; }
+tail -3 "$WORK/freecad-view3dstereofit-test.txt"
