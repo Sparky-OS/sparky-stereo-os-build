@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-2.0-or-later
 # The person's session of the loopback proof, as uid 1000: a session bus, PipeWire and WirePlumber, a headless Stereo
-# KWin (+stereo3d66) with one 1280x720 screen, the Throw daemon, then the scenario (scenario.py).
+# KWin (+stereo3d66) with one 1280x1440 screen (tall, so a device page shows whole), the Throw daemon, then the scenario (scenario.py).
 # Usage: session.sh OUT_DIR
 set -u
 OUT=${1:?out dir}
@@ -15,6 +15,8 @@ fi
 pipewire > "$OUT/pipewire.log" 2>&1 &
 for i in $(seq 1 50); do [ -S "$XDG_RUNTIME_DIR/pipewire-0" ] && break; sleep 0.1; done
 wireplumber > "$OUT/wireplumber.log" 2>&1 &
+# the desktop's notification server, as a stand-in that logs what the person would be told
+python3 -I /tests/loopback/notifications.py "$OUT/notifications.jsonl" > "$OUT/notifications.log" 2>&1 &
 sleep 1
 if [ -x /usr/lib/x86_64-linux-gnu/libexec/sparky-stereo-throwd ]; then
     # the installed package: KWin's own permission check, the desktop file the package ships
@@ -28,7 +30,7 @@ else
     export XDG_DATA_DIRS=/tools/share:/usr/share
 fi
 KWIN_WAYLAND_NO_PERMISSION_CHECKS=${CHECKS} KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1 QT_LOGGING_RULES='kwin_screencast.debug=true;kwin_core.debug=false' \
-    kwin_wayland --virtual --output-count 1 --width 1280 --height 720 --socket=w0 > "$OUT/kwin.log" 2>&1 &
+    kwin_wayland --virtual --output-count 1 --width 1280 --height 1440 --socket=w0 > "$OUT/kwin.log" 2>&1 &
 for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/w0" ] && break; sleep 0.1; done
 export WAYLAND_DISPLAY=w0
 sleep 2

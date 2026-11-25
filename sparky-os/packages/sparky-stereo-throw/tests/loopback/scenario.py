@@ -111,6 +111,24 @@ def kwin_script(js):
     run("python3", "-I", "/rigtools/kwin_script.py", os.path.join(OUT, "kwin.log"), js, timeout=30)
 
 
+def notices():
+    try:
+        with open(os.path.join(OUT, "notifications.jsonl")) as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except OSError:
+        return []
+
+
+def screen_made(id_):
+    """KWin made a network screen for a Throw to that device: the daemon asked for it and was told it was created."""
+    try:
+        lines = open(os.path.join(OUT, "throwd.log")).read().splitlines()
+    except OSError:
+        return False
+    asked = [i for i, line in enumerate(lines) if f'asked KWin for the network screen "{id_}"' in line]
+    return any("network screen created" in line for i in asked for line in lines[i + 1:i + 4])
+
+
 def place_fixture(screen_name):
     kwin_script("const s = workspace.screens.find(o => o.name == '%s');"
                 "for (const w of workspace.windowList()) { if (w.desktopFileName == 'org.kde.kwin.capturefixture') {"
@@ -182,7 +200,8 @@ def main():
 
     # --- a Throw to a first-generation Chromecast
     name = f"Virtual-{LIVING}"
-    row("T0", "no network screen for the device before the Throw", False, name in screens())
+    row("T0", "the device is listed and has no network screen before its Throw", (True, False),
+        (LIVING in devices(), name in screens()))
     rc, out = throw(LIVING)
     row("T1", "the Throw starts and the device plays (state)", (0, "throwing"), (rc, out))
     out_ = screens().get(name, {})
@@ -253,15 +272,22 @@ def main():
     rc, out = throw(BEDROOM, 30)
     row("F1", "a device that refuses to launch the player: the Throw fails and says so", (1, True),
         (rc, "refused to start its media player: NOT_FOUND" in out))
-    row("F2", "its network screen is removed after the failure", False, bool(wait_for(lambda: f"Virtual-{BEDROOM}" in screens(), 2) and
-                                                                         f"Virtual-{BEDROOM}" in screens()))
+    row("F2", "a network screen was made for that Throw, and it is removed after the failure", (True, False),
+        (screen_made(BEDROOM), bool(wait_for(lambda: f"Virtual-{BEDROOM}" in screens(), 2) and f"Virtual-{BEDROOM}" in screens())))
     pr = problems()
     row("F3", "the failure is kept in the problems engine for that device", True, f"throw:{BEDROOM}" in pr)
     rc, out = throw(HALL, 30)
     lost = wait_for(lambda: devices().get(HALL, {}).get("state") == "failed", 45)
     row("F4", "a device that stops answering the heartbeat: the Throw ends and says so (state, detail)", (True, True),
         (bool(lost), "stopped answering" in devices().get(HALL, {}).get("detail", "")))
-    row("F5", "its network screen is gone", False, f"Virtual-{HALL}" in screens())
+    row("F5", "a network screen was made for that Throw, and it is gone", (True, False),
+        (screen_made(HALL), f"Virtual-{HALL}" in screens()))
+
+    # --- what the person is told: the desktop's notifications (a stand-in server logs each Notify)
+    told = notices()
+    row("N1", "a failure is told through the desktop's notifications, whole (body)", True,
+        any(n.get("body") == "Bedroom TV refused to start its media player: NOT_FOUND" for n in told))
+    row("N2", "a running Throw is told (body)", True, any(n.get("body") == "Throwing to Living room TV." for n in told))
 
     # --- the unknown model: the first Chromecast's limits, told once
     rc, out = throw(STUDY)
@@ -302,7 +328,8 @@ def main():
     row("I3", "its receiver status: the volume and its kind", (0.5, "attenuation"),
         (info.get("receiver", {}).get("volume", {}).get("level"), info.get("receiver", {}).get("volume", {}).get("controlType")))
     tokens = [x for x in events(LIVING, "eureka") if x.get("token")]
-    row("I4", "no request carried an account token", 0, len(tokens))
+    row("I4", "the device's setup interface was asked, and no request carried an account token", (True, 0),
+        (len(events(LIVING, "eureka")) > 0, len(tokens)))
     rc, out, err = run(CLI, "volume", LIVING, "0.25", "mute", timeout=30)
     try:
         vol = json.loads(out).get("volume", {})
@@ -321,7 +348,8 @@ def main():
 def captions():
     rc, out, _ = run("python3", "-I", "/rigtools/kwin_windows.py", os.path.join(OUT, "kwin.log"), timeout=30)
     try:
-        return [w.get("caption", "") for w in json.loads(out.strip().splitlines()[-1])]
+        # the rig's helper prints {"t_monotonic_ms": ..., "windows": [{caption, ...}]} (KWin's own view)
+        return [w.get("caption", "") for w in (json.loads(out.strip().splitlines()[-1]).get("windows") or [])]
     except (json.JSONDecodeError, IndexError, AttributeError):
         return []
 
@@ -339,7 +367,11 @@ def page(name, args=(), lang=None):
     before = len(events(LIVING, "eureka"))
     shell = subprocess.Popen(["systemsettings", "kcm_sparkystereo_throw", *args], env=env, stdout=subprocess.DEVNULL,
                              stderr=open(os.path.join(OUT, f"page-{name}.log"), "w"))
-    time.sleep(12)
+    time.sleep(10)
+    # the window as tall as the screen, so a device's page shows whole, its account part included
+    kwin_script("for (const w of workspace.windowList()) { if (String(w.resourceClass) == 'kdesystemsettings') {"
+                " const g = w.output.geometry; w.frameGeometry = {x: g.x + 100, y: g.y, width: 1080, height: g.height}; } }")
+    time.sleep(2)
     png = os.path.join(OUT, "frames", f"page-{name}.png")
     rc, out, err = run("python3", "-I", "/rigtools/capture.py", png, timeout=60)
     shown = captions()
