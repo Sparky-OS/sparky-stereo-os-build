@@ -123,6 +123,10 @@ group('image', 'On the image from first boot (our stereo programs everyone uses)
     # the simple Kirigami viewer on the same libf3d sits beside F3D, never in its place: F3D's package holds the Dolphin model
     # pictures and F3D's own window (do-not-remove-functionality; ORDER 17 milestone 7)
     'sparky-stereo-model-viewer',
+    # the first run is KDE's own Welcome Center with every element of SparkyLinux's first-run window and pages that explain
+    # the edition's defaults (Daniel, 2026-11-18: "change sparky first run to our custom kde first run with all the elements
+    # sparkylinux one has, since our native DE is kde, I would rather follow this path"; ORDER 63 and 720)
+    'sparky-stereo-welcome',
 ])
 
 # 1b. Film and visual effects: the studios' own open projects (Daniel, 2026-10-14: "follow those that have repos, orgs
