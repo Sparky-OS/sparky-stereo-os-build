@@ -1,0 +1,180 @@
+Description: Preroll gallery previews in opaque RGB and show their pending state
+ Flat and stereo gallery previews can first display green or transparent GL
+ textures despite receiving complete JPEG frames. Negotiate one opaque
+ RGB plane and tell the viewer when the preview is still preparing.
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-24
+
+diff --git a/autotests/configgrid-test.cpp b/autotests/configgrid-test.cpp
+--- a/autotests/configgrid-test.cpp
++++ b/autotests/configgrid-test.cpp
+@@ -31,4 +31,5 @@
+     Q_INTERFACES(QQmlParserStatus)
+     Q_PROPERTY(QString description READ description WRITE setDescription NOTIFY descriptionChanged)
++    Q_PROPERTY(bool ready READ ready NOTIFY descriptionChanged)
+     Q_PROPERTY(bool playing MEMBER m_playing NOTIFY playingChanged)
+ public:
+@@ -46,4 +47,5 @@
+     {
+     }
++    bool ready() const { return !m_description.isEmpty(); }
+     QString description() const
+     {
+diff --git a/po/de/kamoso.po b/po/de/kamoso.po
+--- a/po/de/kamoso.po
++++ b/po/de/kamoso.po
+@@ -606,2 +606,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "Der Effekt %1 konnte nicht gestartet werden: %2. Die Kamera wird ohne ihn angezeigt."
++
++msgid "Preparing preview…"
++msgstr "Vorschau wird vorbereitet…"
+diff --git a/po/es/kamoso.po b/po/es/kamoso.po
+--- a/po/es/kamoso.po
++++ b/po/es/kamoso.po
+@@ -260,2 +260,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "No se pudo iniciar el efecto %1: %2. La cámara se muestra sin él."
++
++msgid "Preparing preview…"
++msgstr "Preparando la vista previa…"
+diff --git a/po/fr/kamoso.po b/po/fr/kamoso.po
+--- a/po/fr/kamoso.po
++++ b/po/fr/kamoso.po
+@@ -493,2 +493,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "L'effet %1 n'a pas pu démarrer : %2. La caméra est affichée sans lui."
++
++msgid "Preparing preview…"
++msgstr "Préparation de l’aperçu…"
+diff --git a/po/ja/kamoso.po b/po/ja/kamoso.po
+--- a/po/ja/kamoso.po
++++ b/po/ja/kamoso.po
+@@ -251,2 +251,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "エフェクト %1 を開始できませんでした: %2。カメラはこのエフェクトなしで表示されています。"
++
++msgid "Preparing preview…"
++msgstr "プレビューを準備中…"
+diff --git a/po/ko/kamoso.po b/po/ko/kamoso.po
+--- a/po/ko/kamoso.po
++++ b/po/ko/kamoso.po
+@@ -446,2 +446,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "효과 %1을(를) 시작할 수 없습니다: %2. 카메라는 이 효과 없이 표시됩니다."
++
++msgid "Preparing preview…"
++msgstr "미리 보기 준비 중…"
+diff --git a/po/pl/kamoso.po b/po/pl/kamoso.po
+--- a/po/pl/kamoso.po
++++ b/po/pl/kamoso.po
+@@ -502,2 +502,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "Nie można uruchomić efektu %1: %2. Kamera jest pokazywana bez niego."
++
++msgid "Preparing preview…"
++msgstr "Przygotowywanie podglądu…"
+diff --git a/po/pt_BR/kamoso.po b/po/pt_BR/kamoso.po
+--- a/po/pt_BR/kamoso.po
++++ b/po/pt_BR/kamoso.po
+@@ -330,2 +330,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "Não foi possível iniciar o efeito %1: %2. A câmera é mostrada sem ele."
++
++msgid "Preparing preview…"
++msgstr "Preparando a prévia…"
+diff --git a/po/zh_CN/kamoso.po b/po/zh_CN/kamoso.po
+--- a/po/zh_CN/kamoso.po
++++ b/po/zh_CN/kamoso.po
+@@ -251,2 +251,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "无法启动效果 %1：%2。摄像头画面在不使用此效果的情况下显示。"
++
++msgid "Preparing preview…"
++msgstr "正在准备预览…"
+diff --git a/po/zh_TW/kamoso.po b/po/zh_TW/kamoso.po
+--- a/po/zh_TW/kamoso.po
++++ b/po/zh_TW/kamoso.po
+@@ -251,2 +251,5 @@
+ msgid "The effect %1 could not start: %2. The camera is shown without it."
+ msgstr "無法啟動特效 %1：%2。攝影機畫面在不套用此特效的情況下顯示。"
++
++msgid "Preparing preview…"
++msgstr "正在準備預覽…"
+diff --git a/src/qml/Config.qml b/src/qml/Config.qml
+--- a/src/qml/Config.qml
++++ b/src/qml/Config.qml
+@@ -129,4 +129,5 @@
+ 
+                 PipelineItem {
++                    id: preview
+                     playing: false
+                     onFailed: (reason) => {
+@@ -148,6 +149,7 @@
+             QQC2.Label {
+                 anchors.fill: parent
+-                visible: delegateItem.previewFailed
+-                text: i18n("No preview for this effect")
++                visible: delegateItem.previewFailed || !preview.ready
++                text: delegateItem.previewFailed || !WebcamControl.currentDevice.length
++                    ? i18n("No preview for this effect") : i18n("Preparing preview…")
+                 horizontalAlignment: Text.AlignHCenter
+                 verticalAlignment: Text.AlignTop
+diff --git a/src/video/effectpreview.h b/src/video/effectpreview.h
+--- a/src/video/effectpreview.h
++++ b/src/video/effectpreview.h
+@@ -18,4 +18,8 @@
+         return false;
+     gst_bin_add_many(bin, convert, upload, sink, nullptr);
+-    return gst_element_link_many(last, convert, upload, sink, nullptr);
++    GstCaps *caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGB", nullptr);
++    const bool linked = gst_element_link(last, convert)
++        && gst_element_link_filtered(convert, upload, caps) && gst_element_link(upload, sink);
++    gst_caps_unref(caps);
++    return linked;
+ }
+diff --git a/src/video/webcamcontrol.cpp b/src/video/webcamcontrol.cpp
+--- a/src/video/webcamcontrol.cpp
++++ b/src/video/webcamcontrol.cpp
+@@ -105,4 +105,5 @@
+ Q_PROPERTY(QString description READ description WRITE setDescription NOTIFY descriptionChanged)
+ Q_PROPERTY(bool playing READ playing WRITE setPlaying NOTIFY playingChanged)
++Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
+ public:
+     PipelineItem()
+@@ -126,4 +127,10 @@
+     {
+         switch (GST_MESSAGE_TYPE(message)) {
++        case GST_MESSAGE_ASYNC_DONE:
++            if (m_pipeline && GST_MESSAGE_SRC(message) == GST_OBJECT(m_pipeline.data()) && !m_ready) {
++                m_ready = true;
++                Q_EMIT readyChanged();
++            }
++            break;
+         case GST_MESSAGE_EOS: //End of stream. We reached the end of the file.
+             setPlaying(false);
+@@ -146,7 +153,12 @@
+     }
+ 
++    bool ready() const { return m_ready; }
+     QString description() const { return m_description; }
+     void setDescription(const QString &desc) {
+         if (m_description != desc) {
++            if (m_ready) {
++                m_ready = false;
++                Q_EMIT readyChanged();
++            }
+             m_description = desc;
+             Q_EMIT descriptionChanged();
+@@ -232,7 +244,9 @@
+     void surfaceChanged();
+     void descriptionChanged();
++    void readyChanged();
+     void failed(const QString &reason);
+ 
+ private:
++    bool m_ready = false;
+     bool m_playing = false;
+     bool m_complete = false;

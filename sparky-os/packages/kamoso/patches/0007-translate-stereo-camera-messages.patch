@@ -1,0 +1,2397 @@
+Description: Translate the stereo camera and gallery and test the compiled catalogues
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-24
+
+--- /dev/null
++++ b/autotests/catalogues.py
+@@ -0,0 +1,45 @@
++# SPDX-License-Identifier: GPL-2.0-or-later
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++"""Check the installed gettext meaning of every edition message in all nine catalogues."""
++import argparse
++from collections import Counter
++import gettext
++import io
++from pathlib import Path
++import re
++import subprocess
++
++parser = argparse.ArgumentParser()
++parser.add_argument('source', type=Path)
++parser.add_argument('--table', type=Path)
++args = parser.parse_args()
++# These untouched upstream strings belong to the original Debian catalogue.
++# Keeping the baseline here lets the test detect new strings in native and quilt builds alike.
++baseline = set(Path(__file__).with_name('upstream-msgids.txt').read_text().splitlines())
++source = args.source / 'src'
++literal = re.compile(r'\bk?i18n\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)"')
++messages = set()
++for path in source.rglob('*'):
++    if path.suffix in ('.cpp', '.qml', '.h'):
++        messages.update(literal.findall(path.read_text()))
++messages -= baseline
++assert messages
++languages = 'de es fr ja ko pl pt_BR zh_CN zh_TW'.split()
++rows = {key: [key] for key in sorted(messages)}
++errors = []
++for lang in languages:
++    po = args.source / 'po' / lang / 'kamoso.po'
++    compiled = subprocess.check_output(['msgfmt', '--check-format', '-o', '-', po])
++    catalog = gettext.GNUTranslations(io.BytesIO(compiled))._catalog
++    for key, row in rows.items():
++        value = catalog.get(key, '')
++        if not value.strip() or Counter(re.findall(r'%\d+', key)) != Counter(re.findall(r'%\d+', value)):
++            errors.append(f'{lang}: {key}')
++        row.append(value)
++print(f'{len(rows)} messages × {len(languages)} catalogues; {len(errors)} missing or invalid')
++if errors:
++    raise SystemExit('\n'.join(errors))
++if args.table:
++    with args.table.open('w') as table:
++        for row in [['English', *languages], ['---'] * 10, *rows.values()]:
++            print('| ' + ' | '.join(s.replace('|', r'\|') for s in row) + ' |', file=table)
+--- /dev/null
++++ b/autotests/upstream-msgids.txt
+@@ -0,0 +1,30 @@
++(C) 2008-2025 Alex Fiestas and Aleix Pol
++Aleix Pol Gonzalez
++Alex Fiestas
++Back
++Cameras
++Capture a Burst
++Choose the folder where Kamoso will save pictures
++Choose the folder where Kamoso will save videos
++Coffee drinker
++Configure Kamoso
++Configure Kamoso...
++Effects Gallery
++End Burst
++Kamoso
++Media now exported
++Move Item to Trash
++No device found
++Open Pictures Folder
++Pictures:
++Record a Video
++Save Locations
++Semaphore hacker
++Share
++Share Item...
++Stop Recording
++Take a Picture
++Uploaded the shutter sound: https://freesound.org/people/caseymoura/sounds/445482/
++Utility for taking photos and videos using a webcam
++Videos:
++caseymoura
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -34,3 +34,6 @@
+ target_compile_definitions(effectpreview-test PRIVATE KAMOSO_CONFIG_QML="${CMAKE_SOURCE_DIR}/src/qml/Config.qml")
+ target_link_libraries(effectpreview-test PRIVATE Qt6::Test PkgConfig::GStreamer)
+ add_test(NAME effectpreview COMMAND effectpreview-test)
++
++find_package(Python3 REQUIRED COMPONENTS Interpreter)
++add_test(NAME catalogues COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/catalogues.py" "${CMAKE_SOURCE_DIR}")
+--- a/po/de/kamoso.po
++++ b/po/de/kamoso.po
+@@ -608,3 +608,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "Vorschau wird vorbereitet…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1 kann die Stereokennzeichnung noch nicht schreiben. Wählen Sie x264."
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "Zum Speichern dieses Fotos werden ein vollständiges Stereobild und das Format MPO oder JPS benötigt."
++
++msgid "Bulge"
++msgstr "Wölbung"
++
++msgid "Camera Settings"
++msgstr "Kameraeinstellungen"
++
++msgid "Cartoon"
++msgstr "Zeichentrick"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "Wählen Sie Matroska oder MP4 für die Aufnahme."
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "Wählen Sie in den Kameraeinstellungen die Bildanordnung dieser Kamera, um das Bildpaar in 3D anzuzeigen."
++
++msgid "Delay"
++msgstr "Verzögerung"
++
++msgid "Dice"
++msgstr "Würfel"
++
++msgid "Display Settings"
++msgstr "Anzeigeeinstellungen"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "Kanten"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "Warten Sie mit dem Wechsel des 3D-Modus, bis die Aufnahme gespeichert ist."
++
++msgid "Grayscale"
++msgstr "Graustufen"
++
++msgid "Heat"
++msgstr "Hitze"
++
++msgid "Hue +0.5"
++msgstr "Farbton +0,5"
++
++msgid "Hue −0.5"
++msgstr "Farbton −0,5"
++
++msgid "Kaleidoscope"
++msgstr "Kaleidoskop"
++
++msgid "Kamoso 3D camera"
++msgstr "Kamoso-3D-Kamera"
++
++msgid "Mirror"
++msgstr "Spiegel"
++
++msgid "No effect"
++msgstr "Kein Effekt"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "Während der Aufnahme sind keine Stereobilder eingetroffen. Es wurde keine Datei gespeichert."
++
++msgid "Old film"
++msgstr "Alter Film"
++
++msgid "Optical art"
++msgstr "Op-Art"
++
++msgid "Pinch"
++msgstr "Einschnüren"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "Radioaktiv"
++
++msgid "Ripples"
++msgstr "Wellen"
++
++msgid "Sepia"
++msgstr "Sepia"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "Quadrat"
++
++msgid "Stereo photo format"
++msgstr "Stereo-Fotoformat"
++
++msgid "Stereo video container"
++msgstr "Stereo-Videocontainer"
++
++msgid "Stereo video encoder"
++msgstr "Stereo-Videoencoder"
++
++msgid "Streaks"
++msgstr "Schlieren"
++
++msgid "Stretch"
++msgstr "Strecken"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "Der Multiplexer %1 ist nicht verfügbar."
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "Die 3D-Kamera kann nicht für andere Programme freigegeben werden: %1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "Der 3D-Sucher lässt sich nicht starten."
++
++msgid "The JPEG encoder is unavailable."
++msgstr "Der JPEG-Encoder ist nicht verfügbar."
++
++msgid "The camera frame could not be copied."
++msgstr "Das Kamerabild lässt sich nicht kopieren."
++
++msgid "The camera publisher could not start."
++msgstr "Die Kamerafreigabe lässt sich nicht starten."
++
++msgid "The camera publisher is unavailable."
++msgstr "Die Kamerafreigabe ist nicht verfügbar."
++
++msgid "The camera publisher refused a frame."
++msgstr "Die Kamerafreigabe hat ein Bild abgewiesen."
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "Die Kameraauflösung hat sich während der Aufnahme geändert. Die unvollständige Aufnahme wurde nicht gespeichert."
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "Die fertige Aufnahme lässt sich nicht verschieben. Sie bleibt unter %1 gespeichert."
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "Der Effekt %1 lässt sich nicht für jedes Auge getrennt anwenden: %2. Die Kamera wird ohne diesen Effekt angezeigt."
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "Der Encoder kommt nicht nach. Einige Stereobilder wurden übersprungen. Die Aufnahme läuft weiter."
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "Der Encoder hat ein Stereobild abgewiesen. Die unvollständige Aufnahme wurde nicht gespeichert."
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "Der Filter hat die Bildabmessungen eines Auges geändert"
++
++msgid "The filter could not start"
++msgstr "Der Filter lässt sich nicht starten"
++
++msgid "The filter refused a camera frame"
++msgstr "Der Filter hat ein Kamerabild abgewiesen"
++
++msgid "The filter stopped"
++msgstr "Der Filter wurde angehalten"
++
++msgid "The photo already exists. Choose another name."
++msgstr "Das Foto ist bereits vorhanden. Wählen Sie einen anderen Namen."
++
++msgid "The previous recording is still being saved."
++msgstr "Die vorherige Aufnahme wird noch gespeichert."
++
++msgid "The recording already exists. Choose another name."
++msgstr "Die Aufnahme ist bereits vorhanden. Wählen Sie einen anderen Namen."
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "Die Aufnahme lässt sich nicht kopieren. Sie bleibt unter %1 gespeichert: %2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "Die Aufnahme lässt sich nicht speichern: %1"
++
++msgid "The recording folder could not be created."
++msgstr "Der Aufnahmeordner lässt sich nicht erstellen."
++
++msgid "The recording pipeline could not start."
++msgstr "Die Verarbeitungskette für die Aufnahme lässt sich nicht starten."
++
++msgid "The recording's temporary folder could not be created."
++msgstr "Der temporäre Ordner für die Aufnahme lässt sich nicht erstellen."
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "Die gespeicherte Bildanordnung ist nicht verfügbar. Wählen Sie sie in den Kameraeinstellungen erneut aus."
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "Das Stereofoto lässt sich nicht speichern: %1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "Dieser MP4-Multiplexer kann die Stereokennzeichnung nicht schreiben. Installieren Sie die aktualisierten GStreamer-Module der Edition."
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "Diese Kamera liefert keine zwei lesbaren Ansichten. Prüfen Sie das Format in den Kameraeinstellungen."
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "Diese Kamera gibt die Reihenfolge der abwechselnden Bilder nicht an. Wählen Sie in den Kameraeinstellungen eine unterstützte Bildanordnung."
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "Dieses Kamerabild lässt sich nicht als zwei Ansichten in Originalgröße anzeigen. Wählen Sie eine andere Kameraauflösung oder Bildanordnung."
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "Dieses Kamerabild enthält das gewählte Bildpaar nicht. Prüfen Sie die Bildanordnung in den Kameraeinstellungen."
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "Dieser Kamerastream kennzeichnet kein Ansichtenpaar. Wählen Sie in den Kameraeinstellungen eine unterstützte Bildanordnung."
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "Diese Anzeige ist im 2D-Modus. Das linke Auge wird angezeigt."
++
++msgid "Twirl"
++msgstr "Wirbel"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "Schwindel"
++
++msgid "Video saved"
++msgstr "Video gespeichert"
++
++msgid "Vivid colors"
++msgstr "Kräftige Farben"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "Warten Sie vor der Aufnahme auf ein Kamerabild."
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "Warten Sie vor der Aufnahme auf ein vollständiges Stereobild."
++
++msgid "Warp"
++msgstr "Verzerrung"
++
++msgid "Waveform"
++msgstr "Wellenform"
++
++msgid "X-ray"
++msgstr "Röntgenbild"
+--- a/po/es/kamoso.po
++++ b/po/es/kamoso.po
+@@ -262,3 +262,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "Preparando la vista previa…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1 aún no puede escribir la marca de grabación estereoscópica. Elija x264."
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "Para guardar esta foto se necesita un fotograma estéreo completo y el formato MPO o JPS."
++
++msgid "Bulge"
++msgstr "Abombamiento"
++
++msgid "Camera Settings"
++msgstr "Preferencias de la cámara"
++
++msgid "Cartoon"
++msgstr "Dibujo animado"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "Elija Matroska o MP4 para la grabación."
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "Elija la disposición de las vistas de esta cámara en las preferencias de la cámara para ver el par en 3D."
++
++msgid "Delay"
++msgstr "Retardo"
++
++msgid "Dice"
++msgstr "Dados"
++
++msgid "Display Settings"
++msgstr "Preferencias de pantalla"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "Bordes"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "Espere a que se guarde la grabación antes de cambiar el modo 3D."
++
++msgid "Grayscale"
++msgstr "Escala de grises"
++
++msgid "Heat"
++msgstr "Calor"
++
++msgid "Hue +0.5"
++msgstr "Tono +0,5"
++
++msgid "Hue −0.5"
++msgstr "Tono −0,5"
++
++msgid "Kaleidoscope"
++msgstr "Caleidoscopio"
++
++msgid "Kamoso 3D camera"
++msgstr "Cámara 3D de Kamoso"
++
++msgid "Mirror"
++msgstr "Espejo"
++
++msgid "No effect"
++msgstr "Sin efecto"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "No se recibieron fotogramas estéreo durante la grabación. No se guardó ningún archivo."
++
++msgid "Old film"
++msgstr "Película antigua"
++
++msgid "Optical art"
++msgstr "Arte óptico"
++
++msgid "Pinch"
++msgstr "Pellizco"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "Radiactivo"
++
++msgid "Ripples"
++msgstr "Ondulaciones"
++
++msgid "Sepia"
++msgstr "Sepia"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "Cuadrado"
++
++msgid "Stereo photo format"
++msgstr "Formato de foto estéreo"
++
++msgid "Stereo video container"
++msgstr "Contenedor de vídeo estéreo"
++
++msgid "Stereo video encoder"
++msgstr "Codificador de vídeo estéreo"
++
++msgid "Streaks"
++msgstr "Estelas"
++
++msgid "Stretch"
++msgstr "Estirar"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "El multiplexor %1 no está disponible."
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "No se ha podido compartir la cámara 3D con otros programas: %1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "No se ha podido iniciar el visor 3D."
++
++msgid "The JPEG encoder is unavailable."
++msgstr "El codificador JPEG no está disponible."
++
++msgid "The camera frame could not be copied."
++msgstr "No se ha podido copiar el fotograma de la cámara."
++
++msgid "The camera publisher could not start."
++msgstr "No se ha podido iniciar el servicio que comparte la cámara."
++
++msgid "The camera publisher is unavailable."
++msgstr "El servicio que comparte la cámara no está disponible."
++
++msgid "The camera publisher refused a frame."
++msgstr "El servicio que comparte la cámara ha rechazado un fotograma."
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "La resolución de la cámara cambió durante la grabación. No se guardó la grabación incompleta."
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "No se ha podido mover la grabación terminada. Se conserva en %1."
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "No se ha podido aplicar el efecto %1 por separado a cada ojo: %2. Se muestra la cámara sin este efecto."
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "El codificador no ha podido mantener el ritmo. Se han omitido algunos fotogramas estéreo. La grabación continúa."
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "El codificador ha rechazado un fotograma estéreo. No se ha guardado la grabación incompleta."
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "El filtro ha cambiado las dimensiones de la imagen de un ojo"
++
++msgid "The filter could not start"
++msgstr "No se ha podido iniciar el filtro"
++
++msgid "The filter refused a camera frame"
++msgstr "El filtro ha rechazado un fotograma de la cámara"
++
++msgid "The filter stopped"
++msgstr "El filtro se ha detenido"
++
++msgid "The photo already exists. Choose another name."
++msgstr "La foto ya existe. Elija otro nombre."
++
++msgid "The previous recording is still being saved."
++msgstr "Todavía se está guardando la grabación anterior."
++
++msgid "The recording already exists. Choose another name."
++msgstr "La grabación ya existe. Elija otro nombre."
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "No se ha podido copiar la grabación. Se conserva en %1: %2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "No se ha podido guardar la grabación: %1"
++
++msgid "The recording folder could not be created."
++msgstr "No se ha podido crear la carpeta de grabaciones."
++
++msgid "The recording pipeline could not start."
++msgstr "No se ha podido iniciar la cadena de grabación."
++
++msgid "The recording's temporary folder could not be created."
++msgstr "No se ha podido crear la carpeta temporal de la grabación."
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "La disposición de vistas guardada no está disponible. Vuelva a elegirla en las preferencias de la cámara."
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "No se ha podido guardar la foto estéreo: %1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "Este multiplexor MP4 no puede escribir la marca estéreo. Instale los complementos de GStreamer actualizados de esta edición."
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "Esta cámara no ha proporcionado dos vistas legibles. Compruebe el formato en las preferencias de la cámara."
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "Esta cámara no indica el orden de los fotogramas alternos. Elija una disposición compatible en las preferencias de la cámara."
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "Este fotograma no puede mostrarse como dos vistas nativas. Elija otra resolución de cámara o disposición de vistas."
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "Este fotograma no proporciona el par seleccionado. Compruebe la disposición en las preferencias de la cámara."
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "Este flujo de cámara no identifica un par de vistas. Elija una disposición compatible en las preferencias de la cámara."
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "Esta pantalla está en modo 2D. Se muestra la vista del ojo izquierdo."
++
++msgid "Twirl"
++msgstr "Remolino"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "Vértigo"
++
++msgid "Video saved"
++msgstr "Vídeo guardado"
++
++msgid "Vivid colors"
++msgstr "Colores vivos"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "Espere a recibir un fotograma de la cámara antes de capturar."
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "Espere a recibir un fotograma estéreo completo antes de grabar."
++
++msgid "Warp"
++msgstr "Deformación"
++
++msgid "Waveform"
++msgstr "Forma de onda"
++
++msgid "X-ray"
++msgstr "Rayos X"
+--- a/po/fr/kamoso.po
++++ b/po/fr/kamoso.po
+@@ -495,3 +495,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "Préparation de l’aperçu…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1 ne peut pas encore écrire le marquage stéréo de l’enregistrement. Choisissez x264."
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "Pour enregistrer cette photo, il faut une image stéréo complète et le format MPO ou JPS."
++
++msgid "Bulge"
++msgstr "Bombement"
++
++msgid "Camera Settings"
++msgstr "Configuration de la caméra"
++
++msgid "Cartoon"
++msgstr "Dessin animé"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "Choisissez Matroska ou MP4 pour l’enregistrement."
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "Choisissez l’agencement des vues dans la configuration de la caméra pour afficher la paire en 3D."
++
++msgid "Delay"
++msgstr "Retard"
++
++msgid "Dice"
++msgstr "Dés"
++
++msgid "Display Settings"
++msgstr "Configuration de l’affichage"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "Contours"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "Attendez la fin de l’enregistrement du fichier avant de changer de mode 3D."
++
++msgid "Grayscale"
++msgstr "Niveaux de gris"
++
++msgid "Heat"
++msgstr "Chaleur"
++
++msgid "Hue +0.5"
++msgstr "Teinte +0,5"
++
++msgid "Hue −0.5"
++msgstr "Teinte −0,5"
++
++msgid "Kaleidoscope"
++msgstr "Kaléidoscope"
++
++msgid "Kamoso 3D camera"
++msgstr "Caméra 3D de Kamoso"
++
++msgid "Mirror"
++msgstr "Miroir"
++
++msgid "No effect"
++msgstr "Aucun effet"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "Aucune image stéréo n’a été reçue pendant l’enregistrement. Aucun fichier n’a été enregistré."
++
++msgid "Old film"
++msgstr "Vieux film"
++
++msgid "Optical art"
++msgstr "Art optique"
++
++msgid "Pinch"
++msgstr "Pincement"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "Radioactif"
++
++msgid "Ripples"
++msgstr "Ondulations"
++
++msgid "Sepia"
++msgstr "Sépia"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "Carré"
++
++msgid "Stereo photo format"
++msgstr "Format des photos stéréo"
++
++msgid "Stereo video container"
++msgstr "Conteneur vidéo stéréo"
++
++msgid "Stereo video encoder"
++msgstr "Encodeur vidéo stéréo"
++
++msgid "Streaks"
++msgstr "Traînées"
++
++msgid "Stretch"
++msgstr "Étirement"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "Le multiplexeur %1 est indisponible."
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "Impossible de partager la caméra 3D avec d’autres programmes : %1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "Impossible de démarrer le viseur 3D."
++
++msgid "The JPEG encoder is unavailable."
++msgstr "L’encodeur JPEG est indisponible."
++
++msgid "The camera frame could not be copied."
++msgstr "Impossible de copier l’image de la caméra."
++
++msgid "The camera publisher could not start."
++msgstr "Impossible de démarrer le service de partage de la caméra."
++
++msgid "The camera publisher is unavailable."
++msgstr "Le service de partage de la caméra est indisponible."
++
++msgid "The camera publisher refused a frame."
++msgstr "Le service de partage de la caméra a refusé une image."
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "La résolution de la caméra a changé pendant l’enregistrement. L’enregistrement incomplet n’a pas été sauvegardé."
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "Impossible de déplacer l’enregistrement terminé. Il est conservé dans %1."
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "Impossible d’appliquer l’effet %1 séparément à chaque œil : %2. La caméra s’affiche sans cet effet."
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "L’encodeur ne suit pas la cadence. Certaines images stéréo ont été ignorées. L’enregistrement continue."
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "L’encodeur a refusé une image stéréo. L’enregistrement incomplet n’a pas été sauvegardé."
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "Le filtre a modifié les dimensions de l’image d’un œil"
++
++msgid "The filter could not start"
++msgstr "Impossible de démarrer le filtre"
++
++msgid "The filter refused a camera frame"
++msgstr "Le filtre a refusé une image de la caméra"
++
++msgid "The filter stopped"
++msgstr "Le filtre s’est arrêté"
++
++msgid "The photo already exists. Choose another name."
++msgstr "La photo existe déjà. Choisissez un autre nom."
++
++msgid "The previous recording is still being saved."
++msgstr "La sauvegarde de l’enregistrement précédent est en cours."
++
++msgid "The recording already exists. Choose another name."
++msgstr "L’enregistrement existe déjà. Choisissez un autre nom."
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "Impossible de copier l’enregistrement. Il est conservé dans %1 : %2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "Impossible de sauvegarder l’enregistrement : %1"
++
++msgid "The recording folder could not be created."
++msgstr "Impossible de créer le dossier des enregistrements."
++
++msgid "The recording pipeline could not start."
++msgstr "Impossible de démarrer la chaîne d’enregistrement."
++
++msgid "The recording's temporary folder could not be created."
++msgstr "Impossible de créer le dossier temporaire de l’enregistrement."
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "L’agencement des vues mémorisé est indisponible. Sélectionnez-le à nouveau dans la configuration de la caméra."
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "Impossible d’enregistrer la photo stéréo : %1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "Ce multiplexeur MP4 ne peut pas écrire le marquage stéréo. Installez les modules GStreamer mis à jour de cette édition."
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "Cette caméra n’a pas fourni deux vues lisibles. Vérifiez son format dans la configuration de la caméra."
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "Cette caméra n’indique pas l’ordre des images alternées. Choisissez un agencement pris en charge dans la configuration de la caméra."
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "Impossible d’afficher cette image de la caméra sous forme de deux vues à leur taille native. Choisissez une autre résolution ou un autre agencement."
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "Cette image ne fournit pas la paire choisie. Vérifiez l’agencement dans la configuration de la caméra."
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "Ce flux de caméra ne signale pas de paire de vues. Choisissez un agencement pris en charge dans la configuration de la caméra."
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "Cet écran est en mode 2D. La vue de l’œil gauche est affichée."
++
++msgid "Twirl"
++msgstr "Tourbillon"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "Vertige"
++
++msgid "Video saved"
++msgstr "Vidéo enregistrée"
++
++msgid "Vivid colors"
++msgstr "Couleurs vives"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "Attendez de recevoir une image de la caméra avant la capture."
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "Attendez une image stéréo complète avant de lancer l’enregistrement."
++
++msgid "Warp"
++msgstr "Déformation"
++
++msgid "Waveform"
++msgstr "Forme d’onde"
++
++msgid "X-ray"
++msgstr "Rayons X"
+--- a/po/ja/kamoso.po
++++ b/po/ja/kamoso.po
+@@ -235,12 +235,12 @@
+ #: src/video/webcamcontrol.cpp:412
+ #, kde-format
+ msgid "Photo taken"
+-msgstr ""
++msgstr "写真を撮影しました"
+ 
+ #: src/video/webcamcontrol.cpp:412
+ #, kde-format
+ msgid "Saved in %1"
+-msgstr ""
++msgstr "%1 に保存しました"
+ 
+ #: src/qml/Config.qml
+ msgid "No preview for this effect"
+@@ -253,3 +253,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "プレビューを準備中…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1 はまだ録画にステレオ識別情報を書き込めません。x264 を選んでください。"
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "この写真を保存するには、完全なステレオフレームと MPO または JPS 形式が必要です。"
++
++msgid "Bulge"
++msgstr "膨らみ"
++
++msgid "Camera Settings"
++msgstr "カメラ設定"
++
++msgid "Cartoon"
++msgstr "漫画調"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "録画用に Matroska または MP4 を選んでください。"
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "左右の映像を 3D 表示するには、カメラ設定でこのカメラの映像の配置を選んでください。"
++
++msgid "Delay"
++msgstr "遅延"
++
++msgid "Dice"
++msgstr "サイコロ"
++
++msgid "Display Settings"
++msgstr "ディスプレイ設定"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "輪郭"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "3D モードを変更する前に録画の保存が終わるまでお待ちください。"
++
++msgid "Grayscale"
++msgstr "グレースケール"
++
++msgid "Heat"
++msgstr "熱"
++
++msgid "Hue +0.5"
++msgstr "色相 +0.5"
++
++msgid "Hue −0.5"
++msgstr "色相 −0.5"
++
++msgid "Kaleidoscope"
++msgstr "万華鏡"
++
++msgid "Kamoso 3D camera"
++msgstr "Kamoso 3D カメラ"
++
++msgid "Mirror"
++msgstr "鏡"
++
++msgid "No effect"
++msgstr "効果なし"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "録画中にステレオフレームを受信できませんでした。ファイルは保存されていません。"
++
++msgid "Old film"
++msgstr "古い映画"
++
++msgid "Optical art"
++msgstr "オプアート"
++
++msgid "Pinch"
++msgstr "つまむ"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "放射線"
++
++msgid "Ripples"
++msgstr "波紋"
++
++msgid "Sepia"
++msgstr "セピア"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "四角形"
++
++msgid "Stereo photo format"
++msgstr "ステレオ写真形式"
++
++msgid "Stereo video container"
++msgstr "ステレオ動画コンテナ"
++
++msgid "Stereo video encoder"
++msgstr "ステレオ動画エンコーダー"
++
++msgid "Streaks"
++msgstr "残像"
++
++msgid "Stretch"
++msgstr "引き伸ばし"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "マルチプレクサー %1 は使用できません。"
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "3D カメラを他のプログラムと共有できませんでした: %1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "3D ファインダーを起動できませんでした。"
++
++msgid "The JPEG encoder is unavailable."
++msgstr "JPEG エンコーダーは使用できません。"
++
++msgid "The camera frame could not be copied."
++msgstr "カメラのフレームをコピーできませんでした。"
++
++msgid "The camera publisher could not start."
++msgstr "カメラ共有サービスを起動できませんでした。"
++
++msgid "The camera publisher is unavailable."
++msgstr "カメラ共有サービスは使用できません。"
++
++msgid "The camera publisher refused a frame."
++msgstr "カメラ共有サービスがフレームを拒否しました。"
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "録画中にカメラの解像度が変わりました。不完全な録画は保存されていません。"
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "完了した録画を移動できませんでした。%1 に保管されています。"
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "効果「%1」を左右の目に個別に適用できませんでした: %2。効果を適用せずにカメラを表示します。"
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "エンコードが追いつかず、一部のステレオフレームをスキップしました。録画を続けます。"
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "エンコーダーがステレオフレームを拒否しました。不完全な録画は保存されていません。"
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "フィルターが片目の映像の寸法を変更しました"
++
++msgid "The filter could not start"
++msgstr "フィルターを起動できませんでした"
++
++msgid "The filter refused a camera frame"
++msgstr "フィルターがカメラのフレームを拒否しました"
++
++msgid "The filter stopped"
++msgstr "フィルターが停止しました"
++
++msgid "The photo already exists. Choose another name."
++msgstr "写真はすでに存在します。別の名前を選んでください。"
++
++msgid "The previous recording is still being saved."
++msgstr "前の録画を保存中です。"
++
++msgid "The recording already exists. Choose another name."
++msgstr "録画はすでに存在します。別の名前を選んでください。"
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "録画をコピーできませんでした。%1 に保管されています: %2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "録画を保存できませんでした: %1"
++
++msgid "The recording folder could not be created."
++msgstr "録画フォルダーを作成できませんでした。"
++
++msgid "The recording pipeline could not start."
++msgstr "録画パイプラインを起動できませんでした。"
++
++msgid "The recording's temporary folder could not be created."
++msgstr "録画用の一時フォルダーを作成できませんでした。"
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "保存した映像の配置は使用できません。カメラ設定で選び直してください。"
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "ステレオ写真を保存できませんでした: %1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "この MP4 マルチプレクサーはステレオ識別情報を書き込めません。このエディションの更新済み GStreamer プラグインをインストールしてください。"
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "このカメラから読み取り可能な 2 つの映像が得られませんでした。カメラ設定で形式を確認してください。"
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "このカメラは交互フレームの順序を示しません。カメラ設定で対応する映像の配置を選んでください。"
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "このフレームを元の大きさの 2 つの映像として表示できません。別の解像度または映像の配置を選んでください。"
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "このフレームから選択した映像ペアを取得できません。カメラ設定で映像の配置を確認してください。"
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "このカメラストリームには 2 つの映像がペアであることを示す情報がありません。カメラ設定で対応する映像の配置を選んでください。"
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "このディスプレイは 2D モードです。左目の映像を表示しています。"
++
++msgid "Twirl"
++msgstr "渦巻き"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "めまい"
++
++msgid "Video saved"
++msgstr "動画を保存しました"
++
++msgid "Vivid colors"
++msgstr "鮮やかな色"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "カメラからフレームが届いてから撮影してください。"
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "完全なステレオフレームが届いてから録画してください。"
++
++msgid "Warp"
++msgstr "ゆがみ"
++
++msgid "Waveform"
++msgstr "波形"
++
++msgid "X-ray"
++msgstr "X 線"
+--- a/po/ko/kamoso.po
++++ b/po/ko/kamoso.po
+@@ -448,3 +448,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "미리 보기 준비 중…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1에서는 아직 녹화 파일에 스테레오 표시를 기록할 수 없습니다. x264를 선택하십시오."
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "이 사진을 저장하려면 완전한 스테레오 프레임과 MPO 또는 JPS 형식이 필요합니다."
++
++msgid "Bulge"
++msgstr "볼록하게"
++
++msgid "Camera Settings"
++msgstr "카메라 설정"
++
++msgid "Cartoon"
++msgstr "만화"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "녹화에 사용할 Matroska 또는 MP4를 선택하십시오."
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "두 영상을 3D로 보려면 카메라 설정에서 이 카메라의 영상 배치를 선택하십시오."
++
++msgid "Delay"
++msgstr "지연"
++
++msgid "Dice"
++msgstr "주사위"
++
++msgid "Display Settings"
++msgstr "디스플레이 설정"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "윤곽선"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "녹화 저장이 끝난 후 3D 모드를 변경하십시오."
++
++msgid "Grayscale"
++msgstr "회색조"
++
++msgid "Heat"
++msgstr "열기"
++
++msgid "Hue +0.5"
++msgstr "색조 +0.5"
++
++msgid "Hue −0.5"
++msgstr "색조 −0.5"
++
++msgid "Kaleidoscope"
++msgstr "만화경"
++
++msgid "Kamoso 3D camera"
++msgstr "Kamoso 3D 카메라"
++
++msgid "Mirror"
++msgstr "거울"
++
++msgid "No effect"
++msgstr "효과 없음"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "녹화 중 스테레오 프레임을 받지 못했습니다. 파일을 저장하지 않았습니다."
++
++msgid "Old film"
++msgstr "옛날 영화"
++
++msgid "Optical art"
++msgstr "옵아트"
++
++msgid "Pinch"
++msgstr "오목하게"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "방사능"
++
++msgid "Ripples"
++msgstr "물결"
++
++msgid "Sepia"
++msgstr "세피아"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "사각형"
++
++msgid "Stereo photo format"
++msgstr "스테레오 사진 형식"
++
++msgid "Stereo video container"
++msgstr "스테레오 동영상 컨테이너"
++
++msgid "Stereo video encoder"
++msgstr "스테레오 동영상 인코더"
++
++msgid "Streaks"
++msgstr "잔상"
++
++msgid "Stretch"
++msgstr "늘이기"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "%1 멀티플렉서를 사용할 수 없습니다."
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "다른 프로그램과 3D 카메라를 공유할 수 없습니다: %1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "3D 뷰파인더를 시작할 수 없습니다."
++
++msgid "The JPEG encoder is unavailable."
++msgstr "JPEG 인코더를 사용할 수 없습니다."
++
++msgid "The camera frame could not be copied."
++msgstr "카메라 프레임을 복사할 수 없습니다."
++
++msgid "The camera publisher could not start."
++msgstr "카메라 공유 서비스를 시작할 수 없습니다."
++
++msgid "The camera publisher is unavailable."
++msgstr "카메라 공유 서비스를 사용할 수 없습니다."
++
++msgid "The camera publisher refused a frame."
++msgstr "카메라 공유 서비스가 프레임을 거부했습니다."
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "녹화 중 카메라 해상도가 변경되었습니다. 불완전한 녹화 파일을 저장하지 않았습니다."
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "완료된 녹화 파일을 이동할 수 없습니다. %1에 보관되어 있습니다."
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "각 눈에 %1 효과를 따로 적용할 수 없습니다: %2. 이 효과 없이 카메라 영상을 표시합니다."
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "인코더가 속도를 따라가지 못해 일부 스테레오 프레임을 건너뛰었습니다. 녹화를 계속합니다."
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "인코더가 스테레오 프레임을 거부했습니다. 불완전한 녹화 파일을 저장하지 않았습니다."
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "필터가 한쪽 눈 영상의 크기를 변경했습니다"
++
++msgid "The filter could not start"
++msgstr "필터를 시작할 수 없습니다"
++
++msgid "The filter refused a camera frame"
++msgstr "필터가 카메라 프레임을 거부했습니다"
++
++msgid "The filter stopped"
++msgstr "필터가 중지되었습니다"
++
++msgid "The photo already exists. Choose another name."
++msgstr "사진이 이미 있습니다. 다른 이름을 선택하십시오."
++
++msgid "The previous recording is still being saved."
++msgstr "이전 녹화 파일을 저장하는 중입니다."
++
++msgid "The recording already exists. Choose another name."
++msgstr "녹화 파일이 이미 있습니다. 다른 이름을 선택하십시오."
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "녹화 파일을 복사할 수 없습니다. %1에 보관되어 있습니다: %2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "녹화 파일을 저장할 수 없습니다: %1"
++
++msgid "The recording folder could not be created."
++msgstr "녹화 폴더를 만들 수 없습니다."
++
++msgid "The recording pipeline could not start."
++msgstr "녹화 파이프라인을 시작할 수 없습니다."
++
++msgid "The recording's temporary folder could not be created."
++msgstr "녹화용 임시 폴더를 만들 수 없습니다."
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "저장된 영상 배치를 사용할 수 없습니다. 카메라 설정에서 다시 선택하십시오."
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "스테레오 사진을 저장할 수 없습니다: %1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "이 MP4 멀티플렉서는 스테레오 표시를 기록할 수 없습니다. 이 에디션의 업데이트된 GStreamer 플러그인을 설치하십시오."
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "이 카메라가 읽을 수 있는 두 영상을 제공하지 않았습니다. 카메라 설정에서 형식을 확인하십시오."
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "이 카메라는 교대로 들어오는 프레임의 순서를 알려 주지 않습니다. 카메라 설정에서 지원되는 영상 배치를 선택하십시오."
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "이 프레임을 원래 크기의 두 영상으로 표시할 수 없습니다. 다른 카메라 해상도나 영상 배치를 선택하십시오."
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "이 프레임에서 선택한 영상 쌍을 얻을 수 없습니다. 카메라 설정에서 영상 배치를 확인하십시오."
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "이 카메라 스트림은 두 영상이 한 쌍인지 알려 주지 않습니다. 카메라 설정에서 지원되는 영상 배치를 선택하십시오."
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "이 디스플레이는 2D 모드입니다. 왼쪽 눈 영상을 표시합니다."
++
++msgid "Twirl"
++msgstr "소용돌이"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "현기증"
++
++msgid "Video saved"
++msgstr "동영상을 저장했습니다"
++
++msgid "Vivid colors"
++msgstr "선명한 색상"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "카메라 프레임을 받은 후 촬영하십시오."
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "완전한 스테레오 프레임을 받은 후 녹화하십시오."
++
++msgid "Warp"
++msgstr "뒤틀기"
++
++msgid "Waveform"
++msgstr "파형"
++
++msgid "X-ray"
++msgstr "엑스선"
+--- a/po/pl/kamoso.po
++++ b/po/pl/kamoso.po
+@@ -504,3 +504,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "Przygotowywanie podglądu…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1 nie potrafi jeszcze zapisać oznaczenia stereo w nagraniu. Wybierz x264."
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "Do zapisania tego zdjęcia potrzebna jest pełna klatka stereo i format MPO lub JPS."
++
++msgid "Bulge"
++msgstr "Wybrzuszenie"
++
++msgid "Camera Settings"
++msgstr "Ustawienia kamery"
++
++msgid "Cartoon"
++msgstr "Kreskówka"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "Wybierz Matroskę lub MP4 jako format nagrania."
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "Aby wyświetlić parę obrazów w 3D, wybierz układ widoków tej kamery w ustawieniach kamery."
++
++msgid "Delay"
++msgstr "Opóźnienie"
++
++msgid "Dice"
++msgstr "Kostki"
++
++msgid "Display Settings"
++msgstr "Ustawienia ekranu"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "Krawędzie"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "Poczekaj na zapisanie nagrania przed zmianą trybu 3D."
++
++msgid "Grayscale"
++msgstr "Odcienie szarości"
++
++msgid "Heat"
++msgstr "Gorąco"
++
++msgid "Hue +0.5"
++msgstr "Odcień +0,5"
++
++msgid "Hue −0.5"
++msgstr "Odcień −0,5"
++
++msgid "Kaleidoscope"
++msgstr "Kalejdoskop"
++
++msgid "Kamoso 3D camera"
++msgstr "Kamera 3D Kamoso"
++
++msgid "Mirror"
++msgstr "Lustro"
++
++msgid "No effect"
++msgstr "Bez efektu"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "Podczas nagrywania nie odebrano żadnych klatek stereo. Nie zapisano pliku."
++
++msgid "Old film"
++msgstr "Stary film"
++
++msgid "Optical art"
++msgstr "Op-art"
++
++msgid "Pinch"
++msgstr "Ściśnięcie"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "Radioaktywność"
++
++msgid "Ripples"
++msgstr "Kręgi na wodzie"
++
++msgid "Sepia"
++msgstr "Sepia"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "Kwadrat"
++
++msgid "Stereo photo format"
++msgstr "Format zdjęć stereo"
++
++msgid "Stereo video container"
++msgstr "Kontener wideo stereo"
++
++msgid "Stereo video encoder"
++msgstr "Koder wideo stereo"
++
++msgid "Streaks"
++msgstr "Smugi"
++
++msgid "Stretch"
++msgstr "Rozciągnięcie"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "Multiplekser %1 jest niedostępny."
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "Nie udało się udostępnić kamery 3D innym programom: %1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "Nie udało się uruchomić wizjera 3D."
++
++msgid "The JPEG encoder is unavailable."
++msgstr "Koder JPEG jest niedostępny."
++
++msgid "The camera frame could not be copied."
++msgstr "Nie udało się skopiować klatki z kamery."
++
++msgid "The camera publisher could not start."
++msgstr "Nie udało się uruchomić usługi udostępniania kamery."
++
++msgid "The camera publisher is unavailable."
++msgstr "Usługa udostępniania kamery jest niedostępna."
++
++msgid "The camera publisher refused a frame."
++msgstr "Usługa udostępniania kamery odrzuciła klatkę."
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "Rozdzielczość kamery zmieniła się podczas nagrywania. Nie zapisano niekompletnego nagrania."
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "Nie udało się przenieść ukończonego nagrania. Pozostaje ono w %1."
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "Nie udało się zastosować efektu %1 osobno dla każdego oka: %2. Obraz z kamery jest wyświetlany bez tego efektu."
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "Koder nie nadąża. Pominięto część klatek stereo. Nagrywanie trwa dalej."
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "Koder odrzucił klatkę stereo. Nie zapisano niekompletnego nagrania."
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "Filtr zmienił wymiary obrazu dla jednego oka"
++
++msgid "The filter could not start"
++msgstr "Nie udało się uruchomić filtra"
++
++msgid "The filter refused a camera frame"
++msgstr "Filtr odrzucił klatkę z kamery"
++
++msgid "The filter stopped"
++msgstr "Filtr się zatrzymał"
++
++msgid "The photo already exists. Choose another name."
++msgstr "Zdjęcie już istnieje. Wybierz inną nazwę."
++
++msgid "The previous recording is still being saved."
++msgstr "Poprzednie nagranie jest nadal zapisywane."
++
++msgid "The recording already exists. Choose another name."
++msgstr "Nagranie już istnieje. Wybierz inną nazwę."
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "Nie udało się skopiować nagrania. Pozostaje ono w %1: %2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "Nie udało się zapisać nagrania: %1"
++
++msgid "The recording folder could not be created."
++msgstr "Nie udało się utworzyć katalogu nagrań."
++
++msgid "The recording pipeline could not start."
++msgstr "Nie udało się uruchomić potoku nagrywania."
++
++msgid "The recording's temporary folder could not be created."
++msgstr "Nie udało się utworzyć katalogu tymczasowego nagrania."
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "Zapisany układ widoków jest niedostępny. Wybierz go ponownie w ustawieniach kamery."
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "Nie udało się zapisać zdjęcia stereo: %1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "Ten multiplekser MP4 nie potrafi zapisać oznaczenia stereo. Zainstaluj uaktualnione wtyczki GStreamera z tego wydania."
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "Kamera nie dostarczyła dwóch czytelnych widoków. Sprawdź format w ustawieniach kamery."
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "Kamera nie określa kolejności naprzemiennych klatek. W ustawieniach kamery wybierz obsługiwany układ widoków."
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "Nie można wyświetlić tej klatki jako dwóch widoków w oryginalnym rozmiarze. Wybierz inną rozdzielczość kamery lub układ widoków."
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "Ta klatka nie dostarcza wybranej pary widoków. Sprawdź ich układ w ustawieniach kamery."
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "Strumień kamery nie wskazuje pary widoków. W ustawieniach kamery wybierz obsługiwany układ widoków."
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "Ekran jest w trybie 2D. Wyświetlany jest obraz dla lewego oka."
++
++msgid "Twirl"
++msgstr "Wir"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "Zawrót głowy"
++
++msgid "Video saved"
++msgstr "Zapisano film"
++
++msgid "Vivid colors"
++msgstr "Żywe kolory"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "Poczekaj na klatkę z kamery przed rozpoczęciem przechwytywania."
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "Poczekaj na pełną klatkę stereo przed rozpoczęciem nagrywania."
++
++msgid "Warp"
++msgstr "Zniekształcenie"
++
++msgid "Waveform"
++msgstr "Przebieg fali"
++
++msgid "X-ray"
++msgstr "Rentgen"
+--- a/po/pt_BR/kamoso.po
++++ b/po/pt_BR/kamoso.po
+@@ -332,3 +332,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "Preparando a prévia…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1 ainda não grava a identificação 3D do vídeo. Selecione x264."
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "Para salvar esta foto, é necessário um quadro 3D completo e o formato MPO ou JPS."
++
++msgid "Bulge"
++msgstr "Saliência"
++
++msgid "Camera Settings"
++msgstr "Configurações da câmera"
++
++msgid "Cartoon"
++msgstr "Desenho animado"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "Selecione Matroska ou MP4 para a gravação."
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "Selecione o formato desta câmera nas Configurações da câmera para mostrar o par em 3D."
++
++msgid "Delay"
++msgstr "Atraso"
++
++msgid "Dice"
++msgstr "Mosaico"
++
++msgid "Display Settings"
++msgstr "Configurações da tela"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "Bordas"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "Termine de salvar a gravação antes de mudar o modo 3D."
++
++msgid "Grayscale"
++msgstr "Escala de cinza"
++
++msgid "Heat"
++msgstr "Calor"
++
++msgid "Hue +0.5"
++msgstr "Matiz +0,5"
++
++msgid "Hue −0.5"
++msgstr "Matiz −0,5"
++
++msgid "Kaleidoscope"
++msgstr "Caleidoscópio"
++
++msgid "Kamoso 3D camera"
++msgstr "Câmera 3D do Kamoso"
++
++msgid "Mirror"
++msgstr "Espelho"
++
++msgid "No effect"
++msgstr "Sem efeito"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "Nenhum quadro 3D chegou durante a gravação. Nenhum arquivo foi salvo."
++
++msgid "Old film"
++msgstr "Filme antigo"
++
++msgid "Optical art"
++msgstr "Arte óptica"
++
++msgid "Pinch"
++msgstr "Pinçamento"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "Radioativo"
++
++msgid "Ripples"
++msgstr "Ondulações"
++
++msgid "Sepia"
++msgstr "Sépia"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "Quadrado"
++
++msgid "Stereo photo format"
++msgstr "Formato da foto 3D"
++
++msgid "Stereo video container"
++msgstr "Contêiner do vídeo 3D"
++
++msgid "Stereo video encoder"
++msgstr "Codificador do vídeo 3D"
++
++msgid "Streaks"
++msgstr "Rastros"
++
++msgid "Stretch"
++msgstr "Esticar"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "O multiplexador %1 não está disponível."
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "Não foi possível compartilhar a câmera 3D com outros programas: %1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "Não foi possível iniciar a prévia em 3D."
++
++msgid "The JPEG encoder is unavailable."
++msgstr "O codificador JPEG não está disponível."
++
++msgid "The camera frame could not be copied."
++msgstr "Não foi possível copiar o quadro da câmera."
++
++msgid "The camera publisher could not start."
++msgstr "Não foi possível iniciar o compartilhamento da câmera."
++
++msgid "The camera publisher is unavailable."
++msgstr "O compartilhamento da câmera está indisponível."
++
++msgid "The camera publisher refused a frame."
++msgstr "O compartilhamento da câmera recusou um quadro."
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "A resolução da câmera mudou durante a gravação. A gravação incompleta não foi salva."
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "Não foi possível mover a gravação concluída. Ela foi mantida em %1."
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "Não foi possível aplicar o efeito %1 separadamente a cada olho: %2. A câmera é mostrada sem esse efeito."
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "O codificador não conseguiu acompanhar. Alguns quadros estéreo foram ignorados; a gravação continua."
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "O codificador recusou um quadro 3D. A gravação incompleta não foi salva."
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "O filtro alterou as dimensões da imagem de um olho"
++
++msgid "The filter could not start"
++msgstr "Não foi possível iniciar o filtro"
++
++msgid "The filter refused a camera frame"
++msgstr "O filtro recusou um quadro da câmera"
++
++msgid "The filter stopped"
++msgstr "O filtro parou"
++
++msgid "The photo already exists. Choose another name."
++msgstr "A foto já existe. Escolha outro nome."
++
++msgid "The previous recording is still being saved."
++msgstr "A gravação anterior ainda está sendo salva."
++
++msgid "The recording already exists. Choose another name."
++msgstr "A gravação já existe. Escolha outro nome."
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "Não foi possível copiar a gravação. Ela foi mantida em %1: %2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "Não foi possível salvar a gravação: %1"
++
++msgid "The recording folder could not be created."
++msgstr "Não foi possível criar a pasta da gravação."
++
++msgid "The recording pipeline could not start."
++msgstr "Não foi possível iniciar o processamento da gravação."
++
++msgid "The recording's temporary folder could not be created."
++msgstr "Não foi possível criar a pasta temporária da gravação."
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "O formato salvo para a câmera não está disponível. Selecione-o novamente nas Configurações da câmera."
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "Não foi possível salvar a foto 3D: %1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "Este multiplexador MP4 não grava a identificação 3D. Instale os plugins GStreamer atualizados da edição."
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "Esta câmera não forneceu duas vistas que possam ser lidas. Verifique o formato nas Configurações da câmera."
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "Esta câmera não identifica a ordem dos quadros alternados. Selecione um formato compatível nas Configurações da câmera."
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "Este quadro da câmera não pode ser mostrado como duas vistas em sua resolução original. Selecione outra resolução ou outro formato para a câmera."
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "Este quadro da câmera não pode fornecer o par selecionado. Verifique o formato nas Configurações da câmera."
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "Este fluxo da câmera não identifica um par de duas vistas. Selecione um formato compatível nas Configurações da câmera."
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "Esta tela está em 2D. Mostrando a imagem do olho esquerdo."
++
++msgid "Twirl"
++msgstr "Redemoinho"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "Vertigem"
++
++msgid "Video saved"
++msgstr "Vídeo salvo"
++
++msgid "Vivid colors"
++msgstr "Cores vivas"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "Aguarde um quadro da câmera antes de capturar."
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "Aguarde um quadro 3D completo antes de gravar."
++
++msgid "Warp"
++msgstr "Deformação"
++
++msgid "Waveform"
++msgstr "Forma de onda"
++
++msgid "X-ray"
++msgstr "Raio X"
+--- a/po/zh_CN/kamoso.po
++++ b/po/zh_CN/kamoso.po
+@@ -253,3 +253,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "正在准备预览…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1 尚不能写入立体录像标记。请选择 x264。"
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "保存此照片需要完整的立体帧以及 MPO 或 JPS 格式。"
++
++msgid "Bulge"
++msgstr "凸起"
++
++msgid "Camera Settings"
++msgstr "摄像头设置"
++
++msgid "Cartoon"
++msgstr "卡通"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "请选择 Matroska 或 MP4 用于录像。"
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "要以 3D 显示这对画面，请在摄像头设置中选择此摄像头的视图排列方式。"
++
++msgid "Delay"
++msgstr "延迟"
++
++msgid "Dice"
++msgstr "骰子"
++
++msgid "Display Settings"
++msgstr "显示设置"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "边缘"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "请等录像保存完毕后再更改 3D 模式。"
++
++msgid "Grayscale"
++msgstr "灰度"
++
++msgid "Heat"
++msgstr "热感"
++
++msgid "Hue +0.5"
++msgstr "色相 +0.5"
++
++msgid "Hue −0.5"
++msgstr "色相 −0.5"
++
++msgid "Kaleidoscope"
++msgstr "万花筒"
++
++msgid "Kamoso 3D camera"
++msgstr "Kamoso 3D 摄像头"
++
++msgid "Mirror"
++msgstr "镜像"
++
++msgid "No effect"
++msgstr "无特效"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "录像期间未收到立体帧。没有保存文件。"
++
++msgid "Old film"
++msgstr "老电影"
++
++msgid "Optical art"
++msgstr "光效应艺术"
++
++msgid "Pinch"
++msgstr "挤压"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "放射性"
++
++msgid "Ripples"
++msgstr "涟漪"
++
++msgid "Sepia"
++msgstr "棕褐色"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "方形"
++
++msgid "Stereo photo format"
++msgstr "立体照片格式"
++
++msgid "Stereo video container"
++msgstr "立体视频容器"
++
++msgid "Stereo video encoder"
++msgstr "立体视频编码器"
++
++msgid "Streaks"
++msgstr "拖影"
++
++msgid "Stretch"
++msgstr "拉伸"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "%1 复用器不可用。"
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "无法与其他程序共享 3D 摄像头：%1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "无法启动 3D 取景器。"
++
++msgid "The JPEG encoder is unavailable."
++msgstr "JPEG 编码器不可用。"
++
++msgid "The camera frame could not be copied."
++msgstr "无法复制摄像头画面。"
++
++msgid "The camera publisher could not start."
++msgstr "无法启动摄像头共享服务。"
++
++msgid "The camera publisher is unavailable."
++msgstr "摄像头共享服务不可用。"
++
++msgid "The camera publisher refused a frame."
++msgstr "摄像头共享服务拒绝了一帧。"
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "录像期间摄像头分辨率发生了变化。未保存不完整的录像。"
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "无法移动已完成的录像。录像保留在 %1。"
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "无法为双眼分别应用特效“%1”：%2。摄像头画面将不带此特效。"
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "编码器未能跟上速度。已跳过部分立体帧，录像仍在继续。"
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "编码器拒绝了一帧立体画面。未保存不完整的录像。"
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "滤镜更改了单眼画面的尺寸"
++
++msgid "The filter could not start"
++msgstr "无法启动滤镜"
++
++msgid "The filter refused a camera frame"
++msgstr "滤镜拒绝了一帧摄像头画面"
++
++msgid "The filter stopped"
++msgstr "滤镜已停止"
++
++msgid "The photo already exists. Choose another name."
++msgstr "照片已存在。请选择其他名称。"
++
++msgid "The previous recording is still being saved."
++msgstr "上一段录像仍在保存。"
++
++msgid "The recording already exists. Choose another name."
++msgstr "录像已存在。请选择其他名称。"
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "无法复制录像。录像保留在 %1：%2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "无法保存录像：%1"
++
++msgid "The recording folder could not be created."
++msgstr "无法创建录像文件夹。"
++
++msgid "The recording pipeline could not start."
++msgstr "无法启动录像处理管线。"
++
++msgid "The recording's temporary folder could not be created."
++msgstr "无法创建录像的临时文件夹。"
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "已保存的画面排列方式不可用。请在摄像头设置中重新选择。"
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "无法保存立体照片：%1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "此 MP4 复用器无法写入立体标记。请安装本发行版更新后的 GStreamer 插件。"
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "此摄像头未提供两个可读取的视图。请在摄像头设置中检查格式。"
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "此摄像头未指明交替帧的顺序。请在摄像头设置中选择其支持的排列方式。"
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "无法将此帧显示为两个原始尺寸的视图。请选择其他摄像头分辨率或排列方式。"
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "此帧无法提供选定的视图对。请在摄像头设置中检查排列方式。"
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "此摄像头的视频流未标明成对的视图。请在摄像头设置中选择其支持的排列方式。"
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "此显示器处于 2D 模式。正在显示左眼画面。"
++
++msgid "Twirl"
++msgstr "旋转"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "眩晕"
++
++msgid "Video saved"
++msgstr "视频已保存"
++
++msgid "Vivid colors"
++msgstr "鲜艳色彩"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "请等收到摄像头画面后再拍摄。"
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "请等收到完整的立体帧后再录像。"
++
++msgid "Warp"
++msgstr "扭曲"
++
++msgid "Waveform"
++msgstr "波形"
++
++msgid "X-ray"
++msgstr "X 射线"
+--- a/po/zh_TW/kamoso.po
++++ b/po/zh_TW/kamoso.po
+@@ -253,3 +253,251 @@
+ 
+ msgid "Preparing preview…"
+ msgstr "正在準備預覽…"
++
++#, kde-format
++msgid "%1 cannot yet write the stereo recording mark. Choose x264."
++msgstr "%1 尚無法寫入立體錄影標記。請選擇 x264。"
++
++msgid "A complete stereo frame and an MPO or JPS format are needed to save this photo."
++msgstr "儲存這張相片需要完整的立體影格，以及 MPO 或 JPS 格式。"
++
++msgid "Bulge"
++msgstr "凸起"
++
++msgid "Camera Settings"
++msgstr "攝影機設定"
++
++msgid "Cartoon"
++msgstr "卡通"
++
++msgid "Choose Matroska or MP4 for the recording."
++msgstr "請選擇 Matroska 或 MP4 作為錄影格式。"
++
++msgid "Choose this camera's packing in Camera Settings to show a pair in 3D."
++msgstr "若要以 3D 顯示這對畫面，請在攝影機設定中選擇這部攝影機的視圖排列方式。"
++
++msgid "Delay"
++msgstr "延遲"
++
++msgid "Dice"
++msgstr "骰子"
++
++msgid "Display Settings"
++msgstr "顯示設定"
++
++msgid "Distort0r"
++msgstr "Distort0r"
++
++msgid "Edges"
++msgstr "邊緣"
++
++msgid "Finish saving the recording before changing 3D mode."
++msgstr "請等錄影儲存完畢後再變更 3D 模式。"
++
++msgid "Grayscale"
++msgstr "灰階"
++
++msgid "Heat"
++msgstr "熱感"
++
++msgid "Hue +0.5"
++msgstr "色相 +0.5"
++
++msgid "Hue −0.5"
++msgstr "色相 −0.5"
++
++msgid "Kaleidoscope"
++msgstr "萬花筒"
++
++msgid "Kamoso 3D camera"
++msgstr "Kamoso 3D 攝影機"
++
++msgid "Mirror"
++msgstr "鏡像"
++
++msgid "No effect"
++msgstr "無特效"
++
++msgid "No stereo frames arrived during recording. No file was saved."
++msgstr "錄影期間未收到立體影格。未儲存檔案。"
++
++msgid "Old film"
++msgstr "老電影"
++
++msgid "Optical art"
++msgstr "歐普藝術"
++
++msgid "Pinch"
++msgstr "擠壓"
++
++msgid "Quark"
++msgstr "Quark"
++
++msgid "Radioactive"
++msgstr "放射性"
++
++msgid "Ripples"
++msgstr "漣漪"
++
++msgid "Sepia"
++msgstr "棕褐色"
++
++msgid "Shagadelic"
++msgstr "Shagadelic"
++
++msgid "Square"
++msgstr "方形"
++
++msgid "Stereo photo format"
++msgstr "立體相片格式"
++
++msgid "Stereo video container"
++msgstr "立體影片容器"
++
++msgid "Stereo video encoder"
++msgstr "立體影片編碼器"
++
++msgid "Streaks"
++msgstr "殘影"
++
++msgid "Stretch"
++msgstr "拉伸"
++
++#, kde-format
++msgid "The %1 muxer is unavailable."
++msgstr "無法使用 %1 多工器。"
++
++#, kde-format
++msgid "The 3D camera could not be shared with other programs: %1"
++msgstr "無法與其他程式共享 3D 攝影機：%1"
++
++msgid "The 3D viewfinder could not start."
++msgstr "無法啟動 3D 觀景窗。"
++
++msgid "The JPEG encoder is unavailable."
++msgstr "無法使用 JPEG 編碼器。"
++
++msgid "The camera frame could not be copied."
++msgstr "無法複製攝影機影格。"
++
++msgid "The camera publisher could not start."
++msgstr "無法啟動攝影機共享服務。"
++
++msgid "The camera publisher is unavailable."
++msgstr "無法使用攝影機共享服務。"
++
++msgid "The camera publisher refused a frame."
++msgstr "攝影機共享服務拒絕了一個影格。"
++
++msgid "The camera resolution changed during recording. The incomplete recording was not saved."
++msgstr "錄影期間攝影機解析度發生變更。未儲存不完整的錄影。"
++
++#, kde-format
++msgid "The completed recording could not be moved. It is kept at %1."
++msgstr "無法移動已完成的錄影。錄影保留在 %1。"
++
++#, kde-format
++msgid "The effect %1 could not run separately for each eye: %2. The camera is shown without this effect."
++msgstr "無法為雙眼分別套用「%1」特效：%2。攝影機畫面將不套用此特效。"
++
++msgid "The encoder could not keep up. Some stereo frames were skipped; recording continues."
++msgstr "編碼器無法跟上速度。已略過部分立體影格，並繼續錄影。"
++
++msgid "The encoder refused a stereo frame. The incomplete recording was not saved."
++msgstr "編碼器拒絕了一個立體影格。未儲存不完整的錄影。"
++
++msgid "The filter changed the eye's sample dimensions"
++msgstr "濾鏡變更了單眼畫面的尺寸"
++
++msgid "The filter could not start"
++msgstr "無法啟動濾鏡"
++
++msgid "The filter refused a camera frame"
++msgstr "濾鏡拒絕了一個攝影機影格"
++
++msgid "The filter stopped"
++msgstr "濾鏡已停止"
++
++msgid "The photo already exists. Choose another name."
++msgstr "相片已存在。請選擇其他名稱。"
++
++msgid "The previous recording is still being saved."
++msgstr "上一段錄影仍在儲存中。"
++
++msgid "The recording already exists. Choose another name."
++msgstr "錄影已存在。請選擇其他名稱。"
++
++#, kde-format
++msgid "The recording could not be copied. It is kept at %1: %2"
++msgstr "無法複製錄影。錄影保留在 %1：%2"
++
++#, kde-format
++msgid "The recording could not be saved: %1"
++msgstr "無法儲存錄影：%1"
++
++msgid "The recording folder could not be created."
++msgstr "無法建立錄影資料夾。"
++
++msgid "The recording pipeline could not start."
++msgstr "無法啟動錄影處理管線。"
++
++msgid "The recording's temporary folder could not be created."
++msgstr "無法建立錄影的暫存資料夾。"
++
++msgid "The saved camera packing is unavailable. Choose it again in Camera Settings."
++msgstr "已儲存的畫面排列方式無法使用。請在攝影機設定中重新選擇。"
++
++#, kde-format
++msgid "The stereo photo could not be saved: %1"
++msgstr "無法儲存立體相片：%1"
++
++msgid "This MP4 muxer cannot write the stereo mark. Install the edition's updated GStreamer plugins."
++msgstr "這個 MP4 多工器無法寫入立體標記。請安裝本發行版更新的 GStreamer 外掛程式。"
++
++msgid "This camera did not provide two readable views. Check its format in Camera Settings."
++msgstr "這部攝影機未提供兩個可讀取的視圖。請在攝影機設定中確認格式。"
++
++msgid "This camera does not identify the order of alternating frames. Choose a packing it can provide in Camera Settings."
++msgstr "這部攝影機未指明交替影格的順序。請在攝影機設定中選擇支援的排列方式。"
++
++msgid "This camera frame cannot be shown as two native views. Choose another camera resolution or packing."
++msgstr "無法將這個影格顯示為兩個原始尺寸的視圖。請選擇其他攝影機解析度或排列方式。"
++
++msgid "This camera frame cannot provide the selected pair. Check its packing in Camera Settings."
++msgstr "這個影格無法提供所選的視圖配對。請在攝影機設定中確認排列方式。"
++
++msgid "This camera stream does not identify a two-view pair. Choose a packing it can provide in Camera Settings."
++msgstr "這部攝影機的影像串流未標明成對的視圖。請在攝影機設定中選擇支援的排列方式。"
++
++msgid "This display is in 2D. Showing the left eye."
++msgstr "此顯示器處於 2D 模式。正在顯示左眼畫面。"
++
++msgid "Twirl"
++msgstr "旋轉"
++
++msgid "Twolay0r"
++msgstr "Twolay0r"
++
++msgid "Vertigo"
++msgstr "眩暈"
++
++msgid "Video saved"
++msgstr "已儲存影片"
++
++msgid "Vivid colors"
++msgstr "鮮豔色彩"
++
++msgid "Wait for a camera frame before capturing."
++msgstr "請等收到攝影機畫面後再拍攝。"
++
++msgid "Wait for a complete stereo frame before recording."
++msgstr "請等收到完整的立體影格後再錄影。"
++
++msgid "Warp"
++msgstr "扭曲"
++
++msgid "Waveform"
++msgstr "波形"
++
++msgid "X-ray"
++msgstr "X 光"

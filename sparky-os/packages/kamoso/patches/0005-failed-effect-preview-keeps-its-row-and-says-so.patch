@@ -1,0 +1,707 @@
+Description: A failed effect preview keeps its row and says so
+ A preview that fails no longer takes its effect away: upstream removed
+ the row in 2D (view.model.remove(index)), and in 3D the grid kept a
+ black tile without a word. Now, in 2D and 3D alike, the row stays, the
+ tile shows "No preview for this effect" with the effect's name, the
+ reason goes to the log once per effect, and the effect can still be
+ chosen. PipelineItem's failed() carries GStreamer's reason, and a
+ preview that cannot be linked to its sink fails instead of asserting.
+ When a chosen effect cannot start in the flat camera (its element is
+ missing, or the description is refused), the camera runs without it and
+ the viewfinder says so (WebcamControl::effectMessage); before, the
+ description was handed to camerabin half-built with only a debug line.
+ This is the edition's reading of Daniel Campos Ramos's rules ("nothing
+ we do should silently fail", 2026-11-01; "do not remove
+ functionality!", 2026-10-08), not upstream's behaviour.
+ The two new sentences are translated into the nine languages Kamoso
+ ships besides English (de, es, fr, ja, ko, pl, pt_BR, zh_CN, zh_TW); the
+ translations are ours.
+ configgrid-test: a failed preview keeps its row; a model row whose
+ element does not exist keeps its row, shows the sentence, can be chosen
+ and is logged once, in 2D and in 3D. The stand-in PipelineItem asks
+ GStreamer's own parser, as the real item does.
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-24
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index e5a922c..487bfdc 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -25,7 +25,7 @@ add_test(NAME stereopublisher COMMAND stereopublisher-test)
+ 
+ add_executable(configgrid-test configgrid-test.cpp)
+ target_compile_definitions(configgrid-test PRIVATE KAMOSO_CONFIG_QML="${CMAKE_SOURCE_DIR}/src/qml/Config.qml")
+-target_link_libraries(configgrid-test PRIVATE Qt6::Test Qt6::Qml Qt6::Quick KF6::I18n)
++target_link_libraries(configgrid-test PRIVATE Qt6::Test Qt6::Qml Qt6::Quick KF6::I18n PkgConfig::GStreamer)
+ add_test(NAME configgrid COMMAND configgrid-test)
+ set_tests_properties(configgrid PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+ 
+diff --git a/autotests/configgrid-test.cpp b/autotests/configgrid-test.cpp
+index 568479c..e86e996 100644
+--- a/autotests/configgrid-test.cpp
++++ b/autotests/configgrid-test.cpp
+@@ -4,9 +4,11 @@
+     SPDX-License-Identifier: GPL-2.0-or-later
+ */
+ 
+-// Loads the real effects grid (src/qml/Config.qml) with stand-ins for the types Kamoso registers in C++, and checks
+-// what a delegate hands to its PipelineItem after its row was removed: the delegate lives on until its deferred
+-// deletion, and a new sample image (the drawer opened again) must not make it build a pipeline from "undefined".
++// Loads the real effects grid (src/qml/Config.qml) with stand-ins for the types Kamoso registers in C++.
++// The stand-in PipelineItem asks GStreamer's own parser for each description, as the real item does, so an effect
++// whose element is missing fails the way it fails in Kamoso. Checked: a failed preview keeps its row, says so in its
++// tile in 2D and 3D alike, can still be chosen, and its reason is logged once per effect; and no delegate ever hands
++// "undefined" to GStreamer.
+ 
+ #include <KLocalizedContext>
+ #include <KLocalizedString>
+@@ -18,8 +20,11 @@
+ #include <QQuickView>
+ #include <QQuickWindow>
+ #include <QSGRendererInterface>
++#include <QQmlExpression>
+ #include <QTest>
+ 
++#include <gst/gst.h>
++
+ class TestPipelineItem : public QObject, public QQmlParserStatus
+ {
+     Q_OBJECT
+@@ -51,17 +56,30 @@ public:
+         m_description = description;
+         descriptions.append(description);
+         Q_EMIT descriptionChanged();
++        if (description.isEmpty())
++            return;
++        // As the real item: GStreamer's parser refuses a description whose element is missing, and the failure
++        // reaches QML after the description has changed.
++        GError *error = nullptr;
++        GstElement *pipeline = gst_parse_launch(description.toUtf8().constData(), &error);
++        if (pipeline)
++            gst_object_unref(pipeline);
++        if (error) {
++            const QString reason = QString::fromUtf8(error->message);
++            g_error_free(error);
++            QMetaObject::invokeMethod(this, [this, reason] { Q_EMIT failed(reason); }, Qt::QueuedConnection);
++        }
+     }
+-    // The real item emits failed() when GStreamer refuses its pipeline or reports an error on its bus.
++    // The real item also emits failed() when GStreamer reports an error on its bus.
+     void fail()
+     {
+-        Q_EMIT failed();
++        Q_EMIT failed(QStringLiteral("a test failure"));
+     }
+ 
+ Q_SIGNALS:
+     void descriptionChanged();
+     void playingChanged();
+-    void failed();
++    void failed(const QString &reason);
+ 
+ private:
+     QString m_description;
+@@ -92,7 +110,12 @@ public:
+     }
+     bool stereoPreviewActive() const
+     {
+-        return false;
++        return m_stereo;
++    }
++    void setStereoPreviewActive(bool stereo)
++    {
++        m_stereo = stereo;
++        Q_EMIT stereoChanged();
+     }
+     QString stereoEffectMessage() const
+     {
+@@ -100,6 +123,9 @@ public:
+     }
+ Q_SIGNALS:
+     void stereoChanged();
++
++private:
++    bool m_stereo = false;
+ };
+ 
+ class TestKamoso : public QObject
+@@ -127,6 +153,11 @@ class TestDevice : public QObject
+ {
+     Q_OBJECT
+     Q_PROPERTY(QString filters MEMBER m_filters NOTIFY filtersChanged)
++public:
++    QString filters() const
++    {
++        return m_filters;
++    }
+ Q_SIGNALS:
+     void filtersChanged();
+ 
+@@ -143,6 +174,10 @@ public:
+     {
+         return &m_device;
+     }
++    TestDevice *device()
++    {
++        return &m_device;
++    }
+ 
+ private:
+     TestDevice m_device;
+@@ -154,6 +189,9 @@ class ConfigGridTest : public QObject
+ private Q_SLOTS:
+     void initTestCase()
+     {
++        gst_init(nullptr, nullptr);
++        // After QTest's own handler is in place (qExec installs it), so that ours passes every message on to it.
++        s_previous = qInstallMessageHandler(countTold);
+         KLocalizedString::setApplicationDomain("kamoso");
+         QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+         qmlRegisterType<TestPipelineItem>("org.kde.kamoso", 3, 0, "PipelineItem");
+@@ -163,18 +201,12 @@ private Q_SLOTS:
+         qmlRegisterType<TestVideoItem>("org.freedesktop.gstreamer.Qt6GLVideoItem", 1, 0, "GstGLQt6VideoItem");
+     }
+ 
+-    void removedRowBuildsNoPipeline()
++    void failedPreviewKeepsItsRow()
+     {
+-        QQuickView view;
+-        view.rootContext()->setContextObject(new KLocalizedContext(view.engine()));
+-        view.setResizeMode(QQuickView::SizeRootObjectToView);
+-        view.resize(600, 2400);
+-        view.setSource(QUrl::fromLocalFile(QStringLiteral(KAMOSO_CONFIG_QML)));
+-        QVERIFY2(view.status() == QQuickView::Ready, qPrintable(QDebug::toString(view.errors())));
+-        view.show();
+-        QVERIFY(QTest::qWaitForWindowExposed(&view));
+-        QQuickItem *grid = view.rootObject();
+-        QTRY_COMPARE(grid->property("count").toInt(), 31);
++        m_webcam.setStereoPreviewActive(false);
++        QQuickView view(&m_engine, nullptr);
++        QQuickItem *grid = loadGrid(view);
++        QVERIFY(grid);
+ 
+         TestPipelineItem *streaks = nullptr;
+         QTRY_VERIFY([&] {
+@@ -184,27 +216,122 @@ private Q_SLOTS:
+             }
+             return streaks != nullptr;
+         }());
+-        QPointer<TestPipelineItem> removed(streaks);
+ 
+-        // In 2D a failed preview removes its row, from the delegate's own onFailed handler.
++        // A failed preview keeps its row (upstream removed it, and a removed row's delegate once built "undefined").
+         TestPipelineItem::descriptions.clear();
+-        removed->fail();
+-        QCOMPARE(grid->property("count").toInt(), 30);
++        streaks->fail();
++        QCoreApplication::processEvents();
++        QCOMPARE(grid->property("count").toInt(), 31);
+ 
+-        // Before the removed delegate is deleted, the drawer shows a new sample image.
++        // The drawer shows a new sample image: every delegate builds its description again, none from "undefined".
+         m_kamoso.setSampleImage(QStringLiteral("/nonexistent/second-sample.jpg"));
+         for (const QString &description : std::as_const(TestPipelineItem::descriptions))
+             QVERIFY2(!description.contains(QLatin1String("undefined")), qPrintable(description));
+-        QVERIFY(TestPipelineItem::descriptions.size() >= 29);
++        QVERIFY(TestPipelineItem::descriptions.size() >= 31);
++    }
++
++    void missingElementKeepsRowAndSays_data()
++    {
++        QTest::addColumn<bool>("stereo");
++        QTest::newRow("2D") << false;
++        QTest::newRow("3D") << true;
++    }
++
++    // A model with one filter whose element does not exist: the row stays, its tile shows the sentence with the
++    // effect's name, the effect can still be chosen, and the reason is written to the log once.
++    void missingElementKeepsRowAndSays()
++    {
++        QFETCH(bool, stereo);
++        m_webcam.setStereoPreviewActive(stereo);
++        m_devices.device()->setProperty("filters", QString());
++        s_told.clear();
++        QQuickView view(&m_engine, nullptr);
++        QQuickItem *grid = loadGrid(view);
++        QVERIFY(grid);
++        QQmlExpression append(view.rootContext(), grid, QStringLiteral("model.append({filters: \"kam61nosuchelement\"})"));
++        append.evaluate();
++        QVERIFY(!append.hasError());
++
++        TestPipelineItem *missing = nullptr;
++        QTRY_VERIFY([&] {
++            for (const auto &item : std::as_const(TestPipelineItem::items)) {
++                if (item && item->description().contains(QLatin1String(" ! kam61nosuchelement name=last")))
++                    missing = item;
++            }
++            return missing != nullptr;
++        }());
++        auto *video = qobject_cast<QQuickItem *>(missing->parent());
++        QVERIFY(video && video->parentItem() && video->parentItem()->parentItem());
++        // Held weakly: a grid that removes a failed row deletes its delegate.
++        QPointer<QQuickItem> delegate = video->parentItem()->parentItem();
++
++        QTRY_VERIFY(delegate && delegate->property("previewFailed").toBool());
++        QCOMPARE(grid->property("count").toInt(), 32);
++        QVERIFY(delegate && delegate->isVisible());
++        const QString sentence = i18n("No preview for this effect");
++        bool said = false;
++        for (auto *label : delegate->findChildren<QQuickItem *>()) {
++            if (label->property("text").toString() == sentence && label->isVisible())
++                said = true;
++        }
++        if (!said) {
++            QList<QQuickItem *> stack = delegate->childItems();
++            while (!stack.isEmpty()) {
++                QQuickItem *item = stack.takeLast();
++                if (item->property("text").toString() == sentence && item->isVisible())
++                    said = true;
++                stack.append(item->childItems());
++            }
++        }
++        QVERIFY2(said, "the failed tile does not show its sentence");
++
++        // The same failure again (the drawer opened again with a new sample): still one line in the log.
++        m_kamoso.setSampleImage(QStringLiteral("/nonexistent/third-sample-%1.jpg").arg(stereo));
++        QTRY_VERIFY(delegate && delegate->property("previewFailed").toBool());
++        QCoreApplication::processEvents();
++        QCOMPARE(s_told.size(), 1);
++        QVERIFY2(s_told.first().contains(QLatin1String("kam61nosuchelement")), qPrintable(s_told.first()));
++
++        // The effect can still be chosen.
++        QVERIFY(delegate);
++        const QPointF centre = delegate->mapToScene(QPointF(delegate->width() / 2, delegate->height() / 2));
++        QTest::mouseClick(&view, Qt::LeftButton, {}, centre.toPoint());
++        QTRY_COMPARE(m_devices.device()->filters(), QStringLiteral("kam61nosuchelement"));
++    }
+ 
+-        // A late failure of the removed delegate removes no other effect.
+-        if (removed) {
+-            removed->fail();
+-            QCOMPARE(grid->property("count").toInt(), 30);
++private:
++    QQuickItem *loadGrid(QQuickView &view)
++    {
++        view.rootContext()->setContextObject(new KLocalizedContext(view.engine()));
++        view.setResizeMode(QQuickView::SizeRootObjectToView);
++        view.resize(600, 2400);
++        view.setSource(QUrl::fromLocalFile(QStringLiteral(KAMOSO_CONFIG_QML)));
++        if (view.status() != QQuickView::Ready) {
++            qWarning() << view.errors();
++            return nullptr;
+         }
++        view.show();
++        if (!QTest::qWaitForWindowExposed(&view))
++            return nullptr;
++        QQuickItem *grid = view.rootObject();
++        if (!QTest::qWaitFor([grid] { return grid->property("count").toInt() == 31; }))
++            return nullptr;
++        return grid;
++    }
++
++    static inline QStringList s_told;
++    static inline QtMessageHandler s_previous = nullptr;
++    static void countTold(QtMsgType type, const QMessageLogContext &context, const QString &message)
++    {
++        if (message.contains(QLatin1String("No preview for the effect")))
++            s_told.append(message);
++        if (s_previous)
++            s_previous(type, context, message);
+     }
+ 
+ private:
++    // One engine for every case: a singleton instance registered with qmlRegisterSingletonInstance serves one engine.
++    QQmlEngine m_engine;
+     TestWebcamControl m_webcam;
+     TestKamoso m_kamoso;
+     TestDeviceManager m_devices;
+diff --git a/po/de/kamoso.po b/po/de/kamoso.po
+index 6c0e36b..0e17230 100644
+--- a/po/de/kamoso.po
++++ b/po/de/kamoso.po
+@@ -596,3 +596,12 @@ msgstr "Gespeichert in %1"
+ 
+ #~ msgid "Upload to YouTube"
+ #~ msgstr "Auf YouTube hochladen"
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "Keine Vorschau für diesen Effekt"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "Der Effekt %1 konnte nicht gestartet werden: %2. Die Kamera wird ohne ihn angezeigt."
+diff --git a/po/es/kamoso.po b/po/es/kamoso.po
+index b05f3ce..2396213 100644
+--- a/po/es/kamoso.po
++++ b/po/es/kamoso.po
+@@ -250,3 +250,12 @@ msgstr "Fotografía tomada"
+ #, kde-format
+ msgid "Saved in %1"
+ msgstr "Guardada en %1"
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "No hay vista previa de este efecto"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "No se pudo iniciar el efecto %1: %2. La cámara se muestra sin él."
+diff --git a/po/fr/kamoso.po b/po/fr/kamoso.po
+index 52ae627..e3f8afe 100644
+--- a/po/fr/kamoso.po
++++ b/po/fr/kamoso.po
+@@ -483,3 +483,12 @@ msgstr "Enregistré sous %1"
+ 
+ #~ msgid "Gamma"
+ #~ msgstr "Gamma"
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "Pas d'aperçu pour cet effet"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "L'effet %1 n'a pas pu démarrer : %2. La caméra est affichée sans lui."
+diff --git a/po/ja/kamoso.po b/po/ja/kamoso.po
+index 8bf6969..f284e97 100644
+--- a/po/ja/kamoso.po
++++ b/po/ja/kamoso.po
+@@ -241,3 +241,12 @@ msgstr ""
+ #, kde-format
+ msgid "Saved in %1"
+ msgstr ""
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "このエフェクトのプレビューはありません"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "エフェクト %1 を開始できませんでした: %2。カメラはこのエフェクトなしで表示されています。"
+diff --git a/po/ko/kamoso.po b/po/ko/kamoso.po
+index b86271e..599faac 100644
+--- a/po/ko/kamoso.po
++++ b/po/ko/kamoso.po
+@@ -436,3 +436,12 @@ msgstr "%1에 저장됨"
+ 
+ #~ msgid "Gamma"
+ #~ msgstr "감마"
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "이 효과의 미리 보기가 없습니다"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "효과 %1을(를) 시작할 수 없습니다: %2. 카메라는 이 효과 없이 표시됩니다."
+diff --git a/po/pl/kamoso.po b/po/pl/kamoso.po
+index 9fe9ea5..b07cc2f 100644
+--- a/po/pl/kamoso.po
++++ b/po/pl/kamoso.po
+@@ -492,3 +492,12 @@ msgstr "Zapisano w %1"
+ 
+ #~ msgid "Gamma"
+ #~ msgstr "Gamma"
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "Brak podglądu tego efektu"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "Nie można uruchomić efektu %1: %2. Kamera jest pokazywana bez niego."
+diff --git a/po/pt_BR/kamoso.po b/po/pt_BR/kamoso.po
+index 30effad..c566d9c 100644
+--- a/po/pt_BR/kamoso.po
++++ b/po/pt_BR/kamoso.po
+@@ -320,3 +320,12 @@ msgstr "Salvo em %1"
+ 
+ #~ msgid "Show settings..."
+ #~ msgstr "Mostrar configurações..."
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "Sem pré-visualização deste efeito"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "Não foi possível iniciar o efeito %1: %2. A câmera é mostrada sem ele."
+diff --git a/po/zh_CN/kamoso.po b/po/zh_CN/kamoso.po
+index 085b592..4af6b88 100644
+--- a/po/zh_CN/kamoso.po
++++ b/po/zh_CN/kamoso.po
+@@ -241,3 +241,12 @@ msgstr "已拍摄照片"
+ #, kde-format
+ msgid "Saved in %1"
+ msgstr "已保存到 %1"
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "此效果没有预览"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "无法启动效果 %1：%2。摄像头画面在不使用此效果的情况下显示。"
+diff --git a/po/zh_TW/kamoso.po b/po/zh_TW/kamoso.po
+index e4e4cc7..57fff49 100644
+--- a/po/zh_TW/kamoso.po
++++ b/po/zh_TW/kamoso.po
+@@ -241,3 +241,12 @@ msgstr "已拍照"
+ #, kde-format
+ msgid "Saved in %1"
+ msgstr "已儲存於 %1"
++
++#: src/qml/Config.qml
++msgid "No preview for this effect"
++msgstr "此特效沒有預覽"
++
++#: src/video/webcamcontrol.cpp
++#, kde-format
++msgid "The effect %1 could not start: %2. The camera is shown without it."
++msgstr "無法啟動特效 %1：%2。攝影機畫面在不套用此特效的情況下顯示。"
+diff --git a/src/qml/Config.qml b/src/qml/Config.qml
+index d9fdd93..50cbe3a 100644
+--- a/src/qml/Config.qml
++++ b/src/qml/Config.qml
+@@ -97,6 +97,11 @@ GridView {
+         ListElement { filters: "coloreffects preset=xray" }
+     }
+ 
++    // The edition's reading of Daniel's rules ("nothing we do should silently fail", 2026-11-01; "do not remove
++    // functionality!", 2026-10-08), not upstream's behaviour: a preview that fails keeps its row and says so in its
++    // tile, in 2D and 3D alike, and its effect can still be chosen. The reason goes to the log once per effect.
++    property var toldPreviewFailures: ({})
++
+     readonly property string sampleImage: view.visible && WebcamControl.currentDevice.length > 0 ? Kamoso.sampleImage : ""
+ 
+     delegate: Rectangle {
+@@ -104,6 +109,7 @@ GridView {
+         // A delegate whose row was removed lives on until its deferred deletion, with index -1 and no filters;
+         // it has no effect to preview, and building one would hand "undefined" to GStreamer's parser.
+         readonly property bool hasEffect: index >= 0 && model.filters !== undefined
++        property bool previewFailed: false
+         id: delegateItem
+ 
+         width: Math.floor(view.width / columnCount) - Kirigami.Units.smallSpacing
+@@ -123,23 +129,38 @@ GridView {
+ 
+                 PipelineItem {
+                     playing: false
+-                    onFailed: {
+-                        if (WebcamControl.stereoPreviewActive || !delegateItem.hasEffect) {
++                    onFailed: (reason) => {
++                        if (!delegateItem.hasEffect) {
+                             return
+                         }
+-                        delegateItem.visible = false
+-                        view.model.remove(index)
++                        delegateItem.previewFailed = true
++                        if (!view.toldPreviewFailures[model.filters]) {
++                            view.toldPreviewFailures[model.filters] = true
++                            console.warn("No preview for the effect " + model.filters + ": " + reason)
++                        }
+                     }
++                    onDescriptionChanged: delegateItem.previewFailed = false
+ 
+                     description: view.sampleImage.length === 0 || !delegateItem.hasEffect ? "" : "filesrc location=\"" + view.sampleImage + "\" ! decodebin ! imagefreeze ! videoconvert ! " + model.filters + " name=last"
+                 }
+             }
+ 
++            QQC2.Label {
++                anchors.fill: parent
++                visible: delegateItem.previewFailed
++                text: i18n("No preview for this effect")
++                horizontalAlignment: Text.AlignHCenter
++                verticalAlignment: Text.AlignTop
++                wrapMode: Text.WordWrap
++                padding: Kirigami.Units.smallSpacing
++                background: Rectangle { color: Kirigami.Theme.backgroundColor }
++            }
++
+             QQC2.Label {
+                 anchors.left: parent.left
+                 anchors.right: parent.right
+                 anchors.bottom: parent.bottom
+-                visible: WebcamControl.stereoPreviewActive
++                visible: WebcamControl.stereoPreviewActive || delegateItem.previewFailed
+                 text: view.effectNames[model.filters] || model.filters
+                 wrapMode: Text.WordWrap
+                 padding: Kirigami.Units.smallSpacing
+diff --git a/src/qml/Main.qml b/src/qml/Main.qml
+index d4a0e71..8a5b4c3 100644
+--- a/src/qml/Main.qml
++++ b/src/qml/Main.qml
+@@ -308,8 +308,8 @@ Kirigami.ApplicationWindow
+             anchors.right: parent.right
+             wrapMode: Text.WordWrap
+             color: "white"
+-            visible: WebcamControl.stereoEnabled && (WebcamControl.stereoMessage.length > 0 || (WebcamControl.stereoFrame && WebcamControl.flatOutput))
+-            text: [WebcamControl.stereoFrame && WebcamControl.flatOutput ? i18n("This display is in 2D. Showing the left eye.") : "", WebcamControl.stereoMessage].filter(function(message) { return message.length > 0; }).join("\n")
++            visible: (WebcamControl.stereoEnabled && (WebcamControl.stereoMessage.length > 0 || (WebcamControl.stereoFrame && WebcamControl.flatOutput))) || WebcamControl.effectMessage.length > 0
++            text: [WebcamControl.stereoEnabled && WebcamControl.stereoFrame && WebcamControl.flatOutput ? i18n("This display is in 2D. Showing the left eye.") : "", WebcamControl.stereoEnabled ? WebcamControl.stereoMessage : "", WebcamControl.effectMessage].filter(function(message) { return message.length > 0; }).join("\n")
+         }
+ 
+         Text {
+diff --git a/src/video/webcamcontrol.cpp b/src/video/webcamcontrol.cpp
+index f6412d7..7e83db8 100644
+--- a/src/video/webcamcontrol.cpp
++++ b/src/video/webcamcontrol.cpp
+@@ -52,6 +52,21 @@
+ #include <KJob>
+ #include <KLocalizedContext>
+ 
++// The reason an effect preview stopped, as GStreamer gives it: the error's own text, then its detail.
++static QString errorReason(GstMessage* msg)
++{
++    GError *e = nullptr;
++    gchar *debug = nullptr;
++    gst_message_parse_error(msg, &e, &debug);
++    QString reason = e ? QString::fromUtf8(e->message) : QString();
++    if (debug && *debug)
++        reason += QStringLiteral(" (%1)").arg(QString::fromUtf8(debug));
++    if (e)
++        g_error_free(e);
++    g_free(debug);
++    return reason;
++}
++
+ static QString debugMessage(GstMessage* msg)
+ {
+     gchar *debug = nullptr;
+@@ -114,9 +129,10 @@ public:
+             setPlaying(false);
+             break;
+         case GST_MESSAGE_ERROR:  {//Some error occurred.
+-            qCritical() << "error on:" << m_description << debugMessage(message);
++            // The effects grid tells the person in the tile and writes the reason to the log once per effect.
++            const QString reason = errorReason(message);
+             clearPipeline();
+-            QMetaObject::invokeMethod(this, [this] { Q_EMIT failed(); }, Qt::QueuedConnection);
++            QMetaObject::invokeMethod(this, [this, reason] { Q_EMIT failed(reason); }, Qt::QueuedConnection);
+         }   break;
+         default:
+             break;
+@@ -161,10 +177,10 @@ public:
+             GError* e = nullptr;
+             m_pipeline.reset(GST_PIPELINE(gst_parse_launch(m_description.toUtf8().constData(), &e)));
+             if (e) {
+-                qWarning() << "error:" << e->message;
++                const QString reason = QString::fromUtf8(e->message);
+                 g_error_free(e);
+                 clearPipeline();
+-                QMetaObject::invokeMethod(this, [this] { Q_EMIT failed(); }, Qt::QueuedConnection);
++                QMetaObject::invokeMethod(this, [this, reason] { Q_EMIT failed(reason); }, Qt::QueuedConnection);
+                 return;
+             }
+             Q_ASSERT(m_pipeline);
+@@ -178,8 +194,12 @@ public:
+                                                                           , "async", true
+                                                                           , nullptr);
+             bool correct = linkEffectPreview(GST_BIN(m_pipeline.data()), lastItem, glupload, sink);
+-            Q_ASSERT(correct);
+             gst_object_unref(lastItem);
++            if (!correct) {
++                clearPipeline();
++                QMetaObject::invokeMethod(this, [this] { Q_EMIT failed(QStringLiteral("the preview could not be linked to its sink")); }, Qt::QueuedConnection);
++                return;
++            }
+             m_bus.reset(gst_pipeline_get_bus(m_pipeline.data()));
+             gst_bus_add_watch(m_bus.data(), &pipelineWatch, this);
+         }
+@@ -211,7 +231,7 @@ Q_SIGNALS:
+     void playingChanged(bool playing);
+     void surfaceChanged();
+     void descriptionChanged();
+-    void failed();
++    void failed(const QString &reason);
+ 
+ private:
+     bool m_playing = false;
+@@ -700,17 +720,37 @@ void WebcamControl::updateSourceFilter()
+         filters.prepend(m_extraFilters);
+     }
+ 
++    // An effect that cannot start in the flat camera (its element is missing, or it refuses the description) is
++    // not applied silently half-built: the camera runs without it and the viewfinder says so.
++    QString effectMessage;
+     if (!filters.isEmpty()) {
+         GError* error = nullptr;
+-        auto elem = gst_parse_bin_from_description(filters.toUtf8().constData(), true, &error);
++        GstElement *elem = gst_parse_bin_from_description(filters.toUtf8().constData(), true, &error);
+         if (error) {
+-            qDebug() << "error" << error->message;
++            const QString reason = QString::fromUtf8(error->message);
++            g_clear_error(&error);
++            if (elem)
++                gst_object_unref(gst_object_ref_sink(elem));
++            elem = nullptr;
++            if (!m_extraFilters.isEmpty() && !pairFilter) {
++                qWarning() << "The effect" << m_extraFilters << "could not start in the camera:" << reason;
++                effectMessage = i18n("The effect %1 could not start: %2. The camera is shown without it.", m_extraFilters, reason);
++                const qsizetype effectEnd = filters.indexOf(QStringLiteral(" ! "), m_extraFilters.size());
++                const QString withoutEffect = effectEnd < 0 ? QString() : filters.mid(effectEnd + 3);
++                if (!withoutEffect.isEmpty())
++                    elem = gst_parse_bin_from_description(withoutEffect.toUtf8().constData(), true, nullptr);
++            } else {
++                qWarning() << "The camera's filters could not start:" << reason;
++            }
+         }
+-        Q_ASSERT(!error);
+         g_object_set(m_cameraSource.data(), "video-source-filter", elem, nullptr);
+     } else {
+         g_object_set(m_cameraSource.data(), "video-source-filter", nullptr, nullptr);
+     }
++    if (m_effectMessage != effectMessage) {
++        m_effectMessage = effectMessage;
++        Q_EMIT effectMessageChanged();
++    }
+ 
+     if (prevstate != GST_STATE_NULL)
+         gst_element_set_state(GST_ELEMENT(m_pipeline.data()), prevstate);
+diff --git a/src/video/webcamcontrol.h b/src/video/webcamcontrol.h
+index c1f3167..235c805 100644
+--- a/src/video/webcamcontrol.h
++++ b/src/video/webcamcontrol.h
+@@ -35,6 +35,7 @@ class WebcamControl : public QObject
+     Q_PROPERTY(bool stereoFrame READ stereoFrame NOTIFY stereoChanged)
+     Q_PROPERTY(QString stereoMessage READ stereoMessage NOTIFY stereoChanged)
+     Q_PROPERTY(QString stereoEffectMessage READ stereoEffectMessage NOTIFY stereoChanged)
++    Q_PROPERTY(QString effectMessage READ effectMessage NOTIFY effectMessageChanged)
+     Q_PROPERTY(QVideoSink *stereoSink READ stereoSink WRITE setStereoSink NOTIFY stereoChanged)
+     Q_PROPERTY(QString currentDevice READ currentDevice NOTIFY currentDeviceChanged)
+     Q_PROPERTY(bool readyForCapture READ readyForCapture NOTIFY readyForCaptureChanged)
+@@ -58,6 +59,8 @@ class WebcamControl : public QObject
+         bool stereoFrame() const { return m_stereoFrame; }
+         QString stereoMessage() const { QStringList messages{m_stereoMessage, m_stereoEffectMessage, m_stereoPublishMessage}; messages.removeAll(QString()); return messages.join(QLatin1Char('\n')); }
+         QString stereoEffectMessage() const { return m_stereoEffectMessage; }
++        // Set when the effect chosen for the flat camera cannot start; the camera then runs without it.
++        QString effectMessage() const { return m_effectMessage; }
+         QVideoSink *stereoSink() const { return m_stereoSink; }
+         void setStereoSink(QVideoSink *sink);
+         Q_INVOKABLE void openCameraSettings();
+@@ -80,6 +83,7 @@ class WebcamControl : public QObject
+ 
+     Q_SIGNALS:
+         void stereoChanged();
++        void effectMessageChanged();
+         void photoTaken(const QString &photoUrl);
+         void mirroredChanged(bool mirrored);
+         void currentDeviceChanged();
+@@ -104,6 +108,7 @@ class WebcamControl : public QObject
+         bool m_stereoFrame = false;
+         QString m_stereoMessage;
+         QString m_stereoEffectMessage;
++        QString m_effectMessage;
+         QString m_extraFilters;
+         QString m_tmpVideoPath;
+         QUrl m_videoDestination;

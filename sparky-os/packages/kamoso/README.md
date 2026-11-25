@@ -115,3 +115,13 @@ The effectv elements give only RGBx, xRGB, BGRx and xBGR, and qml6glsink takes R
 Measured against `glcolorconvert` after `glupload`, which also passes all 31: preparing the whole grid once took 3.39 s of processor time against 4.01 s on llvmpipe and 4.59 s against 4.74 s on an RTX 3060 (median of five).
 `effectpreview-test` joins every filter of Config.qml's model through that function to qml6glsink's own template in system memory; without the conversion the twelve fail.
 The camera's own pipeline was not affected: camerabin's viewfinder bin converts by itself.
+
+## A failed effect preview keeps its row and says so (patch 0005)
+
+Upstream removed a row whose preview failed (in 2D) and our 3D route left its tile black without a word; a person lost the effect with nothing said.
+Now the row stays in 2D and 3D alike, the tile shows "No preview for this effect" with the effect's name, the reason goes to Kamoso's log once per effect, and the effect can still be chosen.
+When the chosen effect cannot start in the flat camera, the camera runs without it and the viewfinder says so; before, camerabin got a half-built description with only a debug line.
+This is the edition's reading of Daniel's rules ("nothing we do should silently fail"; "do not remove functionality!"), not upstream's.
+The two sentences come with translations in the nine languages Kamoso ships besides English; the translations are ours.
+`configgrid-test` adds a row whose element does not exist and checks, in 2D and 3D, that the row stays, says so, can be chosen and is logged once; its stand-in PipelineItem asks GStreamer's own parser, as the real item does.
+
