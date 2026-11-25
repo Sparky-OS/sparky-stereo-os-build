@@ -321,8 +321,25 @@ def scheme_digest(path):
     return hashlib.sha256('\n'.join(lines).encode()).hexdigest()
 
 
+def session_languages():
+    names = [n for n in os.environ.get('LANGUAGE', '').split(':') if n]
+    lang = (os.environ.get('LC_ALL') or os.environ.get('LC_MESSAGES') or os.environ.get('LANG') or '').split('.')[0]
+    if lang and lang not in ('C', 'POSIX'):
+        names.append(lang)
+    out = []
+    for n in names:
+        out += [n, n.split('_')[0]]
+    return out
+
+
 def scheme_name(path):
-    return KConfigFile(path).get('General', 'Name') or path.stem
+    """The scheme's name in the session's language, as KDE's own Colours page shows it (Name[LANG], then Name)."""
+    cfg = KConfigFile(path)
+    for lang in session_languages():
+        name = cfg.get('General', f'Name[{lang}]')
+        if name:
+            return name
+    return cfg.get('General', 'Name') or path.stem
 
 
 def set_scheme(kind, saved):
