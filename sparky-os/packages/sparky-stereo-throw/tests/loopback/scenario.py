@@ -493,7 +493,8 @@ def main():
         (st.get("playerState"), (st.get("bytesFetched") or 0) > 0))
     stop(LIVING)
     player.wait(10)
-    row("A4", "the sound output is gone when the Throw ends", True, bool(wait_for(lambda: sink_description(LIVING) is None, 10)))
+    row("A4", "the sound output existed during the Throw and is gone when it ends", (True, True),
+        (bool(sink), bool(wait_for(lambda: sink_description(LIVING) is None, 10))))
     n = n_before + 1
     wait_for(lambda: probe(LIVING, n), 40)
     cap = capture(LIVING, n) or ""
