@@ -55,6 +55,7 @@ SaverPreview::SaverPreview(QQuickItem *parent)
         }
     });
     connect(&m_runner, &SaverRunner::failed, this, [this](SaverRunner::Failure failure, const QString &detail) {
+        qCDebug(pairLog) << "preview failed" << m_saver << failure << detail;
         m_surface.hide();
         m_failure = failure;
         m_failureDetail = detail;
