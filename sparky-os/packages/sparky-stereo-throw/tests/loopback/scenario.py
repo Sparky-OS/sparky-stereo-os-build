@@ -963,24 +963,45 @@ def dependent_rows():
         f.write("[VideoSave]\npreferredVideoFormat=2\n")
     rec = os.path.join(OUT, "spectacle-still.mp4")
     log_path = os.path.join(OUT, "spectacle.log")
+    # a window on the screen (the still pair) for the click that picks the screen: Spectacle's screen recording asks KWin
+    # which screen (queryWindowInfo) and waits for a click, given here through KWin's fake input (/tools/bin/fakeinput)
+    fixture = subprocess.Popen(["/tools/bin/capturefixture", os.path.join(OUT, "pair.png"), "640", "360", "stereo"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(3)
+    kwin_script("for (const w of workspace.windowList()) { if (w.desktopFileName == 'org.kde.kwin.capturefixture') {"
+                " w.frameGeometry = {x: 100, y: 100, width: w.frameGeometry.width, height: w.frameGeometry.height}; } }")
+    time.sleep(1)
     with open(log_path, "w") as lf:
-        first = subprocess.Popen(["spectacle", "--background", "--nonotify", "--record", "s", "--output", rec], stdout=lf, stderr=lf)
-        time.sleep(12)
+        # libx264, as the Throw's rows use (KWin draws on the NVIDIA card here, whose NVENC path gave Spectacle no frame)
+        first = subprocess.Popen(["spectacle", "--background", "--nonotify", "--record", "s", "--output", rec], stdout=lf, stderr=lf,
+                                 env=dict(os.environ, QT_LOGGING_RULES="org.kde.spectacle*=true;kpipewire*=true",
+                                          KPIPEWIRE_FORCE_ENCODER="libx264"))
+        time.sleep(4)
+        click = subprocess.run(["/tools/bin/fakeinput", "m:300,250", "s:200", "b:272"], stdout=lf, stderr=lf, timeout=30)
+        log(f"DK1 the click that picks the screen: exit {click.returncode}")
+        # the screen changes six times, once every 2 s: KPipeWire's own behaviour gives a picture or two for each change,
+        # a constant rate would give 30 a second
+        for i in range(6):
+            time.sleep(2)
+            kwin_script("for (const w of workspace.windowList()) { if (w.desktopFileName == 'org.kde.kwin.capturefixture') {"
+                        " w.frameGeometry = {x: %d, y: 100, width: w.frameGeometry.width, height: w.frameGeometry.height}; } }"
+                        % (100 + 40 * (i + 1)))
         second = subprocess.run(["spectacle", "--background", "--nonotify", "--record", "s", "--output", rec], stdout=lf,
                                 stderr=lf, timeout=60)
         try:
             first.wait(timeout=30)
         except subprocess.TimeoutExpired:
             first.kill()
+    fixture.terminate()
     lib = subprocess.run(["dpkg-query", "-W", "-f", "${Version}", "libkpipewirerecord6"], capture_output=True, text=True).stdout
     rate, count = picture_rate(rec) if os.path.exists(rec) else (0.0, 0)
     rc, codec, _ = run("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", rec)
     rc, dur, _ = run("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", rec)
     log(f"DK1 KPipeWire {lib}: Spectacle wrote {os.path.exists(rec)} ({codec.strip()}, {dur.strip()} s): {count} pictures, "
         f"{rate:.1f} a second; second request exit {second.returncode}")
-    row("DK1", "Spectacle's screen recording of a still screen on this KPipeWire (a client that did not ask for a constant rate): "
-        "a recording with fewer than 10 pictures, not one a frame interval apart", (True, True),
-        (os.path.exists(rec) and count > 0, 0 < count < 10))
+    row("DK1", "Spectacle's screen recording on this KPipeWire (a client that did not ask for a constant rate) of a screen that "
+        "changes six times in 12 s: at least one picture, and fewer than 30 (a constant rate gives about 30 a second)", (True, True),
+        (count > 0, count < 30))
 
 
 def cpu_seconds(pid):
@@ -1059,7 +1080,7 @@ def make_pair():
 
 
 try:
-    if CLI == "sparky-stereo-throw":
+    if CLI == "sparky-stereo-throw" and os.environ.get("THROW_ROWS") != "dependent":
         # the installed package only: the session bus started the daemon from its service file (session.sh)
         try:
             text = open(os.path.join(OUT, "activation.txt")).read()
@@ -1072,13 +1093,15 @@ try:
     if os.environ.get("THROW_ROWS") == "cost":
         # the cost of a still screen alone (step 4 of part D's second half; the lane's encoder rows)
         cost_rows()
+    elif os.environ.get("THROW_ROWS") == "dependent":
+        # a client of KPipeWire that did not ask for a constant rate, alone (its session has KWin's fake input)
+        dependent_rows()
     elif os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "only-partd")):
         partd()
     else:
         main()
         partd()
         pages()
-        dependent_rows()
 finally:
     with open(os.path.join(OUT, "rows.tsv"), "w") as f:
         f.write("row\tclaim\texpected\tmeasured\tresult\n")

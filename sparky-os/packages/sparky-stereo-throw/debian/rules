@@ -12,11 +12,13 @@ override_dh_auto_configure:
 override_dh_auto_install:
 	dh_auto_install
 	# a Throw's failures are kept by the edition's one engine: its sentences, word for word from the .po files, as
-	# journal catalogs the engine reads in the person's language
+	# journal catalogs the engine reads in the person's language (a Throw that did not start playing is one; a sound's
+	# name inside it is a message of its own)
 	mkdir -p debian/sparky-stereo-throw/usr/lib/systemd/catalog
 	sparky-stereo-problems catalog sparky-stereo-throw po debian/sparky-stereo-throw/usr/lib/systemd/catalog \
 		--domain sparky-stereo-throw --context "@info a Throw failed" --context "@info a Throw cannot start" \
 		--context "@info a Cast device whose model is not in the table; %1 its name" \
+		--context "@info a Throw ended" --context "@item a sound format" \
 		--subject "@title notification the subject of a kept Throw problem|A Throw could not go on"
 
 # dh_auto_test runs ctest: the hand-written CastMessage against pychromecast's generated module, both ways

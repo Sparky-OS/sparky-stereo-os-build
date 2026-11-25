@@ -36,6 +36,10 @@ else
     # its frame statistics in the daemon's log (frames processed each second)
     [ -d /tools/lib ] && export THROW_DEV_LOGGING='kpipewire_record_framestatistics.debug=true;'
 fi
+# the session of a KPipeWire client's row (THROW_ROWS=dependent): Spectacle asks KWin which screen to record and waits for
+# a click, which the rig gives through KWin's fake input, which KWin takes only with its permission checks off; that
+# session's rows test no permission of the Throw
+[ "${THROW_ROWS:-}" != dependent ] || CHECKS=1
 KWIN_WAYLAND_NO_PERMISSION_CHECKS=${CHECKS} KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1 QT_LOGGING_RULES='kwin_screencast.debug=true;kwin_core.debug=false' \
     kwin_wayland --virtual --output-count 1 --width 1280 --height 1440 --socket=w0 > "$OUT/kwin.log" 2>&1 &
 for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/w0" ] && break; sleep 0.1; done
