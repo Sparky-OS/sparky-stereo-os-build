@@ -1,0 +1,2895 @@
+Description: Plasma Keyboard as the on-screen keyboard of Fcitx 5
+ When Fcitx 5 is KWin's input method (the edition's Japanese, Korean and
+ Chinese sessions), `plasma-keyboard --fcitx` is Fcitx 5's keyboard through
+ Fcitx 5's own keyboard bridge (fcitx5 src/ui/virtualkeyboard): it starts at
+ login, ends at once unless KWin's input method is Fcitx 5 and the setting
+ showWithFcitx is on, shows when KWin would show an on-screen keyboard for
+ the touched text field (org.kde.kwin.VirtualKeyboard), sends its keys to
+ Fcitx 5 as keysyms (ProcessKeyEvent), and shows the preedit, the candidates
+ (a touch chooses one) and the input method switch in a bar above the keys.
+ Its window is a layer-shell dock at the bottom that never takes the keyboard
+ focus. When Fcitx 5 does not answer, it says so and types plain text through
+ KWin's fake input. Test: autotests/fcitxbridgetest (stand-ins of KWin and
+ Fcitx 5 on a session bus). A session whose input method is Plasma Keyboard
+ is unchanged.
+Author: Daniel Campos Ramos
+Origin: vendor, Sparky Stereo OS (row 71), branch order71 of KDE's plasma/plasma-keyboard at v6.7.4
+Forwarded: no
+Last-Update: 2026-11-25
+---
+Commit dbc9df7: Fcitx 5 mode: never start Fcitx 5 by calling it
+Commit 7455023: Fcitx 5 mode: make the layout markers and the Japanese and Chinese links at install
+Commit 87b8c29: Fcitx 5 mode: at the screen's plane, no zone, and fixes from the session rig
+Commit f0c7f92: Fcitx 5 mode: make the links to Plasma Keyboard's own layouts at install
+Commit 2117aea: Plasma Keyboard as the on-screen keyboard of Fcitx 5
+
+ 21 files changed, 2574 insertions(+), 3 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index db9e0da..a4f267d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -56,6 +56,8 @@ find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS
+ )
+ 
+ find_package(PlasmaQuick ${PROJECT_DEP_VERSION} REQUIRED)
++find_package(LayerShellQt ${PROJECT_DEP_VERSION} REQUIRED)
++find_package(PlasmaWaylandProtocols REQUIRED)
+ 
+ ecm_set_disabled_deprecation_versions(QT 6.11.0
+     KF 6.26.0
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index e660766..c3baf3e 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -25,3 +25,32 @@ qt6_generate_wayland_protocol_server_sources(mockinputmethodcompositor
+         ${WaylandProtocols_DATADIR}/unstable/input-method/input-method-unstable-v1.xml
+         ${Wayland_DATADIR}/wayland.xml
+ )
++
++# Plasma Keyboard as Fcitx 5's keyboard: the bridge against stand-ins of KWin and Fcitx 5 on a session bus
++find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS DBus Quick)
++ecm_add_test(fcitxbridgetest.cpp
++    ${CMAKE_SOURCE_DIR}/src/fcitx/fcitxbridge.cpp
++    ${CMAKE_SOURCE_DIR}/src/fcitx/fcitxinputitem.cpp
++    ${CMAKE_SOURCE_DIR}/src/fcitx/fakekeyboard.cpp
++    TEST_NAME fcitxbridgetest
++    LINK_LIBRARIES
++        KF6::ConfigCore
++        KF6::ConfigGui
++        KF6::I18n
++        PkgConfig::XKBCommon
++        Qt::DBus
++        Qt::GuiPrivate
++        Qt::Quick
++        Qt::Test
++        Qt::WaylandClient
++        Qt::WaylandClientPrivate
++        Wayland::Client
++)
++ecm_qt_declare_logging_category(fcitxbridgetest
++    HEADER logging.h
++    IDENTIFIER "PlasmaKeyboard"
++    CATEGORY_NAME "org.kde.plasma.keyboard"
++)
++kconfig_add_kcfg_files(fcitxbridgetest GENERATE_MOC ${CMAKE_SOURCE_DIR}/src/plasmakeyboardsettings.kcfgc)
++ecm_add_qtwayland_client_protocol(fcitxbridgetest PROTOCOL ${PLASMA_WAYLAND_PROTOCOLS_DIR}/fake-input.xml BASENAME fake-input)
++target_include_directories(fcitxbridgetest PRIVATE ${CMAKE_SOURCE_DIR}/src/fcitx ${CMAKE_CURRENT_BINARY_DIR})
+diff --git a/autotests/fcitxbridgetest.cpp b/autotests/fcitxbridgetest.cpp
+new file mode 100644
+index 0000000..635ecd8
+--- /dev/null
++++ b/autotests/fcitxbridgetest.cpp
+@@ -0,0 +1,522 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#include "fcitxbridge.h"
++#include "fcitxinputitem.h"
++#include "plasmakeyboardsettings.h"
++
++#include <KConfigGroup>
++#include <KSharedConfig>
++
++#include <QDBusArgument>
++#include <QDBusConnection>
++#include <QDBusConnectionInterface>
++#include <QDBusContext>
++#include <QDBusMessage>
++#include <QDBusMetaType>
++#include <QSignalSpy>
++#include <QStandardPaths>
++#include <QTest>
++
++#include <xkbcommon/xkbcommon-keysyms.h>
++
++using namespace Qt::StringLiterals;
++
++// KWin's org.kde.kwin.VirtualKeyboard on /VirtualKeyboard (kwin src/virtualkeyboard_dbus.h)
++class FakeKWin : public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", "org.kde.kwin.VirtualKeyboard")
++    Q_PROPERTY(bool active READ isActive)
++public:
++    bool m_active = false;
++    bool m_willShow = false;
++    bool isActive() const
++    {
++        return m_active;
++    }
++    void setState(bool active, bool willShow)
++    {
++        m_active = active;
++        m_willShow = willShow;
++        Q_EMIT activeChanged();
++    }
++public Q_SLOTS:
++    Q_SCRIPTABLE bool willShowOnActive()
++    {
++        return m_willShow;
++    }
++Q_SIGNALS:
++    Q_SCRIPTABLE void activeChanged();
++};
++
++// Fcitx 5: org.fcitx.Fcitx.VirtualKeyboard1 on /virtualkeyboard of org.fcitx.Fcitx5 (fcitx5 src/ui/virtualkeyboard)
++class FakeFcitxKeyboard : public QObject, protected QDBusContext
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", "org.fcitx.Fcitx.VirtualKeyboard1")
++public:
++    FakeFcitxKeyboard(QDBusConnection bus, QDBusConnection backendBus)
++        : m_bus(bus)
++        , m_backendBus(backendBus)
++    {
++    }
++    QDBusConnection m_bus;
++    QDBusConnection m_backendBus;
++    int m_shows = 0;
++    int m_hides = 0;
++    bool m_refuse = false;
++public Q_SLOTS:
++    Q_SCRIPTABLE void ShowVirtualKeyboard()
++    {
++        ++m_shows;
++        if (m_refuse) {
++            sendErrorReply(QDBusError::UnknownObject, u"No such object path '/virtualkeyboard'"_s);
++            return;
++        }
++        // as Fcitx 5 does: its keyboard mode registers the backend, then the keyboard is asked to show
++        m_backendBus.registerService(u"org.fcitx.Fcitx5.VirtualKeyboardBackend"_s);
++        m_bus.asyncCall(QDBusMessage::createMethodCall(u"org.fcitx.Fcitx5.VirtualKeyboard"_s,
++                                                       u"/org/fcitx/virtualkeyboard/impanel"_s,
++                                                       u"org.fcitx.Fcitx5.VirtualKeyboard1"_s,
++                                                       u"ShowVirtualKeyboard"_s));
++    }
++    Q_SCRIPTABLE void HideVirtualKeyboard()
++    {
++        ++m_hides;
++        m_bus.asyncCall(QDBusMessage::createMethodCall(u"org.fcitx.Fcitx5.VirtualKeyboard"_s,
++                                                       u"/org/fcitx/virtualkeyboard/impanel"_s,
++                                                       u"org.fcitx.Fcitx5.VirtualKeyboard1"_s,
++                                                       u"HideVirtualKeyboard"_s));
++    }
++};
++
++// Fcitx 5's org.fcitx.Fcitx5.VirtualKeyboardBackend1 on /virtualkeyboard
++class FakeFcitxBackend : public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", "org.fcitx.Fcitx5.VirtualKeyboardBackend1")
++public:
++    QList<QVariantList> m_keys;
++    QList<int> m_selected;
++    int m_nextPages = 0;
++    int m_previousPages = 0;
++public Q_SLOTS:
++    Q_SCRIPTABLE void ProcessKeyEvent(uint keyval, uint keycode, uint state, bool isRelease, uint time)
++    {
++        Q_UNUSED(time)
++        m_keys.append({keyval, keycode, state, isRelease});
++    }
++    Q_SCRIPTABLE void SelectCandidate(int index)
++    {
++        m_selected.append(index);
++    }
++    Q_SCRIPTABLE void NextPage()
++    {
++        ++m_nextPages;
++    }
++    Q_SCRIPTABLE void PrevPage()
++    {
++        ++m_previousPages;
++    }
++};
++
++// Fcitx 5's org.fcitx.Fcitx.Controller1 on /controller (fcitx5 src/modules/dbus/dbusmodule.cpp)
++struct FcitxInputMethodEntry {
++    QString uniqueName, name, nativeName, icon, label, languageCode;
++    bool configurable = false;
++};
++QDBusArgument &operator<<(QDBusArgument &arg, const FcitxInputMethodEntry &im)
++{
++    arg.beginStructure();
++    arg << im.uniqueName << im.name << im.nativeName << im.icon << im.label << im.languageCode << im.configurable;
++    arg.endStructure();
++    return arg;
++}
++const QDBusArgument &operator>>(const QDBusArgument &arg, FcitxInputMethodEntry &im)
++{
++    arg.beginStructure();
++    arg >> im.uniqueName >> im.name >> im.nativeName >> im.icon >> im.label >> im.languageCode >> im.configurable;
++    arg.endStructure();
++    return arg;
++}
++struct FcitxGroupItem {
++    QString uniqueName, layout;
++};
++QDBusArgument &operator<<(QDBusArgument &arg, const FcitxGroupItem &item)
++{
++    arg.beginStructure();
++    arg << item.uniqueName << item.layout;
++    arg.endStructure();
++    return arg;
++}
++const QDBusArgument &operator>>(const QDBusArgument &arg, FcitxGroupItem &item)
++{
++    arg.beginStructure();
++    arg >> item.uniqueName >> item.layout;
++    arg.endStructure();
++    return arg;
++}
++Q_DECLARE_METATYPE(FcitxInputMethodEntry)
++Q_DECLARE_METATYPE(FcitxGroupItem)
++
++class FakeFcitxController : public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", "org.fcitx.Fcitx.Controller1")
++public:
++    QString m_current = u"mozc"_s;
++    QStringList m_switchedTo;
++public Q_SLOTS:
++    Q_SCRIPTABLE QList<FcitxInputMethodEntry> AvailableInputMethods()
++    {
++        return {{u"keyboard-us"_s, u"English (US)"_s, u"English (US)"_s, u"input-keyboard"_s, u"en"_s, u"en"_s, false},
++                {u"mozc"_s, u"Mozc"_s, u"Mozc"_s, u"fcitx-mozc"_s, u"あ"_s, u"ja"_s, true},
++                {u"hangul"_s, u"Hangul"_s, u"한글"_s, u"fcitx-hangul"_s, u"한"_s, u"ko"_s, true}};
++    }
++    Q_SCRIPTABLE QString CurrentInputMethodGroup()
++    {
++        return u"Default"_s;
++    }
++    Q_SCRIPTABLE QString InputMethodGroupInfo(const QString &group, QList<FcitxGroupItem> &items)
++    {
++        Q_UNUSED(group)
++        items = {{u"keyboard-us"_s, QString()}, {u"mozc"_s, QString()}};
++        return u"us"_s;
++    }
++    Q_SCRIPTABLE QString CurrentInputMethod()
++    {
++        return m_current;
++    }
++    Q_SCRIPTABLE void SetCurrentIM(const QString &uniqueName)
++    {
++        m_switchedTo.append(uniqueName);
++    }
++};
++
++class FcitxBridgeTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase();
++    void cleanup();
++    void testKeysForText_data();
++    void testKeysForText();
++    void testLayoutLocale_data();
++    void testLayoutLocale();
++    void testWhyNotNeeded();
++    void testShownWhenKWinShowsAKeyboard();
++    void testNotShownForTheMouse();
++    void testShownWhenATouchMovesTheFocus();
++    void testKeysReachFcitx();
++    void testCandidates();
++    void testInputMethods();
++    void testHideKey();
++    void testPlainTypingWhenFcitxRefuses();
++
++private:
++    void setUpStandIns();
++    void startBridge();
++
++    QDBusConnection m_kwinBus{QString()};
++    QDBusConnection m_fcitxBus{QString()};
++    QDBusConnection m_backendBus{QString()};
++    FakeKWin *m_kwin = nullptr;
++    FakeFcitxKeyboard *m_fcitxKeyboard = nullptr;
++    FakeFcitxBackend *m_backend = nullptr;
++    FakeFcitxController *m_controller = nullptr;
++    FcitxBridge *m_bridge = nullptr;
++    int m_round = 0;
++};
++
++void FcitxBridgeTest::initTestCase()
++{
++    QStandardPaths::setTestModeEnabled(true);
++    qDBusRegisterMetaType<FcitxInputMethodEntry>();
++    qDBusRegisterMetaType<QList<FcitxInputMethodEntry>>();
++    qDBusRegisterMetaType<FcitxGroupItem>();
++    qDBusRegisterMetaType<QList<FcitxGroupItem>>();
++}
++
++void FcitxBridgeTest::setUpStandIns()
++{
++    if (!QDBusConnection::sessionBus().isConnected()) {
++        QSKIP("needs a D-Bus session bus (dbus-run-session)");
++    }
++    ++m_round;
++    m_kwinBus = QDBusConnection::connectToBus(QDBusConnection::SessionBus, u"fakekwin%1"_s.arg(m_round));
++    m_fcitxBus = QDBusConnection::connectToBus(QDBusConnection::SessionBus, u"fakefcitx%1"_s.arg(m_round));
++    m_backendBus = QDBusConnection::connectToBus(QDBusConnection::SessionBus, u"fakebackend%1"_s.arg(m_round));
++    m_kwin = new FakeKWin;
++    QVERIFY(m_kwinBus.registerObject(u"/VirtualKeyboard"_s,
++                                     m_kwin,
++                                     QDBusConnection::ExportAllProperties | QDBusConnection::ExportScriptableSlots | QDBusConnection::ExportScriptableSignals));
++    QVERIFY(m_kwinBus.registerService(u"org.kde.KWin"_s));
++    m_fcitxKeyboard = new FakeFcitxKeyboard(m_fcitxBus, m_backendBus);
++    m_backend = new FakeFcitxBackend;
++    m_controller = new FakeFcitxController;
++    QVERIFY(m_fcitxBus.registerObject(u"/virtualkeyboard"_s, m_fcitxKeyboard, QDBusConnection::ExportScriptableSlots));
++    QVERIFY(m_fcitxBus.registerObject(u"/controller"_s, m_controller, QDBusConnection::ExportScriptableSlots));
++    QVERIFY(m_fcitxBus.registerService(u"org.fcitx.Fcitx5"_s));
++    QVERIFY(m_backendBus.registerObject(u"/virtualkeyboard"_s, m_backend, QDBusConnection::ExportScriptableSlots));
++}
++
++void FcitxBridgeTest::cleanup()
++{
++    delete m_bridge;
++    m_bridge = nullptr;
++    QDBusConnection::sessionBus().unregisterService(u"org.fcitx.Fcitx5.VirtualKeyboard"_s);
++    QDBusConnection::sessionBus().unregisterObject(u"/org/fcitx/virtualkeyboard/impanel"_s);
++    // a connection closes only when nothing holds it any more
++    for (QDBusConnection *bus : {&m_kwinBus, &m_fcitxBus, &m_backendBus}) {
++        const QString name = bus->name();
++        *bus = QDBusConnection(QString());
++        if (!name.isEmpty()) {
++            QDBusConnection::disconnectFromBus(name);
++        }
++    }
++    delete m_kwin;
++    m_kwin = nullptr;
++    delete m_fcitxKeyboard;
++    m_fcitxKeyboard = nullptr;
++    delete m_backend;
++    m_backend = nullptr;
++    delete m_controller;
++    m_controller = nullptr;
++}
++
++void FcitxBridgeTest::startBridge()
++{
++    setUpStandIns();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    m_bridge = new FcitxBridge;
++    QVERIFY(m_bridge->start());
++    QVERIFY(QDBusConnection::sessionBus().interface()->isServiceRegistered(u"org.fcitx.Fcitx5.VirtualKeyboard"_s));
++}
++
++void FcitxBridgeTest::testKeysForText_data()
++{
++    QTest::addColumn<QString>("text");
++    QTest::addColumn<QList<uint>>("keysyms");
++    QTest::addColumn<QList<uint>>("states");
++    // romaji and pinyin are plain letters
++    QTest::newRow("nihongo") << u"nihongo"_s << QList<uint>{XKB_KEY_n, XKB_KEY_i, XKB_KEY_h, XKB_KEY_o, XKB_KEY_n, XKB_KEY_g, XKB_KEY_o} << QList<uint>{0, 0, 0, 0, 0, 0, 0};
++    // Fcitx 5's Hangul engine reads Shift+Q as the tense consonant: the shift state goes with the capital
++    QTest::newRow("shifted") << u"Qa"_s << QList<uint>{XKB_KEY_Q, XKB_KEY_a} << QList<uint>{FcitxBridge::ShiftState, 0};
++    QTest::newRow("space and return") << u" \n"_s << QList<uint>{XKB_KEY_space, XKB_KEY_Return} << QList<uint>{0, 0};
++    QTest::newRow("Dachen tone and punctuation") << u"3,/"_s << QList<uint>{XKB_KEY_3, XKB_KEY_comma, XKB_KEY_slash} << QList<uint>{0, 0, 0};
++    QTest::newRow("Latin with diacritics") << u"çã"_s << QList<uint>{XKB_KEY_ccedilla, XKB_KEY_atilde} << QList<uint>{0, 0};
++    QTest::newRow("a CJK character") << u"中"_s << QList<uint>{0x1004e2d} << QList<uint>{0};
++}
++
++void FcitxBridgeTest::testKeysForText()
++{
++    QFETCH(QString, text);
++    QFETCH(QList<uint>, keysyms);
++    QFETCH(QList<uint>, states);
++    const auto keys = FcitxInputItem::keysForText(text);
++    QCOMPARE(keys.size(), keysyms.size());
++    for (int i = 0; i < keys.size(); ++i) {
++        QCOMPARE(keys.at(i).first, keysyms.at(i));
++        QCOMPARE(keys.at(i).second, states.at(i));
++    }
++}
++
++void FcitxBridgeTest::testLayoutLocale_data()
++{
++    QTest::addColumn<QString>("languageCode");
++    QTest::addColumn<QString>("locale");
++    QTest::newRow("Mozc") << u"ja"_s << u"ja_JP"_s;
++    QTest::newRow("Hangul") << u"ko"_s << u"ko_KR"_s;
++    QTest::newRow("Pinyin") << u"zh_CN"_s << u"zh_CN"_s;
++    QTest::newRow("Chewing") << u"zh_TW"_s << u"zh_TW"_s;
++    QTest::newRow("keyboard-us") << u"en"_s << u"en_US"_s;
++    QTest::newRow("keyboard-br") << u"pt_BR"_s << u"pt_BR"_s;
++    QTest::newRow("unknown") << u""_s << u"en_US"_s;
++}
++
++void FcitxBridgeTest::testLayoutLocale()
++{
++    QFETCH(QString, languageCode);
++    QFETCH(QString, locale);
++    QCOMPARE(FcitxBridge::layoutLocaleForLanguage(languageCode), locale);
++}
++
++void FcitxBridgeTest::testWhyNotNeeded()
++{
++    auto kwinrc = KSharedConfig::openConfig(u"kwinrc"_s);
++    auto setInputMethod = [&kwinrc](const QString &desktop) {
++        KConfigGroup(kwinrc, u"Wayland"_s).writeEntry("InputMethod", desktop);
++        kwinrc->sync();
++    };
++    auto setShowWithFcitx = [](bool show) {
++        PlasmaKeyboardSettings::self()->setShowWithFcitx(show);
++        PlasmaKeyboardSettings::self()->save();
++    };
++    setInputMethod(u"/usr/share/applications/org.kde.plasma.keyboard.desktop"_s);
++    setShowWithFcitx(true);
++    QVERIFY(!FcitxBridge::whyNotNeeded().isEmpty());
++    setInputMethod(u"/usr/share/applications/org.fcitx.Fcitx5.desktop"_s);
++    QVERIFY(FcitxBridge::whyNotNeeded().isEmpty());
++    setShowWithFcitx(false);
++    QVERIFY(!FcitxBridge::whyNotNeeded().isEmpty());
++}
++
++void FcitxBridgeTest::testShownWhenKWinShowsAKeyboard()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    QSignalSpy visible(m_bridge, &FcitxBridge::visibleChanged);
++    // a touch on a text field in tablet mode: KWin would show a keyboard
++    m_kwin->setState(true, true);
++    QTRY_VERIFY(m_bridge->isVisible());
++    QCOMPARE(m_fcitxKeyboard->m_shows, 1);
++    QVERIFY(!m_bridge->plainTyping());
++    QVERIFY(m_bridge->problem().isEmpty());
++    // the text field loses the focus
++    m_kwin->setState(false, false);
++    QTRY_VERIFY(!m_bridge->isVisible());
++}
++
++void FcitxBridgeTest::testNotShownForTheMouse()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    // a click on a text field, or a touch outside tablet mode: KWin would not show a keyboard
++    m_kwin->setState(true, false);
++    QTest::qWait(500);
++    QVERIFY(!m_bridge->isVisible());
++    QCOMPARE(m_fcitxKeyboard->m_shows, 0);
++    // Fcitx 5 still in its keyboard mode from an earlier touch asks to show: KWin's rule wins
++    m_bridge->fcitxShow();
++    QVERIFY(!m_bridge->isVisible());
++}
++
++void FcitxBridgeTest::testShownWhenATouchMovesTheFocus()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    // a click gives a text field the focus: no keyboard
++    m_kwin->setState(true, false);
++    QTest::qWait(300);
++    QVERIFY(!m_bridge->isVisible());
++    // a touch on another field: KWin stays active (no activeChanged) and now says it would show a keyboard; Fcitx 5, in its
++    // keyboard mode, asks its keyboard to show at the focus change
++    m_kwin->m_willShow = true;
++    m_bridge->fcitxShow();
++    QTRY_VERIFY(m_bridge->isVisible());
++}
++
++void FcitxBridgeTest::testKeysReachFcitx()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    m_kwin->setState(true, true);
++    QTRY_VERIFY(m_bridge->isVisible());
++    m_bridge->sendKey(XKB_KEY_n, 0, false);
++    m_bridge->sendKey(XKB_KEY_n, 0, true);
++    m_bridge->sendKey(XKB_KEY_space, 0, false);
++    m_bridge->sendKey(XKB_KEY_space, 0, true);
++    QTRY_COMPARE(m_backend->m_keys.size(), 4);
++    // evdev KEY_N is 49, KEY_SPACE 57; X keycodes are evdev + 8
++    QCOMPARE(m_backend->m_keys.at(0), (QVariantList{uint(XKB_KEY_n), 57u, 0u, false}));
++    QCOMPARE(m_backend->m_keys.at(1), (QVariantList{uint(XKB_KEY_n), 57u, 0u, true}));
++    QCOMPARE(m_backend->m_keys.at(2), (QVariantList{uint(XKB_KEY_space), 65u, 0u, false}));
++    QVERIFY(!m_bridge->plainTyping());
++}
++
++void FcitxBridgeTest::testCandidates()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    m_kwin->setState(true, true);
++    QTRY_VERIFY(m_bridge->isVisible());
++    QSignalSpy candidates(m_bridge, &FcitxBridge::candidatesChanged);
++    auto call = [this](const QString &method, const QVariantList &args) {
++        auto msg = QDBusMessage::createMethodCall(u"org.fcitx.Fcitx5.VirtualKeyboard"_s, u"/org/fcitx/virtualkeyboard/impanel"_s, u"org.fcitx.Fcitx5.VirtualKeyboard1"_s, method);
++        msg.setArguments(args);
++        m_fcitxBus.asyncCall(msg);
++    };
++    call(u"UpdatePreeditArea"_s, {u"にほんご"_s});
++    call(u"UpdateCandidateArea"_s, {QStringList{u"日本語"_s, u"二本後"_s}, false, true, -1, 0});
++    QTRY_COMPARE(m_bridge->candidates(), (QStringList{u"日本語"_s, u"二本後"_s}));
++    QCOMPARE(m_bridge->preedit(), u"にほんご"_s);
++    QCOMPARE(m_bridge->highlightedCandidate(), 0);
++    QVERIFY(m_bridge->hasNextPage());
++    QVERIFY(!m_bridge->hasPreviousPage());
++    m_bridge->selectCandidate(1);
++    m_bridge->nextPage();
++    QTRY_COMPARE(m_backend->m_selected, QList<int>{1});
++    QTRY_COMPARE(m_backend->m_nextPages, 1);
++}
++
++void FcitxBridgeTest::testInputMethods()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    // the group's input methods, in the person's order, with Fcitx 5's labels; the layout follows the current one
++    QTRY_COMPARE(m_bridge->inputMethods().size(), 2);
++    QCOMPARE(m_bridge->inputMethods().at(0).toMap().value(u"uniqueName"_s).toString(), u"keyboard-us"_s);
++    QCOMPARE(m_bridge->currentInputMethod(), u"mozc"_s);
++    QCOMPARE(m_bridge->currentInputMethodLabel(), u"あ"_s);
++    QCOMPARE(m_bridge->layoutLocale(), u"ja_JP"_s);
++    // the person switches on the keyboard; Fcitx 5 says which input method is now active
++    m_bridge->switchInputMethod(u"keyboard-us"_s);
++    QTRY_COMPARE(m_controller->m_switchedTo, QStringList{u"keyboard-us"_s});
++    m_bridge->fcitxInputMethodActivated(u"keyboard-us"_s);
++    QCOMPARE(m_bridge->layoutLocale(), u"en_US"_s);
++    QCOMPARE(m_bridge->currentInputMethodLabel(), u"en"_s);
++}
++
++void FcitxBridgeTest::testHideKey()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    m_kwin->setState(true, true);
++    QTRY_VERIFY(m_bridge->isVisible());
++    m_bridge->hide();
++    QVERIFY(!m_bridge->isVisible());
++    QTRY_COMPARE(m_fcitxKeyboard->m_hides, 1);
++}
++
++void FcitxBridgeTest::testPlainTypingWhenFcitxRefuses()
++{
++    setUpStandIns();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    m_fcitxKeyboard->m_refuse = true;
++    m_bridge = new FcitxBridge;
++    QVERIFY(m_bridge->start());
++    m_kwin->setState(true, true);
++    // the person is told, and the keyboard shows to type plain text
++    QTRY_VERIFY(m_bridge->plainTyping());
++    QVERIFY(!m_bridge->problem().isEmpty());
++    QTRY_VERIFY(m_bridge->isVisible());
++    // no key goes to a Fcitx 5 that refused
++    m_bridge->sendKey(XKB_KEY_a, 0, false);
++    QTest::qWait(300);
++    QVERIFY(m_backend->m_keys.isEmpty());
++}
++
++QTEST_MAIN(FcitxBridgeTest)
++#include "fcitxbridgetest.moc"
+diff --git a/kcm/plasmakeyboardkcm.cpp b/kcm/plasmakeyboardkcm.cpp
+index d04e451..101d687 100644
+--- a/kcm/plasmakeyboardkcm.cpp
++++ b/kcm/plasmakeyboardkcm.cpp
+@@ -127,6 +127,23 @@ void PlasmaKeyboardKcm::setAutoCapitalizationEnabled(bool autoCapitalizationEnab
+     setNeedsSave(true);
+ }
+ 
++bool PlasmaKeyboardKcm::showWithFcitx() const
++{
++    return m_showWithFcitx;
++}
++
++void PlasmaKeyboardKcm::setShowWithFcitx(bool showWithFcitx)
++{
++    if (showWithFcitx == m_showWithFcitx) {
++        return;
++    }
++
++    m_showWithFcitx = showWithFcitx;
++    Q_EMIT showWithFcitxChanged();
++
++    setNeedsSave(true);
++}
++
+ bool PlasmaKeyboardKcm::diacriticsPopupEnabled() const
+ {
+     return m_diacriticsPopupEnabled;
+@@ -175,6 +192,7 @@ void PlasmaKeyboardKcm::load()
+     Q_EMIT enabledLocalesChanged();
+     setKeyboardNavigationEnabled(PlasmaKeyboardSettings::self()->keyboardNavigationEnabled());
+     setAutoCapitalizationEnabled(PlasmaKeyboardSettings::self()->autoCapitalizationEnabled());
++    setShowWithFcitx(PlasmaKeyboardSettings::self()->showWithFcitx());
+     setDiacriticsPopupEnabled(PlasmaKeyboardSettings::self()->diacriticsPopupEnabled());
+     setDiacriticsHoldThresholdMs(PlasmaKeyboardSettings::self()->diacriticsHoldThresholdMs());
+ 
+@@ -188,6 +206,7 @@ void PlasmaKeyboardKcm::save()
+     PlasmaKeyboardSettings::self()->setEnabledLocales(m_enabledLocales);
+     PlasmaKeyboardSettings::self()->setKeyboardNavigationEnabled(m_keyboardNavigationEnabled);
+     PlasmaKeyboardSettings::self()->setAutoCapitalizationEnabled(m_autoCapitalizationEnabled);
++    PlasmaKeyboardSettings::self()->setShowWithFcitx(m_showWithFcitx);
+     PlasmaKeyboardSettings::self()->setDiacriticsPopupEnabled(m_diacriticsPopupEnabled);
+     PlasmaKeyboardSettings::self()->setDiacriticsHoldThresholdMs(m_diacriticsHoldThresholdMs);
+     PlasmaKeyboardSettings::self()->save();
+diff --git a/kcm/plasmakeyboardkcm.h b/kcm/plasmakeyboardkcm.h
+index 469bcd6..a1cdd5c 100644
+--- a/kcm/plasmakeyboardkcm.h
++++ b/kcm/plasmakeyboardkcm.h
+@@ -19,6 +19,7 @@ class PlasmaKeyboardKcm : public KQuickManagedConfigModule
+     Q_PROPERTY(QStringList enabledLocales READ enabledLocales NOTIFY enabledLocalesChanged)
+     Q_PROPERTY(bool keyboardNavigationEnabled READ keyboardNavigationEnabled WRITE setKeyboardNavigationEnabled NOTIFY keyboardNavigationEnabledChanged)
+     Q_PROPERTY(bool autoCapitalizationEnabled READ autoCapitalizationEnabled WRITE setAutoCapitalizationEnabled NOTIFY autoCapitalizationEnabledChanged)
++    Q_PROPERTY(bool showWithFcitx READ showWithFcitx WRITE setShowWithFcitx NOTIFY showWithFcitxChanged)
+     Q_PROPERTY(bool diacriticsPopupEnabled READ diacriticsPopupEnabled WRITE setDiacriticsPopupEnabled NOTIFY diacriticsPopupEnabledChanged)
+     Q_PROPERTY(int diacriticsHoldThresholdMs READ diacriticsHoldThresholdMs WRITE setDiacriticsHoldThresholdMs NOTIFY diacriticsHoldThresholdMsChanged)
+ 
+@@ -42,6 +43,9 @@ public:
+     bool autoCapitalizationEnabled() const;
+     void setAutoCapitalizationEnabled(bool autoCapitalizationEnabled);
+ 
++    bool showWithFcitx() const;
++    void setShowWithFcitx(bool showWithFcitx);
++
+     bool diacriticsPopupEnabled() const;
+     void setDiacriticsPopupEnabled(bool enabled);
+ 
+@@ -60,6 +64,7 @@ Q_SIGNALS:
+     void enabledLocalesChanged();
+     void keyboardNavigationEnabledChanged();
+     void autoCapitalizationEnabledChanged();
++    void showWithFcitxChanged();
+     void diacriticsPopupEnabledChanged();
+     void diacriticsHoldThresholdMsChanged();
+ 
+@@ -68,6 +73,7 @@ private:
+     bool m_vibrationEnabled = true;
+     bool m_keyboardNavigationEnabled = false;
+     bool m_autoCapitalizationEnabled = true;
++    bool m_showWithFcitx = false;
+     bool m_diacriticsPopupEnabled = true;
+     int m_diacriticsHoldThresholdMs = 600;
+ 
+diff --git a/kcm/ui/main.qml b/kcm/ui/main.qml
+index 00ae6de..dd4b435 100644
+--- a/kcm/ui/main.qml
++++ b/kcm/ui/main.qml
+@@ -74,6 +74,26 @@ KCM.ScrollViewKCM {
+             }
+         }
+ 
++        QQC2.CheckBox {
++            id: showWithFcitx
++            Kirigami.FormData.label: i18n("Fcitx 5:")
++            text: i18n("Show this keyboard when Fcitx 5 is the input method")
++
++            checked: kcm.showWithFcitx
++            onCheckedChanged: {
++                kcm.showWithFcitx = checked;
++                checked = Qt.binding(() => kcm.showWithFcitx);
++            }
++        }
++
++        QQC2.Label {
++            Layout.fillWidth: true
++            Layout.maximumWidth: Kirigami.Units.gridUnit * 25
++            wrapMode: Text.Wrap
++            font: Kirigami.Theme.smallFont
++            text: i18n("Fcitx 5 converts the keys and shows its candidates above them. Takes effect at the next login.")
++        }
++
+         QQC2.CheckBox {
+             id: diacriticsCheckbox
+             Kirigami.FormData.label: i18n("Alternate characters:")
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index bdf0948..bd9302c 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -11,6 +11,7 @@ add_executable(plasma-keyboard)
+ ecm_add_qtwayland_client_protocol(plasma-keyboard PROTOCOL ${WaylandProtocols_DATADIR}/unstable/input-method/input-method-unstable-v1.xml BASENAME input-method-unstable-v1)
+ ecm_add_qtwayland_client_protocol(plasma-keyboard PROTOCOL ${WaylandProtocols_DATADIR}/unstable/text-input/text-input-unstable-v1.xml BASENAME text-input-unstable-v1)
+ ecm_add_qtwayland_client_protocol(plasma-keyboard PROTOCOL "${Wayland_DATADIR}/wayland.xml" BASENAME wayland)
++ecm_add_qtwayland_client_protocol(plasma-keyboard PROTOCOL ${PLASMA_WAYLAND_PROTOCOLS_DIR}/fake-input.xml BASENAME fake-input)
+ 
+ target_sources(plasma-keyboard PRIVATE
+     main.cpp
+@@ -44,6 +45,12 @@ target_sources(plasma-keyboard PRIVATE
+     overlay/prefixquerytrigger.h
+     overlay/textexpansiontrigger.cpp
+     overlay/textexpansiontrigger.h
++    fcitx/fakekeyboard.cpp
++    fcitx/fakekeyboard.h
++    fcitx/fcitxbridge.cpp
++    fcitx/fcitxbridge.h
++    fcitx/fcitxinputitem.cpp
++    fcitx/fcitxinputitem.h
+ )
+ 
+ if(PLASMA_KEYBOARD_VIBRATION_ENABLED)
+@@ -86,6 +93,8 @@ ecm_target_qml_sources(plasma-keyboard SOURCES
+     qml/LanguagePopupDelegate.qml
+     qml/DiacriticsOverlay.qml
+     qml/OverlayWindow.qml
++    qml/FcitxMain.qml
++    qml/FcitxCandidateBar.qml
+ )
+ ecm_finalize_qml_module(plasma-keyboard)
+ 
+@@ -96,6 +105,7 @@ target_include_directories(plasma-keyboard PRIVATE
+     # Add directories to include path for QML type registration
+     ${CMAKE_CURRENT_SOURCE_DIR}
+     ${CMAKE_CURRENT_SOURCE_DIR}/overlay
++    ${CMAKE_CURRENT_SOURCE_DIR}/fcitx
+ )
+ 
+ target_link_libraries(plasma-keyboard
+@@ -106,6 +116,7 @@ target_link_libraries(plasma-keyboard
+     KF6::ConfigCore
+     KF6::ConfigGui
+     KF6::Crash
++    LayerShellQt::Interface
+     PkgConfig::XKBCommon
+     Plasma::PlasmaQuick
+     Qt::DBus
+@@ -120,10 +131,36 @@ target_link_libraries(plasma-keyboard
+ install(TARGETS plasma-keyboard ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+ install(PROGRAMS org.kde.plasma.keyboard.desktop DESTINATION ${KDE_INSTALL_APPDIR})
+ 
++# Plasma Keyboard as Fcitx 5's keyboard: started at login (it ends at once unless KWin's input method is Fcitx 5 and the
++# showWithFcitx setting is on), and an application entry whose absolute Exec lets KWin grant it its fake input device
++configure_file(org.kde.plasma.keyboard.fcitx.desktop.in ${CMAKE_CURRENT_BINARY_DIR}/org.kde.plasma.keyboard.fcitx.desktop @ONLY)
++install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/org.kde.plasma.keyboard.fcitx.desktop DESTINATION ${KDE_INSTALL_APPDIR})
++install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.kde.plasma.keyboard.fcitx.desktop DESTINATION ${KDE_INSTALL_AUTOSTARTDIR})
++
+ add_subdirectory(styles)
+ add_subdirectory(qmlplugin)
+ 
+ install(DIRECTORY layouts DESTINATION ${CMAKE_INSTALL_PREFIX}/share/plasma/keyboard)
++# The layouts of Fcitx 5 mode (layouts-fcitx). Korean and Chinese (Taiwan): QWERTY keys labelled as Fcitx 5's engine reads
++# them, their other pages Qt Virtual Keyboard's fallback (empty markers). Japanese and Chinese (China): the fallback layout,
++# whose Latin keys Mozc and Pinyin read. Every other locale: Plasma Keyboard's own layout. Markers and links are made here,
++# at install: a Debian source's patch cannot carry an empty file or a link.
++set(_fcitx_layouts ${CMAKE_INSTALL_PREFIX}/share/plasma/keyboard/layouts-fcitx)
++foreach(_layout ko_KR zh_TW)
++    install(FILES layouts-fcitx/${_layout}/main.qml DESTINATION ${_fcitx_layouts}/${_layout})
++    foreach(_page dialpad digits handwriting numbers symbols)
++        install(CODE "file(TOUCH \"\$ENV{DESTDIR}${_fcitx_layouts}/${_layout}/${_page}.fallback\")")
++    endforeach()
++endforeach()
++foreach(_layout ja_JP zh_CN)
++    install(CODE "file(CREATE_LINK ../layouts/fallback \"\$ENV{DESTDIR}${_fcitx_layouts}/${_layout}\" SYMBOLIC)")
++endforeach()
++file(GLOB _plasma_keyboard_layouts RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/layouts ${CMAKE_CURRENT_SOURCE_DIR}/layouts/*)
++foreach(_layout ${_plasma_keyboard_layouts})
++    if(NOT _layout MATCHES "^(ko_KR|zh_TW|ja_JP|zh_CN)$")
++        install(CODE "file(CREATE_LINK ../layouts/${_layout} \"\$ENV{DESTDIR}${_fcitx_layouts}/${_layout}\" SYMBOLIC)")
++    endif()
++endforeach()
+ install(DIRECTORY overlay/diacritics DESTINATION ${CMAKE_INSTALL_PREFIX}/share/plasma/keyboard)
+ 
+ install(
+diff --git a/src/fcitx/fakekeyboard.cpp b/src/fcitx/fakekeyboard.cpp
+new file mode 100644
+index 0000000..987992f
+--- /dev/null
++++ b/src/fcitx/fakekeyboard.cpp
+@@ -0,0 +1,43 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#include "fakekeyboard.h"
++#include "logging.h"
++
++#include <KLocalizedString>
++
++FakeKeyboard::FakeKeyboard(QObject *parent)
++    : QWaylandClientExtensionTemplate<FakeKeyboard>(6)
++{
++    setParent(parent);
++}
++
++FakeKeyboard::~FakeKeyboard()
++{
++    if (isActive()) {
++        destroy();
++    }
++}
++
++void FakeKeyboard::sendKeysym(uint keysym, bool pressed)
++{
++    // version() reads the bound object: only once the extension is active
++    if (!isActive() || QtWayland::org_kde_kwin_fake_input::version() < 6) {
++        if (!m_warned) {
++            m_warned = true;
++            qCWarning(PlasmaKeyboard) << "KWin's fake input (version 6) is not available to Plasma Keyboard: the keys cannot type;"
++                                      << "bound:" << isActive();
++        }
++        return;
++    }
++    if (!m_authenticated) {
++        authenticate(i18n("Plasma Keyboard"), i18nc("@info", "Types the keys of the on-screen keyboard while Fcitx 5 does not answer"));
++        m_authenticated = true;
++    }
++    keyboard_keysym(keysym, pressed ? 1 : 0);
++}
++
++#include "moc_fakekeyboard.cpp"
+diff --git a/src/fcitx/fakekeyboard.h b/src/fcitx/fakekeyboard.h
+new file mode 100644
+index 0000000..6cb4e2b
+--- /dev/null
++++ b/src/fcitx/fakekeyboard.h
+@@ -0,0 +1,30 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#pragma once
++
++#include <QtWaylandClient/QWaylandClientExtensionTemplate>
++
++#include "qwayland-fake-input.h"
++
++/**
++ * Keys typed through KWin's fake input device (org_kde_kwin_fake_input version 6, keyboard_keysym), for the
++ * Fcitx 5 keyboard when Fcitx 5 does not answer. KWin grants the protocol to the executable whose desktop entry
++ * lists it in X-KDE-Wayland-Interfaces (org.kde.plasma.keyboard.fcitx.desktop).
++ */
++class FakeKeyboard : public QWaylandClientExtensionTemplate<FakeKeyboard>, public QtWayland::org_kde_kwin_fake_input
++{
++    Q_OBJECT
++public:
++    explicit FakeKeyboard(QObject *parent = nullptr);
++    ~FakeKeyboard() override;
++
++    void sendKeysym(uint keysym, bool pressed);
++
++private:
++    bool m_authenticated = false;
++    bool m_warned = false;
++};
+diff --git a/src/fcitx/fcitxbridge.cpp b/src/fcitx/fcitxbridge.cpp
+new file mode 100644
+index 0000000..fd09fdb
+--- /dev/null
++++ b/src/fcitx/fcitxbridge.cpp
+@@ -0,0 +1,655 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#include "fcitxbridge.h"
++#include "fakekeyboard.h"
++#include "logging.h"
++#include "plasmakeyboardsettings.h"
++
++#include <KConfigGroup>
++#include <KLocalizedString>
++#include <KSharedConfig>
++
++#include <QDBusArgument>
++#include <QDBusConnectionInterface>
++#include <QDBusMessage>
++#include <QDBusPendingCallWatcher>
++#include <QDBusPendingReply>
++#include <QDBusServiceWatcher>
++#include <QDateTime>
++#include <QFileInfo>
++#include <QHash>
++
++#include <xkbcommon/xkbcommon.h>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++// fcitx5 src/ui/virtualkeyboard/virtualkeyboard.cpp
++const QString s_keyboardName = u"org.fcitx.Fcitx5.VirtualKeyboard"_s;
++const QString s_keyboardPath = u"/org/fcitx/virtualkeyboard/impanel"_s;
++const QString s_backendName = u"org.fcitx.Fcitx5.VirtualKeyboardBackend"_s;
++const QString s_backendPath = u"/virtualkeyboard"_s;
++const QString s_backendInterface = u"org.fcitx.Fcitx5.VirtualKeyboardBackend1"_s;
++const QString s_fcitxName = u"org.fcitx.Fcitx5"_s;
++const QString s_fcitxKeyboardPath = u"/virtualkeyboard"_s;
++const QString s_fcitxKeyboardInterface = u"org.fcitx.Fcitx.VirtualKeyboard1"_s;
++// fcitx5 src/modules/dbus/dbusmodule.cpp
++const QString s_controllerPath = u"/controller"_s;
++const QString s_controllerInterface = u"org.fcitx.Fcitx.Controller1"_s;
++// kwin src/virtualkeyboard_dbus.h
++const QString s_kwinName = u"org.kde.KWin"_s;
++const QString s_kwinPath = u"/VirtualKeyboard"_s;
++const QString s_kwinInterface = u"org.kde.kwin.VirtualKeyboard"_s;
++
++// How long Fcitx 5 has to answer a request to show its keyboard before the keys type plain text
++constexpr int s_answerTimeoutMs = 1500;
++
++// A call to Fcitx 5 never starts it: a Fcitx 5 started by D-Bus activation is not KWin's input method (it would bind KWin's
++// input method protocol beside it and take KWin's input panel), so an absent Fcitx 5 answers "no such service" instead
++QDBusMessage fcitxCall(const QString &service, const QString &path, const QString &interface, const QString &method)
++{
++    QDBusMessage message = QDBusMessage::createMethodCall(service, path, interface, method);
++    message.setAutoStartService(false);
++    return message;
++}
++
++QHash<uint, uint> usKeycodes()
++{
++    QHash<uint, uint> keycodes;
++    xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
++    if (!context) {
++        return keycodes;
++    }
++    const xkb_rule_names names{"evdev", "pc105", "us", "", ""};
++    xkb_keymap *keymap = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
++    if (keymap) {
++        for (xkb_keycode_t code = xkb_keymap_min_keycode(keymap); code <= xkb_keymap_max_keycode(keymap); ++code) {
++            for (xkb_level_index_t level = 0; level < 2; ++level) {
++                const xkb_keysym_t *syms = nullptr;
++                const int count = xkb_keymap_key_get_syms_by_level(keymap, code, 0, level, &syms);
++                for (int i = 0; i < count; ++i) {
++                    if (!keycodes.contains(syms[i])) {
++                        keycodes.insert(syms[i], code);
++                    }
++                }
++            }
++        }
++        xkb_keymap_unref(keymap);
++    }
++    xkb_context_unref(context);
++    return keycodes;
++}
++}
++
++/**
++ * org.fcitx.Fcitx5.VirtualKeyboard1 on /org/fcitx/virtualkeyboard/impanel: what Fcitx 5 calls on its keyboard.
++ */
++class FcitxKeyboardService : public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", "org.fcitx.Fcitx5.VirtualKeyboard1")
++
++public:
++    explicit FcitxKeyboardService(FcitxBridge *bridge)
++        : QObject(bridge)
++        , m_bridge(bridge)
++    {
++    }
++
++public Q_SLOTS:
++    void ShowVirtualKeyboard()
++    {
++        m_bridge->fcitxShow();
++    }
++    void HideVirtualKeyboard()
++    {
++        m_bridge->fcitxHide();
++    }
++    void UpdatePreeditCaret(int caret)
++    {
++        m_bridge->fcitxPreeditCaret(caret);
++    }
++    void UpdatePreeditArea(const QString &text)
++    {
++        m_bridge->fcitxPreeditArea(text);
++    }
++    void UpdateCandidateArea(const QStringList &candidates, bool hasPrev, bool hasNext, int pageIndex, int globalCursorIndex)
++    {
++        m_bridge->fcitxCandidateArea(candidates, hasPrev, hasNext, pageIndex, globalCursorIndex);
++    }
++    void NotifyIMActivated(const QString &uniqueName)
++    {
++        m_bridge->fcitxInputMethodActivated(uniqueName);
++    }
++    void NotifyIMDeactivated(const QString &uniqueName)
++    {
++        m_bridge->fcitxInputMethodDeactivated(uniqueName);
++    }
++    void NotifyIMListChanged()
++    {
++        m_bridge->fcitxInputMethodListChanged();
++    }
++
++private:
++    FcitxBridge *m_bridge;
++};
++
++FcitxBridge::FcitxBridge(QObject *parent)
++    : QObject(parent)
++    , m_bus(QDBusConnection::sessionBus())
++{
++    m_answerTimer.setSingleShot(true);
++    m_answerTimer.setInterval(s_answerTimeoutMs);
++    connect(&m_answerTimer, &QTimer::timeout, this, [this] {
++        if (m_kwinWants && !m_fcitxShown) {
++            enterPlainTyping(i18nc("@info:status", "Fcitx 5 does not answer. The keys type plain text, without conversion."));
++        }
++    });
++}
++
++FcitxBridge::~FcitxBridge() = default;
++
++QString FcitxBridge::whyNotNeeded()
++{
++    const KConfigGroup wayland(KSharedConfig::openConfig(u"kwinrc"_s), u"Wayland"_s);
++    const QString inputMethod = wayland.readEntry("InputMethod", QString());
++    if (!QFileInfo(inputMethod).fileName().contains("fcitx"_L1, Qt::CaseInsensitive)) {
++        return u"KWin's input method is \"%1\", not Fcitx 5: Plasma Keyboard has nothing to do as Fcitx 5's keyboard."_s.arg(inputMethod);
++    }
++    if (!PlasmaKeyboardSettings::self()->showWithFcitx()) {
++        return u"Showing Plasma Keyboard for Fcitx 5 is turned off (plasmakeyboardrc [General] showWithFcitx)."_s;
++    }
++    return {};
++}
++
++QString FcitxBridge::layoutLocaleForLanguage(const QString &languageCode)
++{
++    if (languageCode.startsWith("ja"_L1)) {
++        return u"ja_JP"_s;
++    }
++    if (languageCode.startsWith("ko"_L1)) {
++        return u"ko_KR"_s;
++    }
++    if (languageCode == "zh_TW"_L1 || languageCode == "zh_HK"_L1 || languageCode == "zh_MO"_L1) {
++        return u"zh_TW"_s;
++    }
++    if (languageCode.startsWith("zh"_L1)) {
++        return u"zh_CN"_s;
++    }
++    if (languageCode.contains(u'_')) {
++        return languageCode;
++    }
++    static const QHash<QString, QString> s_countries = {
++        {u"en"_s, u"en_US"_s},
++        {u"de"_s, u"de_DE"_s},
++        {u"es"_s, u"es_ES"_s},
++        {u"fr"_s, u"fr_FR"_s},
++        {u"pl"_s, u"pl_PL"_s},
++        {u"pt"_s, u"pt_PT"_s},
++    };
++    return s_countries.value(languageCode, u"en_US"_s);
++}
++
++bool FcitxBridge::start()
++{
++    m_service = new FcitxKeyboardService(this);
++    if (!m_bus.registerObject(s_keyboardPath, m_service, QDBusConnection::ExportAllSlots)) {
++        qCCritical(PlasmaKeyboard) << "Cannot export the Fcitx 5 keyboard object" << s_keyboardPath;
++        return false;
++    }
++    if (!m_bus.registerService(s_keyboardName)) {
++        setProblem(i18nc("@info:status", "Another program is already the on-screen keyboard of Fcitx 5."));
++        qCCritical(PlasmaKeyboard) << "The name" << s_keyboardName << "is owned by another program:" << m_bus.lastError().message();
++        return false;
++    }
++
++    m_fakeKeyboard = new FakeKeyboard(this);
++
++    auto backendWatcher = new QDBusServiceWatcher(s_backendName, m_bus, QDBusServiceWatcher::WatchForOwnerChange, this);
++    connect(backendWatcher, &QDBusServiceWatcher::serviceOwnerChanged, this, [this](const QString &, const QString &, const QString &newOwner) {
++        m_backendAvailable = !newOwner.isEmpty();
++        qCDebug(PlasmaKeyboard) << "Fcitx 5 keyboard backend" << (m_backendAvailable ? "registered" : "gone");
++    });
++    m_backendAvailable = m_bus.interface()->isServiceRegistered(s_backendName);
++
++    auto fcitxWatcher = new QDBusServiceWatcher(s_fcitxName, m_bus, QDBusServiceWatcher::WatchForOwnerChange, this);
++    connect(fcitxWatcher, &QDBusServiceWatcher::serviceOwnerChanged, this, [this](const QString &, const QString &, const QString &newOwner) {
++        if (!newOwner.isEmpty()) {
++            refreshInputMethods();
++        } else if (m_visible || m_kwinWants) {
++            enterPlainTyping(i18nc("@info:status", "Fcitx 5 does not answer. The keys type plain text, without conversion."));
++        }
++    });
++
++    m_bus.connect(s_kwinName, s_kwinPath, s_kwinInterface, u"activeChanged"_s, this, SLOT(kwinActiveChanged()));
++
++    refreshInputMethods();
++    kwinActiveChanged();
++    return true;
++}
++
++void FcitxBridge::kwinActiveChanged()
++{
++    auto get = QDBusMessage::createMethodCall(s_kwinName, s_kwinPath, u"org.freedesktop.DBus.Properties"_s, u"Get"_s);
++    get << s_kwinInterface << u"active"_s;
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(get), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<QDBusVariant> reply = *call;
++        if (reply.isError()) {
++            qCWarning(PlasmaKeyboard) << "Cannot read KWin's virtual keyboard state:" << reply.error().message();
++            return;
++        }
++        if (!reply.value().variant().toBool()) {
++            setKWinWantsKeyboard(false);
++            return;
++        }
++        askKWinWhetherToShow();
++    });
++}
++
++void FcitxBridge::askKWinWhetherToShow()
++{
++    // KWin's own rule for showing a keyboard on the active text field: the last input came from a touch screen or a pen,
++    // the visibility mode, and "Only when in Tablet Mode"
++    auto willShow = QDBusMessage::createMethodCall(s_kwinName, s_kwinPath, s_kwinInterface, u"willShowOnActive"_s);
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(willShow), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<bool> reply = *call;
++        if (reply.isError()) {
++            qCWarning(PlasmaKeyboard) << "Cannot ask KWin whether to show the keyboard:" << reply.error().message();
++            return;
++        }
++        qCDebug(PlasmaKeyboard) << "KWin: text field active, show the keyboard:" << reply.value();
++        setKWinWantsKeyboard(reply.value());
++    });
++}
++
++void FcitxBridge::setKWinWantsKeyboard(bool wants)
++{
++    m_kwinWants = wants;
++    if (wants) {
++        askFcitxToShow();
++    } else {
++        m_answerTimer.stop();
++    }
++    updateVisible();
++}
++
++void FcitxBridge::askFcitxToShow()
++{
++    // one request until Fcitx 5 answers or the wait for its answer ends
++    if (m_fcitxShown || m_answerTimer.isActive()) {
++        return;
++    }
++    // Puts Fcitx 5 in its on-screen keyboard mode, which makes its keyboard addon the user interface; the addon then
++    // calls ShowVirtualKeyboard on this keyboard
++    auto show = fcitxCall(s_fcitxName, s_fcitxKeyboardPath, s_fcitxKeyboardInterface, u"ShowVirtualKeyboard"_s);
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(show), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<> reply = *call;
++        if (reply.isError()) {
++            qCWarning(PlasmaKeyboard) << "Fcitx 5 refused to show its keyboard:" << reply.error().name() << reply.error().message();
++            enterPlainTyping(i18nc("@info:status", "Fcitx 5 does not answer. The keys type plain text, without conversion."));
++        }
++    });
++    m_answerTimer.start();
++}
++
++void FcitxBridge::setFcitxShown(bool shown)
++{
++    m_fcitxShown = shown;
++    if (shown) {
++        m_answerTimer.stop();
++        leavePlainTyping();
++    }
++    updateVisible();
++}
++
++void FcitxBridge::enterPlainTyping(const QString &reason)
++{
++    qCWarning(PlasmaKeyboard) << "Plain typing:" << reason;
++    setProblem(reason);
++    if (!m_plainTyping) {
++        m_plainTyping = true;
++        Q_EMIT plainTypingChanged();
++    }
++    if (!m_preedit.isEmpty() || !m_candidates.isEmpty()) {
++        m_preedit.clear();
++        m_candidates.clear();
++        Q_EMIT preeditChanged();
++        Q_EMIT candidatesChanged();
++    }
++    updateVisible();
++}
++
++void FcitxBridge::leavePlainTyping()
++{
++    setProblem(QString());
++    if (m_plainTyping) {
++        m_plainTyping = false;
++        Q_EMIT plainTypingChanged();
++    }
++}
++
++void FcitxBridge::setProblem(const QString &problem)
++{
++    if (m_problem != problem) {
++        m_problem = problem;
++        Q_EMIT problemChanged();
++    }
++}
++
++void FcitxBridge::updateVisible()
++{
++    const bool visible = m_kwinWants && (m_fcitxShown || m_plainTyping);
++    if (m_visible != visible) {
++        m_visible = visible;
++        qCDebug(PlasmaKeyboard) << "Fcitx 5 keyboard visible:" << visible;
++        Q_EMIT visibleChanged();
++    }
++}
++
++uint FcitxBridge::keycodeFor(uint keysym) const
++{
++    static const QHash<uint, uint> s_keycodes = usKeycodes();
++    return s_keycodes.value(keysym, 0);
++}
++
++void FcitxBridge::sendKey(uint keysym, uint states, bool release)
++{
++    if (m_plainTyping || !m_backendAvailable) {
++        if (!m_plainTyping) {
++            enterPlainTyping(i18nc("@info:status", "Fcitx 5 does not answer. The keys type plain text, without conversion."));
++        }
++        m_fakeKeyboard->sendKeysym(keysym, !release);
++        return;
++    }
++    auto key = fcitxCall(s_backendName, s_backendPath, s_backendInterface, u"ProcessKeyEvent"_s);
++    key << keysym << keycodeFor(keysym) << states << release << uint(QDateTime::currentMSecsSinceEpoch() & 0xffffffff);
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(key), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, keysym, release](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<> reply = *call;
++        if (reply.isError()) {
++            qCWarning(PlasmaKeyboard) << "Fcitx 5 refused a key:" << reply.error().message();
++            enterPlainTyping(i18nc("@info:status", "Fcitx 5 does not answer. The keys type plain text, without conversion."));
++            // the key that was refused is typed now, so nothing the person typed is lost
++            m_fakeKeyboard->sendKeysym(keysym, !release);
++        }
++    });
++}
++
++void FcitxBridge::selectCandidate(int index)
++{
++    auto call = fcitxCall(s_backendName, s_backendPath, s_backendInterface, u"SelectCandidate"_s);
++    call << index;
++    m_bus.asyncCall(call);
++}
++
++void FcitxBridge::previousPage()
++{
++    m_bus.asyncCall(fcitxCall(s_backendName, s_backendPath, s_backendInterface, u"PrevPage"_s));
++}
++
++void FcitxBridge::nextPage()
++{
++    m_bus.asyncCall(fcitxCall(s_backendName, s_backendPath, s_backendInterface, u"NextPage"_s));
++}
++
++void FcitxBridge::switchInputMethod(const QString &uniqueName)
++{
++    auto call = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"SetCurrentIM"_s);
++    call << uniqueName;
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(call), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *switched) {
++        switched->deleteLater();
++        readCurrentInputMethod();
++    });
++}
++
++void FcitxBridge::hide()
++{
++    m_bus.asyncCall(fcitxCall(s_fcitxName, s_fcitxKeyboardPath, s_fcitxKeyboardInterface, u"HideVirtualKeyboard"_s));
++    m_answerTimer.stop();
++    m_kwinWants = false;
++    updateVisible();
++}
++
++void FcitxBridge::fcitxShow()
++{
++    setFcitxShown(true);
++    // Fcitx 5 asks to show at every focus change while its keyboard mode is on; KWin says whether that change came from a
++    // touch or a pen (a touch on another text field brings the keyboard back, a click does not)
++    if (!m_kwinWants) {
++        askKWinWhetherToShow();
++    }
++    // Fcitx 5 tells its keyboard which input method is active only while its keyboard mode is on: read it now
++    readCurrentInputMethod();
++}
++
++void FcitxBridge::fcitxHide()
++{
++    setFcitxShown(false);
++}
++
++void FcitxBridge::fcitxPreeditCaret(int caret)
++{
++    if (m_preeditCaret != caret) {
++        m_preeditCaret = caret;
++        Q_EMIT preeditChanged();
++    }
++}
++
++void FcitxBridge::fcitxPreeditArea(const QString &text)
++{
++    if (m_preedit != text) {
++        m_preedit = text;
++        Q_EMIT preeditChanged();
++    }
++}
++
++void FcitxBridge::fcitxCandidateArea(const QStringList &candidates, bool hasPrev, bool hasNext, int pageIndex, int globalCursorIndex)
++{
++    Q_UNUSED(pageIndex)
++    m_candidates = candidates;
++    m_hasPrev = hasPrev;
++    m_hasNext = hasNext;
++    m_highlighted = globalCursorIndex;
++    Q_EMIT candidatesChanged();
++}
++
++void FcitxBridge::fcitxInputMethodActivated(const QString &uniqueName)
++{
++    m_currentInputMethod = uniqueName;
++    updateLayoutLocale();
++    Q_EMIT inputMethodsChanged();
++}
++
++void FcitxBridge::fcitxInputMethodDeactivated(const QString &uniqueName)
++{
++    Q_UNUSED(uniqueName)
++}
++
++void FcitxBridge::fcitxInputMethodListChanged()
++{
++    refreshInputMethods();
++}
++
++void FcitxBridge::refreshInputMethods()
++{
++    // AvailableInputMethods: a(ssssssb) uniqueName, name, nativeName, icon, label, languageCode, configurable
++    auto available = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"AvailableInputMethods"_s);
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(available), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusMessage reply = call->reply();
++        if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
++            qCWarning(PlasmaKeyboard) << "Cannot read Fcitx 5's input methods:" << reply.errorMessage();
++            return;
++        }
++        QHash<QString, QVariantMap> known;
++        const QDBusArgument list = reply.arguments().at(0).value<QDBusArgument>();
++        list.beginArray();
++        while (!list.atEnd()) {
++            QString uniqueName, name, nativeName, icon, label, languageCode;
++            bool configurable = false;
++            list.beginStructure();
++            list >> uniqueName >> name >> nativeName >> icon >> label >> languageCode >> configurable;
++            list.endStructure();
++            known.insert(uniqueName,
++                         {{u"uniqueName"_s, uniqueName}, {u"name"_s, name}, {u"label"_s, label.isEmpty() ? name : label}, {u"languageCode"_s, languageCode}});
++        }
++        list.endArray();
++        readInputMethodGroup(known);
++    });
++}
++
++void FcitxBridge::readInputMethodGroup(const QHash<QString, QVariantMap> &known)
++{
++    auto group = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"CurrentInputMethodGroup"_s);
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(group), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, known](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<QString> groupReply = *call;
++        if (groupReply.isError()) {
++            qCWarning(PlasmaKeyboard) << "Cannot read Fcitx 5's input method group:" << groupReply.error().message();
++            return;
++        }
++        // InputMethodGroupInfo(group): s default layout, a(ss) uniqueName and layout, in the order the person set
++        auto info = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"InputMethodGroupInfo"_s);
++        info << groupReply.value();
++        auto infoWatcher = new QDBusPendingCallWatcher(m_bus.asyncCall(info), this);
++        connect(infoWatcher, &QDBusPendingCallWatcher::finished, this, [this, known](QDBusPendingCallWatcher *infoCall) {
++            infoCall->deleteLater();
++            const QDBusMessage infoReply = infoCall->reply();
++            if (infoReply.type() != QDBusMessage::ReplyMessage || infoReply.arguments().size() < 2) {
++                qCWarning(PlasmaKeyboard) << "Cannot read Fcitx 5's input method group:" << infoReply.errorMessage();
++                return;
++            }
++            QVariantList inputMethods;
++            const QDBusArgument items = infoReply.arguments().at(1).value<QDBusArgument>();
++            items.beginArray();
++            while (!items.atEnd()) {
++                QString uniqueName, layout;
++                items.beginStructure();
++                items >> uniqueName >> layout;
++                items.endStructure();
++                inputMethods.append(known.value(uniqueName, {{u"uniqueName"_s, uniqueName}, {u"name"_s, uniqueName}, {u"label"_s, uniqueName}}));
++            }
++            items.endArray();
++            m_inputMethods = inputMethods;
++            readCurrentInputMethod();
++        });
++    });
++}
++
++void FcitxBridge::readCurrentInputMethod()
++{
++    auto current = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"CurrentInputMethod"_s);
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(current), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<QString> reply = *call;
++        if (reply.isError()) {
++            qCWarning(PlasmaKeyboard) << "Cannot read Fcitx 5's current input method:" << reply.error().message();
++        } else {
++            m_currentInputMethod = reply.value();
++        }
++        updateLayoutLocale();
++        qCDebug(PlasmaKeyboard) << "Fcitx 5 input methods:" << m_inputMethods << "current:" << m_currentInputMethod << "layout:" << m_layoutLocale;
++        Q_EMIT inputMethodsChanged();
++    });
++}
++
++void FcitxBridge::updateLayoutLocale()
++{
++    for (const QVariant &entry : std::as_const(m_inputMethods)) {
++        const QVariantMap im = entry.toMap();
++        if (im.value(u"uniqueName"_s).toString() == m_currentInputMethod) {
++            m_layoutLocale = layoutLocaleForLanguage(im.value(u"languageCode"_s).toString());
++            return;
++        }
++    }
++}
++
++bool FcitxBridge::isVisible() const
++{
++    return m_visible;
++}
++
++bool FcitxBridge::plainTyping() const
++{
++    return m_plainTyping;
++}
++
++QString FcitxBridge::problem() const
++{
++    return m_problem;
++}
++
++QString FcitxBridge::preedit() const
++{
++    return m_preedit;
++}
++
++int FcitxBridge::preeditCaret() const
++{
++    return m_preeditCaret;
++}
++
++QStringList FcitxBridge::candidates() const
++{
++    return m_candidates;
++}
++
++int FcitxBridge::highlightedCandidate() const
++{
++    return m_highlighted;
++}
++
++bool FcitxBridge::hasPreviousPage() const
++{
++    return m_hasPrev;
++}
++
++bool FcitxBridge::hasNextPage() const
++{
++    return m_hasNext;
++}
++
++QString FcitxBridge::currentInputMethod() const
++{
++    return m_currentInputMethod;
++}
++
++QString FcitxBridge::currentInputMethodLabel() const
++{
++    for (const QVariant &entry : m_inputMethods) {
++        const QVariantMap im = entry.toMap();
++        if (im.value(u"uniqueName"_s).toString() == m_currentInputMethod) {
++            return im.value(u"label"_s).toString();
++        }
++    }
++    return m_currentInputMethod;
++}
++
++QVariantList FcitxBridge::inputMethods() const
++{
++    return m_inputMethods;
++}
++
++QString FcitxBridge::layoutLocale() const
++{
++    return m_layoutLocale;
++}
++
++#include "fcitxbridge.moc"
++#include "moc_fcitxbridge.cpp"
+diff --git a/src/fcitx/fcitxbridge.h b/src/fcitx/fcitxbridge.h
+new file mode 100644
+index 0000000..20d7ba7
+--- /dev/null
++++ b/src/fcitx/fcitxbridge.h
+@@ -0,0 +1,165 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#pragma once
++
++#include <QDBusConnection>
++#include <QHash>
++#include <QVariantMap>
++#include <QObject>
++#include <QStringList>
++#include <QTimer>
++#include <QVariantList>
++#include <qqmlintegration.h>
++
++class FakeKeyboard;
++
++/**
++ * Plasma Keyboard as the on-screen keyboard of Fcitx 5.
++ *
++ * When Fcitx 5 is KWin's input method, Fcitx 5 holds the input-method connection and does the conversion
++ * (Mozc, Hangul, Pinyin, Chewing). Its "DBus Virtual Keyboard" addon talks to one keyboard over D-Bus:
++ * Fcitx 5 owns org.fcitx.Fcitx5.VirtualKeyboardBackend (keys, candidate choice, paging) while its keyboard mode
++ * is on, and calls the keyboard that owns org.fcitx.Fcitx5.VirtualKeyboard with the preedit, the candidates and
++ * the input method list (fcitx5 src/ui/virtualkeyboard/virtualkeyboard.cpp).
++ *
++ * The keyboard shows when KWin would show an on-screen keyboard for the text field (org.kde.kwin.VirtualKeyboard:
++ * activeChanged, willShowOnActive) and Fcitx 5 asks it to show.
++ *
++ * When Fcitx 5 does not answer, the person is told on the keyboard and its keys type plain text through KWin's
++ * fake input (org_kde_kwin_fake_input keyboard_keysym).
++ */
++class FcitxBridge : public QObject
++{
++    Q_OBJECT
++    QML_ELEMENT
++    QML_UNCREATABLE("FcitxBridge is provided by the application")
++
++    Q_PROPERTY(bool visible READ isVisible NOTIFY visibleChanged)
++    Q_PROPERTY(bool plainTyping READ plainTyping NOTIFY plainTypingChanged)
++    Q_PROPERTY(QString problem READ problem NOTIFY problemChanged)
++    Q_PROPERTY(QString preedit READ preedit NOTIFY preeditChanged)
++    Q_PROPERTY(int preeditCaret READ preeditCaret NOTIFY preeditChanged)
++    Q_PROPERTY(QStringList candidates READ candidates NOTIFY candidatesChanged)
++    Q_PROPERTY(int highlightedCandidate READ highlightedCandidate NOTIFY candidatesChanged)
++    Q_PROPERTY(bool hasPreviousPage READ hasPreviousPage NOTIFY candidatesChanged)
++    Q_PROPERTY(bool hasNextPage READ hasNextPage NOTIFY candidatesChanged)
++    Q_PROPERTY(QString currentInputMethod READ currentInputMethod NOTIFY inputMethodsChanged)
++    Q_PROPERTY(QString currentInputMethodLabel READ currentInputMethodLabel NOTIFY inputMethodsChanged)
++    Q_PROPERTY(QVariantList inputMethods READ inputMethods NOTIFY inputMethodsChanged)
++    Q_PROPERTY(QString layoutLocale READ layoutLocale NOTIFY inputMethodsChanged)
++
++public:
++    // KeyStates of fcitx-utils/keysym.h
++    enum KeyState : uint {
++        ShiftState = 1u << 0,
++        ControlState = 1u << 2,
++        AltState = 1u << 3,
++    };
++
++    explicit FcitxBridge(QObject *parent = nullptr);
++    ~FcitxBridge() override;
++
++    /**
++     * Registers the keyboard on the session bus and starts following KWin and Fcitx 5.
++     * @return false when the keyboard's name is owned by another program; the reason is in problem().
++     */
++    bool start();
++
++    /**
++     * Why the Fcitx 5 keyboard has nothing to do in this session, or an empty string when it has:
++     * KWin's input method is not Fcitx 5, or the person turned the keyboard off for Fcitx 5.
++     */
++    static QString whyNotNeeded();
++
++    /**
++     * The Qt Virtual Keyboard locale whose keys suit an input method language of Fcitx 5 (its "languageCode").
++     */
++    static QString layoutLocaleForLanguage(const QString &languageCode);
++
++    bool isVisible() const;
++    bool plainTyping() const;
++    QString problem() const;
++    QString preedit() const;
++    int preeditCaret() const;
++    QStringList candidates() const;
++    int highlightedCandidate() const;
++    bool hasPreviousPage() const;
++    bool hasNextPage() const;
++    QString currentInputMethod() const;
++    QString currentInputMethodLabel() const;
++    QVariantList inputMethods() const;
++    QString layoutLocale() const;
++
++    /** A key of the on-screen keyboard: an X keysym with Fcitx 5's key states. */
++    void sendKey(uint keysym, uint states, bool release);
++
++    Q_INVOKABLE void selectCandidate(int index);
++    Q_INVOKABLE void previousPage();
++    Q_INVOKABLE void nextPage();
++    Q_INVOKABLE void switchInputMethod(const QString &uniqueName);
++    /** The keyboard's own hide key. */
++    Q_INVOKABLE void hide();
++
++    // org.fcitx.Fcitx5.VirtualKeyboard1, called by Fcitx 5 (see FcitxKeyboardService)
++    void fcitxShow();
++    void fcitxHide();
++    void fcitxPreeditCaret(int caret);
++    void fcitxPreeditArea(const QString &text);
++    void fcitxCandidateArea(const QStringList &candidates, bool hasPrev, bool hasNext, int pageIndex, int globalCursorIndex);
++    void fcitxInputMethodActivated(const QString &uniqueName);
++    void fcitxInputMethodDeactivated(const QString &uniqueName);
++    void fcitxInputMethodListChanged();
++
++Q_SIGNALS:
++    void visibleChanged();
++    void plainTypingChanged();
++    void problemChanged();
++    void preeditChanged();
++    void candidatesChanged();
++    void inputMethodsChanged();
++
++private Q_SLOTS:
++    void kwinActiveChanged();
++
++private:
++    void askFcitxToShow();
++    void askKWinWhetherToShow();
++    void setKWinWantsKeyboard(bool wants);
++    void setFcitxShown(bool shown);
++    void enterPlainTyping(const QString &reason);
++    void leavePlainTyping();
++    void setProblem(const QString &problem);
++    void refreshInputMethods();
++    void readInputMethodGroup(const QHash<QString, QVariantMap> &known);
++    void readCurrentInputMethod();
++    void updateLayoutLocale();
++    void updateVisible();
++    uint keycodeFor(uint keysym) const;
++
++    QDBusConnection m_bus;
++    QObject *m_service = nullptr;
++    FakeKeyboard *m_fakeKeyboard = nullptr;
++    QTimer m_answerTimer;
++
++    bool m_kwinWants = false;
++    bool m_fcitxShown = false;
++    bool m_visible = false;
++    bool m_plainTyping = false;
++    bool m_backendAvailable = false;
++    QString m_problem;
++
++    QString m_preedit;
++    int m_preeditCaret = -1;
++    QStringList m_candidates;
++    int m_highlighted = -1;
++    bool m_hasPrev = false;
++    bool m_hasNext = false;
++
++    QString m_currentInputMethod;
++    QVariantList m_inputMethods;
++    QString m_layoutLocale = QStringLiteral("en_US");
++};
+diff --git a/src/fcitx/fcitxinputitem.cpp b/src/fcitx/fcitxinputitem.cpp
+new file mode 100644
+index 0000000..1eb2fea
+--- /dev/null
++++ b/src/fcitx/fcitxinputitem.cpp
+@@ -0,0 +1,180 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#include "fcitxinputitem.h"
++#include "logging.h"
++
++#include <QGuiApplication>
++#include <QInputMethod>
++#include <QKeyEvent>
++#include <QQuickWindow>
++#include <QtGui/private/qxkbcommon_p.h>
++#include <qpa/qwindowsysteminterface.h>
++
++#include <xkbcommon/xkbcommon-keysyms.h>
++#include <xkbcommon/xkbcommon.h>
++
++FcitxInputItem::FcitxInputItem()
++{
++    setFlag(ItemAcceptsInputMethod, true);
++    // the keyboard's own hide key hides Qt's input panel: the keyboard then hides for Fcitx 5 too
++    connect(QGuiApplication::inputMethod(), &QInputMethod::visibleChanged, this, [this] {
++        if (m_bridge && m_bridge->isVisible() && !QGuiApplication::inputMethod()->isVisible()) {
++            m_bridge->hide();
++        }
++    });
++}
++
++FcitxBridge *FcitxInputItem::bridge() const
++{
++    return m_bridge;
++}
++
++void FcitxInputItem::setBridge(FcitxBridge *bridge)
++{
++    if (m_bridge == bridge) {
++        return;
++    }
++    if (m_bridge) {
++        disconnect(m_bridge, nullptr, this, nullptr);
++    }
++    m_bridge = bridge;
++    if (m_bridge) {
++        connect(m_bridge, &FcitxBridge::visibleChanged, this, &FcitxInputItem::updateVisibility);
++    }
++    Q_EMIT bridgeChanged();
++    updateVisibility();
++}
++
++void FcitxInputItem::updateVisibility()
++{
++    QQuickWindow *win = window();
++    if (!win || !m_bridge) {
++        return;
++    }
++    if (m_bridge->isVisible()) {
++        win->setVisible(true);
++        // KWin never gives the keyboard's surface the keyboard focus (it would take it from the text field), so the
++        // window is made Qt's focus window here, as the input panel surface does on configure
++        QWindowSystemInterface::handleFocusWindowChanged(win, Qt::ActiveWindowFocusReason);
++        forceActiveFocus();
++        QGuiApplication::inputMethod()->update(Qt::ImQueryAll);
++        QGuiApplication::inputMethod()->show();
++    } else {
++        QGuiApplication::inputMethod()->hide();
++        QGuiApplication::inputMethod()->reset();
++        win->setVisible(false);
++    }
++}
++
++QVariant FcitxInputItem::inputMethodQuery(Qt::InputMethodQuery query) const
++{
++    switch (query) {
++    case Qt::ImEnabled:
++        return true;
++    case Qt::ImHints:
++        // Fcitx 5's input method does the conversion and the capitalisation: Qt Virtual Keyboard types the keys as they are
++        return QVariant::fromValue<int>(Qt::ImhNoPredictiveText | Qt::ImhNoAutoUppercase);
++    case Qt::ImSurroundingText:
++    case Qt::ImCurrentSelection:
++    case Qt::ImTextBeforeCursor:
++    case Qt::ImTextAfterCursor:
++        return QString();
++    case Qt::ImCursorPosition:
++    case Qt::ImAnchorPosition:
++        return 0;
++    default:
++        return {};
++    }
++}
++
++QList<QPair<uint, uint>> FcitxInputItem::keysForText(const QString &text)
++{
++    QList<QPair<uint, uint>> keys;
++    const auto codePoints = text.toUcs4();
++    for (const char32_t codePoint : codePoints) {
++        uint keysym = xkb_utf32_to_keysym(codePoint);
++        if (codePoint == U'\n' || codePoint == U'\r') {
++            keysym = XKB_KEY_Return;
++        }
++        if (keysym == XKB_KEY_NoSymbol) {
++            continue;
++        }
++        const uint states = QChar::isUpper(codePoint) ? uint(FcitxBridge::ShiftState) : 0u;
++        keys.append({keysym, states});
++    }
++    return keys;
++}
++
++uint FcitxInputItem::statesFor(Qt::KeyboardModifiers modifiers)
++{
++    uint states = 0;
++    if (modifiers & Qt::ShiftModifier) {
++        states |= FcitxBridge::ShiftState;
++    }
++    if (modifiers & Qt::ControlModifier) {
++        states |= FcitxBridge::ControlState;
++    }
++    if (modifiers & Qt::AltModifier) {
++        states |= FcitxBridge::AltState;
++    }
++    return states;
++}
++
++void FcitxInputItem::sendKeyEvent(QKeyEvent *event, bool release)
++{
++    if (!m_bridge) {
++        return;
++    }
++    const QString text = event->text();
++    const bool printable = !text.isEmpty() && !text.at(0).isNonCharacter() && text.at(0) >= u' ' && text.at(0) != QChar(0x7f);
++    if (printable) {
++        for (const auto &[keysym, states] : keysForText(text)) {
++            m_bridge->sendKey(keysym, states | statesFor(event->modifiers()), release);
++        }
++    } else {
++        const QList<xkb_keysym_t> keysyms = QXkbCommon::toKeysym(event);
++        for (const xkb_keysym_t keysym : keysyms) {
++            m_bridge->sendKey(keysym, statesFor(event->modifiers()), release);
++        }
++    }
++    event->accept();
++}
++
++void FcitxInputItem::keyPressEvent(QKeyEvent *event)
++{
++    // Qt::Key_Context1 is the keyboard's own key for its special keys
++    if (event->key() == Qt::Key_Context1) {
++        return;
++    }
++    sendKeyEvent(event, false);
++}
++
++void FcitxInputItem::keyReleaseEvent(QKeyEvent *event)
++{
++    if (event->key() == Qt::Key_Context1) {
++        return;
++    }
++    sendKeyEvent(event, true);
++}
++
++void FcitxInputItem::inputMethodEvent(QInputMethodEvent *event)
++{
++    if (!m_bridge) {
++        return;
++    }
++    // Qt Virtual Keyboard's plain input method commits what each key types; Fcitx 5 gets it as the keys themselves
++    for (const auto &[keysym, states] : keysForText(event->commitString())) {
++        m_bridge->sendKey(keysym, states, false);
++        m_bridge->sendKey(keysym, states, true);
++    }
++    if (!event->preeditString().isEmpty()) {
++        qCDebug(PlasmaKeyboard) << "Ignoring a preedit from Qt Virtual Keyboard in Fcitx 5 mode:" << event->preeditString();
++    }
++    event->accept();
++}
++
++#include "moc_fcitxinputitem.cpp"
+diff --git a/src/fcitx/fcitxinputitem.h b/src/fcitx/fcitxinputitem.h
+new file mode 100644
+index 0000000..f56ebc7
+--- /dev/null
++++ b/src/fcitx/fcitxinputitem.h
+@@ -0,0 +1,55 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++#pragma once
++
++#include <QList>
++#include <QPair>
++#include <QPointer>
++#include <QQuickItem>
++#include <qqmlintegration.h>
++
++#include "fcitxbridge.h"
++
++/**
++ * The item Qt Virtual Keyboard types into when Plasma Keyboard is Fcitx 5's keyboard: every commit and key becomes
++ * an X keysym with Fcitx 5's key states, handed to Fcitx 5 through the bridge, so Fcitx 5's input method converts
++ * the keys as it converts a physical keyboard's.
++ */
++class FcitxInputItem : public QQuickItem
++{
++    Q_OBJECT
++    QML_ELEMENT
++
++    Q_PROPERTY(FcitxBridge *bridge READ bridge WRITE setBridge NOTIFY bridgeChanged)
++
++public:
++    FcitxInputItem();
++
++    FcitxBridge *bridge() const;
++    void setBridge(FcitxBridge *bridge);
++
++    QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
++
++    /** The keysym and Fcitx 5 key states of each character of @p text. */
++    static QList<QPair<uint, uint>> keysForText(const QString &text);
++    /** Fcitx 5 key states of Qt keyboard modifiers. */
++    static uint statesFor(Qt::KeyboardModifiers modifiers);
++
++Q_SIGNALS:
++    void bridgeChanged();
++
++protected:
++    void keyPressEvent(QKeyEvent *event) override;
++    void keyReleaseEvent(QKeyEvent *event) override;
++    void inputMethodEvent(QInputMethodEvent *event) override;
++
++private:
++    void sendKeyEvent(QKeyEvent *event, bool release);
++    void updateVisibility();
++
++    QPointer<FcitxBridge> m_bridge;
++};
+diff --git a/src/layoutpathhelper.h b/src/layoutpathhelper.h
+index ef9d1f5..2d4b020 100644
+--- a/src/layoutpathhelper.h
++++ b/src/layoutpathhelper.h
+@@ -18,8 +18,11 @@
+  * the option to use the default Qt layouts if they prefer.
+  *
+  * Helper function used by both the main application and the KCM, to ensure they both use the same layouts path.
++ *
++ * With @p fcitx, the layouts of Fcitx 5 mode (layouts-fcitx): Plasma Keyboard's own, and for Korean and Chinese
++ * (Taiwan) its QWERTY keys labelled as Fcitx 5's engine reads them.
+  */
+-inline void initLayoutsPath()
++inline void initLayoutsPath(bool fcitx = false)
+ {
+     // PLASMA_KEYBOARD_USE_QT_LAYOUTS - whether to use Qt's builtin keyboard layouts rather than our own.
+     const bool useQtLayouts = qEnvironmentVariableIntValue("PLASMA_KEYBOARD_USE_QT_LAYOUTS") != 0;
+@@ -30,7 +33,7 @@ inline void initLayoutsPath()
+         // Loop over all "/usr/share" paths and check if layouts folder exists
+         const QStringList locations = QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation);
+         for (const QString &basePath : locations) {
+-            QString layoutsDir = basePath + QStringLiteral("/plasma/keyboard/layouts");
++            QString layoutsDir = basePath + (fcitx ? QStringLiteral("/plasma/keyboard/layouts-fcitx") : QStringLiteral("/plasma/keyboard/layouts"));
+ 
+             // Check if path exists
+             if (QDir(layoutsDir).exists()) {
+diff --git a/src/layouts-fcitx/ko_KR/main.qml b/src/layouts-fcitx/ko_KR/main.qml
+new file mode 100644
+index 0000000..d891e3e
+--- /dev/null
++++ b/src/layouts-fcitx/ko_KR/main.qml
+@@ -0,0 +1,232 @@
++// Copyright (C) 2021 The Qt Company Ltd.
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
++//
++// Plasma Keyboard as Fcitx 5's keyboard: the keys of the fallback layout (layouts/fallback/main.qml), labelled
++// with the jamo of Fcitx 5's Hangul engine (Dubeolsik, its default keyboard). The keys type Latin keysyms; Fcitx 5's engine makes them Hangul.
++// Made by make-fcitx-layouts.py; edit the script, not this file.
++
++import QtQuick
++import QtQuick.VirtualKeyboard
++import QtQuick.VirtualKeyboard.Components
++import QtQuick.Layouts
++
++KeyboardLayout {
++    inputMode: InputEngine.InputMode.Latin
++    keyWeight: 160
++    readonly property real normalKeyWidth: normalKey.width
++    readonly property real functionKeyWidth: mapFromItem(normalKey, normalKey.width / 2, 0).x
++    KeyboardRow {
++        Key {
++            key: Qt.Key_Q
++            text: "q"
++            displayText: "ㅂ"
++            smallText: "ㅃ"
++            smallTextVisible: true
++        }
++        Key {
++            id: normalKey
++            key: Qt.Key_W
++            text: "w"
++            displayText: "ㅈ"
++            smallText: "ㅉ"
++            smallTextVisible: true
++        }
++        Key {
++            key: Qt.Key_E
++            text: "e"
++            displayText: "ㄷ"
++            smallText: "ㄸ"
++            smallTextVisible: true
++        }
++        Key {
++            key: Qt.Key_R
++            text: "r"
++            displayText: "ㄱ"
++            smallText: "ㄲ"
++            smallTextVisible: true
++        }
++        Key {
++            key: Qt.Key_T
++            text: "t"
++            displayText: "ㅅ"
++            smallText: "ㅆ"
++            smallTextVisible: true
++        }
++        Key {
++            key: Qt.Key_Y
++            text: "y"
++            displayText: "ㅛ"
++        }
++        Key {
++            key: Qt.Key_U
++            text: "u"
++            displayText: "ㅕ"
++        }
++        Key {
++            key: Qt.Key_I
++            text: "i"
++            displayText: "ㅑ"
++        }
++        Key {
++            key: Qt.Key_O
++            text: "o"
++            displayText: "ㅐ"
++            smallText: "ㅒ"
++            smallTextVisible: true
++        }
++        Key {
++            key: Qt.Key_P
++            text: "p"
++            displayText: "ㅔ"
++            smallText: "ㅖ"
++            smallTextVisible: true
++        }
++    }
++    KeyboardRow {
++        KeyboardRow {
++            Layout.preferredWidth: functionKeyWidth
++            Layout.fillWidth: false
++            FillerKey {
++            }
++            Key {
++                key: Qt.Key_A
++                text: "a"
++                displayText: "ㅁ"
++                weight: normalKeyWidth
++                Layout.fillWidth: false
++            }
++        }
++        Key {
++            key: Qt.Key_S
++            text: "s"
++            displayText: "ㄴ"
++        }
++        Key {
++            key: Qt.Key_D
++            text: "d"
++            displayText: "ㅇ"
++        }
++        Key {
++            key: Qt.Key_F
++            text: "f"
++            displayText: "ㄹ"
++        }
++        Key {
++            key: Qt.Key_G
++            text: "g"
++            displayText: "ㅎ"
++        }
++        Key {
++            key: Qt.Key_H
++            text: "h"
++            displayText: "ㅗ"
++        }
++        Key {
++            key: Qt.Key_J
++            text: "j"
++            displayText: "ㅓ"
++        }
++        Key {
++            key: Qt.Key_K
++            text: "k"
++            displayText: "ㅏ"
++        }
++        KeyboardRow {
++            Layout.preferredWidth: functionKeyWidth
++            Layout.fillWidth: false
++            Key {
++                key: Qt.Key_L
++                text: "l"
++                displayText: "ㅣ"
++                weight: normalKeyWidth
++                Layout.fillWidth: false
++            }
++            FillerKey {
++            }
++        }
++    }
++    KeyboardRow {
++        ShiftKey {
++            weight: functionKeyWidth
++            Layout.fillWidth: false
++        }
++        Key {
++            key: Qt.Key_Z
++            text: "z"
++            displayText: "ㅋ"
++        }
++        Key {
++            key: Qt.Key_X
++            text: "x"
++            displayText: "ㅌ"
++        }
++        Key {
++            key: Qt.Key_C
++            text: "c"
++            displayText: "ㅊ"
++        }
++        Key {
++            key: Qt.Key_V
++            text: "v"
++            displayText: "ㅍ"
++        }
++        Key {
++            key: Qt.Key_B
++            text: "b"
++            displayText: "ㅠ"
++        }
++        Key {
++            key: Qt.Key_N
++            text: "n"
++            displayText: "ㅜ"
++        }
++        Key {
++            key: Qt.Key_M
++            text: "m"
++            displayText: "ㅡ"
++        }
++        BackspaceKey {
++            weight: functionKeyWidth
++            Layout.fillWidth: false
++        }
++    }
++    KeyboardRow {
++        SymbolModeKey {
++            weight: functionKeyWidth
++            Layout.fillWidth: false
++        }
++        ChangeLanguageKey {
++            weight: normalKeyWidth
++            Layout.fillWidth: false
++        }
++        Key {
++            key: Qt.Key_Comma
++            weight: normalKeyWidth
++            Layout.fillWidth: false
++            text: ","
++            smallText: "\u2699"
++            smallTextVisible: keyboard.isFunctionPopupListAvailable()
++            highlighted: true
++        }
++        SpaceKey {
++        }
++        Key {
++            key: Qt.Key_Period
++            weight: normalKeyWidth
++            Layout.fillWidth: false
++            text: "."
++            smallText: "!?"
++            smallTextVisible: true
++            highlighted: true
++        }
++        HideKeyboardKey {
++            weight: normalKeyWidth
++            Layout.fillWidth: false
++        }
++        EnterKey {
++            weight: functionKeyWidth
++            Layout.fillWidth: false
++        }
++    }
++}
+diff --git a/src/layouts-fcitx/zh_TW/main.qml b/src/layouts-fcitx/zh_TW/main.qml
+new file mode 100644
+index 0000000..f431ed7
+--- /dev/null
++++ b/src/layouts-fcitx/zh_TW/main.qml
+@@ -0,0 +1,244 @@
++// Copyright (C) 2021 The Qt Company Ltd.
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
++//
++// Plasma Keyboard as Fcitx 5's keyboard: the keys of the fallback layout (layouts/fallback/main.qml), labelled
++// with the bopomofo and tones of Fcitx 5's Chewing engine (Dachen, its default keyboard). The keys type Latin keysyms; Fcitx 5's engine makes them Zhuyin and convert it.
++// Made by make-fcitx-layouts.py; edit the script, not this file.
++
++import QtQuick
++import QtQuick.VirtualKeyboard
++import QtQuick.VirtualKeyboard.Components
++import QtQuick.Layouts
++
++KeyboardLayout {
++    inputMode: InputEngine.InputMode.Latin
++    keyWeight: 160
++    KeyboardRow {
++        Key {
++            key: Qt.Key_1
++            text: "1"
++            displayText: "ㄅ"
++        }
++        Key {
++            key: Qt.Key_2
++            text: "2"
++            displayText: "ㄉ"
++        }
++        Key {
++            key: Qt.Key_3
++            text: "3"
++            displayText: "ˇ"
++        }
++        Key {
++            key: Qt.Key_4
++            text: "4"
++            displayText: "ˋ"
++        }
++        Key {
++            key: Qt.Key_5
++            text: "5"
++            displayText: "ㄓ"
++        }
++        Key {
++            key: Qt.Key_6
++            text: "6"
++            displayText: "ˊ"
++        }
++        Key {
++            key: Qt.Key_7
++            text: "7"
++            displayText: "˙"
++        }
++        Key {
++            key: Qt.Key_8
++            text: "8"
++            displayText: "ㄚ"
++        }
++        Key {
++            key: Qt.Key_9
++            text: "9"
++            displayText: "ㄞ"
++        }
++        Key {
++            key: Qt.Key_0
++            text: "0"
++            displayText: "ㄢ"
++        }
++        Key {
++            key: Qt.Key_Minus
++            text: "-"
++            displayText: "ㄦ"
++        }
++    }
++    KeyboardRow {
++        Key {
++            key: Qt.Key_Q
++            text: "q"
++            displayText: "ㄆ"
++        }
++        Key {
++            key: Qt.Key_W
++            text: "w"
++            displayText: "ㄊ"
++        }
++        Key {
++            key: Qt.Key_E
++            text: "e"
++            displayText: "ㄍ"
++        }
++        Key {
++            key: Qt.Key_R
++            text: "r"
++            displayText: "ㄐ"
++        }
++        Key {
++            key: Qt.Key_T
++            text: "t"
++            displayText: "ㄔ"
++        }
++        Key {
++            key: Qt.Key_Y
++            text: "y"
++            displayText: "ㄗ"
++        }
++        Key {
++            key: Qt.Key_U
++            text: "u"
++            displayText: "ㄧ"
++        }
++        Key {
++            key: Qt.Key_I
++            text: "i"
++            displayText: "ㄛ"
++        }
++        Key {
++            key: Qt.Key_O
++            text: "o"
++            displayText: "ㄟ"
++        }
++        Key {
++            key: Qt.Key_P
++            text: "p"
++            displayText: "ㄣ"
++        }
++    }
++    KeyboardRow {
++        Key {
++            key: Qt.Key_A
++            text: "a"
++            displayText: "ㄇ"
++        }
++        Key {
++            key: Qt.Key_S
++            text: "s"
++            displayText: "ㄋ"
++        }
++        Key {
++            key: Qt.Key_D
++            text: "d"
++            displayText: "ㄎ"
++        }
++        Key {
++            key: Qt.Key_F
++            text: "f"
++            displayText: "ㄑ"
++        }
++        Key {
++            key: Qt.Key_G
++            text: "g"
++            displayText: "ㄕ"
++        }
++        Key {
++            key: Qt.Key_H
++            text: "h"
++            displayText: "ㄘ"
++        }
++        Key {
++            key: Qt.Key_J
++            text: "j"
++            displayText: "ㄨ"
++        }
++        Key {
++            key: Qt.Key_K
++            text: "k"
++            displayText: "ㄜ"
++        }
++        Key {
++            key: Qt.Key_L
++            text: "l"
++            displayText: "ㄠ"
++        }
++        Key {
++            key: Qt.Key_Semicolon
++            text: ";"
++            displayText: "ㄤ"
++        }
++        BackspaceKey {
++        }
++    }
++    KeyboardRow {
++        Key {
++            key: Qt.Key_Z
++            text: "z"
++            displayText: "ㄈ"
++        }
++        Key {
++            key: Qt.Key_X
++            text: "x"
++            displayText: "ㄌ"
++        }
++        Key {
++            key: Qt.Key_C
++            text: "c"
++            displayText: "ㄏ"
++        }
++        Key {
++            key: Qt.Key_V
++            text: "v"
++            displayText: "ㄒ"
++        }
++        Key {
++            key: Qt.Key_B
++            text: "b"
++            displayText: "ㄖ"
++        }
++        Key {
++            key: Qt.Key_N
++            text: "n"
++            displayText: "ㄙ"
++        }
++        Key {
++            key: Qt.Key_M
++            text: "m"
++            displayText: "ㄩ"
++        }
++        Key {
++            key: Qt.Key_Comma
++            text: ","
++            displayText: "ㄝ"
++        }
++        Key {
++            key: Qt.Key_Period
++            text: "."
++            displayText: "ㄡ"
++        }
++        Key {
++            key: Qt.Key_Slash
++            text: "/"
++            displayText: "ㄥ"
++        }
++    }
++    KeyboardRow {
++        SymbolModeKey {
++        }
++        ChangeLanguageKey {
++        }
++        SpaceKey {
++        }
++        HideKeyboardKey {
++        }
++        EnterKey {
++        }
++    }
++}
+diff --git a/src/main.cpp b/src/main.cpp
+index 02c1a1f..3a00d12 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1,11 +1,13 @@
+ /*
+     SPDX-FileCopyrightText: 2024 Aleix Pol i Gonzalez <aleixpol@kde.org>
+     SPDX-FileCopyrightText: 2025 Kristen McWilliam <kristen@kde.org>
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+ 
+     SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ */
+ 
+ #include "config-plasma-keyboard.h"
++#include "fcitx/fcitxbridge.h"
+ #include "inputpanelintegration.h"
+ #include "layoutpathhelper.h"
+ #include "logging.h"
+@@ -18,6 +20,8 @@
+ #include <KLocalizedQmlContext>
+ #include <KLocalizedString>
+ 
++#include <LayerShellQt/Window>
++
+ #include <QCommandLineParser>
+ #include <QDir>
+ #include <QGuiApplication>
+@@ -26,11 +30,21 @@
+ #include <QWindow>
+ #include <qpa/qwindowsysteminterface.h>
+ 
++#include <cstring>
++
+ int main(int argc, char **argv)
+ {
+     qputenv("QT_IM_MODULE", QByteArray("qtvirtualkeyboard"));
+ 
+-    initLayoutsPath();
++    // --fcitx: Plasma Keyboard as Fcitx 5's keyboard, started at login while Fcitx 5 is KWin's input method
++    bool fcitxMode = false;
++    for (int i = 1; i < argc; ++i) {
++        if (std::strcmp(argv[i], "--fcitx") == 0) {
++            fcitxMode = true;
++        }
++    }
++
++    initLayoutsPath(fcitxMode);
+ 
+     QGuiApplication application(argc, argv);
+ 
+@@ -56,10 +70,20 @@ int main(int argc, char **argv)
+     {
+         QCommandLineParser parser;
+         aboutData.setupCommandLine(&parser);
++        parser.addOption(QCommandLineOption(QStringLiteral("fcitx"),
++                                            i18nc("@info:shell", "Run as the on-screen keyboard of Fcitx 5, when Fcitx 5 is KWin's input method")));
+         parser.process(application);
+         aboutData.processCommandLine(&parser);
+     }
+ 
++    if (fcitxMode) {
++        const QString reason = FcitxBridge::whyNotNeeded();
++        if (!reason.isEmpty()) {
++            qInfo().noquote() << "plasma-keyboard --fcitx:" << reason;
++            return 0;
++        }
++    }
++
+     if (!PLASMA_KEYBOARD_SOUND_ENABLED) {
+         PlasmaKeyboardSettings::self()->setSoundEnabled(false);
+     }
+@@ -83,6 +107,36 @@ int main(int argc, char **argv)
+     QQmlApplicationEngine view;
+     KLocalization::setupLocalizedContext(&view);
+ 
++    if (fcitxMode) {
++        auto bridge = new FcitxBridge(&application);
++        if (!bridge->start()) {
++            qCCritical(PlasmaKeyboard) << "Cannot be Fcitx 5's on-screen keyboard:" << bridge->problem();
++            return 1;
++        }
++        QObject::connect(&view, &QQmlApplicationEngine::objectCreated, &application, [](QObject *object) {
++            auto window = qobject_cast<QWindow *>(object);
++            if (!window) {
++                qCCritical(PlasmaKeyboard) << "The keyboard for Fcitx 5 has no window";
++                exit(1);
++            }
++            // A layer at the bottom of the screen that never takes the keyboard focus: the text field keeps it, and with
++            // it Fcitx 5's input context. Its scope makes it a dock for KWin, which keeps docks at the screen's plane on a
++            // 3D output, as it keeps its own input panel (any other scope is a normal window, which KWin sinks when it is
++            // not the active one). No exclusive zone: the windows under the keys stay as they are.
++            auto layer = LayerShellQt::Window::get(window);
++            layer->setScope(QStringLiteral("dock"));
++            layer->setLayer(LayerShellQt::Window::LayerOverlay);
++            layer->setAnchors(LayerShellQt::Window::Anchors(LayerShellQt::Window::AnchorBottom | LayerShellQt::Window::AnchorLeft
++                                                            | LayerShellQt::Window::AnchorRight));
++            layer->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
++            layer->setExclusiveZone(0);
++        });
++        view.setInitialProperties({{QStringLiteral("bridge"), QVariant::fromValue(bridge)}});
++        view.load(QUrl(QStringLiteral("qrc:/qt/qml/org/kde/plasma/keyboard/FcitxMain.qml")));
++        qCDebug(PlasmaKeyboard) << "Starting Plasma Keyboard as Fcitx 5's keyboard";
++        return application.exec();
++    }
++
+     QObject::connect(&view, &QQmlApplicationEngine::objectCreated, &application, [](QObject *object) {
+         auto window = qobject_cast<QWindow *>(object);
+         const bool initSuccessful = initInputPanelIntegration(window, InputPanelRole::Keyboard);
+diff --git a/src/org.kde.plasma.keyboard.fcitx.desktop.in b/src/org.kde.plasma.keyboard.fcitx.desktop.in
+new file mode 100644
+index 0000000..57713ac
+--- /dev/null
++++ b/src/org.kde.plasma.keyboard.fcitx.desktop.in
+@@ -0,0 +1,31 @@
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++
++[Desktop Entry]
++Type=Application
++Name=Plasma Keyboard for Fcitx 5
++Name[de]=Plasma-Tastatur für Fcitx 5
++Name[es]=Teclado de Plasma para Fcitx 5
++Name[fr]=Clavier Plasma pour Fcitx 5
++Name[ja]=Fcitx 5 用 Plasma キーボード
++Name[ko]=Fcitx 5용 Plasma 키보드
++Name[pl]=Klawiatura Plasmy dla Fcitx 5
++Name[pt_BR]=Teclado do Plasma para o Fcitx 5
++Name[zh_CN]=用于 Fcitx 5 的 Plasma 键盘
++Name[zh_TW]=用於 Fcitx 5 的 Plasma 鍵盤
++Comment=The on-screen keyboard of Fcitx 5's input methods
++Comment[de]=Die Bildschirmtastatur der Eingabemethoden von Fcitx 5
++Comment[es]=El teclado en pantalla de los métodos de entrada de Fcitx 5
++Comment[fr]=Le clavier virtuel des méthodes de saisie de Fcitx 5
++Comment[ja]=Fcitx 5 の入力メソッド用のスクリーンキーボード
++Comment[ko]=Fcitx 5 입력기의 화상 키보드
++Comment[pl]=Klawiatura ekranowa metod wprowadzania Fcitx 5
++Comment[pt_BR]=O teclado virtual dos métodos de entrada do Fcitx 5
++Comment[zh_CN]=Fcitx 5 输入法的屏幕键盘
++Comment[zh_TW]=Fcitx 5 輸入法的螢幕鍵盤
++Exec=@KDE_INSTALL_FULL_BINDIR@/plasma-keyboard --fcitx
++Icon=input-keyboard-virtual
++NoDisplay=true
++OnlyShowIn=KDE;
++X-KDE-autostart-phase=1
++X-KDE-Wayland-Interfaces=org_kde_kwin_fake_input
+diff --git a/src/plasmakeyboardsettings.kcfg b/src/plasmakeyboardsettings.kcfg
+index 54dd245..42c10cc 100644
+--- a/src/plasmakeyboardsettings.kcfg
++++ b/src/plasmakeyboardsettings.kcfg
+@@ -37,6 +37,10 @@
+             <label>Whether holding a physical key shows diacritic options.</label>
+             <default>true</default>
+         </entry>
++        <entry key="showWithFcitx" type="bool">
++            <label>Whether Plasma Keyboard shows as Fcitx 5's on-screen keyboard when Fcitx 5 is KWin's input method.</label>
++            <default>false</default>
++        </entry>
+         <entry key="diacriticsHoldThresholdMs" type="int">
+             <label>Delay (ms) before showing diacritics when holding a physical key.</label>
+             <min>100</min>
+diff --git a/src/qml/FcitxCandidateBar.qml b/src/qml/FcitxCandidateBar.qml
+new file mode 100644
+index 0000000..760b09c
+--- /dev/null
++++ b/src/qml/FcitxCandidateBar.qml
+@@ -0,0 +1,156 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++pragma ComponentBehavior: Bound
++
++import QtQuick
++import QtQuick.Layouts
++
++import org.kde.kirigami as Kirigami
++import org.kde.plasma.keyboard
++import org.kde.plasma.keyboard.lib as PlasmaKeyboard
++
++/**
++ * The bar above the keys in Fcitx 5 mode: the input method (a touch lists the others), the preedit, the candidates
++ * (a touch chooses one), the pages, and what went wrong when Fcitx 5 does not answer.
++ */
++Item {
++    id: bar
++
++    required property FcitxBridge bridge
++
++    // true while the input methods are listed in place of the candidates
++    property bool listingInputMethods: false
++
++    implicitHeight: Kirigami.Units.gridUnit * 3
++    height: implicitHeight
++
++    component BarButton: Rectangle {
++        id: button
++
++        property string label
++        property bool current: false
++        signal activated()
++
++        Layout.fillHeight: true
++        Layout.preferredWidth: Math.max(height * 1.4, buttonText.implicitWidth + Kirigami.Units.largeSpacing * 2)
++        radius: PlasmaKeyboard.BreezeConstants.buttonRadius
++        color: tap.pressed || current ? PlasmaKeyboard.BreezeConstants.normalKeyPressedBackgroundColor
++                                      : PlasmaKeyboard.BreezeConstants.normalKeyBackgroundColor
++        border.width: current ? 2 : 0
++        border.color: Kirigami.Theme.highlightColor
++
++        Accessible.role: Accessible.Button
++        Accessible.name: label
++        Accessible.onPressAction: button.activated()
++
++        Text {
++            id: buttonText
++            anchors.centerIn: parent
++            text: button.label
++            color: PlasmaKeyboard.BreezeConstants.keyTextColor
++            font.family: PlasmaKeyboard.BreezeConstants.fontFamily
++            font.pixelSize: button.height * 0.5
++        }
++
++        TapHandler {
++            id: tap
++            onTapped: button.activated()
++        }
++    }
++
++    RowLayout {
++        anchors.fill: parent
++        anchors.margins: Kirigami.Units.smallSpacing
++        spacing: Kirigami.Units.smallSpacing
++
++        BarButton {
++            id: inputMethodButton
++            label: bar.bridge.currentInputMethodLabel
++            current: bar.listingInputMethods
++            Accessible.description: i18nc("@info:tooltip", "Input method: touch to choose another")
++            onActivated: bar.listingInputMethods = !bar.listingInputMethods
++        }
++
++        // what went wrong, in place of the candidates
++        Text {
++            visible: bar.bridge.problem !== "" && !bar.listingInputMethods
++            Layout.fillWidth: true
++            Layout.fillHeight: true
++            verticalAlignment: Text.AlignVCenter
++            elide: Text.ElideRight
++            text: bar.bridge.problem
++            color: Kirigami.Theme.negativeTextColor
++            font.pixelSize: bar.height * 0.3
++        }
++
++        // the input methods of Fcitx 5's current group
++        Repeater {
++            model: bar.listingInputMethods ? bar.bridge.inputMethods : []
++            delegate: BarButton {
++                required property var modelData
++                label: modelData.label + "  " + modelData.name
++                current: modelData.uniqueName === bar.bridge.currentInputMethod
++                onActivated: {
++                    bar.bridge.switchInputMethod(modelData.uniqueName);
++                    bar.listingInputMethods = false;
++                }
++            }
++        }
++
++        Text {
++            id: preeditText
++            visible: !bar.listingInputMethods && bar.bridge.problem === "" && text !== ""
++            Layout.fillHeight: true
++            verticalAlignment: Text.AlignVCenter
++            text: bar.bridge.preedit
++            color: PlasmaKeyboard.BreezeConstants.keyTextColor
++            font.underline: true
++            font.pixelSize: bar.height * 0.45
++        }
++
++        BarButton {
++            visible: !bar.listingInputMethods && bar.bridge.hasPreviousPage
++            label: "‹"
++            Accessible.description: i18nc("@action:button", "Previous candidates")
++            onActivated: bar.bridge.previousPage()
++        }
++
++        ListView {
++            id: candidateList
++            visible: !bar.listingInputMethods && bar.bridge.problem === ""
++            Layout.fillWidth: true
++            Layout.fillHeight: true
++            orientation: ListView.Horizontal
++            spacing: Kirigami.Units.smallSpacing
++            clip: true
++            model: bar.bridge.candidates
++            delegate: BarButton {
++                required property int index
++                required property string modelData
++                height: candidateList.height
++                width: Math.max(height * 1.4, implicitWidth)
++                implicitWidth: label.length * height * 0.5 + Kirigami.Units.largeSpacing * 2
++                label: modelData
++                current: index === bar.bridge.highlightedCandidate
++                onActivated: bar.bridge.selectCandidate(index)
++            }
++        }
++
++        // while the input methods are listed, they line up after the button
++        Item {
++            visible: bar.listingInputMethods
++            Layout.fillWidth: true
++        }
++
++        BarButton {
++            visible: !bar.listingInputMethods && bar.bridge.hasNextPage
++            label: "›"
++            Accessible.description: i18nc("@action:button", "Next candidates")
++            onActivated: bar.bridge.nextPage()
++        }
++    }
++}
+diff --git a/src/qml/FcitxMain.qml b/src/qml/FcitxMain.qml
+new file mode 100644
+index 0000000..728e8c3
+--- /dev/null
++++ b/src/qml/FcitxMain.qml
+@@ -0,0 +1,84 @@
++/*
++    SPDX-FileCopyrightText: 2024 Aleix Pol i Gonzalez <aleixpol@kde.org>
++    SPDX-FileCopyrightText: 2026 Kristen McWilliam <kristen@kde.org>
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++
++import QtQuick
++import QtQuick.VirtualKeyboard
++import QtQuick.VirtualKeyboard.Settings
++
++import org.kde.plasma.keyboard
++import org.kde.plasma.keyboard.lib as PlasmaKeyboard
++
++/**
++ * Plasma Keyboard as Fcitx 5's keyboard (plasma-keyboard --fcitx): the keys of Qt Virtual Keyboard, typed through
++ * Fcitx 5, with the preedit, the candidates and the input methods Fcitx 5 hands over in a bar above them.
++ * The window is a layer-shell surface at the bottom of the screen that never takes the keyboard focus, so the text
++ * field keeps it and Fcitx 5 keeps its input context.
++ */
++InputPanelWindow {
++    id: root
++
++    required property FcitxBridge bridge
++
++    color: "transparent"
++    visible: false
++    width: Screen.width
++    height: panel.height
++
++    interactiveRegion: Qt.rect(0, 0, width, height)
++
++    FcitxInputItem {
++        id: input
++        focus: true
++        bridge: root.bridge
++    }
++
++    Rectangle {
++        id: panel
++
++        width: root.width
++        height: candidateBar.height + inputPanel.height
++        color: PlasmaKeyboard.BreezeConstants.keyboardBackgroundColor
++
++        FcitxCandidateBar {
++            id: candidateBar
++            bridge: root.bridge
++            width: parent.width
++        }
++
++        InputPanel {
++            id: inputPanel
++            y: candidateBar.height
++            anchors.horizontalCenter: parent.horizontalCenter
++
++            // height is calculated by InputPanel
++            width: inputPanel.keyboard.style ? inputPanel.keyboard.style.aspectRatio * inputPanel.keyboard.style.targetKeyboardHeight : 0
++
++            focusPolicy: Qt.NoFocus
++            // the language key switches Fcitx 5's input method
++            externalLanguageSwitchEnabled: true
++            onExternalLanguageSwitch: (localeList, currentIndex) => candidateBar.listingInputMethods = !candidateBar.listingInputMethods
++        }
++    }
++
++    function applyLayout() {
++        VirtualKeyboardSettings.activeLocales = [root.bridge.layoutLocale];
++        VirtualKeyboardSettings.locale = root.bridge.layoutLocale;
++    }
++
++    Connections {
++        target: root.bridge
++        function onInputMethodsChanged() {
++            root.applyLayout();
++        }
++    }
++
++    Component.onCompleted: {
++        VirtualKeyboardSettings.styleName = "Breeze";
++        root.applyLayout();
++    }
++}

@@ -57,6 +57,7 @@ install -Dm644 "$HERE/share/plasma-env/sparky-stereo-primary-gpu.sh" "$D/etc/xdg
 install -Dm755 "$HERE/bin/sparky-stereo-has-tablet-mode" "$D/usr/lib/sparky-stereo-hardware/has-tablet-mode"
 install -Dm644 "$HERE/share/plasma-env/sparky-stereo-tablet-mode.sh" "$D/etc/xdg/plasma-workspace/env/sparky-stereo-tablet-mode.sh"
 install -Dm644 "$HERE/share/tablet-mode/xdg/kwinrc" "$D/usr/share/sparky-stereo-hardware/tablet-mode/xdg/kwinrc"
+install -Dm644 "$HERE/share/tablet-mode/xdg/plasmakeyboardrc" "$D/usr/share/sparky-stereo-hardware/tablet-mode/xdg/plasmakeyboardrc"
 install -Dm755 "$HERE/bin/sparky-stereo-opengl-default" "$D/usr/bin/sparky-stereo-opengl-default"
 install -Dm755 "$HERE/bin/sparky-stereo-nvidia-opengl" "$D/usr/bin/sparky-stereo-nvidia-opengl"
 install -m644 "$HERE/share/nvidia-opengl-programs" "$D/usr/share/sparky/sparky-stereo-hardware/"

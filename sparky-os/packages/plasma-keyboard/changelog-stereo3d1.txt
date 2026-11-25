@@ -1,0 +1,27 @@
+plasma-keyboard (6.7.4-2+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: Plasma Keyboard as the on-screen keyboard of Fcitx 5
+    (row 71). In a session whose input method is Fcitx 5 (the edition's
+    Japanese, Korean and Chinese sessions) KWin ran no on-screen keyboard.
+    `plasma-keyboard --fcitx` starts at login (an autostart entry), ends at
+    once unless KWin's input method is Fcitx 5 and the new setting "Show
+    this keyboard when Fcitx 5 is the input method" is on (plasmakeyboardrc
+    [General] showWithFcitx, off here, on for a computer with a touch
+    screen of its own through sparky-stereo-hardware), and shows when KWin
+    would show an on-screen keyboard for the touched text field (KWin's
+    org.kde.kwin.VirtualKeyboard: touch or pen, "Only when in Tablet
+    Mode"). Its keys go to Fcitx 5 through Fcitx 5's own keyboard bridge
+    (org.fcitx.Fcitx5.VirtualKeyboardBackend1, ProcessKeyEvent), so Mozc,
+    Hangul, Pinyin and Chewing convert them; a bar above the keys shows the
+    preedit and the candidates (a touch chooses one) and switches the input
+    method. Korean and Chinese (Taiwan) keys carry the engine's labels
+    (Dubeolsik, Dachen). The window is a layer at the bottom of the screen
+    that never takes the keyboard focus. When Fcitx 5 does not answer, the
+    keyboard says so and its keys type plain text through KWin's fake
+    input. Fcitx 5 stays KWin's input method, so a hardware keyboard types
+    through it as before; a session whose input method is Plasma Keyboard
+    is unchanged (0001-Plasma-Keyboard-as-the-on-screen-keyboard-of-Fcitx-5.patch;
+    test autotests/fcitxbridgetest, run under a session bus).
+  * The new strings in the nine translated languages, a first draft with AI
+    assistance pending review by native speakers
+    (plasma-keyboard-fcitx.po.patch, last in the series).

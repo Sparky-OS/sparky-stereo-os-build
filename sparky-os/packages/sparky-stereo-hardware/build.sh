@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/24
+# Last update 2026/11/25
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.41+lc1
+VERSION=0.1.42+lc1
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
@@ -28,7 +28,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: sparky-stereo-problems, libkf6config-bin, apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, plasma-keyboard, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
+Depends: sparky-stereo-problems, libkf6config-bin, apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, plasma-keyboard (>= 6.7.4-2+stereo3d1), power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
 Recommends: sparky-stereo-cuda-repo
 Section: System
 Priority: optional

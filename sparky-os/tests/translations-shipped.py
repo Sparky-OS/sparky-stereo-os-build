@@ -88,6 +88,7 @@ SOURCES = {
     'kwin-keyboard-tablet-mode-only.po.patch': ('kwin', None),
     'paraview-stereo.po.patch': ('paraview', 'paraview-stereo'),
     'plasma-desktop-tablet-mode-panels.po.patch': ('plasma-desktop', None),
+    'plasma-keyboard-fcitx.po.patch': ('plasma-keyboard', None),
     'plasma-desktop-wallpaper-cost.po.patch': ('plasma-desktop', None),
     'plasma-nm-connectivity-check.po.patch': ('plasma-nm', None),
     'plasma-pa-virtual-streams.po.patch': ('plasma-pa', None),

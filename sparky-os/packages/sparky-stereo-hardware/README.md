@@ -306,6 +306,8 @@ It is a system default, below the person's own `~/.config/kwinrc`: System Settin
 A default written into the person's own file would not do: KConfig removes a key set back to "no value" when no system default exists, so a person's None would be undone at the next login.
 The layout follows the session's language (Plasma Keyboard takes the locale when no language is ticked in its own page).
 The package depends on `plasma-keyboard`.
-A Japanese, Korean or Chinese session keeps Fcitx 5, which the look package writes at the first login.
+A Japanese, Korean or Chinese session keeps Fcitx 5, which the look package writes at the first login, and gets the on-screen keyboard too (row 71): the same folder's `plasmakeyboardrc` sets `[General] showWithFcitx=true`, so Plasma Keyboard (the edition's build, plasma-keyboard 6.7.4-2+stereo3d1) starts at login as Fcitx 5's keyboard (`plasma-keyboard --fcitx`) and shows when KWin would show a keyboard for the touched text field, with Fcitx 5's preedit and candidates above its keys.
+Fcitx 5 stays KWin's input method, so a hardware keyboard types through it as before.
+The person turns it off on Plasma Keyboard's settings page ("Show this keyboard when Fcitx 5 is the input method"); KConfig then writes `false` into the person's own file, because a system default exists.
 A desktop with a touch monitor has no built-in panel and gets nothing.
 `tests/tablet-mode.sh` runs the detection on fixture sysfs trees, the slider among them, and reads the result through KConfig.
