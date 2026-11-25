@@ -39,6 +39,8 @@ public:
     int setVolume(std::optional<double> level, std::optional<bool> muted);
     // the media namespace of a running application
     int load(const QString &transportId, const QString &url, const QString &contentType);
+    // the player's state, as the device reports it (MEDIA_STATUS)
+    int getMediaStatus(const QString &transportId);
 
 Q_SIGNALS:
     void ready();

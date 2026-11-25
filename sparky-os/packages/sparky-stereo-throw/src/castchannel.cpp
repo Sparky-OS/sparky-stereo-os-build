@@ -138,6 +138,17 @@ int CastChannel::load(const QString &transportId, const QString &url, const QStr
     return id;
 }
 
+int CastChannel::getMediaStatus(const QString &transportId)
+{
+    if (m_transportConnected != transportId) {
+        send(transportId, NsConnection, {{QStringLiteral("type"), QStringLiteral("CONNECT")}});
+        m_transportConnected = transportId;
+    }
+    const int id = m_nextRequest++;
+    send(transportId, NsMedia, {{QStringLiteral("type"), QStringLiteral("GET_STATUS")}}, id);
+    return id;
+}
+
 void CastChannel::onReadyRead()
 {
     m_reader.append(m_socket.readAll());

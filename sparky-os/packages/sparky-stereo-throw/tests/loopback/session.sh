@@ -7,7 +7,10 @@
 set -u
 OUT=${1:?out dir}
 export XDG_RUNTIME_DIR=$OUT/run HOME=$OUT/home LANG=C.UTF-8
-mkdir -p "$XDG_RUNTIME_DIR" "$HOME" "$OUT/frames"
+mkdir -p "$XDG_RUNTIME_DIR" "$HOME" "$OUT/frames" "$HOME/.config"
+# a long session must not lock its screen: KWin's locker cannot unlock without logind in a container, and every later
+# capture would show its message instead of the page
+printf '[Daemon]\nAutolock=false\nLockOnResume=false\n' > "$HOME/.config/kscreenlockerrc"
 chmod 700 "$XDG_RUNTIME_DIR"
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
     exec dbus-run-session -- bash "$0" "$@"
@@ -50,8 +53,20 @@ if [ -z "$CHECKS" ]; then
     fi
 fi
 QT_LOGGING_RULES='org.sparky.throw.debug=true' "$DAEMON" > "$OUT/throwd.log" 2>&1 &
-for i in $(seq 1 50); do dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner string:org.sparky.Throw 2>/dev/null | grep -q true && break; sleep 0.2; done
-echo "daemon $DAEMON, command $CLI, KWin permission checks $([ -n "$CHECKS" ] && echo off || echo on)" > "$OUT/session.txt"
+COPY=$!
+# Nothing of this session is a client of the name before the scenario starts (PipeWire, WirePlumber, KWin and the
+# notification stand-in never ask for it), so nothing can make the bus start the daemon in the gap; and the scenario
+# starts only once the name's owner is this copy, whose log the rows read.
+for i in $(seq 1 150); do dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner string:org.sparky.Throw 2>/dev/null | grep -q true && break; sleep 0.2; done
+OWNER=$(dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.GetConnectionUnixProcessID \
+    string:org.sparky.Throw 2>/dev/null | awk '/uint32/ {print $2}')
+echo "daemon $DAEMON (pid $COPY, the owner of org.sparky.Throw: pid ${OWNER:-none}), command $CLI, KWin permission checks $([ -n "$CHECKS" ] && echo off || echo on)" > "$OUT/session.txt"
+if [ "${OWNER:-}" != "$COPY" ]; then
+    echo "refusing to run the scenario: org.sparky.Throw is owned by pid ${OWNER:-none}, not by this session's copy (pid $COPY), whose log the rows read" >> "$OUT/session.txt"
+    kill $(jobs -p) 2>/dev/null
+    wait 2>/dev/null
+    exit 99
+fi
 python3 -I /tests/loopback/scenario.py "$OUT" "$CLI"
 RC=$?
 echo "scenario exit $RC" >> "$OUT/session.txt"

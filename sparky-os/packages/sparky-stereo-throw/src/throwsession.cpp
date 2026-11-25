@@ -9,7 +9,6 @@
 #include <KSharedConfig>
 
 #include <QJsonArray>
-#include <QRegularExpression>
 
 namespace Throw
 {
@@ -20,30 +19,14 @@ constexpr int FetchTimeoutMs = 20000;
 const QString CtxDevice = QStringLiteral("@info a Throw failed; %1 is the Cast device's name, %2 the reason it gave");
 } // namespace
 
-ThrowSession::ThrowSession(const Device &device, const ModelRow &row, QObject *parent)
+ThrowSession::ThrowSession(const Device &device, const ModelRow &row, const Plan &plan, QObject *parent)
     : QObject(parent)
     , m_device(device)
     , m_row(row)
+    , m_plan(plan)
 {
-    m_size = row.size;
-    m_hz = row.refreshHz;
-    // the person's own mode for this device, when set (sparky-stereo-throwrc, [Device][<id>] Mode=1280x720@30)
-    const KConfigGroup group = KSharedConfig::openConfig(QStringLiteral("sparky-stereo-throwrc"))->group(QStringLiteral("Device")).group(device.id);
-    static const QRegularExpression modeRe(QStringLiteral("^(\\d+)x(\\d+)@(\\d+)$"));
-    const auto match = modeRe.match(group.readEntry("Mode", QString()));
-    if (match.hasMatch()) {
-        m_size = QSize(match.captured(1).toInt(), match.captured(2).toInt());
-        m_hz = match.captured(3).toInt();
-    }
-
     connect(&m_screen, &NetworkScreen::created, this, [this](quint64 serial, quint32 node) {
-        if (!m_streamer.start(serial, node, m_size, m_hz)) {
-            fail(QStringLiteral("@info a Throw failed; %1 is the Cast device's name, %2 why the stream could not start"),
-                 QStringLiteral("The Throw to %1 could not start its stream: %2"), {m_device.name, m_streamer.error()},
-                 QStringLiteral("The Throw to %1 could not start its stream: %2").arg(m_device.name, m_streamer.error()));
-            return;
-        }
-        m_channel.open(m_device.address.isNull() ? m_device.host : m_device.address.toString(), m_device.port);
+        startStream(serial, node);
     });
     connect(&m_screen, &NetworkScreen::failed, this, [this](const QString &error) {
         fail(QStringLiteral("@info a Throw failed; %1 is the Cast device's name, %2 what KWin answered"),
@@ -65,7 +48,7 @@ ThrowSession::ThrowSession(const Device &device, const ModelRow &row, QObject *p
         m_fetchTimeout.stop();
     });
     connect(&m_streamer, &Streamer::streaming, this, [this] {
-        qCInfo(THROW) << "the first keyframe went to" << m_device.name;
+        qCInfo(THROW) << (m_plan.video ? "the first keyframe went to" : "the first sound went to") << m_device.name;
     });
     connect(&m_channel, &CastChannel::ready, this, [this] {
         m_channel.launch(DefaultMediaReceiver);
@@ -102,6 +85,13 @@ ThrowSession::ThrowSession(const Device &device, const ModelRow &row, QObject *p
             teardown();
         }
     });
+    // what the device reports, each second while the Throw runs (the kit records it)
+    m_poll.setInterval(1000);
+    connect(&m_poll, &QTimer::timeout, this, [this] {
+        if (m_channel.isReady() && !m_transportId.isEmpty()) {
+            m_channel.getMediaStatus(m_transportId);
+        }
+    });
     m_fetchTimeout.setSingleShot(true);
     m_fetchTimeout.setInterval(FetchTimeoutMs);
     connect(&m_fetchTimeout, &QTimer::timeout, this, [this] {
@@ -118,17 +108,60 @@ ThrowSession::~ThrowSession()
 
 void ThrowSession::start()
 {
-    if (!m_row.video) {
-        fail(QStringLiteral("@info a Throw cannot start; %1 is the Cast device's name"),
-             QStringLiteral("%1 is a speaker or a group: it has no screen to throw to."), {m_device.name},
-             QStringLiteral("%1 is a speaker or a group: it has no screen to throw to.").arg(m_device.name));
+    if (!m_plan.error.isEmpty()) {
+        // the person's choice for this device cannot be met: refused with its reason, never replaced by another codec
+        fail(QStringLiteral("@info a Throw cannot start as chosen; %1 is the Cast device's name, %2 why"),
+             QStringLiteral("The Throw to %1 cannot start as chosen: %2. Choose another codec or mode on its page."),
+             {m_device.name, m_plan.error.translated()},
+             QStringLiteral("The Throw to %1 cannot start as chosen: %2. Choose another codec or mode on its page.").arg(m_device.name, m_plan.error.english()));
         return;
     }
     if (!m_row.known) {
         Tell::unknownModel(m_device.id, m_device.name, m_device.model);
     }
     setState(QStringLiteral("starting"));
-    m_screen.request(m_device.id, m_device.name, m_size, m_hz * 1000);
+    if (!m_plan.video) {
+        startStream(0, 0); // a speaker or a group: the sound alone
+        return;
+    }
+    m_screen.request(m_device.id, m_device.name, m_plan.mode.size, m_plan.mode.hz * 1000);
+}
+
+QString ThrowSession::sinkName() const
+{
+    return QStringLiteral("throw.") + m_device.id;
+}
+
+void ThrowSession::startStream(quint64 serial, quint32 node)
+{
+    // the sink is named as the design names the sound output: "Throw: <device>" (Daniel, 2026-10-14)
+    const QString description = i18nc("@item the sound output of a Throw; %1 is the Cast device's name", "Throw: %1", m_device.name);
+    if (m_device.address.isNull() || !m_streamer.start(m_plan, serial, node, m_device.address, sinkName(), description)) {
+        const QString why = m_device.address.isNull() ? QStringLiteral("the device's address is not known") : m_streamer.error();
+        fail(QStringLiteral("@info a Throw failed; %1 is the Cast device's name, %2 why the stream could not start"),
+             QStringLiteral("The Throw to %1 could not start its stream: %2"), {m_device.name, why},
+             QStringLiteral("The Throw to %1 could not start its stream: %2").arg(m_device.name, why));
+        return;
+    }
+    m_channel.open(m_device.address.toString(), m_device.port);
+}
+
+QJsonObject ThrowSession::status() const
+{
+    return {
+        {QStringLiteral("state"), m_state},
+        {QStringLiteral("detail"), m_detail},
+        {QStringLiteral("playerState"), m_media.value(QStringLiteral("playerState")).toString()},
+        {QStringLiteral("idleReason"), m_media.value(QStringLiteral("idleReason")).toString()},
+        {QStringLiteral("currentTime"), m_media.value(QStringLiteral("currentTime")).toDouble()},
+        {QStringLiteral("bytesFetched"), double(m_streamer.bytesServed())},
+        {QStringLiteral("codec"), m_plan.video ? m_plan.info.codec : QString()},
+        {QStringLiteral("mode"), m_plan.video ? m_plan.mode.text() : QString()},
+        {QStringLiteral("container"), m_plan.info.format},
+        {QStringLiteral("sound"), m_plan.info.audioCodec},
+        {QStringLiteral("sink"), sinkName()},
+        {QStringLiteral("listen"), m_streamer.listenAddress().toString()},
+    };
 }
 
 void ThrowSession::stop()
@@ -166,6 +199,7 @@ void ThrowSession::teardown()
 {
     m_stopping = true;
     m_fetchTimeout.stop();
+    m_poll.stop();
     m_channel.close();
     m_streamer.stop();
     m_screen.close();
@@ -184,9 +218,9 @@ void ThrowSession::onReceiverStatus(const QJsonObject &status, int)
         m_sessionId = app.value(QStringLiteral("sessionId")).toString();
         if (!m_loadSent && !m_transportId.isEmpty()) {
             m_loadSent = true;
-            const QString url = m_streamer.url(m_channel.localAddress());
+            const QString url = m_streamer.url();
             qCInfo(THROW) << "asking" << m_device.name << "to load" << url;
-            m_channel.load(m_transportId, url, Streamer::contentType());
+            m_channel.load(m_transportId, url, m_streamer.contentType());
             m_fetchTimeout.start();
         }
         return;
@@ -204,11 +238,13 @@ void ThrowSession::onMediaStatus(const QJsonObject &payload)
     const QJsonArray statuses = payload.value(QStringLiteral("status")).toArray();
     for (const auto &value : statuses) {
         const QJsonObject status = value.toObject();
+        m_media = status;
         const QString player = status.value(QStringLiteral("playerState")).toString();
         if ((player == QLatin1String("PLAYING") || player == QLatin1String("BUFFERING")) && m_state == QLatin1String("starting")) {
             Tell::clear(m_device.id);
             Tell::event(QStringLiteral("throwStarted"), i18nc("@info:status a Throw runs; %1 is the Cast device's name", "Throwing to %1.", m_device.name));
             setState(QStringLiteral("throwing"));
+            m_poll.start();
         } else if (player == QLatin1String("IDLE") && status.value(QStringLiteral("idleReason")).toString() == QLatin1String("ERROR")) {
             fail(CtxDevice, QStringLiteral("%1 refused the stream: %2"), {m_device.name, QStringLiteral("ERROR")},
                  QStringLiteral("%1 refused the stream: %2").arg(m_device.name, QStringLiteral("ERROR")));

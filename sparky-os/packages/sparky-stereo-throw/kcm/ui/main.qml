@@ -71,11 +71,9 @@ KCM.ScrollViewKCM {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         opacity: 0.7
-                        // the table's generation text, beside the model when it tells more than the model's own name
-                        text: item.modelData.known
-                              ? (item.modelData.generation === item.modelData.model ? item.modelData.model
-                                 : i18ndc("sparky-stereo-throw", "@info a Cast device's model and what the model name tells; %1 model, %2 generation", "%1 — %2", item.modelData.model, item.modelData.generation))
-                              : i18ndc("sparky-stereo-throw", "@info a Cast device whose model is not in the table; %1 its model", "%1 — not in the device table: the first Chromecast's limits are used", item.modelData.model)
+                        // the model and the table's few words about it: short and whole (the device's page says it at length)
+                        text: !item.modelData.short || item.modelData.short === item.modelData.model ? item.modelData.model
+                              : i18ndc("sparky-stereo-throw", "@info a Cast device's model and what the model name tells; %1 model, %2 generation", "%1 — %2", item.modelData.model, item.modelData.short)
                     }
                     QQC2.Label {
                         Layout.fillWidth: true
@@ -85,11 +83,13 @@ KCM.ScrollViewKCM {
                         text: item.modelData.state === "throwing" ? i18ndc("sparky-stereo-throw", "@info:status a Throw runs; %1 is the Cast device's name", "Throwing to %1.", item.modelData.name)
                               : item.modelData.state === "starting" ? i18ndc("sparky-stereo-throw", "@info:status a Throw is being set up", "Starting…")
                               : item.modelData.state === "failed" ? (item.modelData.detail || "")
+                              : !item.modelData.mode ? item.modelData.address
                               : i18ndc("sparky-stereo-throw", "@info a Cast device's address and the mode its Throw uses; %1 address, %2 mode", "%1 · %2", item.modelData.address, item.modelData.mode)
                     }
                 }
                 QQC2.Button {
-                    visible: item.modelData.video && item.modelData.state !== "throwing" && item.modelData.state !== "starting"
+                    // a speaker or a group gets the sound alone
+                    visible: item.modelData.state !== "throwing" && item.modelData.state !== "starting"
                     icon.name: "video-display"
                     text: i18ndc("sparky-stereo-throw", "@action:button start a Throw to this device", "Throw")
                     onClicked: kcm.throwTo(item.modelData.id)
