@@ -84,6 +84,7 @@ private:
     bool m_stereo = false;
     bool m_active = false;
     bool m_wasShowing = false;
+    bool m_waited = false;
 };
 
 /* The selected saver over the whole screen. It ends as a saver does: a key, a
@@ -109,6 +110,7 @@ protected:
     void exposeEvent(QExposeEvent *event) override;
 
 private:
+    void start();
     void end(int failure = 0, const QString &detail = {});
     SaverRunner m_runner;
     PairSurface m_surface;
@@ -118,4 +120,5 @@ private:
     bool m_haveFirst = false;
     bool m_started = false;
     bool m_ended = false;
+    bool m_waited = false;
 };

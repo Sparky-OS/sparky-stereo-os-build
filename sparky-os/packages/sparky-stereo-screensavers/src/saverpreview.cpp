@@ -46,6 +46,14 @@ SaverPreview::SaverPreview(QQuickItem *parent)
     m_follow.setInterval(150);
     connect(&m_follow, &QTimer::timeout, this, &SaverPreview::follow);
     connect(&m_runner, &SaverRunner::frameChanged, this, &SaverPreview::onFrame);
+    connect(&m_surface, &PairSurface::limitsChanged, this, [this] {
+        if (m_waited && !m_runner.running()) {
+            m_restart.stop();
+            begin();
+        } else if (m_runner.running() && m_stereo) {
+            restart(); // the person changed the depth limits: the saver is drawn again with them
+        }
+    });
     connect(&m_runner, &SaverRunner::failed, this, [this](SaverRunner::Failure failure, const QString &detail) {
         m_surface.hide();
         m_failure = failure;
@@ -144,11 +152,21 @@ QRect SaverPreview::place(QWindow **hostOut) const
     if (w < 64 || h < 64 || !QRect(QPoint(0, 0), real->size()).contains(rect) || !page.contains(rect)) {
         return {};
     }
+    // an ancestor that clips (a scrolled column) cuts the picture: the surface cannot be cut with it
+    for (const QQuickItem *ancestor = parentItem(); ancestor; ancestor = ancestor->parentItem()) {
+        if (ancestor->clip()) {
+            const QRectF shown = ancestor->mapRectToScene(QRectF(0, 0, ancestor->width(), ancestor->height())).translated(offset).adjusted(-0.5, -0.5, 0.5, 0.5);
+            if (!shown.contains(QRectF(rect))) {
+                return {};
+            }
+        }
+    }
     return rect;
 }
 
 void SaverPreview::restart()
 {
+    m_waited = false;
     m_runner.stop();
     m_surface.hide();
     m_follow.stop();
@@ -183,17 +201,29 @@ void SaverPreview::begin()
     if (m_stereo) {
         if (m_rect.isEmpty()) {
             m_pairNote = QStringLiteral("cut");
-        } else if (!m_surface.place(real, m_rect)) {
-            m_pairNote = m_surface.failure();
         } else {
+            const bool placed = m_surface.place(real, m_rect);
+            // the compositor's answers (that it takes pairs, the person's limits) come a moment after the first request
+            if (!m_waited && (placed ? !m_surface.hasLimits() : m_surface.failure() == QLatin1String("no-stereo-compositor"))) {
+                m_waited = true;
+                m_restart.start(700);
+                return;
+            }
             double sunk = 0, popped = 0;
-            if (m_surface.limits(screenWidth(real), view.width(), view.width(), &sunk, &popped)) {
+            if (!placed) {
+                m_pairNote = m_surface.failure();
+            } else if (qEnvironmentVariableIsSet("SPARKY_SAVER_OWN_SEPARATION")) {
+                // a test's control: the saver's own share of its view, as the catalogue has it
+            } else if (m_surface.limits(screenWidth(real), view.width(), view.width(), &sunk, &popped)) {
                 m_separation = shareFor(sunk, view.width());
             } else {
                 qCWarning(pairLog) << "the compositor gave no depth limits for the preview: the saver keeps its own separation";
             }
         }
     }
+    m_waited = false;
+    qCDebug(pairLog).nospace() << "preview " << m_saver << (m_stereo ? " pair" : " one view") << " place " << m_rect << " scale " << ratio << " view " << view
+                               << " screen " << screenWidth(real) << " share " << m_separation << " note " << m_pairNote;
     m_runner.start(m_saver, view, m_separation);
     m_follow.start();
     Q_EMIT stateChanged();
@@ -300,6 +330,7 @@ FullScreenPreview::FullScreenPreview(const QString &saver, bool stereo, QScreen 
     connect(&m_runner, &SaverRunner::failed, this, [this](SaverRunner::Failure failure, const QString &detail) {
         end(failure, detail);
     });
+    connect(&m_surface, &PairSurface::limitsChanged, this, &FullScreenPreview::start);
 }
 
 FullScreenPreview::~FullScreenPreview()
@@ -315,23 +346,40 @@ void FullScreenPreview::begin()
 void FullScreenPreview::exposeEvent(QExposeEvent *event)
 {
     QRasterWindow::exposeEvent(event);
-    if (!isExposed() || m_started || m_ended) {
+    if (isExposed() && !m_started && !m_ended) {
+        m_started = true;
+        start();
+    }
+}
+
+void FullScreenPreview::start()
+{
+    if (m_ended || m_runner.running()) {
         return;
     }
-    m_started = true;
     // the show's own size for one view (640 wide), at the screen's shape; Stereo KWin resizes once
     const int high = qBound(64, (qRound(640.0 * height() / qMax(1, width())) / 2) * 2, 720);
     const QSize view(640, high);
     double share = -1;
-    if (m_stereo && m_surface.place(this, QRect(QPoint(0, 0), size()))) {
+    if (m_stereo) {
+        const bool placed = m_surface.place(this, QRect(QPoint(0, 0), size()));
+        if (!m_waited && (placed ? !m_surface.hasLimits() : m_surface.failure() == QLatin1String("no-stereo-compositor"))) {
+            m_waited = true;
+            QTimer::singleShot(700, this, &FullScreenPreview::start);
+            return;
+        }
         double sunk = 0, popped = 0;
         const double shown = width() * devicePixelRatio();
-        if (m_surface.limits(screenWidth(this), view.width(), shown, &sunk, &popped)) {
+        if (!placed || qEnvironmentVariableIsSet("SPARKY_SAVER_OWN_SEPARATION")) {
+            // one view, or a test's control
+        } else if (m_surface.limits(screenWidth(this), view.width(), shown, &sunk, &popped)) {
             share = SaverPreview::shareFor(sunk, view.width());
         } else {
             qCWarning(pairLog) << "the compositor gave no depth limits for the full-screen preview: the saver keeps its own separation";
         }
     }
+    qCDebug(pairLog).nospace() << "full screen " << m_saver << (m_stereo ? " pair" : " one view") << " window " << size() << " scale " << devicePixelRatio()
+                               << " view " << view << " screen " << screenWidth(this) << " share " << share << " note " << m_surface.failure();
     m_runner.start(m_saver, view, share);
 }
 
@@ -353,6 +401,7 @@ void FullScreenPreview::end(int failure, const QString &detail)
     if (m_ended) {
         return;
     }
+    qCDebug(pairLog) << "full screen ended" << failure << detail;
     m_ended = true;
     m_runner.stop();
     m_surface.hide();

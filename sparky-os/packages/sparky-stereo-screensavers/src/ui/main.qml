@@ -119,11 +119,7 @@ KCM.AbstractKCM {
                     clip: true
                     model: kcm.savers
                     currentIndex: -1
-                    Component.onCompleted: {
-                        const first = kcm.savers.find("starfield");
-                        currentIndex = first >= 0 ? first : (count > 0 ? 0 : -1);
-                        positionViewAtIndex(currentIndex, ListView.Center);
-                    }
+                    Component.onCompleted: currentIndex = count > 0 ? 0 : -1
                     delegate: QQC2.ItemDelegate {
                         id: row
                         required property int index

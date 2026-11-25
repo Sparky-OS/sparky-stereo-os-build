@@ -28,6 +28,8 @@ public:
     /* Why the last show() failed; empty when it did not. Not translated: a log word. */
     QString failure() const { return m_failure; }
     bool active() const { return m_active; }
+    /* Whether the compositor has said the person's limits for this surface yet. */
+    bool hasLimits() const;
 
     /* The rectangle in the window's own pixels. Makes the surface when needed. False when it cannot be made. */
     bool place(QWindow *host, const QRect &rect);

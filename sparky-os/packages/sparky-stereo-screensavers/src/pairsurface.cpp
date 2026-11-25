@@ -34,8 +34,14 @@ struct Globals {
             return;
         }
         display = native->display();
-        stereo_declare_wayland_init(display, nullptr);
-        registry = wl_display_get_registry(display);
+        stereo_declare_wayland_init(display, nullptr); // -EBUSY when the toolkit did it already: the same state either way
+        // The globals are bound on a queue of this file's own, so waiting for them dispatches nothing of the toolkit's;
+        // then each is moved to the default queue, where the toolkit dispatches (a buffer's release must arrive).
+        wl_event_queue *queue = wl_display_create_queue(display);
+        auto *wrapper = static_cast<wl_display *>(wl_proxy_create_wrapper(display));
+        wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapper), queue);
+        registry = wl_display_get_registry(wrapper);
+        wl_proxy_wrapper_destroy(wrapper);
         static const wl_registry_listener listener = {
             [](void *data, wl_registry *registry, uint32_t name, const char *interface, uint32_t version) {
                 auto *g = static_cast<Globals *>(data);
@@ -51,8 +57,15 @@ struct Globals {
             },
             [](void *, wl_registry *, uint32_t) {}};
         wl_registry_add_listener(registry, &listener, this);
-        wl_display_roundtrip(display);
-        wl_display_roundtrip(display);
+        wl_display_roundtrip_queue(display, queue);
+        for (void *proxy : {static_cast<void *>(compositor), static_cast<void *>(subcompositor), static_cast<void *>(shm), static_cast<void *>(viewporter)}) {
+            if (proxy) {
+                wl_proxy_set_queue(static_cast<wl_proxy *>(proxy), nullptr);
+            }
+        }
+        wl_registry_destroy(registry);
+        registry = nullptr;
+        wl_event_queue_destroy(queue);
     }
 };
 Globals &globals()
@@ -116,6 +129,11 @@ bool PairSurface::supported()
 {
     auto &g = globals();
     return g.compositor && g.subcompositor && g.shm && g.viewporter && stereo_supported_wayland();
+}
+
+bool PairSurface::hasLimits() const
+{
+    return d->haveLimits;
 }
 
 void PairSurface::hide()
