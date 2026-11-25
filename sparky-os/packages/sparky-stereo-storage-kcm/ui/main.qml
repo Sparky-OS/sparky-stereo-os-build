@@ -104,6 +104,19 @@ KCM.SimpleKCM {
             }
         }
 
+        QQC.Label {
+            objectName: "defaultCleanupSummary"
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            text: [
+            i18n("Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists."),
+                i18n("It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs."),
+                i18n("Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected."),
+                i18n("Documents, pictures, downloads and settings are never cleaned.")
+            ].join("\n\n")
+        }
+
         Kirigami.Heading {
             level: 2
             text: i18n("Last runs")

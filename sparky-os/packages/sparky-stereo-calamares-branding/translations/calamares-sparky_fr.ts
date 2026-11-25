@@ -318,5 +318,21 @@
         <source>Cleans the ticked items every month without asking again.</source>
         <translation>Nettoie les éléments cochés chaque mois sans redemander de confirmation.</translation>
     </message>
+    <message>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>Le nettoyage par défaut peut supprimer les anciens fichiers temporaires et les fichiers temporaires laissés par Word ou PowerPoint, les caches des applications, les journaux archivés, les journaux d’erreurs X11, les métadonnées du Finder, les caches de miniatures de Windows, les paquets téléchargés par APT et les listes de paquets.</translation>
+    </message>
+    <message>
+        <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>
+        <translation>Il peut également supprimer les sauvegardes de marque-pages et les rapports de plantage de Firefox, les fichiers de récupération de Vim, le contenu des boîtes aux lettres locales et les courriers non remis, y compris les files d’attente des logiciels de messagerie désinstallés.</translation>
+    </message>
+    <message>
+        <source>Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected.</source>
+        <translation>Le nettoyage du stockage ignore les journaux système, l’effacement de l’espace d’échange et le compactage des bases de données de Firefox et de Thunderbird, même si ces options sont cochées dans BleachBit.</translation>
+    </message>
+    <message>
+        <source>Documents, pictures, downloads and settings are never cleaned.</source>
+        <translation>Le nettoyage ne supprime jamais les documents, les images, les téléchargements ni les réglages.</translation>
+    </message>
 </context>
 </TS>

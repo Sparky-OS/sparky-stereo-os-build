@@ -318,5 +318,21 @@
         <source>Cleans the ticked items every month without asking again.</source>
         <translation>선택한 항목을 매월 다시 묻지 않고 정리합니다.</translation>
     </message>
+    <message>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>기본 정리에서는 오래된 임시 파일과 Word 또는 PowerPoint가 남긴 임시 파일, 앱 캐시, 보관된 로그, X11 오류 로그, Finder 메타데이터, Windows 썸네일 캐시, APT에서 내려받은 패키지와 패키지 목록을 삭제할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>
+        <translation>Firefox 북마크 백업과 충돌 보고서, Vim 복구 파일, 로컬 편지함의 내용과 배달되지 않은 메일도 삭제할 수 있습니다. 제거한 메일 프로그램의 대기열에 남은 메일이 여기에 포함됩니다.</translation>
+    </message>
+    <message>
+        <source>Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected.</source>
+        <translation>BleachBit에서 선택되어 있어도 저장 공간 정리는 시스템 저널 삭제, 스왑 영역 지우기, Firefox와 Thunderbird의 데이터베이스 압축을 건너뜁니다.</translation>
+    </message>
+    <message>
+        <source>Documents, pictures, downloads and settings are never cleaned.</source>
+        <translation>문서, 사진, 다운로드 파일과 설정은 정리 과정에서 삭제되지 않습니다.</translation>
+    </message>
 </context>
 </TS>

@@ -318,5 +318,21 @@
         <source>Cleans the ticked items every month without asking again.</source>
         <translation>チェックした項目を毎月、再確認せずにクリーンアップします。</translation>
     </message>
+    <message>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>既定のクリーンアップでは、古い一時ファイルや Word または PowerPoint が残した一時ファイル、アプリのキャッシュ、切り替え済みのログ、X11 のエラーログ、Finder のメタデータ、Windows のサムネイルキャッシュ、APT がダウンロードしたパッケージやパッケージ一覧が削除されることがあります。</translation>
+    </message>
+    <message>
+        <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>
+        <translation>Firefox のブックマークのバックアップとクラッシュレポート、Vim の復元用ファイル、ローカルのメールボックスの中身や未配信メール（削除済みのメールプログラムが残した送信待ちメールを含む）も削除されることがあります。</translation>
+    </message>
+    <message>
+        <source>Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected.</source>
+        <translation>システムジャーナルの削除、スワップ領域の消去、Firefox と Thunderbird のデータベースの最適化は、BleachBit で選択されていても、ストレージのクリーンアップでは実行されません。</translation>
+    </message>
+    <message>
+        <source>Documents, pictures, downloads and settings are never cleaned.</source>
+        <translation>ドキュメント、画像、ダウンロードしたファイル、設定はクリーンアップで削除されません。</translation>
+    </message>
 </context>
 </TS>

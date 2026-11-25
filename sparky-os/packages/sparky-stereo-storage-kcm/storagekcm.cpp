@@ -26,7 +26,9 @@ static void useDisplayDescription(QVariantMap &entry)
     const auto description = entry.value(u"description"_s).toString();
     if (label == entry.value(u"id"_s).toString() && !description.isEmpty()) {
         entry.insert(u"label"_s, description);
-        entry.remove(u"description"_s);
+        entry.insert(u"description"_s, QString{});
+    } else {
+        entry.insert(u"description"_s, description);
     }
 }
 

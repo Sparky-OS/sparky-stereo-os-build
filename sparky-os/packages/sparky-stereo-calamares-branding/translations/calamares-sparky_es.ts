@@ -318,5 +318,21 @@
         <source>Cleans the ticked items every month without asking again.</source>
         <translation>Limpia los elementos marcados cada mes sin volver a preguntar.</translation>
     </message>
+    <message>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>La limpieza predeterminada puede eliminar archivos temporales antiguos y archivos temporales de Word o PowerPoint, cachés de aplicaciones, registros archivados, registros de errores de X11, metadatos del Finder, cachés de miniaturas de Windows, paquetes descargados por APT y listas de paquetes.</translation>
+    </message>
+    <message>
+        <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>
+        <translation>También puede eliminar copias de seguridad de marcadores e informes de fallos de Firefox, archivos de recuperación de Vim, el contenido de buzones locales y correo sin entregar, incluidas las colas de programas de correo desinstalados.</translation>
+    </message>
+    <message>
+        <source>Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected.</source>
+        <translation>La limpieza de almacenamiento omite los diarios del sistema, el borrado del espacio de intercambio y la compactación de las bases de datos de Firefox y Thunderbird, aunque estas opciones estén marcadas en BleachBit.</translation>
+    </message>
+    <message>
+        <source>Documents, pictures, downloads and settings are never cleaned.</source>
+        <translation>La limpieza nunca elimina documentos, imágenes, descargas ni configuraciones.</translation>
+    </message>
 </context>
 </TS>
