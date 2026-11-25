@@ -15,7 +15,7 @@ Last-Update: 2026-11-25
  
  #include <chrono>
  
-@@ -80,12 +83,28 @@
+@@ -80,12 +83,35 @@
          const int limit = qMin(fixedLimit, percLimit);
          const qint64 avail = available / (1024 * 1024); // to MiB
  
@@ -34,13 +34,20 @@ Last-Update: 2026-11-25
 +
 +        const auto config = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
 +            + QStringLiteral("/sparky-storage-cleanuprc");
-+        const bool lowSpaceMode = QSettings(config, QSettings::IniFormat).value(QStringLiteral("scheduleMode"), 2).toInt() == 2;
-+        if (lowSpaceMode && observe(QStringLiteral("low"))) {
++        const int scheduleMode = QSettings(config, QSettings::IniFormat).value(QStringLiteral("scheduleMode"), 2).toInt();
++        if (scheduleMode == 2 && observe(QStringLiteral("low"))) {
 +            m_lastAvail = avail;
 +            return;
 +        }
-+        if (!lowSpaceMode) {
-+            observe(QStringLiteral("recovered"));
++        if (scheduleMode != 2) {
++            const bool recovered = observe(QStringLiteral("recovered"));
++            if (scheduleMode == 0 && recovered) {
++                if (m_notification) {
++                    m_notification->close();
++                }
++                m_lastAvail = avail;
++                return;
++            }
          }
  
          const int availPercent = int(100 * available / size);
