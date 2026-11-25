@@ -1,0 +1,20 @@
+Source: sparky-stereo-colour-vision
+Section: kde
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, gettext, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, ninja-build, qt6-base-dev, qt6-declarative-dev
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-stereo-colour-vision
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3, systemsettings, kwin-wayland, plasma-workspace, libkf6config-bin, dbus-bin, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-layouts
+Recommends: konsole, nano
+Description: Colour Vision page for System Settings
+ One choice for the person's colour vision (none, protan, deutan, tritan or
+ monochromacy) sets KWin's colour correction and a colour scheme that keeps
+ the colours that carry meaning apart, and, when chosen, Konsole, nano and the
+ text console. The person's own settings are kept and come back exactly when
+ the choice returns to none; what could not be set is said on the page.

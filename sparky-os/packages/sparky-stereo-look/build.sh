@@ -23,7 +23,7 @@ OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 sparky_provenance_init "$IMAGE" "$HERE"
 TREE=$(cd "$HERE/../../.." && pwd)
-VERSION=${VERSION:-20261123.2~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261125~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -90,6 +90,9 @@ D=$WORK/sparky-stereo-look
 T=$D/$LNF/org.sparkystereo.desktop
 mkdir -p "$T/contents" "$D/etc/xdg" "$D/usr/share/kglobalaccel" "$D/usr/share/plasma/desktoptheme" "$D/usr/share/color-schemes"
 cp "$HERE/default/color-schemes/SparkyStereoOxygenDark.colors" "$D/usr/share/color-schemes/"   # Oxygen Dark with a readable active title
+# Konsole's Breeze (Konsole 26.08.3, data/color-schemes/Breeze.colorscheme) with its intense red at 4.5:1 on its background
+# (queue row 68); Konsole looks for a scheme in the data folders before its built-in copy, and a person's own copy wins
+install -D -m 644 "$HERE/default/konsole/Breeze.colorscheme" "$D/usr/share/konsole/Breeze.colorscheme"
 # Sparky Stereo Oxygen: Oxygen's Plasma style with every background at 91 % alpha, foreground inherited from Oxygen
 cp -a "$HERE/default/desktoptheme/sparky-stereo-oxygen" "$D/usr/share/plasma/desktoptheme/"
 cp "$HERE/default/kglobalaccel/org.sparkystereo.systemmonitor.desktop" "$D/usr/share/kglobalaccel/"
@@ -128,7 +131,9 @@ control "$D" sparky-stereo-look \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
 	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)." \
 	"In Dolphin's split view the inactive pane's background is translucent. The colours are" \
-	"Oxygen Dark with a readable active window title (Sparky Stereo Oxygen Dark)." \
+	"Oxygen Dark with a readable active window title and its negative, positive and" \
+	"link texts at 4.5:1 or more (Sparky Stereo Oxygen Dark). Konsole's Breeze colours" \
+	"have their bright red (the root prompt, errors) at 4.5:1 or more." \
 	"Search lists installed applications first, then settings. Power actions and" \
 	"unit conversion remain available. Currency rates refresh only when converting a currency." \
 	"Web search and the online dictionary are off by default." \
@@ -161,6 +166,9 @@ Daniel Ramos (Capitain Jack), GPL-2+.
 Sparky Stereo Oxygen Plasma style: derived from KDE's Oxygen Plasma style (plasma-theme-oxygen),
 Copyright The Oxygen Project, GPL; only its background SVGs are changed (91 % alpha), its
 foreground artwork is inherited; licence texts in /usr/share/plasma/desktoptheme/sparky-stereo-oxygen/.
+Konsole's Breeze colour scheme (/usr/share/konsole/Breeze.colorscheme): Konsole 26.08.3's
+data/color-schemes/Breeze.colorscheme, Copyright the Konsole developers (KDE), GPL-2.0-or-later, Konsole's
+licence; one value changed (Color1Intense, 2026, Daniel Ramos (Capitain Jack)).
 On Debian systems the GPL is in /usr/share/common-licenses/GPL-2.
 EOF
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/sparky-stereo-look/README"
