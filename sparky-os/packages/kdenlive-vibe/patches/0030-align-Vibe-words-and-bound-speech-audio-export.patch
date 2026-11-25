@@ -9,16 +9,18 @@ Last-Update: 2026-11-25
 
 --- a/renderer/kdenlive_render.cpp
 +++ b/renderer/kdenlive_render.cpp
-@@ -19,6 +19,8 @@
+@@ -17,7 +17,10 @@
+ #include <QDomDocument>
+ #include <QImageReader>
  #include <QTemporaryFile>
++#include <QThread>
  #include <QtGlobal>
- 
-+#include <memory>
 +
++#include <memory>
+ 
  QString getCIMltRepositoryPath()
  {
-     for (auto varname : {"CRAFT_ROOT", "KDEROOT"}) {
-@@ -42,6 +44,81 @@
+@@ -42,6 +45,88 @@
          return repositoryPath;
      }
      return {};
@@ -54,6 +56,7 @@ Last-Update: 2026-11-25
 +
 +    const QString profilePath = args.at(8);
 +    Mlt::Profile profile(profilePath.isEmpty() ? nullptr : profilePath.toUtf8().constData());
++    profile.set_explicit(true);
 +    Mlt::Producer producer(profile, timeline ? "xml" : nullptr, args.at(1).toUtf8().constData());
 +    if (!producer.is_valid()) {
 +        return 1;
@@ -93,23 +96,31 @@ Last-Update: 2026-11-25
 +        consumer.set("acodec", "pcm_s16le");
 +    }
 +    producer.set_in_and_out(in, out);
-+    if (consumer.connect(producer) != 0) {
++    if (consumer.connect(producer) != 0 || consumer.start() != 0) {
 +        return 1;
 +    }
-+    return consumer.run();
++    // Consumer::run registers for consumer-stopped after checking the state.
++    // Polling avoids losing a stop that happens in that interval. The editor
++    // enforces the deadline even if start or stop blocks inside MLT.
++    while (!consumer.is_stopped()) {
++        QThread::msleep(10);
++    }
++    return consumer.stop();
  }
  
  int main(int argc, char **argv)
-@@ -65,6 +142,9 @@
-     QStringList args = parser.positionalArguments();
-     const QString mode = args.isEmpty() ? QString() : args.first();
- 
-+    if (mode == QStringLiteral("speech-audio")) {
-+        return exportSpeechAudio(args);
+@@ -54,6 +139,11 @@
+     QCoreApplication::setApplicationName("kdenlive_render");
+     QCoreApplication::setApplicationVersion(KDENLIVE_VERSION);
+     QImageReader::setAllocationLimit(1024);
++
++    const auto command = QCoreApplication::arguments().mid(1);
++    if (command.value(0) == QStringLiteral("speech-audio")) {
++        return exportSpeechAudio(command);
 +    }
-     if (mode == "preview-chunks") {
  
-         parser.clearPositionalArguments();
+     QCommandLineParser parser;
+     parser.setApplicationDescription("Kdenlive video renderer for MLT");
 --- a/src/dialogs/CMakeLists.txt
 +++ b/src/dialogs/CMakeLists.txt
 @@ -16,7 +16,9 @@
