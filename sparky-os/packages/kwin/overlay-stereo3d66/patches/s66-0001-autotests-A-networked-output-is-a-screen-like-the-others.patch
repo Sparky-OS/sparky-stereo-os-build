@@ -1,5 +1,5 @@
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Wed, 25 Nov 2026 01:10:00 +0000
+Date: Wed, 25 Nov 2026 01:49:22 +0000
 Subject: [PATCH] autotests: a networked output is a screen like the others
 
 A network screen (an output the screencast protocol's version 7 request makes without the split-eye
@@ -9,7 +9,10 @@ made from the switches and taken away again) and networkedChoiceKeptByIdentity (
 swap chosen for a device come back at the next output for the same device, not for another device and
 not at another mode); screencasting_test gains testNetworkedOutput (a declared pair, left eye red and
 right eye blue, in a frame of the stream for 2D and every format, with and without the swap); the new
-integration test testThrowToMenu checks the window menu's two lists.
+integration test testThrowToMenu checks the window menu's two lists; testNetworkedFormatChangeReachesStream
+(a format and the swap chosen while the stream runs, each in a frame of its own) and
+testNetworkedChoiceComesBack (the next Throw to the same device opens in the format chosen for it) come
+from the installed-package session, which found what a stream started after the choice cannot show.
 Red on +65: the formats cannot be switched on, the store forces 2D, the menu lists the device under
 Move to Screen. The headset's split-eye rows are unchanged and pass on both.
 
@@ -28,7 +31,7 @@ index ef733da..6ded32a 100644
  if (KWIN_BUILD_ACTIVITIES)
      integrationTest(NAME testActivities SRCS activities_test.cpp LIBS XCB::ICCCM Plasma::Activities)
 diff --git a/autotests/integration/screencasting_test.cpp b/autotests/integration/screencasting_test.cpp
-index fde693a..1e398e4 100644
+index fde693a..1b4900a 100644
 --- a/autotests/integration/screencasting_test.cpp
 +++ b/autotests/integration/screencasting_test.cpp
 @@ -14,6 +14,7 @@
@@ -39,16 +42,18 @@ index fde693a..1e398e4 100644
  #include "pointer_input.h"
  #include "scene/workspacescene.h"
  #include "wayland_server.h"
-@@ -99,6 +100,8 @@ private Q_SLOTS:
+@@ -99,6 +100,10 @@ private Q_SLOTS:
      void testNativePanelMirror_data();
      void testNativePanelMirror();
      void testNativePanelRefresh();
 +    void testNetworkedOutput_data();
 +    void testNetworkedOutput();
++    void testNetworkedFormatChangeReachesStream();
++    void testNetworkedChoiceComesBack();
  #endif
  
  private:
-@@ -404,6 +407,177 @@ void ScreencastingTest::testNativePanel()
+@@ -404,6 +409,333 @@ void ScreencastingTest::testNativePanel()
      QVERIFY(!kwinApp()->outputBackend()->findOutput(QStringLiteral("Virtual-native-phone")));
  }
  
@@ -221,6 +226,162 @@ index fde693a..1e398e4 100644
 +    stream.reset();
 +    QTRY_COMPARE(workspace()->outputs().size(), outputCount);
 +    QVERIFY(!kwinApp()->outputBackend()->findOutput(QStringLiteral("Virtual-cast-test-device")));
++}
++
++// A network screen opened in 2D, its declared pair streaming; the person then picks a 3D format, the eye swap, and
++// 2D again in Display Settings while the Throw goes on. Nothing in the scene changes, yet every pixel of the stream
++// does: each choice must reach the receiver in a frame of its own.
++void ScreencastingTest::testNetworkedFormatChangeReachesStream()
++{
++    using Flag = OutputModeline::Flag;
++    const QSize deviceSize(1280, 720);
++    const int refresh = 30000;
++    const auto outputCount = workspace()->outputs().size();
++    auto stream = std::make_unique<Test::ScreencastingStreamV1>(nullptr);
++    stream->init(Test::screencasting()->stream_virtual_output_with_properties(QStringLiteral("cast-change-device"), QStringLiteral("Bedroom TV"),
++        deviceSize.width(), deviceSize.height(), refresh, wl_fixed_from_double(1), 0, 0, 0, QtWayland::zkde_screencast_unstable_v1::pointer_hidden));
++    QSignalSpy created(stream.get(), &Test::ScreencastingStreamV1::created);
++    QVERIFY(created.wait());
++    auto backendOutput = kwinApp()->outputBackend()->findOutput(QStringLiteral("Virtual-cast-change-device"));
++    QVERIFY(backendOutput);
++    QTRY_VERIFY(workspace()->findOutput(backendOutput));
++    const OutputModeline flat = backendOutput->currentMode()->modeline();
++    QVERIFY(!flat.flags().testFlag(Flag::VirtualStereo));
++    auto output = workspace()->findOutput(backendOutput);
++
++    const QColor red(255, 0, 0);
++    const QColor blue(0, 0, 255);
++    QImage pair(QSize(deviceSize.width() * 2, deviceSize.height()), QImage::Format_RGBA8888_Premultiplied);
++    {
++        QPainter painter(&pair);
++        painter.fillRect(QRect(QPoint(), deviceSize), red);
++        painter.fillRect(QRect(QPoint(deviceSize.width(), 0), deviceSize), blue);
++    }
++    QTemporaryDir fixtureDirectory;
++    QVERIFY(fixtureDirectory.isValid());
++    const auto fixturePath = fixtureDirectory.filePath(QStringLiteral("pair.png"));
++    QVERIFY(pair.save(fixturePath));
++    QProcess producer;
++    auto environment = QProcessEnvironment::systemEnvironment();
++    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), waylandServer()->socketName());
++    producer.setProcessEnvironment(environment);
++    producer.setProgram(QCoreApplication::applicationDirPath() + QStringLiteral("/capturefixture"));
++    producer.setArguments({fixturePath, QString::number(deviceSize.width()), QString::number(deviceSize.height()), QStringLiteral("stereo")});
++    const auto stopProducer = qScopeGuard([&] {
++        producer.terminate();
++        producer.waitForFinished();
++    });
++    producer.start();
++    Window *window = Test::waitForWaylandWindowShown();
++    QVERIFY2(window, producer.readAllStandardError().constData());
++    window->move(output->geometry().topLeft());
++
++    PipeWireSourceStream receiver;
++    std::optional<QImage> image;
++    receiver.setAllowDmaBuf(false);
++    connect(&receiver, &PipeWireSourceStream::frameReceived, this, [&](const PipeWireFrame &frame) {
++        if (frame.dataFrame) {
++            image = frame.dataFrame->toImage().convertedTo(QImage::Format_RGBA8888);
++        }
++    });
++    receiver.createStream(stream->nodeId(), 0);
++    QTRY_VERIFY_WITH_TIMEOUT(image.has_value(), 10000);
++
++    const auto mean = [&](const QRect &region) {
++        qint64 r = 0, g = 0, b = 0;
++        for (int y = region.top(); y <= region.bottom(); ++y) {
++            for (int x = region.left(); x <= region.right(); ++x) {
++                const QColor c = image->pixelColor(x, y);
++                r += c.red();
++                g += c.green();
++                b += c.blue();
++            }
++        }
++        const qint64 n = qint64(region.width()) * region.height();
++        return QColor(r / n, g / n, b / n);
++    };
++    const auto near = [](const QColor &a, const QColor &b) {
++        return std::abs(a.red() - b.red()) <= 16 && std::abs(a.green() - b.green()) <= 16 && std::abs(a.blue() - b.blue()) <= 16;
++    };
++    const int w = deviceSize.width();
++    const int h = deviceSize.height();
++    const QRect leftHalf(16, 16, w / 2 - 32, h - 32);
++    const QRect rightHalf(w / 2 + 16, 16, w / 2 - 32, h - 32);
++    QVERIFY(near(mean(leftHalf), red) && near(mean(rightHalf), red));
++
++    // each step: the choice as Display Settings applies it, then a new frame that shows it
++    const auto choose = [&](std::optional<Flag> layout, bool swapEyes) {
++        OutputConfiguration configuration;
++        configuration.source = OutputConfiguration::Source::User;
++        configuration.changeSet(backendOutput)->otherStereoFormats = true;
++        configuration.changeSet(backendOutput)->anaglyph = true;
++        configuration.changeSet(backendOutput)->stereoSwapEyes = swapEyes;
++        const OutputModeline mode = layout ? OutputModeline(deviceSize, refresh, Flag::VirtualStereo | *layout) : flat;
++        configuration.changeSet(backendOutput)->currentMode = mode;
++        configuration.changeSet(backendOutput)->desiredMode = mode;
++        image.reset();
++        return workspace()->applyOutputConfiguration(configuration);
++    };
++    QCOMPARE(choose(Flag::Stereo3DSideBySideHalf, false), OutputConfigurationError::None);
++    QTRY_VERIFY_WITH_TIMEOUT(image.has_value(), 3000);
++    QVERIFY(near(mean(leftHalf), red) && near(mean(rightHalf), blue));
++    QCOMPARE(choose(Flag::Stereo3DSideBySideHalf, true), OutputConfigurationError::None);
++    QTRY_VERIFY_WITH_TIMEOUT(image.has_value(), 3000);
++    QVERIFY(near(mean(leftHalf), blue) && near(mean(rightHalf), red));
++    QCOMPARE(choose(std::nullopt, false), OutputConfigurationError::None);
++    QTRY_VERIFY_WITH_TIMEOUT(image.has_value(), 3000);
++    QVERIFY(near(mean(leftHalf), red) && near(mean(rightHalf), red));
++
++    receiver.stopStreaming();
++    stream.reset();
++    QTRY_COMPARE(workspace()->outputs().size(), outputCount);
++}
++
++// The person chose top and bottom with the eyes swapped for a device; the next Throw to that device opens its
++// network screen in that choice, not refused and not back in 2D.
++void ScreencastingTest::testNetworkedChoiceComesBack()
++{
++    using Flag = OutputModeline::Flag;
++    const QSize deviceSize(1280, 720);
++    const int refresh = 30000;
++    const auto outputCount = workspace()->outputs().size();
++    const auto request = [&] {
++        auto stream = std::make_unique<Test::ScreencastingStreamV1>(nullptr);
++        stream->init(Test::screencasting()->stream_virtual_output_with_properties(QStringLiteral("cast-again-device"), QStringLiteral("Study TV"),
++            deviceSize.width(), deviceSize.height(), refresh, wl_fixed_from_double(1), 0, 0, 0, QtWayland::zkde_screencast_unstable_v1::pointer_hidden));
++        return stream;
++    };
++    auto stream = request();
++    {
++        QSignalSpy created(stream.get(), &Test::ScreencastingStreamV1::created);
++        QVERIFY(created.wait());
++    }
++    auto backendOutput = kwinApp()->outputBackend()->findOutput(QStringLiteral("Virtual-cast-again-device"));
++    QVERIFY(backendOutput);
++    QVERIFY(!backendOutput->currentMode()->flags().testFlag(Flag::VirtualStereo));
++    OutputConfiguration configuration;
++    configuration.source = OutputConfiguration::Source::User;
++    configuration.changeSet(backendOutput)->otherStereoFormats = true;
++    configuration.changeSet(backendOutput)->stereoSwapEyes = true;
++    configuration.changeSet(backendOutput)->currentMode = OutputModeline(deviceSize, refresh, Flag::VirtualStereo | Flag::Stereo3DTopAndBottom);
++    configuration.changeSet(backendOutput)->desiredMode = configuration.changeSet(backendOutput)->currentMode;
++    QCOMPARE(workspace()->applyOutputConfiguration(configuration), OutputConfigurationError::None);
++    stream.reset();
++    QTRY_COMPARE(workspace()->outputs().size(), outputCount);
++    QVERIFY(!kwinApp()->outputBackend()->findOutput(QStringLiteral("Virtual-cast-again-device")));
++
++    stream = request();
++    QSignalSpy created(stream.get(), &Test::ScreencastingStreamV1::created);
++    QSignalSpy failed(stream.get(), &Test::ScreencastingStreamV1::failed);
++    QVERIFY(created.wait() || !failed.isEmpty());
++    QVERIFY2(failed.isEmpty(), failed.isEmpty() ? "" : qPrintable(failed.first().first().toString()));
++    backendOutput = kwinApp()->outputBackend()->findOutput(QStringLiteral("Virtual-cast-again-device"));
++    QVERIFY(backendOutput);
++    QVERIFY(backendOutput->currentMode()->flags().testFlag(Flag::Stereo3DTopAndBottom));
++    QVERIFY(backendOutput->stereoSwapEyes());
++    QVERIFY(!backendOutput->isSplitEyeDisplay());
++    stream.reset();
++    QTRY_COMPARE(workspace()->outputs().size(), outputCount);
 +}
 +
  void ScreencastingTest::testNativePanelMirror_data()

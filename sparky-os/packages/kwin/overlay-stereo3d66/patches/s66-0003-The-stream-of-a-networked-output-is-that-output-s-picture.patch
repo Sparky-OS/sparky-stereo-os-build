@@ -1,11 +1,15 @@
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Wed, 25 Nov 2026 01:10:00 +0000
+Date: Wed, 25 Nov 2026 01:49:22 +0000
 Subject: [PATCH] screencast: the stream of a networked output is that output's picture
 
 A network screen in one of its 3D formats streams what that format sends: each eye drawn at the device
 raster, squeezed into its half for side by side half and top and bottom, mixed with the Dubois
 matrices for the anaglyph twins, the eyes in the order the output's swap gives; in 2D one view, as before.
 The matrices move into opengl/anaglyphmatrix.h, which the DRM layer now uses too: one copy.
+A format or eye swap chosen while the screen streams repaints the whole picture and sends a frame (it
+damages nothing in the scene). The typed panel request accepts a network screen that comes back in the
+3D format saved for its device: it compares the split-eye flag with the panel's own and asks for eyes
+only of a split-eye panel, the headset, as before.
 
 Assisted-by: Claude Opus 5.5
 ---
@@ -76,7 +80,7 @@ index 0000000..c5e39b8
 +
 +} // namespace KWin
 diff --git a/src/plugins/screencast/outputscreencastsource.cpp b/src/plugins/screencast/outputscreencastsource.cpp
-index 19fb297..f1ecc28 100644
+index 19fb297..6b61dd2 100644
 --- a/src/plugins/screencast/outputscreencastsource.cpp
 +++ b/src/plugins/screencast/outputscreencastsource.cpp
 @@ -26,6 +26,8 @@
@@ -88,7 +92,17 @@ index 19fb297..f1ecc28 100644
  #include "kwinscreencast_logging.h"
  #include "utils/stereoreplicaproblems.h"
  #include "opengl/glframebuffer.h"
-@@ -99,6 +101,26 @@ static bool isSplitEyeCapture(BackendOutput *output)
+@@ -80,6 +82,9 @@ OutputScreenCastSource::OutputScreenCastSource(BackendOutput *panel, std::option
+     connect(panel, &BackendOutput::scaleChanged, this, &OutputScreenCastSource::updateView);
+     connect(panel, &BackendOutput::deviceOffsetChanged, this, &OutputScreenCastSource::updateView);
+     connect(panel, &BackendOutput::headsetViewChanged, this, &OutputScreenCastSource::updateView);
++    // a network screen's 3D format and eye order change every pixel of its stream without any damage in the scene
++    connect(panel, &BackendOutput::currentModeChanged, this, &OutputScreenCastSource::repaintWhole);
++    connect(panel, &BackendOutput::stereoSwapEyesChanged, this, &OutputScreenCastSource::repaintWhole);
+     connect(Cursors::self(), &Cursors::positionChanged, this, &OutputScreenCastSource::updateView);
+     connect(workspace(), &Workspace::windowActivated, this, &OutputScreenCastSource::updateView);
+ }
+@@ -99,6 +104,26 @@ static bool isSplitEyeCapture(BackendOutput *output)
      return output->isSplitEyeDisplay();
  }
  
@@ -115,7 +129,7 @@ index 19fb297..f1ecc28 100644
  BackendOutput *OutputScreenCastSource::backendOutput() const
  {
      return m_panel ? m_panel.data() : m_output->backendOutput();
-@@ -186,6 +208,9 @@ Region OutputScreenCastSource::render(GLFramebuffer *target, const Region &buffe
+@@ -186,6 +211,9 @@ Region OutputScreenCastSource::render(GLFramebuffer *target, const Region &buffe
      if (isSplitEyeCapture(backendOutput())) {
          return renderStereo(target);
      }
@@ -125,7 +139,7 @@ index 19fb297..f1ecc28 100644
      m_layer->setFramebuffer(target, bufferRepair & Rect(QPoint(), target->size()));
      if (!m_layer->preparePresentationTest()) {
          return Region{};
-@@ -339,6 +364,138 @@ Region OutputScreenCastSource::renderStereo(GLFramebuffer *target)
+@@ -339,6 +367,138 @@ Region OutputScreenCastSource::renderStereo(GLFramebuffer *target)
      return Rect(QPoint(), target->size());
  }
  
@@ -264,7 +278,23 @@ index 19fb297..f1ecc28 100644
  std::chrono::nanoseconds OutputScreenCastSource::clock() const
  {
      return backendOutput()->renderLoop()->lastPresentationTimestamp();
-@@ -419,11 +576,15 @@ void OutputScreenCastSource::pause()
+@@ -407,6 +567,15 @@ void OutputScreenCastSource::resume()
+     m_active = true;
+ }
+ 
++void OutputScreenCastSource::repaintWhole()
++{
++    if (!m_active) {
++        return;
++    }
++    m_layer->addDeviceRepaint(Region::infinite());
++    Q_EMIT frame();
++}
++
+ void OutputScreenCastSource::pause()
+ {
+     m_resumeOnRebind = false;
+@@ -419,11 +588,15 @@ void OutputScreenCastSource::pause()
      m_cursorView.reset();
      m_sceneView.reset();
      m_layer.reset();
@@ -282,7 +312,7 @@ index 19fb297..f1ecc28 100644
      m_active = false;
  }
 diff --git a/src/plugins/screencast/outputscreencastsource.h b/src/plugins/screencast/outputscreencastsource.h
-index edb82ab..cac7ac0 100644
+index edb82ab..021dfcb 100644
 --- a/src/plugins/screencast/outputscreencastsource.h
 +++ b/src/plugins/screencast/outputscreencastsource.h
 @@ -7,6 +7,7 @@
@@ -309,7 +339,15 @@ index edb82ab..cac7ac0 100644
      bool copyStereoEyes(const RenderTarget &target, GLFramebuffer *streamTarget);
      BackendOutput *backendOutput() const;
      RectF captureViewport() const;
-@@ -65,6 +68,11 @@ private:
+@@ -56,6 +59,7 @@ private:
+     QPoint renderOffset() const;
+     void updateView();
+     void followPanel();
++    void repaintWhole();
+ 
+     QPointer<LogicalOutput> m_output;
+     QPointer<BackendOutput> m_panel;
+@@ -65,6 +69,11 @@ private:
      std::unique_ptr<ItemTreeView> m_cursorView;
      std::unique_ptr<GLTexture> m_eyeTexture;
      std::unique_ptr<GLFramebuffer> m_eyeFramebuffer;
@@ -321,3 +359,19 @@ index edb82ab..cac7ac0 100644
      bool m_active = false;
      bool m_resumeOnRebind = false;
      bool m_renderCursor = false;
+diff --git a/src/plugins/screencast/screencastmanager.cpp b/src/plugins/screencast/screencastmanager.cpp
+index 495d4a4..353a594 100644
+--- a/src/plugins/screencast/screencastmanager.cpp
++++ b/src/plugins/screencast/screencastmanager.cpp
+@@ -114,8 +114,10 @@ void ScreencastManager::streamVirtualPanel(ScreencastStreamV1Interface *stream,
+         return;
+     }
+     auto logical = workspace()->findOutput(output);
++    // a split-eye panel (a headset) has its eyes from the start; a network screen without split eyes may come back in
++    // the 3D format the person chose for that device, and then it has eyes too
+     if (!logical || output->modeSize() != properties.pixelSize || output->refreshRate() != int(properties.refreshRate)
+-        || output->hasStereoEyes() != properties.splitEye) {
++        || output->isSplitEyeDisplay() != properties.splitEye || (properties.splitEye && !output->hasStereoEyes())) {
+         backend->removeVirtualOutput(output);
+         stream->sendFailed(i18n("Virtual panel configuration could not be applied"));
+         return;
