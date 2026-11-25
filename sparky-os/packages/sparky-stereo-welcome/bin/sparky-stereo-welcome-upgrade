@@ -6,7 +6,8 @@
 # installation of the session's languages after it (sparky-locale through spsudo), and then the mark Sparky Welcome
 # leaves, /home/$USER/.sparky-welcome-first, as its handler leaves it, so neither window asks for the languages again.
 # Exits with the status of the step that failed; Plasma Welcome shows the reason on the page.
-mark=/home/$USER/.sparky-welcome-first
+# $USER as the handler names it; the user's own name when a session has no $USER (Sparky Welcome's launcher uses whoami)
+mark=/home/${USER:-$(id -un)}/.sparky-welcome-first
 if [ -f "$mark" ]; then
 	exec remsu /usr/bin/sparky-aptus-upgrade
 fi
