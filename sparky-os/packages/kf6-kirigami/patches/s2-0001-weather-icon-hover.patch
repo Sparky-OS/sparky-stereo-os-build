@@ -1,0 +1,440 @@
+Description: Draw Weather Report pairs and present their loop on hover
+Origin: vendor
+Forwarded: no
+Author: Daniel Campos Ramos
+Last-Update: 2026-11-24
+
+--- a/src/primitives/CMakeLists.txt
++++ b/src/primitives/CMakeLists.txt
+@@ -1,3 +1,5 @@
++find_package(KF6IconThemes 6.32 REQUIRED)
++find_package(StereoLayer 1.23.3 REQUIRED)
+ 
+ add_library(KirigamiPrimitives)
+ ecm_add_qml_module(KirigamiPrimitives URI "org.kde.kirigami.primitives"
+@@ -53,7 +55,7 @@
+ 
+ target_include_directories(KirigamiPrimitives PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+ 
+-target_link_libraries(KirigamiPrimitives PRIVATE Qt6::Quick KirigamiPlatform)
++target_link_libraries(KirigamiPrimitives PRIVATE Qt6::Quick KirigamiPlatform KF6::IconThemes Stereo::Layer)
+ 
+ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+     set(_extra_options DEBUGINFO)
+--- a/src/primitives/icon.cpp
++++ b/src/primitives/icon.cpp
+@@ -13,11 +13,22 @@
+ #include "platform/platformtheme.h"
+ #include "platform/units.h"
+ 
++#include <animatedpicture.h>
++#include <iconsurface.h>
++#include <screenmode.h>
++#include <KIconLoader>
++
+ #include <QBitmap>
++#include <QCryptographicHash>
++#include <QElapsedTimer>
++#include <QHoverEvent>
++#include <QProcess>
++#include <QTimer>
+ #include <QDebug>
+ #include <QDynamicPropertyChangeEvent>
+ #include <QGuiApplication>
+ #include <QIcon>
++#include <QLoggingCategory>
+ #include <QNetworkReply>
+ #include <QPainter>
+ #include <QPropertyAnimation>
+@@ -27,6 +38,7 @@
+ #include <QScreen>
+ 
+ using namespace Qt::StringLiterals;
++Q_LOGGING_CATEGORY(lcWeatherIcon, "org.sparky.weather.icon", QtWarningMsg)
+ 
+ // The eye a window is drawn for while the edition's Qt draws it once per eye (its _q_stereo_eye): 1 the left eye,
+ // 2 the right eye, else 0
+@@ -59,6 +71,236 @@
+ private:
+     const int m_eye;
+ };
++
++struct Icon::Weather {
++    Stereo::ScreenMode screen;
++    Stereo::IconSurface surface;
++    Stereo::Picture still;
++    std::unique_ptr<Stereo::AnimatedPicture> animation;
++    QTimer tick;
++    QElapsedTimer elapsed;
++    QString stillPath;
++    QString loopPath;
++    QString keptFailure;
++    QRect nativeRect;
++    QMetaObject::Connection screenConnection;
++    QMetaObject::Connection activeConnection;
++    QMetaObject::Connection geometryConnection;
++    bool hovered = false;
++};
++
++bool Icon::weatherTheme() const
++{
++    return bool(m_weather);
++}
++
++void Icon::setWeatherTheme(bool enabled)
++{
++    if (enabled == weatherTheme()) {
++        return;
++    }
++    if (enabled) {
++        m_weather = std::make_unique<Weather>();
++        connect(&m_weather->screen, &Stereo::ScreenMode::modeChanged, this, &QQuickItem::polish);
++        m_weather->tick.setInterval(16);
++        connect(&m_weather->tick, &QTimer::timeout, this, &QQuickItem::polish);
++        weatherWindowChanged();
++    } else {
++        stopWeatherLoop();
++        disconnect(m_weather->screenConnection);
++        disconnect(m_weather->activeConnection);
++        disconnect(m_weather->geometryConnection);
++        m_weather.reset();
++        m_weatherNative = false;
++    }
++    setAcceptHoverEvents(enabled);
++    Q_EMIT weatherThemeChanged();
++    polish();
++}
++
++bool Icon::weatherHovered() const
++{
++    return m_weatherHover;
++}
++
++void Icon::setWeatherHovered(bool hovered)
++{
++    if (m_weatherHoverSupplied && hovered == m_weatherHover) {
++        return;
++    }
++    m_weatherHoverSupplied = true;
++    m_weatherHover = hovered;
++    qCDebug(lcWeatherIcon) << "hover" << m_source << hovered;
++    if (m_weather) {
++        if (hovered) {
++            m_weather->hovered = true;
++        } else {
++            stopWeatherLoop();
++        }
++        polish();
++        update();
++    }
++    Q_EMIT weatherHoveredChanged();
++}
++
++void Icon::weatherWindowChanged()
++{
++    if (!m_weather) {
++        return;
++    }
++    disconnect(m_weather->screenConnection);
++    disconnect(m_weather->activeConnection);
++    disconnect(m_weather->geometryConnection);
++    stopWeatherLoop();
++    m_weather->surface.clear();
++    m_weather->screen.setScreen(m_window ? m_window->screen() : nullptr);
++    if (m_window) {
++        m_weather->screenConnection = connect(m_window.data(), &QWindow::screenChanged, this, [this](QScreen *screen) {
++            m_weather->screen.setScreen(screen);
++            polish();
++        });
++        m_weather->activeConnection = connect(m_window.data(), &QWindow::activeChanged, this, [this]() {
++            qCDebug(lcWeatherIcon) << "window focus" << m_source << m_window->isActive();
++            if (!m_window->isActive()) {
++                stopWeatherLoop();
++                polish();
++            }
++        });
++        m_weather->geometryConnection = connect(m_window.data(), &QQuickWindow::afterAnimating, this, [this]() {
++            if (m_weatherNative && weatherRect() != m_weather->nativeRect) {
++                polish();
++            }
++        });
++    }
++    polish();
++}
++
++void Icon::stopWeatherLoop()
++{
++    if (m_weather) {
++        m_weather->hovered = false;
++        m_weather->tick.stop();
++        m_weather->elapsed.invalidate();
++        m_weather->animation.reset();
++    }
++}
++
++void Icon::hoverEnterEvent(QHoverEvent *event)
++{
++    if (m_weather && !m_weatherHoverSupplied) {
++        m_weather->hovered = true;
++        polish();
++    }
++    QQuickItem::hoverEnterEvent(event);
++}
++
++void Icon::hoverLeaveEvent(QHoverEvent *event)
++{
++    if (m_weather && !m_weatherHoverSupplied) {
++        stopWeatherLoop();
++        polish();
++    }
++    QQuickItem::hoverLeaveEvent(event);
++}
++
++QRect Icon::weatherRect()
++{
++    const QRectF rect = mapRectToScene(calculateNodeRect());
++    for (const QQuickItem *item = this; item; item = item->parentItem()) {
++        if (item->rotation() != 0 || item->scale() != 1 || item->opacity() != 1
++            || (item->clip() && !item->mapRectToScene(item->boundingRect()).contains(rect))) {
++            return {};
++        }
++    }
++    return QRect(QPoint(qRound(rect.x()), qRound(rect.y())), QSize(qRound(rect.width()), qRound(rect.height())));
++}
++
++bool Icon::updateWeatherIcon(const QSize &size)
++{
++    if (!m_weather) {
++        return false;
++    }
++    const QString name = m_source.toString();
++    const int itemExtent = std::min(size.width(), size.height());
++    const int extent = m_roundToIconSize && m_units ? m_units->iconSizes()->roundedIconSize(itemExtent) : itemExtent;
++    const QSize paintedSize(extent, extent);
++    const auto paths = KIconLoader::global()->weatherIconPaths(name, paintedSize, m_devicePixelRatio);
++    auto &weather = *m_weather;
++    if (paths.still != weather.stillPath) {
++        weather.animation.reset();
++        weather.elapsed.invalidate();
++        weather.stillPath = paths.still;
++        weather.still = {};
++        const auto [left, right] = KIconLoader::global()->readWeatherIcon(paths.still);
++        if (!left.isNull() && !right.isNull()) {
++            weather.still = Stereo::Picture::fromViewsInTurn(left, right, Stereo::Picture::EyeOrder::LeftFirst);
++        }
++    }
++    m_weatherNative = false;
++    if (!weather.still.isStereo() || !isVisible() || !m_window || !m_window->isVisible()) {
++        weather.surface.clear();
++        weather.tick.stop();
++        return false;
++    }
++
++    Stereo::Picture shown = weather.still;
++    const auto mode = weather.screen.mode();
++    const bool twoEyes = mode == Stereo::OutputMode::Stereo || mode == Stereo::OutputMode::Anaglyph;
++    if (weather.hovered && paths.animateOnHover && twoEyes) {
++        if (!weather.animation || weather.loopPath != paths.loop) {
++            weather.loopPath = paths.loop;
++            weather.animation = std::make_unique<Stereo::AnimatedPicture>(paths.loop);
++            weather.elapsed.start();
++        }
++        const QSize eyeSize = weather.still.left.size();
++        const qint64 elapsed = weather.elapsed.elapsed();
++        const Stereo::Picture frame = weather.animation->pairAt(elapsed, eyeSize);
++        if (frame.isStereo() && weather.animation->reason().isEmpty()) {
++            if (lcWeatherIcon().isDebugEnabled()) {
++                const auto signature = [](const QImage &image) {
++                    return QCryptographicHash::hash(QByteArrayView(reinterpret_cast<const char *>(image.constBits()), image.sizeInBytes()),
++                                                    QCryptographicHash::Sha256).toHex().left(12);
++                };
++                qCDebug(lcWeatherIcon) << name << elapsed << weather.animation->frameAt(elapsed) << signature(frame.left) << signature(frame.right);
++            }
++            shown = frame;
++            weather.tick.start();
++        } else {
++            weather.tick.stop();
++            const QString key = QStringLiteral("loop-") + QString::fromLatin1(
++                QCryptographicHash::hash(paths.loop.toUtf8(), QCryptographicHash::Sha256).toHex());
++            if (weather.keptFailure != key) {
++                const QString failure = weather.animation->reason();
++                QProcess::startDetached(QStringLiteral("/usr/bin/sparky-stereo-problems"),
++                    {QStringLiteral("keep"), QStringLiteral("--person"), QStringLiteral("--quiet"),
++                     QStringLiteral("sparky-stereo-weather-icons"), key, QStringLiteral("LOCAL2"), name, failure});
++                weather.keptFailure = key;
++            }
++        }
++    } else {
++        weather.tick.stop();
++        weather.animation.reset();
++        weather.elapsed.invalidate();
++    }
++    if (m_animation) {
++        m_animation->stop();
++    }
++    m_animValue = 1;
++    m_icon = shown.left;
++    m_oldIcon = {};
++    m_textureChanged = true;
++    setStatus(Ready);
++    updatePaintedGeometry();
++    const QRect rect = weatherRect();
++    if (twoEyes && !rect.isEmpty()) {
++        m_weatherNative = weather.surface.show(m_window.data(), rect, shown);
++        weather.nativeRect = rect;
++    } else {
++        weather.surface.clear();
++    }
++    update();
++    return true;
++}
+ 
+ Icon::Icon(QQuickItem *parent)
+     : QQuickItem(parent)
+@@ -210,7 +452,7 @@
+ 
+ QSGNode *Icon::updatePaintNode(QSGNode *node, QQuickItem::UpdatePaintNodeData * /*data*/)
+ {
+-    if (m_source.isNull() || qFuzzyIsNull(width()) || qFuzzyIsNull(height())) {
++    if (m_weatherNative || m_source.isNull() || qFuzzyIsNull(width()) || qFuzzyIsNull(height())) {
+         delete node;
+         return nullptr;
+     }
+@@ -341,6 +583,13 @@
+     }
+ 
+     if (m_source.isNull()) {
++        if (m_weather) {
++            stopWeatherLoop();
++            m_weather->surface.clear();
++            m_weather->still = {};
++            m_weather->stillPath.clear();
++            m_weatherNative = false;
++        }
+         setStatus(Ready);
+         updatePaintedGeometry();
+         update();
+@@ -348,6 +597,9 @@
+     }
+ 
+     const QSize itemSize(width(), height());
++    if (updateWeatherIcon(itemSize)) {
++        return;
++    }
+     if (itemSize.width() != 0 && itemSize.height() != 0) {
+         const QSize size = itemSize;
+ 
+@@ -448,7 +700,7 @@
+     // Qt Quick sets the eye before it polishes and synchronizes the window for it: the image for that eye replaces
+     // the other eye's, with no animation, and what the item dirties now is drawn by that eye's pass
+     const int eye = stereoEye(m_window);
+-    if (!m_stereo || eye == m_eye || m_source.isNull() || qFuzzyIsNull(width()) || qFuzzyIsNull(height())) {
++    if ((m_weather && m_weather->still.isStereo()) || !m_stereo || eye == m_eye || m_source.isNull() || qFuzzyIsNull(width()) || qFuzzyIsNull(height())) {
+         return;
+     }
+     m_eye = eye;
+@@ -679,6 +931,8 @@
+     QSizeF newSize;
+     if (!m_icon.width() || !m_icon.height()) {
+         newSize = {0, 0};
++    } else if (m_weather && m_weather->still.isStereo()) {
++        newSize = QSizeF(m_icon.size()) / m_devicePixelRatio;
+     } else {
+         qreal roundedWidth = m_units ? m_units->iconSizes()->roundedIconSize(std::min(width(), height())) : 32;
+         roundedWidth = std::round(roundedWidth * m_devicePixelRatio) / m_devicePixelRatio;
+@@ -787,8 +1041,20 @@
+                 polish();
+             }
+         }
+-    } else if (change == ItemVisibleHasChanged && value.boolValue) {
+-        m_blockNextAnimation = true;
++        weatherWindowChanged();
++    } else if (change == ItemVisibleHasChanged) {
++        if (value.boolValue) {
++            m_blockNextAnimation = true;
++        } else {
++            stopWeatherLoop();
++            if (m_weather) {
++                m_weather->surface.clear();
++                m_weatherNative = false;
++            }
++        }
++        if (m_weather) {
++            polish();
++        }
+     }
+     QQuickItem::itemChange(change, value);
+ }
+@@ -803,6 +1069,11 @@
+ {
+     if (visible) {
+         m_blockNextAnimation = true;
++    } else {
++        stopWeatherLoop();
++    }
++    if (m_weather) {
++        polish();
+     }
+ }
+ 
+--- a/src/primitives/icon.h
++++ b/src/primitives/icon.h
+@@ -14,6 +14,7 @@
+ #include <QVariant>
+ 
+ #include <QQmlEngine>
++#include <memory>
+ 
+ class QNetworkReply;
+ class QQuickWindow;
+@@ -76,6 +77,8 @@
+      * on which icons to use in your application.
+      */
+     Q_PROPERTY(QVariant source READ source WRITE setSource NOTIFY sourceChanged FINAL)
++    Q_PROPERTY(bool weatherTheme READ weatherTheme WRITE setWeatherTheme NOTIFY weatherThemeChanged FINAL)
++    Q_PROPERTY(bool weatherHovered READ weatherHovered WRITE setWeatherHovered NOTIFY weatherHoveredChanged FINAL)
+ 
+     /*!
+      * \qmlproperty string Icon::fallback
+@@ -241,6 +244,10 @@
+ 
+     void setSource(const QVariant &source);
+     QVariant source() const;
++    bool weatherTheme() const;
++    void setWeatherTheme(bool enabled);
++    bool weatherHovered() const;
++    void setWeatherHovered(bool hovered);
+ 
+     void setActive(bool active = true);
+     bool active() const;
+@@ -277,6 +284,8 @@
+ 
+ Q_SIGNALS:
+     void sourceChanged();
++    void weatherThemeChanged();
++    void weatherHoveredChanged();
+     void activeChanged();
+     void validChanged();
+     void selectedChanged();
+@@ -297,10 +306,21 @@
+     void setStatus(Status status);
+     void updatePolish() override;
+     void updatePaintedGeometry();
++    void hoverEnterEvent(QHoverEvent *event) override;
++    void hoverLeaveEvent(QHoverEvent *event) override;
+     void itemChange(QQuickItem::ItemChange change, const QQuickItem::ItemChangeData &value) override;
+ 
+ private:
+     void valueChanged(const QVariant &value);
++    bool updateWeatherIcon(const QSize &size);
++    void stopWeatherLoop();
++    void weatherWindowChanged();
++    QRect weatherRect();
++    struct Weather;
++    std::unique_ptr<Weather> m_weather;
++    bool m_weatherNative = false;
++    bool m_weatherHoverSupplied = false;
++    bool m_weatherHover = false;
+     void windowVisibleChanged(bool visible);
+     bool eventFilter(QObject *watched, QEvent *event) override;
+     // The image of the source for the window's eye, and whether it is an icon the theme has in stereo

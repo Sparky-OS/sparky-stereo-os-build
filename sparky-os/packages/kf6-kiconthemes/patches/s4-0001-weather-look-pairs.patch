@@ -1,0 +1,138 @@
+Description: Resolve the selected Weather Report look and read the two marked views
+Origin: vendor
+Forwarded: no
+Author: Daniel Campos Ramos
+Last-Update: 2026-11-24
+
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -1,3 +1,5 @@
++find_package(StereoLayer 1.23.3 REQUIRED)
++
+ configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+ 
+ if(NOT IOS)
+@@ -14,6 +16,7 @@
+ 
+ add_library(KF6IconThemes)
+ add_library(KF6::IconThemes ALIAS KF6IconThemes)
++target_link_libraries(KF6IconThemes PRIVATE Stereo::Layer)
+ 
+ set_target_properties(KF6IconThemes PROPERTIES
+     VERSION     ${KICONTHEMES_VERSION}
+--- a/src/kiconloader.cpp
++++ b/src/kiconloader.cpp
+@@ -10,6 +10,9 @@
+     SPDX-License-Identifier: LGPL-2.0-only
+ */
+ 
++#include <picture.h>
++#include <KConfig>
++#include <QRegularExpression>
+ #include "kiconloader.h"
+ #include "kiconloader_p.h"
+ 
+@@ -1073,6 +1076,76 @@
+     return true;
+ }
+ 
++KIconLoader::WeatherIconPaths KIconLoader::weatherIconPaths(const QString &requested, const QSize &size, qreal scale) const
++{
++    static const QRegularExpression condition(QStringLiteral("^weather-[a-z0-9-]+$"));
++    if (!condition.match(requested).hasMatch() || size.isEmpty()) {
++        return {};
++    }
++
++    KConfig settings(QStringLiteral("sparky-stereo-weatherrc"), KConfig::SimpleConfig);
++    const KConfigGroup weather(&settings, QStringLiteral("Weather"));
++    auto look = weather.readEntry("Look", QStringLiteral("Auto"));
++    if (look == QLatin1String("Auto")) {
++        look = weather.readEntry("HardwareLook", QString());
++    }
++    const bool vector = look == QLatin1String("Vector");
++    QString theme;
++    if (vector) {
++        theme = QStringLiteral("sparky-weather-vector");
++    } else if (look == QLatin1String("Photoreal")) {
++        theme = QStringLiteral("sparky-weather-photoreal");
++    } else if (look == QLatin1String("RealWeather")) {
++        theme = QStringLiteral("sparky-weather-real");
++    } else {
++        return {};
++    }
++
++    QString name = requested;
++    const bool symbolic = name.endsWith(QLatin1String("-symbolic"));
++    if (symbolic && weather.readEntry("PanelIcon", QStringLiteral("Colour")) == QLatin1String("Colour")) {
++        name.chop(9);
++    }
++    const int extent = qFloor(std::min(size.width(), size.height()) * scale);
++    const auto path = [&](const QString &themeName) {
++        const KIconTheme theme(themeName);
++        QList<int> sizes = theme.querySizes(KIconLoader::Desktop);
++        std::sort(sizes.begin(), sizes.end(), std::greater<int>());
++        for (const int nativeSize : sizes) {
++            if (nativeSize <= extent) {
++                const QString exact = theme.stereoIconPathByName(name, nativeSize, KIconLoader::MatchExact, 1);
++                if (!exact.isEmpty()) {
++                    return exact;
++                }
++            }
++        }
++        return QString();
++    };
++
++    WeatherIconPaths result;
++    if (weather.readEntry("Shade", QStringLiteral("Present")) == QLatin1String("Darker")) {
++        result.still = path(theme + QLatin1String("-darker"));
++    }
++    if (result.still.isEmpty()) {
++        result.still = path(theme);
++    }
++    if (!result.still.isEmpty()) {
++        const QFileInfo info(result.still);
++        result.loop = info.dir().filePath(info.completeBaseName() + (vector ? QLatin1String(".loop.svg") : QLatin1String(".loop.jxl")));
++        result.animateOnHover = weather.readEntry("Animation", true);
++    }
++    return result;
++}
++
++QPair<QImage, QImage> KIconLoader::readWeatherIcon(const QString &path) const
++{
++    if (path.isEmpty()) {
++        return {};
++    }
++    const auto pair = Stereo::Picture::load(path, {}, Stereo::OutputMode::Stereo);
++    return {pair.left, pair.right};
++}
++
+ bool KIconLoader::loadStereoIcon(const QString &name, const QSize &size, qreal scale, QPixmap *left, QPixmap *right) const
+ {
+     if (name.isEmpty() || size.isEmpty() || scale <= 0 || !left || !right) {
+--- a/src/kiconloader.h
++++ b/src/kiconloader.h
+@@ -10,6 +10,8 @@
+ #ifndef KICONLOADER_H
+ #define KICONLOADER_H
+ 
++#include <QImage>
++#include <QPair>
+ #include <QObject>
+ #include <QSize>
+ #include <QString>
+@@ -471,6 +473,15 @@
+      */
+     bool loadStereoIcon(const QString &name, const QSize &size, qreal scale, QPixmap *left, QPixmap *right) const;
+ 
++    struct WeatherIconPaths {
++        QString still;
++        QString loop;
++        bool animateOnHover = false;
++    };
++
++    WeatherIconPaths weatherIconPaths(const QString &name, const QSize &size, qreal scale) const;
++    QPair<QImage, QImage> readWeatherIcon(const QString &path) const;
++
+     /*!
+      * Loads an icon for a mimetype.
+      * This is basically like loadIcon except that extra desktop themes are loaded if necessary.

@@ -1,0 +1,75 @@
+Description: Opt into the shared weather theme for condition icons in Weather Report
+Origin: vendor
+Forwarded: no
+Author: Daniel Campos Ramos
+Last-Update: 2026-11-24
+
+--- a/applets/weather/qml/CompactRepresentation.qml
++++ b/applets/weather/qml/CompactRepresentation.qml
+@@ -36,6 +36,11 @@
+     Layout.minimumWidth: item.Layout.minimumWidth
+     Layout.minimumHeight: item.Layout.minimumHeight
+ 
++    HoverHandler {
++        id: iconHover
++        blocking: false
++    }
++
+     MouseArea {
+         id: compactMouseArea
+         anchors.fill: parent
+@@ -51,6 +56,8 @@
+         id: iconComponent
+ 
+         Kirigami.Icon {
++            weatherTheme: true
++            weatherHovered: iconHover.hovered
+             id: weatherIcon
+             readonly property int minIconSize: Math.max((compactRoot.vertical ? compactRoot.width : compactRoot.height), Kirigami.Units.iconSizes.small)
+ 
+@@ -95,6 +102,7 @@
+         IconAndTextItem {
+             vertical: compactRoot.vertical
+             iconSource: Plasmoid.icon
++            weatherHovered: iconHover.hovered
+             fallback: Util.unknownWeatherIcon
+             active: compactMouseArea.containsMouse
+             text: compactRoot.isTemperaturePresent ? Util.temperatureToDisplayString(compactRoot.displayTemperatureUnit, compactRoot.lastObservation.temperature, compactRoot.metaData.temperatureUnit, true, false) : "";
+--- a/applets/weather/qml/TopPanel.qml
++++ b/applets/weather/qml/TopPanel.qml
+@@ -142,6 +142,7 @@
+     }
+ 
+     Kirigami.Icon {
++        weatherTheme: true
+         id: conditionIcon
+ 
+         visible: !!root.lastObservation?.conditionIcon || !!root.futureDays?.firstDayIcon
+--- a/applets/weather/qml/IconAndTextItem.qml
++++ b/applets/weather/qml/IconAndTextItem.qml
+@@ -19,6 +19,7 @@
+     property alias fallback: icon.fallback
+     property bool vertical: false // too bad we cannot make this an enum
+     property alias active: icon.active
++    property alias weatherHovered: icon.weatherHovered
+ 
+     readonly property int minimumIconSize: Kirigami.Units.iconSizes.small
+     readonly property int iconSize: iconAndTextRoot.vertical ? width : height
+@@ -30,6 +31,7 @@
+     rowSpacing: 0
+ 
+     Kirigami.Icon {
++        weatherTheme: true
+         id: icon
+ 
+         readonly property int implicitMinimumIconSize: Math.max(iconSize, minimumIconSize)
+--- a/applets/weather/qml/ForecastView.qml
++++ b/applets/weather/qml/ForecastView.qml
+@@ -127,6 +127,7 @@
+             spacing: Math.round(Kirigami.Units.smallSpacing / 2)
+ 
+             Kirigami.Icon {
++                weatherTheme: true
+                 Layout.fillWidth: true
+                 Layout.preferredHeight: preferredIconSize
+                 Layout.preferredWidth: preferredIconSize

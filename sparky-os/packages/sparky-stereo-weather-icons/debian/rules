@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	python3 debian/check-loops.py icons
+
+override_dh_auto_install:
+	install -d debian/sparky-stereo-weather-icons/usr/share/icons
+	cp -a icons/. debian/sparky-stereo-weather-icons/usr/share/icons/
+	sparky-stereo-problems catalog sparky-stereo-weather-icons lang debian/sparky-stereo-weather-icons/usr/lib/systemd/catalog --subject LOCAL1=LOCAL2,LOCAL3
