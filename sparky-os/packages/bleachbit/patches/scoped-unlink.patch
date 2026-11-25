@@ -73,3 +73,50 @@ Last-Update: 2026-11-25
          finally:
              os.close(fd)
              signal.signal(signal.SIGIO, previous)
+--- /dev/null
++++ b/tests/TestScopedUnlink.py
+@@ -0,0 +1,44 @@
++# SPDX-License-Identifier: GPL-3.0-or-later
++"""Test what happens when a name changes at the final move."""
++
++import fcntl
++import os
++import sys
++from pathlib import Path
++from unittest.mock import patch
++
++import pytest
++
++from bleachbit import Command, Structured
++
++
++@pytest.mark.skipif(not sys.platform.startswith('linux'), reason='Linux write lease')
++@pytest.mark.parametrize('reuse_name', [False, True])
++def test_replacement_is_preserved(tmp_path, reuse_name):
++    reviewed = tmp_path / 'reviewed'
++    reviewed.write_bytes(b'approved')
++    replacement = tmp_path / 'replacement'
++    replacement.write_bytes(b'keep')
++    rename = os.rename
++
++    def competing_rename(source, target, *, src_dir_fd, dst_dir_fd):
++        rename(reviewed, tmp_path / 'original')
++        rename(replacement, reviewed)
++        rename(source, target, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
++        if reuse_name:
++            reviewed.write_bytes(b'new arrival')
++
++    with Structured.open_directory(str(tmp_path)) as parent, reviewed.open('rb') as opened:
++        fcntl.fcntl(opened.fileno(), fcntl.F_SETLEASE, fcntl.F_WRLCK)
++        with patch.object(Structured.os, 'rename', side_effect=competing_rename):
++            with pytest.raises(OSError) as error:
++                Structured.remove_reviewed_path(Command.Delete(str(reviewed)), parent,
++                                                 'reviewed', opened.fileno())
++    assert (tmp_path / 'original').read_bytes() == b'approved'
++    if reuse_name:
++        assert reviewed.read_bytes() == b'new arrival'
++        assert os.path.isfile(error.value.filename)
++        assert Path(error.value.filename).read_bytes() == b'keep'
++    else:
++        assert reviewed.read_bytes() == b'keep'
++        assert not list(tmp_path.glob('.bleachbit-*'))
