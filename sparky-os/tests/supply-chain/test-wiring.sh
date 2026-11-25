@@ -12,7 +12,8 @@ wired_ok() {  # wired_ok FILE
 	grep -q 'build-provenance.sh"$' "$f" || { echo "$f: does not source build-provenance.sh"; return 1; }
 	local init run
 	init=$(grep -n '^[[:space:]]*sparky_provenance_init ' "$f" | head -1 | cut -d: -f1)
-	run=$(grep -n 'docker run' "$f" | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)
+	# the container starts at docker run, or at docker create where a script records the container's ID before docker start
+	run=$(grep -n -E 'docker (run|create)' "$f" | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)
 	[ -n "$init" ] && [ -n "$run" ] && [ "$init" -lt "$run" ] || { echo "$f: sparky_provenance_init is not before the container starts"; return 1; }
 	# grep -c reads to the end: with grep -q, sed's next 4 KB block met a closed pipe (SIGPIPE) and pipefail failed a wired script under load
 	sed -n "${run},\$p" "$f" | grep -c '"${SPARKY_PROV_ARGS\[@\]}"' >/dev/null || { echo "$f: docker run lacks \"\${SPARKY_PROV_ARGS[@]}\""; return 1; }
@@ -29,7 +30,12 @@ cp "$OS/packages/kwin/build.sh" "$T/ok.sh"; wired_ok "$T/ok.sh" && echo "ok   gr
 sed 's/"${SPARKY_PROV_ARGS\[@\]}" //' "$T/ok.sh" > "$T/noargs.sh"
 sed '/^sparky_provenance_init /d' "$T/ok.sh" > "$T/noinit.sh"
 sed '/build-provenance.sh"$/d' "$T/ok.sh" > "$T/nosource.sh"
-for c in noargs noinit nosource; do
+# the same script written with docker create and docker start is wired too, and its broken copies are red
+sed 's/docker run /docker create /' "$T/ok.sh" > "$T/create.sh"
+grep -q 'docker create ' "$T/create.sh" && wired_ok "$T/create.sh" && echo "ok   green  docker create form" || { echo "FAIL green docker create form"; fail=1; }
+sed 's/"${SPARKY_PROV_ARGS\[@\]}" //' "$T/create.sh" > "$T/create-noargs.sh"
+sed '/^sparky_provenance_init /d' "$T/create.sh" > "$T/create-noinit.sh"
+for c in noargs noinit nosource create-noargs create-noinit; do
 	if wired_ok "$T/$c.sh" >/dev/null 2>&1; then echo "FAIL red $c: accepted"; fail=1; else echo "ok   red  $c"; fi
 done
 # ORDER 412: a host driver (a docker run in packages/ or release/) whose container reaches the Lean Code gate must pass the
@@ -37,7 +43,7 @@ done
 # (calling release/build-dh-lean.sh counts: that script calls sparky_provenance_init itself).
 # Otherwise lean.release check-debs now stops the build with a message; this finds it before a build is wasted.
 audit_driver() {  # audit_driver FILE
-	grep -qE 'docker (run|exec)|"docker", ?"run"|'"'docker', 'run'" "$1" || return 0
+	grep -qE 'docker (run|create|exec)|"docker", ?"run"|'"'docker', 'run'" "$1" || return 0
 	grep -qE 'check-debs|build-in-container|build-lc|build-dh-lean|build-entry' "$1" || return 0
 	grep -qE '^[[:space:]]*sparky_provenance_init |provenance_args\(|SPARKY_PROVENANCE_OPTOUT|release/build-dh-lean\.sh' "$1"
 }
