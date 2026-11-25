@@ -7,7 +7,7 @@
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 cd "$HERE"
-xgettext --from-code=UTF-8 -C --kde --no-location --sort-output --package-name=sparky-stereo-welcome \
+xgettext --from-code=UTF-8 -C --kde --no-location --package-name=sparky-stereo-welcome \
 	--msgid-bugs-address=https://github.com/Sparky-OS/sparky-stereo-os/issues \
 	-ki18ndc:2c,3 -kxi18ndc:2c,3 -o po/sparky-stereo-welcome.pot first-pages/*.qml extra-pages/*.qml
 for po in po/*.po; do

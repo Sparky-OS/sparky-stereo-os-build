@@ -5,10 +5,11 @@
  */
 
 // Touch and tablet mode, written only from what the edition ships and what was measured (ORDER 63/720 milestone 2):
-// - a tap opens a file or folder in Dolphin and on the desktop with KDE's double-click setting, where a mouse click only
-//   selects it (Dolphin's KItemListController::onRelease(), the desktop's FolderView.qml; measured with a fake touch
-//   screen beside the fake pointer); the task bar activates a window on a tap as on a click, and a long touch opens
-//   its menu (plasma-desktop's Task.qml);
+// - a tap opens a file or folder in Dolphin and on the desktop with KDE's double-click setting (its default here), where
+//   a mouse click only selects it; with single click both open (Dolphin's KItemListController::onRelease(), the
+//   desktop's FolderView.qml; measured with a fake touch screen beside the fake pointer). The task bar is not named:
+//   its source activates a window on a tap and opens a menu on a long touch (plasma-desktop's Task.qml), but in the rig
+//   one tap did nothing and a long touch opened no menu, so it waits for a real touch screen;
 // - on a computer with a touch screen of its own, Plasma Keyboard is the on-screen keyboard in the session's language
 //   (sparky-stereo-hardware's has-tablet-mode) and shows in tablet mode (Stereo KWin's InputMethodTabletOnly);
 // - in tablet mode the panels hide and come back as they were (plasma-workspace, plasmarc [TabletMode] HidePanels).
@@ -30,7 +31,7 @@ Welcome.Page {
 
     heading: i18ndc("sparky-stereo-welcome", "@title:window", "Touch and Tablet Mode")
     description: xi18ndc("sparky-stereo-welcome", "@info:usagetip",
-                         "On a touch screen a tap opens a file or folder in Dolphin and on the desktop, while the mouse keeps its own setting: a double click, or one click if you choose that in General Behavior. In the task bar, touch and hold a button for its menu.<nl/><nl/>On a computer with a touch screen of its own, the on-screen keyboard is Plasma Keyboard, in your language. It opens when you touch a text field in tablet mode, and in tablet mode the panels hide by themselves and come back as they were when you leave it.")
+                         "On a touch screen a tap opens a file or folder in Dolphin and on the desktop, while the mouse keeps its own setting: a double click, or one click if you choose that in General Behavior.<nl/><nl/>On a computer with a touch screen of its own, the on-screen keyboard is Plasma Keyboard, in your language. It opens when you touch a text field in tablet mode, and in tablet mode the panels hide by themselves and come back as they were when you leave it.")
 
     topContent: [
         RowLayout {
