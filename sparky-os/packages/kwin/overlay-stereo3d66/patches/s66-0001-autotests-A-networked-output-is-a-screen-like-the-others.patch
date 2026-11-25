@@ -1,5 +1,5 @@
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Wed, 25 Nov 2026 01:49:22 +0000
+Date: Wed, 25 Nov 2026 03:44:13 +0000
 Subject: [PATCH] autotests: a networked output is a screen like the others
 
 A network screen (an output the screencast protocol's version 7 request makes without the split-eye
@@ -9,7 +9,9 @@ made from the switches and taken away again) and networkedChoiceKeptByIdentity (
 swap chosen for a device come back at the next output for the same device, not for another device and
 not at another mode); screencasting_test gains testNetworkedOutput (a declared pair, left eye red and
 right eye blue, in a frame of the stream for 2D and every format, with and without the swap); the new
-integration test testThrowToMenu checks the window menu's two lists; testNetworkedFormatChangeReachesStream
+integration test testThrowToMenu checks the window menu's two lists; a monitor's interleaved twins (rows,
+columns, checkerboard) and its side by side (full) twin for a mode two eyes wide are checked in the twin list
+and in the stream, frame sequential checked absent even at 120 Hz; testNetworkedFormatChangeReachesStream
 (a format and the swap chosen while the stream runs, each in a frame of its own) and
 testNetworkedChoiceComesBack (the next Throw to the same device opens in the format chosen for it) come
 from the installed-package session, which found what a stream started after the choice cannot show.
@@ -31,7 +33,7 @@ index ef733da..6ded32a 100644
  if (KWIN_BUILD_ACTIVITIES)
      integrationTest(NAME testActivities SRCS activities_test.cpp LIBS XCB::ICCCM Plasma::Activities)
 diff --git a/autotests/integration/screencasting_test.cpp b/autotests/integration/screencasting_test.cpp
-index fde693a..1b4900a 100644
+index fde693a..7cf68b2 100644
 --- a/autotests/integration/screencasting_test.cpp
 +++ b/autotests/integration/screencasting_test.cpp
 @@ -14,6 +14,7 @@
@@ -53,7 +55,7 @@ index fde693a..1b4900a 100644
  #endif
  
  private:
-@@ -404,6 +409,333 @@ void ScreencastingTest::testNativePanel()
+@@ -404,6 +409,378 @@ void ScreencastingTest::testNativePanel()
      QVERIFY(!kwinApp()->outputBackend()->findOutput(QStringLiteral("Virtual-native-phone")));
  }
  
@@ -64,14 +66,26 @@ index fde693a..1b4900a 100644
 +    using Flag = OutputModeline::Flag;
 +    QTest::addColumn<int>("layout");
 +    QTest::addColumn<bool>("swapEyes");
-+    QTest::newRow("2d") << 0 << false;
-+    QTest::newRow("side-by-side-half") << int(Flag::Stereo3DSideBySideHalf) << false;
-+    QTest::newRow("top-and-bottom") << int(Flag::Stereo3DTopAndBottom) << false;
-+    QTest::newRow("anaglyph-modern") << int(Flag::Stereo3DAnaglyphModern) << false;
-+    QTest::newRow("anaglyph-crt") << int(Flag::Stereo3DAnaglyphCrt) << false;
-+    QTest::newRow("side-by-side-half-swapped") << int(Flag::Stereo3DSideBySideHalf) << true;
-+    QTest::newRow("top-and-bottom-swapped") << int(Flag::Stereo3DTopAndBottom) << true;
-+    QTest::newRow("anaglyph-modern-swapped") << int(Flag::Stereo3DAnaglyphModern) << true;
++    QTest::addColumn<QSize>("deviceSize");
++    const QSize device(1280, 720);
++    QTest::newRow("2d") << 0 << false << device;
++    QTest::newRow("side-by-side-half") << int(Flag::Stereo3DSideBySideHalf) << false << device;
++    QTest::newRow("top-and-bottom") << int(Flag::Stereo3DTopAndBottom) << false << device;
++    QTest::newRow("anaglyph-modern") << int(Flag::Stereo3DAnaglyphModern) << false << device;
++    QTest::newRow("anaglyph-crt") << int(Flag::Stereo3DAnaglyphCrt) << false << device;
++    QTest::newRow("side-by-side-half-swapped") << int(Flag::Stereo3DSideBySideHalf) << true << device;
++    QTest::newRow("top-and-bottom-swapped") << int(Flag::Stereo3DTopAndBottom) << true << device;
++    QTest::newRow("anaglyph-modern-swapped") << int(Flag::Stereo3DAnaglyphModern) << true << device;
++    // the interleaved packings of a passive panel, at the device's native raster
++    QTest::newRow("rows") << int(Flag::Stereo3DRowsLeftFirst) << false << device;
++    QTest::newRow("columns") << int(Flag::Stereo3DColumnsLeftFirst) << false << device;
++    QTest::newRow("checkerboard") << int(Flag::Stereo3DCheckerboardLeftFirst) << false << device;
++    QTest::newRow("rows-swapped") << int(Flag::Stereo3DRowsLeftFirst) << true << device;
++    QTest::newRow("columns-swapped") << int(Flag::Stereo3DColumnsLeftFirst) << true << device;
++    QTest::newRow("checkerboard-swapped") << int(Flag::Stereo3DCheckerboardLeftFirst) << true << device;
++    // a device whose mode is two eyes wide: each eye whole in its half
++    QTest::newRow("side-by-side-full") << int(Flag::Stereo3DSideBySideFull) << false << QSize(2560, 720);
++    QTest::newRow("side-by-side-full-swapped") << int(Flag::Stereo3DSideBySideFull) << true << QSize(2560, 720);
 +}
 +
 +void ScreencastingTest::testNetworkedOutput()
@@ -79,7 +93,7 @@ index fde693a..1b4900a 100644
 +    using Flag = OutputModeline::Flag;
 +    QFETCH(int, layout);
 +    QFETCH(bool, swapEyes);
-+    const QSize deviceSize(1280, 720);
++    QFETCH(QSize, deviceSize);
 +    const int refresh = 30000;
 +    const auto outputCount = workspace()->outputs().size();
 +    auto stream = std::make_unique<Test::ScreencastingStreamV1>(nullptr);
@@ -109,15 +123,17 @@ index fde693a..1b4900a 100644
 +        QVERIFY(backendOutput->currentMode()->flags().testFlag(Flag(layout)));
 +        QCOMPARE(backendOutput->stereoSwapEyes(), swapEyes);
 +    }
-+    QCOMPARE(output->geometry().size(), deviceSize);
++    // the desktop is one eye at the eye's size: the device's mode, or half of it for side by side (full)
++    const QSize eyeSize = backendOutput->viewSize();
++    QCOMPARE(output->geometry().size(), eyeSize);
 +
 +    const QColor leftColor(255, 0, 0);
 +    const QColor rightColor(0, 0, 255);
-+    QImage pair(QSize(deviceSize.width() * 2, deviceSize.height()), QImage::Format_RGBA8888_Premultiplied);
++    QImage pair(QSize(eyeSize.width() * 2, eyeSize.height()), QImage::Format_RGBA8888_Premultiplied);
 +    {
 +        QPainter painter(&pair);
-+        painter.fillRect(QRect(QPoint(), deviceSize), leftColor);
-+        painter.fillRect(QRect(QPoint(deviceSize.width(), 0), deviceSize), rightColor);
++        painter.fillRect(QRect(QPoint(), eyeSize), leftColor);
++        painter.fillRect(QRect(QPoint(eyeSize.width(), 0), eyeSize), rightColor);
 +    }
 +    QTemporaryDir fixtureDirectory;
 +    QVERIFY(fixtureDirectory.isValid());
@@ -128,7 +144,7 @@ index fde693a..1b4900a 100644
 +    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), waylandServer()->socketName());
 +    producer.setProcessEnvironment(environment);
 +    producer.setProgram(QCoreApplication::applicationDirPath() + QStringLiteral("/capturefixture"));
-+    producer.setArguments({fixturePath, QString::number(deviceSize.width()), QString::number(deviceSize.height()), QStringLiteral("stereo")});
++    producer.setArguments({fixturePath, QString::number(eyeSize.width()), QString::number(eyeSize.height()), QStringLiteral("stereo")});
 +    const auto stopProducer = qScopeGuard([&] {
 +        producer.terminate();
 +        producer.waitForFinished();
@@ -137,7 +153,7 @@ index fde693a..1b4900a 100644
 +    Window *window = Test::waitForWaylandWindowShown();
 +    QVERIFY2(window, producer.readAllStandardError().constData());
 +    window->move(output->geometry().topLeft());
-+    QCOMPARE(window->frameGeometry().size(), QSizeF(deviceSize));
++    QCOMPARE(window->frameGeometry().size(), QSizeF(eyeSize));
 +
 +    PipeWireSourceStream receiver;
 +    std::optional<QImage> image;
@@ -185,7 +201,38 @@ index fde693a..1b4900a 100644
 +        const QColor c = mean(region);
 +        return QStringLiteral("%1,%2,%3").arg(c.red()).arg(c.green()).arg(c.blue()).toLatin1();
 +    };
++    // the mean colour of the pixels of a region whose parity (of the row, the column or both) is the given one
++    const auto meanOf = [&](const QRect &region, int kind, int parity) {
++        qint64 r = 0, g = 0, b = 0, n = 0;
++        for (int y = region.top(); y <= region.bottom(); ++y) {
++            for (int x = region.left(); x <= region.right(); ++x) {
++                const int p = kind == 0 ? y : (kind == 1 ? x : x + y);
++                if (p % 2 != parity) {
++                    continue;
++                }
++                const QColor c = image->pixelColor(x, y);
++                r += c.red();
++                g += c.green();
++                b += c.blue();
++                ++n;
++            }
++        }
++        return QColor(r / n, g / n, b / n);
++    };
 +    switch (Flag(layout)) {
++    case Flag::Stereo3DRowsLeftFirst:
++    case Flag::Stereo3DColumnsLeftFirst:
++    case Flag::Stereo3DCheckerboardLeftFirst: {
++        // the frame's first row (column, pixel) as the receiver sees it shows the first eye
++        const int kind = Flag(layout) == Flag::Stereo3DRowsLeftFirst ? 0 : (Flag(layout) == Flag::Stereo3DColumnsLeftFirst ? 1 : 2);
++        const QRect whole(16, 16, w - 32, h - 32);
++        const QColor even = meanOf(whole, kind, 0);
++        const QColor odd = meanOf(whole, kind, 1);
++        QVERIFY2(near(even, first) && near(odd, second),
++                 QStringLiteral("even %1,%2,%3 odd %4,%5,%6").arg(even.red()).arg(even.green()).arg(even.blue()).arg(odd.red()).arg(odd.green()).arg(odd.blue()).toLatin1().constData());
++        break;
++    }
++    case Flag::Stereo3DSideBySideFull:
 +    case Flag::Stereo3DSideBySideHalf:
 +        QVERIFY2(near(mean(leftHalf), first), describe(leftHalf).constData());
 +        QVERIFY2(near(mean(rightHalf), second), describe(rightHalf).constData());
@@ -550,7 +597,7 @@ index 0000000..401022a
 +WAYLANDTEST_MAIN(ThrowToMenuTest)
 +#include "throw_to_menu_test.moc"
 diff --git a/autotests/test_virtual_output_properties.cpp b/autotests/test_virtual_output_properties.cpp
-index b00fbe6..836e542 100644
+index b00fbe6..6ed3ab7 100644
 --- a/autotests/test_virtual_output_properties.cpp
 +++ b/autotests/test_virtual_output_properties.cpp
 @@ -16,6 +16,7 @@
@@ -561,7 +608,7 @@ index b00fbe6..836e542 100644
  #include <limits>
  
  using namespace KWin;
-@@ -274,6 +275,150 @@ private Q_SLOTS:
+@@ -274,6 +275,183 @@ private Q_SLOTS:
          backend.removeVirtualOutput(output);
      }
  
@@ -571,14 +618,24 @@ index b00fbe6..836e542 100644
 +    void networkedOutput_data()
 +    {
 +        QTest::addColumn<bool>("drm");
-+        QTest::newRow("headless-network") << false;
-+        QTest::newRow("drm-network") << true;
++        QTest::addColumn<QSize>("deviceSize");
++        QTest::addColumn<uint>("refresh");
++        QTest::newRow("headless-network") << false << QSize(1920, 1080) << 30000u;
++        QTest::newRow("drm-network") << true << QSize(1920, 1080) << 30000u;
++        // a mode two eyes wide also gets the side by side (full) twin, as a monitor's does
++        QTest::newRow("headless-network-two-eyes-wide") << false << QSize(3840, 1080) << 30000u;
++        QTest::newRow("drm-network-two-eyes-wide") << true << QSize(3840, 1080) << 30000u;
++        // never frame sequential, even at a monitor's sequential rates: a stream sends a frame on damage, not at
++        // every refresh, so alternate frames cannot carry alternate eyes
++        QTest::newRow("headless-network-120hz") << false << QSize(1920, 1080) << 120000u;
 +    }
 +
 +    void networkedOutput()
 +    {
 +        using Flag = OutputModeline::Flag;
 +        QFETCH(bool, drm);
++        QFETCH(QSize, deviceSize);
++        QFETCH(uint, refresh);
 +        NoScanoutBackend renderer;
 +        std::unique_ptr<OutputBackend> backend;
 +        if (drm) {
@@ -588,12 +645,11 @@ index b00fbe6..836e542 100644
 +        } else {
 +            backend = std::make_unique<VirtualBackend>();
 +        }
-+        const QSize deviceSize(1920, 1080);
 +        const VirtualOutputProperties properties{
 +            .name = QStringLiteral("cast-living-room"),
 +            .description = QStringLiteral("Living room TV"),
 +            .pixelSize = deviceSize,
-+            .refreshRate = 30000,
++            .refreshRate = refresh,
 +            .scale = 1,
 +            .networked = true,
 +        };
@@ -617,7 +673,14 @@ index b00fbe6..836e542 100644
 +        output->applyChanges(formats);
 +        QVERIFY(output->otherStereoFormats());
 +        QVERIFY(output->anaglyph());
-+        const QList<Flag> layouts{Flag::Stereo3DSideBySideHalf, Flag::Stereo3DTopAndBottom, Flag::Stereo3DAnaglyphModern, Flag::Stereo3DAnaglyphCrt};
++        // a monitor's twins under a monitor's conditions: the device's mode is its native raster, so the interleaved
++        // packings of a passive panel come too (left eye first: the swap gives the other order)
++        QList<Flag> layouts{Flag::Stereo3DSideBySideHalf, Flag::Stereo3DTopAndBottom, Flag::Stereo3DRowsLeftFirst,
++                            Flag::Stereo3DColumnsLeftFirst, Flag::Stereo3DCheckerboardLeftFirst, Flag::Stereo3DAnaglyphModern,
++                            Flag::Stereo3DAnaglyphCrt};
++        if (isTwoEyesWide(deviceSize)) {
++            layouts << Flag::Stereo3DSideBySideFull;
++        }
 +        const auto modes = output->modes();
 +        for (const Flag layout : layouts) {
 +            const auto twin = std::ranges::find_if(modes, [layout](const auto &mode) {
@@ -625,13 +688,30 @@ index b00fbe6..836e542 100644
 +            });
 +            QVERIFY2(twin != modes.end(), qPrintable(QString::number(int(layout))));
 +            QCOMPARE((*twin)->size(), deviceSize);
-+            QCOMPARE((*twin)->refreshRate(), 30000u);
++            QCOMPARE((*twin)->refreshRate(), refresh);
 +        }
 +        QCOMPARE(output->modes().size(), 1 + layouts.size());
++        for (const auto &mode : modes) {
++            QVERIFY(!mode->flags().testFlag(Flag::Stereo3DSequentialLeftFirst));
++            QVERIFY(!mode->flags().testFlag(Flag::Stereo3DSequentialRightFirst));
++        }
++        if (isTwoEyesWide(deviceSize)) {
++            const OutputModeline flat = output->currentMode()->modeline();
++            OutputConfiguration full;
++            full.changeSet(output)->currentMode = OutputModeline(deviceSize, refresh, Flag::VirtualStereo | Flag::Stereo3DSideBySideFull);
++            output->applyChanges(full);
++            QVERIFY(output->currentMode()->flags().testFlag(Flag::Stereo3DSideBySideFull));
++            // the desktop is one eye, each half of the frame
++            QCOMPARE(output->viewSize(), QSize(deviceSize.width() / 2, deviceSize.height()));
++            OutputConfiguration back;
++            back.changeSet(output)->currentMode = flat;
++            output->applyChanges(back);
++            QCOMPARE(output->viewSize(), deviceSize);
++        }
 +        QVERIFY(!output->currentMode()->flags().testFlag(Flag::VirtualStereo));
 +
 +        OutputConfiguration sideBySide;
-+        sideBySide.changeSet(output)->currentMode = OutputModeline(deviceSize, 30000, Flag::VirtualStereo | Flag::Stereo3DSideBySideHalf);
++        sideBySide.changeSet(output)->currentMode = OutputModeline(deviceSize, refresh, Flag::VirtualStereo | Flag::Stereo3DSideBySideHalf);
 +        output->applyChanges(sideBySide);
 +        QVERIFY(output->currentMode()->flags().testFlag(Flag::Stereo3DSideBySideHalf));
 +        QCOMPARE(output->viewSize(), deviceSize);

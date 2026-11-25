@@ -1,11 +1,13 @@
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Wed, 25 Nov 2026 01:49:22 +0000
+Date: Wed, 25 Nov 2026 03:44:13 +0000
 Subject: [PATCH] screencast: the stream of a networked output is that output's picture
 
 A network screen in one of its 3D formats streams what that format sends: each eye drawn at the device
 raster, squeezed into its half for side by side half and top and bottom, mixed with the Dubois
 matrices for the anaglyph twins, the eyes in the order the output's swap gives; in 2D one view, as before.
-The matrices move into opengl/anaglyphmatrix.h, which the DRM layer now uses too: one copy.
+The matrices move into opengl/anaglyphmatrix.h, which the DRM layer now uses too: one copy. Rows, columns
+and checkerboard are drawn with the shader the screen's own layer uses (opengl/stereopattern.frag), the first
+eye on the first row, column or pixel the receiver sees; side by side (full) places each eye whole in its half.
 A format or eye swap chosen while the screen streams repaints the whole picture and sends a frame (it
 damages nothing in the scene). The typed panel request accepts a network screen that comes back in the
 3D format saved for its device: it compares the split-eye flag with the panel's own and asks for eyes
@@ -80,7 +82,7 @@ index 0000000..c5e39b8
 +
 +} // namespace KWin
 diff --git a/src/plugins/screencast/outputscreencastsource.cpp b/src/plugins/screencast/outputscreencastsource.cpp
-index 19fb297..6b61dd2 100644
+index 19fb297..c3d6e9e 100644
 --- a/src/plugins/screencast/outputscreencastsource.cpp
 +++ b/src/plugins/screencast/outputscreencastsource.cpp
 @@ -26,6 +26,8 @@
@@ -102,7 +104,7 @@ index 19fb297..6b61dd2 100644
      connect(Cursors::self(), &Cursors::positionChanged, this, &OutputScreenCastSource::updateView);
      connect(workspace(), &Workspace::windowActivated, this, &OutputScreenCastSource::updateView);
  }
-@@ -99,6 +104,26 @@ static bool isSplitEyeCapture(BackendOutput *output)
+@@ -99,6 +104,27 @@ static bool isSplitEyeCapture(BackendOutput *output)
      return output->isSplitEyeDisplay();
  }
  
@@ -118,7 +120,8 @@ index 19fb297..6b61dd2 100644
 +    if (!(flags & Flag::VirtualStereo)) {
 +        return std::nullopt;
 +    }
-+    for (const Flag layout : {Flag::Stereo3DSideBySideHalf, Flag::Stereo3DTopAndBottom, Flag::Stereo3DAnaglyphModern, Flag::Stereo3DAnaglyphCrt}) {
++    for (const Flag layout : {Flag::Stereo3DSideBySideHalf, Flag::Stereo3DTopAndBottom, Flag::Stereo3DSideBySideFull, Flag::Stereo3DRowsLeftFirst,
++                              Flag::Stereo3DColumnsLeftFirst, Flag::Stereo3DCheckerboardLeftFirst, Flag::Stereo3DAnaglyphModern, Flag::Stereo3DAnaglyphCrt}) {
 +        if (flags.testFlag(layout)) {
 +            return layout;
 +        }
@@ -129,7 +132,7 @@ index 19fb297..6b61dd2 100644
  BackendOutput *OutputScreenCastSource::backendOutput() const
  {
      return m_panel ? m_panel.data() : m_output->backendOutput();
-@@ -186,6 +211,9 @@ Region OutputScreenCastSource::render(GLFramebuffer *target, const Region &buffe
+@@ -186,6 +212,9 @@ Region OutputScreenCastSource::render(GLFramebuffer *target, const Region &buffe
      if (isSplitEyeCapture(backendOutput())) {
          return renderStereo(target);
      }
@@ -139,7 +142,7 @@ index 19fb297..6b61dd2 100644
      m_layer->setFramebuffer(target, bufferRepair & Rect(QPoint(), target->size()));
      if (!m_layer->preparePresentationTest()) {
          return Region{};
-@@ -339,6 +367,138 @@ Region OutputScreenCastSource::renderStereo(GLFramebuffer *target)
+@@ -339,6 +368,166 @@ Region OutputScreenCastSource::renderStereo(GLFramebuffer *target)
      return Rect(QPoint(), target->size());
  }
  
@@ -147,14 +150,18 @@ index 19fb297..6b61dd2 100644
 +{
 +    using Flag = OutputModeline::Flag;
 +    updateView();
-+    // each eye is the whole desktop at the device's raster, as on a screen in that format; the format
-+    // then squeezes the two into the frame (side by side, top and bottom) or mixes them (anaglyph)
++    // each eye is the whole desktop at the device's raster (half of it for side by side full), as on a screen in
++    // that format; the format then places the two in the frame (side by side, top and bottom), mixes them
++    // (anaglyph) or interleaves them (rows, columns, checkerboard)
 +    const QSize eyeSize = backendOutput()->viewSize();
 +    const QSize frameSize = target->size();
 +    if (frameSize != textureSize() || eyeSize.isEmpty()) {
 +        return Region{};
 +    }
 +    const bool anaglyph = layout == Flag::Stereo3DAnaglyphModern || layout == Flag::Stereo3DAnaglyphCrt;
++    const bool interleaved = layout == Flag::Stereo3DRowsLeftFirst || layout == Flag::Stereo3DColumnsLeftFirst
++        || layout == Flag::Stereo3DCheckerboardLeftFirst;
++    const bool mixed = anaglyph || interleaved;
 +    const auto allocate = [&eyeSize](std::unique_ptr<GLTexture> &texture, std::unique_ptr<GLFramebuffer> &framebuffer) {
 +        if (!texture || texture->size() != eyeSize) {
 +            framebuffer.reset();
@@ -166,7 +173,17 @@ index 19fb297..6b61dd2 100644
 +        }
 +        return framebuffer->valid();
 +    };
-+    if (!allocate(m_eyeTexture, m_eyeFramebuffer) || (anaglyph && !allocate(m_firstEyeTexture, m_firstEyeFramebuffer))) {
++    if (!allocate(m_eyeTexture, m_eyeFramebuffer) || (mixed && !allocate(m_firstEyeTexture, m_firstEyeFramebuffer))) {
++        return Region{};
++    }
++    if (interleaved && !m_patternShader && !m_patternShaderFailed) {
++        m_patternShader = ShaderManager::instance()->generateShaderFromFile(ShaderTrait::MapTexture, QString(), QStringLiteral(":/opengl/stereopattern.frag"));
++        if (!m_patternShader) {
++            m_patternShaderFailed = true;
++            qCWarning(KWIN_SCREENCAST, "Failed to load the stereo pattern shader: the stream of %s cannot show its format", qPrintable(backendOutput()->name()));
++        }
++    }
++    if (interleaved && !m_patternShader) {
 +        return Region{};
 +    }
 +    if (anaglyph && !m_anaglyphShader && !m_anaglyphShaderFailed) {
@@ -206,7 +223,8 @@ index 19fb297..6b61dd2 100644
 +    // where each eye goes in the frame, as the person sees it, then as the frame stores it
 +    const int w = frameSize.width();
 +    const int h = frameSize.height();
-+    const std::array<Rect, 2> places = layout == Flag::Stereo3DSideBySideHalf
++    const bool sideBySide = layout == Flag::Stereo3DSideBySideHalf || layout == Flag::Stereo3DSideBySideFull;
++    const std::array<Rect, 2> places = sideBySide
 +        ? std::array<Rect, 2>{Rect(0, 0, w / 2, h), Rect(w / 2, 0, w - w / 2, h)}
 +        : std::array<Rect, 2>{Rect(0, 0, w, h / 2), Rect(0, h / 2, w, h - h / 2)};
 +    qCDebug(KWIN_SCREENCAST, "network screen %s: stream in its 3D format, scene passes 2", qPrintable(backendOutput()->name()));
@@ -215,7 +233,7 @@ index 19fb297..6b61dd2 100644
 +        renderer->setStereoEye((eye == 0) != backendOutput()->stereoSwapEyes() ? StereoEye::Left : StereoEye::Right);
 +        m_sceneView->paint(beginInfo->renderTarget, m_sceneView->renderOffset(), eyeDamage);
 +        GLFramebuffer::pushFramebuffer(m_eyeFramebuffer.get());
-+        if (anaglyph) {
++        if (mixed) {
 +            if (eye == 0) {
 +                m_firstEyeFramebuffer->blitFromFramebuffer(Rect(QPoint(), eyeSize), Rect(QPoint(), eyeSize), GL_NEAREST);
 +            }
@@ -224,17 +242,30 @@ index 19fb297..6b61dd2 100644
 +        }
 +        GLFramebuffer::popFramebuffer();
 +    }
-+    if (anaglyph) {
-+        // the anaglyph a screen's own layer draws: its red from the first eye, its green and blue from the second
++    if (mixed) {
++        // as a screen's own layer draws it: the anaglyph, its red from the first eye and its green and blue from the
++        // second; or the interleaving, the first eye on the frame's first row, column or pixel as the receiver sees it
 +        GLFramebuffer::pushFramebuffer(target);
-+        ShaderBinder binder(m_anaglyphShader.get());
++        ShaderBinder binder(anaglyph ? m_anaglyphShader.get() : m_patternShader.get());
 +        GLShader *shader = binder.shader();
 +        shader->setColorspaceUniforms(beginInfo->renderTarget.colorDescription(), beginInfo->renderTarget.colorDescription(), RenderingIntent::AbsoluteColorimetricNoAdaptation);
 +        shader->setUniform("leftEye", 0);
 +        shader->setUniform("rightEye", 1);
-+        const bool modern = layout == Flag::Stereo3DAnaglyphModern;
-+        shader->setUniform("leftMatrix", duboisAnaglyphMatrix(modern, true));
-+        shader->setUniform("rightMatrix", duboisAnaglyphMatrix(modern, false));
++        if (anaglyph) {
++            const bool modern = layout == Flag::Stereo3DAnaglyphModern;
++            shader->setUniform("leftMatrix", duboisAnaglyphMatrix(modern, true));
++            shader->setUniform("rightMatrix", duboisAnaglyphMatrix(modern, false));
++        } else {
++            const int pattern = layout == Flag::Stereo3DRowsLeftFirst ? 0 : (layout == Flag::Stereo3DColumnsLeftFirst ? 1 : 2);
++            // the shader counts rows and columns in GL's own coordinates, its rows from the bottom one; where the
++            // receiver's first pixel lies there (storage is mapped top-left first) decides which parity takes the
++            // first eye
++            const Rect origin = storage.map(Rect(0, 0, 1, 1), frameSize);
++            const int glRow = frameSize.height() - 1 - origin.y();
++            const int originParity = pattern == 0 ? glRow : (pattern == 1 ? origin.x() : origin.x() + glRow);
++            shader->setUniform("pattern", pattern);
++            shader->setUniform("rightFirst", originParity % 2);
++        }
 +        // as a screen's own layer draws it: storage rows onto storage rows
 +        QMatrix4x4 projection;
 +        projection.scale(1, -1);
@@ -278,7 +309,7 @@ index 19fb297..6b61dd2 100644
  std::chrono::nanoseconds OutputScreenCastSource::clock() const
  {
      return backendOutput()->renderLoop()->lastPresentationTimestamp();
-@@ -407,6 +567,15 @@ void OutputScreenCastSource::resume()
+@@ -407,6 +596,15 @@ void OutputScreenCastSource::resume()
      m_active = true;
  }
  
@@ -294,12 +325,12 @@ index 19fb297..6b61dd2 100644
  void OutputScreenCastSource::pause()
  {
      m_resumeOnRebind = false;
-@@ -419,11 +588,15 @@ void OutputScreenCastSource::pause()
+@@ -419,11 +617,17 @@ void OutputScreenCastSource::pause()
      m_cursorView.reset();
      m_sceneView.reset();
      m_layer.reset();
 -    if (m_eyeFramebuffer) {
-+    if (m_eyeFramebuffer || m_firstEyeFramebuffer || m_anaglyphShader) {
++    if (m_eyeFramebuffer || m_firstEyeFramebuffer || m_anaglyphShader || m_patternShader) {
          static_cast<EglBackend *>(Compositor::self()->backend())->openglContext()->makeCurrent();
      }
      m_eyeFramebuffer.reset();
@@ -308,11 +339,13 @@ index 19fb297..6b61dd2 100644
 +    m_firstEyeTexture.reset();
 +    m_anaglyphShader.reset();
 +    m_anaglyphShaderFailed = false;
++    m_patternShader.reset();
++    m_patternShaderFailed = false;
  
      m_active = false;
  }
 diff --git a/src/plugins/screencast/outputscreencastsource.h b/src/plugins/screencast/outputscreencastsource.h
-index edb82ab..021dfcb 100644
+index edb82ab..ed05dfc 100644
 --- a/src/plugins/screencast/outputscreencastsource.h
 +++ b/src/plugins/screencast/outputscreencastsource.h
 @@ -7,6 +7,7 @@
@@ -347,7 +380,7 @@ index edb82ab..021dfcb 100644
  
      QPointer<LogicalOutput> m_output;
      QPointer<BackendOutput> m_panel;
-@@ -65,6 +69,11 @@ private:
+@@ -65,6 +69,13 @@ private:
      std::unique_ptr<ItemTreeView> m_cursorView;
      std::unique_ptr<GLTexture> m_eyeTexture;
      std::unique_ptr<GLFramebuffer> m_eyeFramebuffer;
@@ -355,6 +388,8 @@ index edb82ab..021dfcb 100644
 +    std::unique_ptr<GLTexture> m_firstEyeTexture;
 +    std::unique_ptr<GLFramebuffer> m_firstEyeFramebuffer;
 +    std::unique_ptr<GLShader> m_anaglyphShader;
++    std::unique_ptr<GLShader> m_patternShader;
++    bool m_patternShaderFailed = false;
 +    bool m_anaglyphShaderFailed = false;
      bool m_active = false;
      bool m_resumeOnRebind = false;
