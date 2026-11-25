@@ -1,0 +1,512 @@
+From 0b038edb99abc8543f59a772a2b7db95291ae55f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 00:32:54 -0300
+Subject: [PATCH] Gui: the stereo fit's pixel distances in a function of their
+ own, with a unit test
+
+The distances the stereo 3D view keeps inside the person's limits are now
+computed from the measuring pass's pictures by stereoFitDistances()
+(View3DStereoFit), with the meaning they had: each pixel at the depth of its
+nearest surface, the scene's and the annotations'.  The unit test
+View3DStereoFit (Gui_tests_run) states the rule the next change builds: a
+pixel counts at the contribution-weighted mean distance of what it shows.
+On this commit its translucent, annotation and unfogged cases fail.
+
+Forwarded: not-needed (FreeCAD's AI_POLICY.md and AGENTS.md; the edition's build)
+Assisted-by: Claude Opus 5.5 (Anthropic)
+---
+ src/Gui/CMakeLists.txt            |   2 +
+ src/Gui/View3DStereo.cpp          |  39 ++++---
+ src/Gui/View3DStereo.h            |   8 +-
+ src/Gui/View3DStereoFit.cpp       |  59 +++++++++++
+ src/Gui/View3DStereoFit.h         |  86 +++++++++++++++
+ tests/src/Gui/CMakeLists.txt      |   1 +
+ tests/src/Gui/View3DStereoFit.cpp | 167 ++++++++++++++++++++++++++++++
+ 7 files changed, 337 insertions(+), 25 deletions(-)
+ create mode 100644 src/Gui/View3DStereoFit.cpp
+ create mode 100644 src/Gui/View3DStereoFit.h
+ create mode 100644 tests/src/Gui/View3DStereoFit.cpp
+
+diff --git a/src/Gui/CMakeLists.txt b/src/Gui/CMakeLists.txt
+index a4a0fc4..2a42789 100644
+--- a/src/Gui/CMakeLists.txt
++++ b/src/Gui/CMakeLists.txt
+@@ -974,6 +974,7 @@ SET(View3D_CPP_SRCS
+     View3DInventorRiftViewer.cpp
+     View3DSettings.cpp
+     View3DStereo.cpp
++    View3DStereoFit.cpp
+     View3DStereoLimits.cpp
+     CoinRiftWidget.cpp
+     View3DPy.cpp
+@@ -997,6 +998,7 @@ SET(View3D_SRCS
+     View3DInventorRiftViewer.h
+     View3DSettings.h
+     View3DStereo.h
++    View3DStereoFit.h
+     View3DStereoLimits.h
+     CoinRiftWidget.h
+     View3DViewerPy.h
+diff --git a/src/Gui/View3DStereo.cpp b/src/Gui/View3DStereo.cpp
+index d258ac3..6983491 100644
+--- a/src/Gui/View3DStereo.cpp
++++ b/src/Gui/View3DStereo.cpp
+@@ -58,6 +58,7 @@
+ #include <Base/Parameter.h>
+ 
+ #include "View3DStereo.h"
++#include "View3DStereoFit.h"
+ #include "View3DInventorViewer.h"
+ 
+ using namespace Gui;
+@@ -420,11 +421,10 @@ void View3DStereo::measure()
+         return;
+     }
+     measuring = true;
+-    depthRead = false;
+-    depthPixels = 0;
++    drawnCount = 0;
++    sceneDepth.clear();
++    annotationDepth.clear();
+     depthUnreadable = false;
+-    depthNear = 1.0F;
+-    depthFar = 0.0F;
+     projectionSeen = false;
+     if (SoCamera* camera = viewer->getSoRenderManager()->getCamera()) {
+         camera->setStereoMode(SoCamera::MONOSCOPIC);
+@@ -457,7 +457,8 @@ void View3DStereo::sceneDrawn()
+     if (w <= 0 || h <= 0) {
+         return;
+     }
+-    std::vector<GLfloat> depth(static_cast<size_t>(w) * h);
++    std::vector<GLfloat>& depth = drawnCount++ == 0 ? sceneDepth : annotationDepth;
++    depth.assign(static_cast<size_t>(w) * h, 1.0F);
+     while (glGetError() != GL_NO_ERROR) {
+     }
+     GLint alignment = 4;
+@@ -468,19 +469,8 @@ void View3DStereo::sceneDrawn()
+     glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+     if (failed) {
+         depthUnreadable = true;
+-        return;
+-    }
+-    size_t seen = 0;
+-    for (const GLfloat d : depth) {
+-        if (d >= 1.0F) {
+-            continue;  // the cleared depth: no scene there
+-        }
+-        depthNear = std::min(depthNear, d);
+-        depthFar = std::max(depthFar, d);
+-        ++seen;
++        depth.clear();
+     }
+-    depthRead = true;
+-    depthPixels += seen;
+ }
+ 
+ void View3DStereo::fit()
+@@ -513,12 +503,19 @@ void View3DStereo::fit()
+     }
+     constexpr double none = std::numeric_limits<double>::infinity();
+     double t = none;
+-    const bool seen = depthRead && depthNear <= depthFar;
++    StereoFitPixels pixels;
++    pixels.sceneDepth = sceneDepth.empty() ? nullptr : sceneDepth.data();
++    pixels.annotationDepth = annotationDepth.size() == sceneDepth.size() ? annotationDepth.data() : nullptr;
++    pixels.count = sceneDepth.size();
++    pixels.screen = c;
++    pixels.nearPlane = nearPlane;
++    const StereoFitDistances measured = stereoFitDistances(pixels, distance);
++    const bool seen = measured.seen;
+     double nearest = 0.0;
+     double farthest = 0.0;
+     if (seen) {
+-        nearest = distance(depthNear);
+-        farthest = distance(depthFar);
++        nearest = measured.nearest;
++        farthest = measured.farthest;
+         const double front = perspective ? c / nearest - 1.0 : c - nearest;
+         const double behind = perspective ? 1.0 - c / farthest : farthest - c;
+         if (front > 0.0) {
+@@ -539,7 +536,7 @@ void View3DStereo::fit()
+         auto disparity = [&](double d) {
+             return perspective ? k * t * (1.0 - c / d) : k * t * (d - c);
+         };
+-        line << "freecad stereo3d fit pixels=" << depthPixels
++        line << "freecad stereo3d fit pixels=" << measured.pixels
+              << " projection=" << (perspective ? "perspective" : "orthographic")
+              << " limits sunk=" << limits.sunk << " popped=" << limits.popped << " width=" << bufferWidth
+              << " k=" << k << " c=" << c << " nearest=" << (seen ? nearest : 0.0)
+diff --git a/src/Gui/View3DStereo.h b/src/Gui/View3DStereo.h
+index f89dcc9..6630e2c 100644
+--- a/src/Gui/View3DStereo.h
++++ b/src/Gui/View3DStereo.h
+@@ -27,6 +27,7 @@
+ #include <memory>
+ #include <set>
+ #include <string>
++#include <vector>
+ 
+ #include <QImage>
+ #include <QPointer>
+@@ -140,15 +141,14 @@ private:
+ 
+     // The measuring pass
+     bool measuring = false;
+-    bool depthRead = false;
++    int drawnCount = 0;               // sceneDrawn() calls of the measuring pass: the scene, then the annotations
++    std::vector<float> sceneDepth;    // window depth after the scene
++    std::vector<float> annotationDepth;  // and after the annotations, drawn over a cleared depth
+     bool depthUnreadable = false;
+-    float depthNear = 1.0F;  // window depth of the nearest and the farthest pixel
+-    float depthFar = 0.0F;
+     bool projectionSeen = false;
+     SbMatrix projection;     // the projection of the camera between the eyes, as Coin set it
+     float nearPlane = 0.0F;
+     int bufferWidth = 0;
+-    size_t depthPixels = 0;  // pixels of the scene the measuring pass saw, for the trace
+ 
+     // The eyes
+     bool perspective = true;
+diff --git a/src/Gui/View3DStereoFit.cpp b/src/Gui/View3DStereoFit.cpp
+new file mode 100644
+index 0000000..1a1aa63
+--- /dev/null
++++ b/src/Gui/View3DStereoFit.cpp
+@@ -0,0 +1,59 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++/****************************************************************************
++ *                                                                          *
++ *   Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>       *
++ *                                                                          *
++ *   This file is part of FreeCAD.                                          *
++ *                                                                          *
++ *   FreeCAD is free software: you can redistribute it and/or modify it     *
++ *   under the terms of the GNU Lesser General Public License as            *
++ *   published by the Free Software Foundation, either version 2.1 of the   *
++ *   License, or (at your option) any later version.                        *
++ *                                                                          *
++ *   FreeCAD is distributed in the hope that it will be useful, but         *
++ *   WITHOUT ANY WARRANTY; without even the implied warranty of             *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU       *
++ *   Lesser General Public License for more details.                        *
++ *                                                                          *
++ *   You should have received a copy of the GNU Lesser General Public       *
++ *   License along with FreeCAD. If not, see                                *
++ *   <https://www.gnu.org/licenses/>.                                       *
++ *                                                                          *
++ ***************************************************************************/
++
++#include <algorithm>
++
++#include "View3DStereoFit.h"
++
++using namespace Gui;
++
++StereoFitDistances Gui::stereoFitDistances(
++    const StereoFitPixels& in,
++    const std::function<double(float)>& distance
++)
++{
++    StereoFitDistances out;
++    if (!in.sceneDepth) {
++        return out;
++    }
++    auto count = [&](double d) {
++        if (!out.seen) {
++            out.nearest = d;
++            out.farthest = d;
++            out.seen = true;
++        }
++        out.nearest = std::min(out.nearest, d);
++        out.farthest = std::max(out.farthest, d);
++        ++out.pixels;
++    };
++    // Each pixel counts at the depth of its nearest surface, the scene's and the annotations'
++    for (std::size_t i = 0; i < in.count; ++i) {
++        if (in.sceneDepth[i] < 1.0F) {
++            count(distance(in.sceneDepth[i]));
++        }
++        if (in.annotationDepth && in.annotationDepth[i] < 1.0F) {
++            count(distance(in.annotationDepth[i]));
++        }
++    }
++    return out;
++}
+diff --git a/src/Gui/View3DStereoFit.h b/src/Gui/View3DStereoFit.h
+new file mode 100644
+index 0000000..0025ccf
+--- /dev/null
++++ b/src/Gui/View3DStereoFit.h
+@@ -0,0 +1,86 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++/****************************************************************************
++ *                                                                          *
++ *   Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>       *
++ *                                                                          *
++ *   This file is part of FreeCAD.                                          *
++ *                                                                          *
++ *   FreeCAD is free software: you can redistribute it and/or modify it     *
++ *   under the terms of the GNU Lesser General Public License as            *
++ *   published by the Free Software Foundation, either version 2.1 of the   *
++ *   License, or (at your option) any later version.                        *
++ *                                                                          *
++ *   FreeCAD is distributed in the hope that it will be useful, but         *
++ *   WITHOUT ANY WARRANTY; without even the implied warranty of             *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU       *
++ *   Lesser General Public License for more details.                        *
++ *                                                                          *
++ *   You should have received a copy of the GNU Lesser General Public       *
++ *   License along with FreeCAD. If not, see                                *
++ *   <https://www.gnu.org/licenses/>.                                       *
++ *                                                                          *
++ ***************************************************************************/
++
++#ifndef GUI_VIEW3DSTEREOFIT_H
++#define GUI_VIEW3DSTEREOFIT_H
++
++#include <cstddef>
++#include <functional>
++
++#include <FCGlobal.h>
++
++/*
++ * The distances the stereo 3D view keeps inside the person's limits, from the pictures of its
++ * measuring pass (the scene drawn from the camera between the eyes, see View3DStereo).
++ *
++ * A pixel's distance is the distance of what it shows. Where a translucent shape stands in front,
++ * the pixel shows several layers, and its distance is their contribution-weighted mean: each
++ * layer's distance weighted by its share of the pixel's colour, a background seen through a
++ * layer counting at the screen. Single faint layers inside a pixel may pass a limit; no pixel
++ * does.
++ *
++ * The measuring pass gives the window depth after the scene and after the annotations (drawn
++ * over a cleared depth), and, drawn twice with linear fog from the camera (distance 0) to
++ * fogEnd, the colour of the pass fogged toward white and of the pass fogged toward black. Every
++ * fragment's own colour is the same in both, so their difference at a pixel is the fog's share
++ * blended exactly as the layers are: the weighted mean distance over fogEnd. A background seen
++ * through a layer is cleared to the screen's distance over fogEnd in the first and to 0 in the
++ * second.
++ */
++
++namespace Gui
++{
++
++struct GuiExport StereoFitPixels
++{
++    // One value per pixel, as glReadPixels gives them. sceneDepth is required; the others may be
++    // null: without the two colours each pixel counts at the depth of its nearest surface.
++    const float* sceneDepth = nullptr;       // window depth after the scene (1: nothing drawn)
++    const float* annotationDepth = nullptr;  // after the annotations, over a cleared depth
++    const float* towardWhite = nullptr;      // red channel of the pass fogged toward white
++    const float* towardBlack = nullptr;      // red channel of the pass fogged toward black
++    std::size_t count = 0;
++    double fogEnd = 0.0;     // the distance where the fog reaches its colour
++    double screen = 0.0;     // the distance where both eyes meet: the background's
++    double nearPlane = 0.0;  // no fragment stands nearer than this
++};
++
++struct GuiExport StereoFitDistances
++{
++    bool seen = false;
++    double nearest = 0.0;
++    double farthest = 0.0;
++    std::size_t pixels = 0;       // pixels counted
++    std::size_t translucent = 0;  // of them, pixels whose distance is a mean over translucent layers
++    std::size_t unfogged = 0;     // of them, pixels drawn without the fog: counted at their depth
++};
++
++// distance: from a window depth to the distance from the camera, by the measuring pass's projection
++GuiExport StereoFitDistances stereoFitDistances(
++    const StereoFitPixels& in,
++    const std::function<double(float)>& distance
++);
++
++}  // namespace Gui
++
++#endif  // GUI_VIEW3DSTEREOFIT_H
+diff --git a/tests/src/Gui/CMakeLists.txt b/tests/src/Gui/CMakeLists.txt
+index d0ce6af..57e8a8d 100644
+--- a/tests/src/Gui/CMakeLists.txt
++++ b/tests/src/Gui/CMakeLists.txt
+@@ -10,6 +10,7 @@ add_executable(Gui_tests_run
+         StyleParameters/ParserTest.cpp
+         StyleParameters/ParameterManagerTest.cpp
+         InputHintTest.cpp
++        View3DStereoFit.cpp
+ )
+ 
+ # Qt tests
+diff --git a/tests/src/Gui/View3DStereoFit.cpp b/tests/src/Gui/View3DStereoFit.cpp
+new file mode 100644
+index 0000000..6dcbc64
+--- /dev/null
++++ b/tests/src/Gui/View3DStereoFit.cpp
+@@ -0,0 +1,167 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++
++#include <gtest/gtest.h>
++
++#include <vector>
++
++#include <Gui/View3DStereoFit.h>
++
++// The stereo 3D view's fit counts a pixel at the contribution-weighted mean distance of what it
++// shows. Each pixel here is made the way the measuring pass draws it: an opaque surface (or the
++// background, cleared to the screen's distance in the pass fogged toward white and to 0 in the
++// other), then translucent layers blended over it, each fragment fogged linearly from the camera
++// (distance 0) to fogEnd toward white in one pass and toward black in the other.
++
++namespace
++{
++
++constexpr double fogEnd = 1000.0;
++constexpr double screen = 180.0;
++
++// window depth <-> distance: any monotonic map will do for the function under test
++double distanceOf(float depth)
++{
++    return double(depth) * fogEnd;
++}
++float depthOf(double distance)
++{
++    return float(distance / fogEnd);
++}
++
++struct Layer
++{
++    double distance;
++    double alpha;   // 1: opaque
++    double colour;  // the fragment's own colour (red), lit
++};
++
++struct Pixel
++{
++    float sceneDepth = 1.0F;
++    float annotationDepth = 1.0F;
++    float white = 0.0F;
++    float black = 0.0F;
++};
++
++// layers from the back to the front; an opaque one writes depth, a translucent one does not
++Pixel draw(const std::vector<Layer>& layers, bool fogged = true)
++{
++    Pixel p;
++    double white = screen / fogEnd;
++    double black = 0.0;
++    for (const Layer& l : layers) {
++        const double f = fogged ? 1.0 - l.distance / fogEnd : 1.0;  // share of the fragment's colour
++        const double w = f * l.colour + (1.0 - f);
++        const double b = f * l.colour;
++        white = l.alpha * w + (1.0 - l.alpha) * white;
++        black = l.alpha * b + (1.0 - l.alpha) * black;
++        if (l.alpha >= 1.0) {
++            p.sceneDepth = depthOf(l.distance);
++        }
++    }
++    p.white = float(white);
++    p.black = float(black);
++    return p;
++}
++
++Gui::StereoFitDistances measure(const std::vector<Pixel>& pixels, bool colours = true)
++{
++    static std::vector<float> scene, annotation, white, black;
++    scene.clear();
++    annotation.clear();
++    white.clear();
++    black.clear();
++    for (const Pixel& p : pixels) {
++        scene.push_back(p.sceneDepth);
++        annotation.push_back(p.annotationDepth);
++        white.push_back(p.white);
++        black.push_back(p.black);
++    }
++    Gui::StereoFitPixels in;
++    in.sceneDepth = scene.data();
++    in.annotationDepth = annotation.data();
++    in.towardWhite = colours ? white.data() : nullptr;
++    in.towardBlack = colours ? black.data() : nullptr;
++    in.count = pixels.size();
++    in.fogEnd = fogEnd;
++    in.screen = screen;
++    in.nearPlane = 1.0;
++    return Gui::stereoFitDistances(in, distanceOf);
++}
++
++}  // namespace
++
++TEST(View3DStereoFit, opaqueSurfaceCountsAtItsDistance)
++{
++    const auto d = measure({draw({{200.0, 1.0, 0.3}}), draw({{250.0, 1.0, 0.7}})});
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 200.0, 0.01);
++    EXPECT_NEAR(d.farthest, 250.0, 0.01);
++    EXPECT_EQ(d.translucent, 0U);
++}
++
++TEST(View3DStereoFit, halfTransparentLayerCountsAtTheWeightedMean)
++{
++    // 50 % of the pixel is the layer at 100, 50 % the surface behind at 200
++    const auto d = measure({draw({{200.0, 1.0, 0.3}, {100.0, 0.5, 0.8}})});
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 150.0, 0.01);
++    EXPECT_NEAR(d.farthest, 150.0, 0.01);
++    EXPECT_EQ(d.translucent, 1U);
++}
++
++TEST(View3DStereoFit, nearlyInvisibleLayerBarelyMovesThePixel)
++{
++    // 90 % transparency: 10 % of the pixel at 100
++    const auto d = measure({draw({{200.0, 1.0, 0.3}, {100.0, 0.1, 0.8}})});
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 190.0, 0.01);
++}
++
++TEST(View3DStereoFit, layerOverTheBackgroundCountsWithTheScreen)
++{
++    const auto d = measure({draw({{100.0, 0.5, 0.8}})});
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 0.5 * 100.0 + 0.5 * screen, 0.01);
++}
++
++TEST(View3DStereoFit, twoLayersCountByTheirShares)
++{
++    const auto d = measure({draw({{200.0, 1.0, 0.3}, {150.0, 0.5, 0.1}, {100.0, 0.5, 0.9}})});
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 0.5 * 100.0 + 0.25 * 150.0 + 0.25 * 200.0, 0.01);
++}
++
++TEST(View3DStereoFit, annotationCountsWhereItHidesTheScene)
++{
++    // drawn last over a cleared depth: the pixel shows the annotation only
++    Pixel p = draw({{200.0, 1.0, 0.3}, {120.0, 1.0, 0.0}});
++    p.sceneDepth = depthOf(200.0);
++    p.annotationDepth = depthOf(120.0);
++    const auto d = measure({p});
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 120.0, 0.01);
++    EXPECT_NEAR(d.farthest, 120.0, 0.01);
++}
++
++TEST(View3DStereoFit, surfaceDrawnWithoutTheFogCountsAtItsDepth)
++{
++    const auto d = measure({draw({{200.0, 1.0, 0.3}}, false)});
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 200.0, 0.01);
++    EXPECT_EQ(d.unfogged, 1U);
++}
++
++TEST(View3DStereoFit, backgroundAloneIsNotCounted)
++{
++    const auto d = measure({draw({})});
++    EXPECT_FALSE(d.seen);
++    EXPECT_EQ(d.pixels, 0U);
++}
++
++TEST(View3DStereoFit, withoutColoursEachPixelCountsAtItsNearestSurface)
++{
++    const auto d = measure({draw({{200.0, 1.0, 0.3}, {100.0, 0.5, 0.8}})}, false);
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 200.0, 0.01);
++}

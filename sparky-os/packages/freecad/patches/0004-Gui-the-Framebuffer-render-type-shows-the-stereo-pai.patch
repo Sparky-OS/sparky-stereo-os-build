@@ -1,0 +1,127 @@
+From 7e7f9b5e40a50786bdeb810076805a978a175c02 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 00:36:15 -0300
+Subject: [PATCH 4/4] Gui: the Framebuffer render type shows the stereo pair
+ too
+
+View3DInventorViewer's Framebuffer render type draws the scene once into a
+framebuffer object and shows that picture on every redraw.  In stereo both
+eyes showed the one picture: a flat view in a declared 3D area.  Now, when
+the view draws two eyes, each eye's picture is drawn with its own camera
+after the fit (measured as a frame of the Native type is) and kept in a
+framebuffer of its own, and each eye's buffer shows its own.  The view's context is made current
+before the eyes are drawn: setRenderType() may be called outside a paint,
+and the fit's measuring pass reads its depth in that context.  Nothing in
+FreeCAD 1.1.3 selects this render type (only setRenderType() does, and its
+callers choose Image and Native), so this keeps the one behaviour of the
+stereo view for any caller.
+
+Forwarded: not-needed (FreeCAD's AI_POLICY.md and AGENTS.md; the edition's build)
+Assisted-by: Claude Opus 5.5 (Anthropic)
+---
+ src/Gui/View3DInventorViewer.cpp | 53 +++++++++++++++++++++++---------
+ src/Gui/View3DInventorViewer.h   |  3 ++
+ 2 files changed, 42 insertions(+), 14 deletions(-)
+
+diff --git a/src/Gui/View3DInventorViewer.cpp b/src/Gui/View3DInventorViewer.cpp
+index 53d5871..00a0ae4 100644
+--- a/src/Gui/View3DInventorViewer.cpp
++++ b/src/Gui/View3DInventorViewer.cpp
+@@ -2218,6 +2218,8 @@ void View3DInventorViewer::setRenderType(RenderType type)
+     if (type != Framebuffer) {
+         delete framebuffer;
+         framebuffer = nullptr;
++        delete framebufferRight;
++        framebufferRight = nullptr;
+     }
+ 
+     switch (type) {
+@@ -2231,21 +2233,38 @@ void View3DInventorViewer::setRenderType(RenderType type)
+                 int height = size[1];
+ 
+                 auto gl = static_cast<QOpenGLWidget*>(this->viewport());  // NOLINT
+-                gl->makeCurrent();
+-                QOpenGLFramebufferObjectFormat fboFormat;
+-                fboFormat.setSamples(getNumSamples());
+-                fboFormat.setAttachment(QOpenGLFramebufferObject::Depth);
+-                auto fbo = new QOpenGLFramebufferObject(width, height, fboFormat);
+-                if (fbo->format().samples() > 0) {
++                auto capture = [&]() -> QOpenGLFramebufferObject* {
++                    gl->makeCurrent();
++                    QOpenGLFramebufferObjectFormat fboFormat;
++                    fboFormat.setSamples(getNumSamples());
++                    fboFormat.setAttachment(QOpenGLFramebufferObject::Depth);
++                    auto fbo = new QOpenGLFramebufferObject(width, height, fboFormat);
++                    if (fbo->format().samples() > 0) {
++                        renderToFramebuffer(fbo);
++                        auto copy = new QOpenGLFramebufferObject(fbo->size());
++                        // this is needed to be able to render the texture later
++                        QOpenGLFramebufferObject::blitFramebuffer(copy, fbo);
++                        delete fbo;
++                        return copy;
++                    }
+                     renderToFramebuffer(fbo);
+-                    framebuffer = new QOpenGLFramebufferObject(fbo->size());
+-                    // this is needed to be able to render the texture later
+-                    QOpenGLFramebufferObject::blitFramebuffer(framebuffer, fbo);
+-                    delete fbo;
++                    return fbo;
++                };
++                if (drawsStereoEyes()) {
++                    // In stereo each eye keeps its own picture, drawn with its own camera after the
++                    // fit, as a frame of the Native type is. The fit's measuring pass draws in the
++                    // view's context, which a caller outside a paint may not have made current
++                    gl->makeCurrent();
++                    capturingFramebuffer = true;
++                    for (int eye = 0; eye < 2; ++eye) {
++                        beginStereoEye(eye);
++                        (eye == 0 ? framebuffer : framebufferRight) = capture();
++                    }
++                    endStereoEyes();
++                    capturingFramebuffer = false;
+                 }
+                 else {
+-                    renderToFramebuffer(fbo);
+-                    framebuffer = fbo;
++                    framebuffer = capture();
+                 }
+             }
+             break;
+@@ -2475,7 +2494,7 @@ void View3DInventorViewer::endStereoEyes()
+ 
+ bool View3DInventorViewer::isMeasurable() const
+ {
+-    return renderType == Native;
++    return renderType == Native || capturingFramebuffer;
+ }
+ 
+ void View3DInventorViewer::renderFramebuffer()
+@@ -2494,7 +2513,13 @@ void View3DInventorViewer::renderFramebuffer()
+ 
+     glClear(GL_COLOR_BUFFER_BIT);
+     glEnable(GL_TEXTURE_2D);
+-    glBindTexture(GL_TEXTURE_2D, this->framebuffer->texture());
++    // In stereo, the picture of the eye whose buffer Quarter has made current
++    QOpenGLFramebufferObject* shown = this->framebuffer;
++    auto gl = qobject_cast<QOpenGLWidget*>(this->viewport());
++    if (this->framebufferRight && gl && gl->currentTargetBuffer() == QOpenGLWidget::RightBuffer) {
++        shown = this->framebufferRight;
++    }
++    glBindTexture(GL_TEXTURE_2D, shown->texture());
+     glColor3f(1.0, 1.0, 1.0);
+ 
+     glBegin(GL_QUADS);
+diff --git a/src/Gui/View3DInventorViewer.h b/src/Gui/View3DInventorViewer.h
+index a97212d..f1abdb3 100644
+--- a/src/Gui/View3DInventorViewer.h
++++ b/src/Gui/View3DInventorViewer.h
+@@ -610,6 +610,9 @@ private:
+ 
+     RenderType renderType;
+     QOpenGLFramebufferObject* framebuffer;
++    // In stereo the Framebuffer render type keeps one picture per eye: this is the right one
++    QOpenGLFramebufferObject* framebufferRight = nullptr;
++    bool capturingFramebuffer = false;
+     QImage glImage;
+     bool shading;
+     SoSwitch* dimensionRoot;

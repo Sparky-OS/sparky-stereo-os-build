@@ -1,0 +1,424 @@
+From 4eb5a0d7737762958a362ad6d4d42a8652f1da66 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 00:35:31 -0300
+Subject: [PATCH 3/4] Gui: a translucent pixel counts in the stereo fit at the
+ weighted mean of what it shows
+
+The separation is the largest under which every pixel of the view stays
+inside the person's depth limits, a translucent pixel's distance being the
+mean of the layers it shows, each weighted by its share of the pixel's
+colour.  Coin draws the transparent shapes after the opaque ones without
+writing depth, so the measuring pass did not see a transparent shape
+standing in front of everything else, and its pixels could pass the popped
+limit.
+
+The measuring pass is now drawn twice into a framebuffer with float colour,
+with linear fog from the camera to beyond the far plane: toward white in the
+first pass, toward black in the second, the background cleared to the
+screen's distance in the first and to 0 in the second.  The fog is the viewer's own
+SoEnvironment node's (Coin's linear HAZE), changed without notification for
+the two passes and given back after them: that node is traversed after the
+pass's callback, and with its fog (none by default) it would switch a fog
+set with GL alone off again.  Every fragment's own
+colour is the same in both, so the difference of the two pictures is, at
+every pixel, the fog's share blended exactly as the layers are: the
+contribution-weighted mean distance (as KiCad's patch 0006 of the edition
+does with the fog over the distance).  A pixel drawn without the fog counts
+at the depth of its surface.  Fog takes the distance without its sign,
+so an orthographic volume that reaches behind the camera's plane is moved
+along its axis for the fog, and its projection the other way (the picture
+is the same).  The framebuffer's format is read back, since a driver may
+give another than the one asked for.  Without a float framebuffer the transparent
+shapes write depth in the one pass and count at their own distance, which
+keeps every pixel inside the limits.  The trace says how many pixels were
+translucent and unfogged.
+
+Forwarded: not-needed (FreeCAD's AI_POLICY.md and AGENTS.md; the edition's build)
+Assisted-by: Claude Opus 5.5 (Anthropic)
+---
+ src/Gui/View3DStereo.cpp          | 139 +++++++++++++++++++++++++-----
+ src/Gui/View3DStereo.h            |   8 ++
+ src/Gui/View3DStereoFit.cpp       |  52 +++++++++--
+ src/Gui/View3DStereoFit.h         |   9 +-
+ tests/src/Gui/View3DStereoFit.cpp |  23 +++--
+ 5 files changed, 197 insertions(+), 34 deletions(-)
+
+diff --git a/src/Gui/View3DStereo.cpp b/src/Gui/View3DStereo.cpp
+index 6983491..eb719b9 100644
+--- a/src/Gui/View3DStereo.cpp
++++ b/src/Gui/View3DStereo.cpp
+@@ -72,6 +72,10 @@ constexpr int limitsPollMs = 250;
+ // The limits may come a moment after the first frame; the person is told after two seconds
+ constexpr int pollsBeforeTelling = 8;
+ 
++#ifndef GL_RGBA32F
++# define GL_RGBA32F 0x8814
++#endif
++
+ const char* const context = "Gui::View3DStereo";
+ 
+ QString tr(const char* sentence)
+@@ -321,8 +325,54 @@ void View3DStereo::eyeNodeCallback(void* data, SoAction* action)
+     SoState* state = action->getState();
+     if (self->measuring) {
+         self->projection = SoProjectionMatrixElement::get(state);
+-        self->nearPlane = SoViewVolumeElement::get(state).getNearDist();
++        const SbViewVolume& volume = SoViewVolumeElement::get(state);
++        self->nearPlane = volume.getNearDist();
+         self->projectionSeen = true;
++        if (self->floatBuffer && self->measuringPass == 1 && !self->fogSet) {
++            // Fog takes the distance without its sign: an orthographic volume that reaches behind the
++            // camera's plane is moved along its axis for the fog (and the projection the other way, so
++            // the picture is the same)
++            const double nearDist = volume.getNearDist();
++            const double depth = volume.getDepth();
++            self->fogOffset = nearDist > 0.0 ? 0.0 : 0.05 * depth - nearDist;
++            self->fogEnd = 1.25 * (nearDist + depth + self->fogOffset);
++            self->screenDistance = self->perspective ? std::max(self->focal, nearDist) : self->focal;
++        }
++        if (self->floatBuffer && self->fogOffset > 0.0) {
++            // on every traversal of the pass, the annotations' paths too: their state passes this node
++            SbMatrix away;
++            away.setTranslate(SbVec3f(0.0F, 0.0F, -float(self->fogOffset)));
++            SbMatrix back;
++            back.setTranslate(SbVec3f(0.0F, 0.0F, float(self->fogOffset)));
++            SbMatrix viewing = SoViewingMatrixElement::get(state);
++            viewing.multRight(away);
++            back.multRight(self->projection);
++            SoViewingMatrixElement::set(state, self->eyeNode, viewing);
++            SoProjectionMatrixElement::set(state, self->eyeNode, back);
++        }
++        if (self->floatBuffer && !self->fogSet) {
++            // Once per pass, before the first shape (the annotations' paths pass this node again):
++            // linear fog from the camera to beyond the far plane, toward white in the first pass and
++            // toward black in the second, and the background, which a translucent shape may show,
++            // at the screen's fog distance in the first and at 0 in the second. The fog is set on the
++            // viewer's own environment node, which is traversed after this node (and again on the
++            // delayed paths of translucent shapes and annotations): its fog, none by default, would
++            // switch off a fog set here with GL alone. Its fields change without notification, and
++            // measure() gives them back after the passes.
++            if (SoEnvironment* environment = self->viewer->getEnvironment()) {
++                const SbBool notify = environment->enableNotify(FALSE);
++                environment->fogType = SoEnvironment::HAZE;
++                environment->fogColor =
++                    self->measuringPass == 1 ? SbColor(1.0F, 1.0F, 1.0F) : SbColor(0.0F, 0.0F, 0.0F);
++                environment->fogVisibility = float(self->fogEnd);
++                environment->enableNotify(notify);
++            }
++            const float background =
++                self->measuringPass == 1 ? float((self->screenDistance + self->fogOffset) / self->fogEnd) : 0.0F;
++            glClearColor(background, 0.0F, 0.0F, 0.0F);
++            glClear(GL_COLOR_BUFFER_BIT);
++            self->fogSet = true;
++        }
+         return;
+     }
+     if (self->perspective || self->eyeSign == 0 || self->separation == 0.0) {
+@@ -407,12 +457,23 @@ void View3DStereo::measure()
+     // The measuring pass: the scene and its annotations from the camera between the eyes, into a
+     // framebuffer of its own, single-sampled so that its depth can be read whatever the viewport's
+     // anti-aliasing
++    // Its colour is a float per channel: a translucent pixel's distance is read from it (see
++    // View3DStereoFit). Without one, the translucent shapes write depth in the pass and count at
++    // their own distance, which keeps every pixel inside the limits.
+     const QSize want(size[0], size[1]);
+     if (!measuringBuffer || measuringBuffer->size() != want) {
+-        measuringBuffer = std::make_unique<QOpenGLFramebufferObject>(
+-            want,
+-            QOpenGLFramebufferObject::CombinedDepthStencil
+-        );
++        QOpenGLFramebufferObjectFormat format;
++        format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
++        format.setInternalTextureFormat(GL_RGBA32F);
++        measuringBuffer = std::make_unique<QOpenGLFramebufferObject>(want, format);
++        // the driver may give another format than the one asked for (QOpenGLFramebufferObject::format())
++        floatBuffer = measuringBuffer->isValid() && measuringBuffer->format().internalTextureFormat() == GL_RGBA32F;
++        if (!floatBuffer) {
++            measuringBuffer = std::make_unique<QOpenGLFramebufferObject>(
++                want,
++                QOpenGLFramebufferObject::CombinedDepthStencil
++            );
++        }
+     }
+     if (!measuringBuffer->isValid() || !measuringBuffer->bind()) {
+         depthUnreadable = true;
+@@ -421,9 +482,10 @@ void View3DStereo::measure()
+         return;
+     }
+     measuring = true;
+-    drawnCount = 0;
+     sceneDepth.clear();
+     annotationDepth.clear();
++    towardWhite.clear();
++    towardBlack.clear();
+     depthUnreadable = false;
+     projectionSeen = false;
+     if (SoCamera* camera = viewer->getSoRenderManager()->getCamera()) {
+@@ -431,7 +493,29 @@ void View3DStereo::measure()
+         perspective = !camera->isOfType(SoOrthographicCamera::getClassTypeId());
+         focal = camera->focalDistance.getValue();
+     }
+-    viewer->renderScene();
++    SoGLRenderAction* action = viewer->getSoRenderManager()->getGLRenderAction();
++    const SbBool depthWrite = action->getDelayedObjDepthWrite();
++    action->setDelayedObjDepthWrite(floatBuffer ? depthWrite : TRUE);
++    // The environment's fog fields, which the passes change, as the person's view has them
++    SoEnvironment* environment = viewer->getEnvironment();
++    const int fogType = environment ? environment->fogType.getValue() : 0;
++    const SbColor fogColor = environment ? environment->fogColor.getValue() : SbColor(1.0F, 1.0F, 1.0F);
++    const float fogVisibility = environment ? environment->fogVisibility.getValue() : 0.0F;
++    for (measuringPass = 1; measuringPass <= (floatBuffer ? 2 : 1); ++measuringPass) {
++        drawnCount = 0;
++        fogSet = false;
++        viewer->renderScene();
++    }
++    measuringPass = 0;
++    action->setDelayedObjDepthWrite(depthWrite);
++    if (environment && floatBuffer) {
++        const SbBool notify = environment->enableNotify(FALSE);
++        environment->fogType = fogType;
++        environment->fogColor = fogColor;
++        environment->fogVisibility = fogVisibility;
++        environment->enableNotify(notify);
++    }
++    glDisable(GL_FOG);
+     measuring = false;
+     // Back to the left buffer of the viewport, which the left eye draws into
+     widget->makeCurrent(QOpenGLWidget::LeftBuffer);
+@@ -457,19 +541,27 @@ void View3DStereo::sceneDrawn()
+     if (w <= 0 || h <= 0) {
+         return;
+     }
+-    std::vector<GLfloat>& depth = drawnCount++ == 0 ? sceneDepth : annotationDepth;
+-    depth.assign(static_cast<size_t>(w) * h, 1.0F);
+-    while (glGetError() != GL_NO_ERROR) {
++    const bool afterScene = drawnCount++ == 0;
++    auto read = [&](std::vector<GLfloat>& into, GLenum format) {
++        into.assign(static_cast<size_t>(w) * h, format == GL_DEPTH_COMPONENT ? 1.0F : 0.0F);
++        while (glGetError() != GL_NO_ERROR) {
++        }
++        GLint alignment = 4;
++        glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
++        glPixelStorei(GL_PACK_ALIGNMENT, 1);
++        glReadPixels(viewport[0], viewport[1], w, h, format, GL_FLOAT, into.data());
++        const bool failed = glGetError() != GL_NO_ERROR;
++        glPixelStorei(GL_PACK_ALIGNMENT, alignment);
++        if (failed) {
++            depthUnreadable = true;
++            into.clear();
++        }
++    };
++    if (measuringPass <= 1) {
++        read(afterScene ? sceneDepth : annotationDepth, GL_DEPTH_COMPONENT);
+     }
+-    GLint alignment = 4;
+-    glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+-    glReadPixels(viewport[0], viewport[1], w, h, GL_DEPTH_COMPONENT, GL_FLOAT, depth.data());
+-    const bool failed = glGetError() != GL_NO_ERROR;
+-    glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+-    if (failed) {
+-        depthUnreadable = true;
+-        depth.clear();
++    if (!afterScene && floatBuffer) {
++        read(measuringPass == 1 ? towardWhite : towardBlack, GL_RED);
+     }
+ }
+ 
+@@ -507,6 +599,12 @@ void View3DStereo::fit()
+     pixels.sceneDepth = sceneDepth.empty() ? nullptr : sceneDepth.data();
+     pixels.annotationDepth = annotationDepth.size() == sceneDepth.size() ? annotationDepth.data() : nullptr;
+     pixels.count = sceneDepth.size();
++    if (floatBuffer && towardWhite.size() == sceneDepth.size() && towardBlack.size() == sceneDepth.size()) {
++        pixels.towardWhite = towardWhite.data();
++        pixels.towardBlack = towardBlack.data();
++    }
++    pixels.fogEnd = fogEnd;
++    pixels.fogOffset = fogOffset;
+     pixels.screen = c;
+     pixels.nearPlane = nearPlane;
+     const StereoFitDistances measured = stereoFitDistances(pixels, distance);
+@@ -536,7 +634,8 @@ void View3DStereo::fit()
+         auto disparity = [&](double d) {
+             return perspective ? k * t * (1.0 - c / d) : k * t * (d - c);
+         };
+-        line << "freecad stereo3d fit pixels=" << measured.pixels
++        line << "freecad stereo3d fit pixels=" << measured.pixels << " translucent=" << measured.translucent
++             << " unfogged=" << measured.unfogged << " weighted=" << (pixels.towardWhite ? "fog" : "depth-write")
+              << " projection=" << (perspective ? "perspective" : "orthographic")
+              << " limits sunk=" << limits.sunk << " popped=" << limits.popped << " width=" << bufferWidth
+              << " k=" << k << " c=" << c << " nearest=" << (seen ? nearest : 0.0)
+diff --git a/src/Gui/View3DStereo.h b/src/Gui/View3DStereo.h
+index 6630e2c..b6a4460 100644
+--- a/src/Gui/View3DStereo.h
++++ b/src/Gui/View3DStereo.h
+@@ -141,6 +141,14 @@ private:
+ 
+     // The measuring pass
+     bool measuring = false;
++    int measuringPass = 0;            // 1: fogged toward white (and the depth read), 2: toward black
++    bool fogSet = false;              // the pass's fog and background are set
++    bool floatBuffer = true;          // the measuring framebuffer has float colour
++    double fogEnd = 0.0;              // the fog distance where the fog reaches its colour
++    double fogOffset = 0.0;           // added to a distance for the fog (orthographic volumes behind the camera)
++    double screenDistance = 0.0;      // the background's distance: the screen
++    std::vector<float> towardWhite;   // the colour (red) after the annotations, of each pass
++    std::vector<float> towardBlack;
+     int drawnCount = 0;               // sceneDrawn() calls of the measuring pass: the scene, then the annotations
+     std::vector<float> sceneDepth;    // window depth after the scene
+     std::vector<float> annotationDepth;  // and after the annotations, drawn over a cleared depth
+diff --git a/src/Gui/View3DStereoFit.cpp b/src/Gui/View3DStereoFit.cpp
+index 1a1aa63..e761459 100644
+--- a/src/Gui/View3DStereoFit.cpp
++++ b/src/Gui/View3DStereoFit.cpp
+@@ -22,6 +22,7 @@
+  ***************************************************************************/
+ 
+ #include <algorithm>
++#include <cmath>
+ 
+ #include "View3DStereoFit.h"
+ 
+@@ -46,13 +47,54 @@ StereoFitDistances Gui::stereoFitDistances(
+         out.farthest = std::max(out.farthest, d);
+         ++out.pixels;
+     };
+-    // Each pixel counts at the depth of its nearest surface, the scene's and the annotations'
++    const bool colours = in.towardWhite && in.towardBlack && in.fogEnd > 0.0;
++    if (!colours) {
++        // Each pixel counts at the depth of its nearest surface, the scene's and the annotations'
++        for (std::size_t i = 0; i < in.count; ++i) {
++            if (in.sceneDepth[i] < 1.0F) {
++                count(distance(in.sceneDepth[i]));
++            }
++            if (in.annotationDepth && in.annotationDepth[i] < 1.0F) {
++                count(distance(in.annotationDepth[i]));
++            }
++        }
++        return out;
++    }
++    // The pass fogged toward white minus the pass fogged toward black: at every fragment the fog's
++    // share, its distance over fogEnd, blended as the layers are; the fragments' own colours cancel
++    const float backgroundWhite = float((in.screen + in.fogOffset) / in.fogEnd);
+     for (std::size_t i = 0; i < in.count; ++i) {
+-        if (in.sceneDepth[i] < 1.0F) {
+-            count(distance(in.sceneDepth[i]));
++        // the weighted mean fog distance; no fragment's is under the near plane's, which is above 0
++        const double fog = (double(in.towardWhite[i]) - double(in.towardBlack[i])) * in.fogEnd;
++        const bool fogged = fog > 0.5 * (in.nearPlane + in.fogOffset);
++        const double mean = fog - in.fogOffset;
++        // the surface the pixel shows: an annotation drawn over a cleared depth hides the scene
++        const float depth = in.annotationDepth && in.annotationDepth[i] < 1.0F ? in.annotationDepth[i]
++                                                                                 : in.sceneDepth[i];
++        if (depth < 1.0F) {
++            const double surface = distance(depth);
++            const double tolerance = std::max(1e-4 * in.fogEnd, 1e-3 * std::abs(surface));
++            if (!fogged || mean > surface + tolerance) {
++                // drawn without the fog (a shader of its own): its colour says nothing of its distance
++                ++out.unfogged;
++                count(surface);
++                continue;
++            }
++            if (mean < surface - tolerance) {
++                ++out.translucent;  // translucent layers in front of the surface
++            }
++            count(mean);
+         }
+-        if (in.annotationDepth && in.annotationDepth[i] < 1.0F) {
+-            count(distance(in.annotationDepth[i]));
++        else {
++            // no opaque surface: the background alone, or translucent layers over it
++            if (in.towardWhite[i] == backgroundWhite && in.towardBlack[i] == 0.0F) {
++                continue;
++            }
++            if (!fogged) {
++                continue;
++            }
++            ++out.translucent;
++            count(mean);
+         }
+     }
+     return out;
+diff --git a/src/Gui/View3DStereoFit.h b/src/Gui/View3DStereoFit.h
+index 0025ccf..1d6c40e 100644
+--- a/src/Gui/View3DStereoFit.h
++++ b/src/Gui/View3DStereoFit.h
+@@ -43,8 +43,8 @@
+  * over a cleared depth), and, drawn twice with linear fog from the camera (distance 0) to
+  * fogEnd, the colour of the pass fogged toward white and of the pass fogged toward black. Every
+  * fragment's own colour is the same in both, so their difference at a pixel is the fog's share
+- * blended exactly as the layers are: the weighted mean distance over fogEnd. A background seen
+- * through a layer is cleared to the screen's distance over fogEnd in the first and to 0 in the
++ * blended exactly as the layers are: the weighted mean fog distance over fogEnd. A background seen
++ * through a layer is cleared to the screen's fog distance over fogEnd in the first and to 0 in the
+  * second.
+  */
+ 
+@@ -60,7 +60,10 @@ struct GuiExport StereoFitPixels
+     const float* towardWhite = nullptr;      // red channel of the pass fogged toward white
+     const float* towardBlack = nullptr;      // red channel of the pass fogged toward black
+     std::size_t count = 0;
+-    double fogEnd = 0.0;     // the distance where the fog reaches its colour
++    double fogEnd = 0.0;     // the fog distance where the fog reaches its colour
++    // The fog distance is a point's distance plus fogOffset: fog takes the distance without its sign, so an
++    // orthographic view whose volume reaches behind the camera's plane is moved that far along its axis for the fog
++    double fogOffset = 0.0;
+     double screen = 0.0;     // the distance where both eyes meet: the background's
+     double nearPlane = 0.0;  // no fragment stands nearer than this
+ };
+diff --git a/tests/src/Gui/View3DStereoFit.cpp b/tests/src/Gui/View3DStereoFit.cpp
+index 6dcbc64..168d206 100644
+--- a/tests/src/Gui/View3DStereoFit.cpp
++++ b/tests/src/Gui/View3DStereoFit.cpp
+@@ -43,14 +43,15 @@ struct Pixel
+     float black = 0.0F;
+ };
+ 
+-// layers from the back to the front; an opaque one writes depth, a translucent one does not
+-Pixel draw(const std::vector<Layer>& layers, bool fogged = true)
++// layers from the back to the front; an opaque one writes depth, a translucent one does not; the fog
++// distance is the distance plus offset (an orthographic volume reaching behind the camera's plane)
++Pixel draw(const std::vector<Layer>& layers, bool fogged = true, double offset = 0.0)
+ {
+     Pixel p;
+-    double white = screen / fogEnd;
++    double white = (screen + offset) / fogEnd;
+     double black = 0.0;
+     for (const Layer& l : layers) {
+-        const double f = fogged ? 1.0 - l.distance / fogEnd : 1.0;  // share of the fragment's colour
++        const double f = fogged ? 1.0 - (l.distance + offset) / fogEnd : 1.0;  // share of the fragment's colour
+         const double w = f * l.colour + (1.0 - f);
+         const double b = f * l.colour;
+         white = l.alpha * w + (1.0 - l.alpha) * white;
+@@ -64,7 +65,7 @@ Pixel draw(const std::vector<Layer>& layers, bool fogged = true)
+     return p;
+ }
+ 
+-Gui::StereoFitDistances measure(const std::vector<Pixel>& pixels, bool colours = true)
++Gui::StereoFitDistances measure(const std::vector<Pixel>& pixels, bool colours = true, double offset = 0.0)
+ {
+     static std::vector<float> scene, annotation, white, black;
+     scene.clear();
+@@ -85,7 +86,8 @@ Gui::StereoFitDistances measure(const std::vector<Pixel>& pixels, bool colours =
+     in.count = pixels.size();
+     in.fogEnd = fogEnd;
+     in.screen = screen;
+-    in.nearPlane = 1.0;
++    in.nearPlane = offset > 0.0 ? -40.0 : 1.0;
++    in.fogOffset = offset;
+     return Gui::stereoFitDistances(in, distanceOf);
+ }
+ 
+@@ -165,3 +167,12 @@ TEST(View3DStereoFit, withoutColoursEachPixelCountsAtItsNearestSurface)
+     ASSERT_TRUE(d.seen);
+     EXPECT_NEAR(d.nearest, 200.0, 0.01);
+ }
++
++TEST(View3DStereoFit, orthographicVolumeBehindTheCameraPlaneKeepsTheSign)
++{
++    // an orthographic view whose volume starts 40 behind the camera's plane: the fog sees distance + 50
++    const auto d = measure({draw({{10.0, 1.0, 0.3}, {-20.0, 0.5, 0.8}}, true, 50.0), draw({}, true, 50.0)}, true, 50.0);
++    ASSERT_TRUE(d.seen);
++    EXPECT_NEAR(d.nearest, 0.5 * -20.0 + 0.5 * 10.0, 0.01);
++    EXPECT_EQ(d.pixels, 1U);  // the background alone is not counted
++}
