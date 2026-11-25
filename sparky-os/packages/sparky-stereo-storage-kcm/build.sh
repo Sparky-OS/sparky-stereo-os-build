@@ -11,7 +11,7 @@ trap 'rm -rf -- "$work"' EXIT HUP INT TERM
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME='Daniel Ramos (Capitain Jack)'
 cp -a -- "$here" "$work/source"
 cd "$work/source"
-PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 0.1.2+lc1 --toolkit "$toolkit"
+PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 0.1.3+lc1 --toolkit "$toolkit"
 python3 "$toolkit/repo/reproducible.py" normalize-tree "$SOURCE_DATE_EPOCH" .
 case "${1:-}" in
     --source-only) dpkg-source -b . ;;
