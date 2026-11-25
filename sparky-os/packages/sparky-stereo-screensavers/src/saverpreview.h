@@ -89,6 +89,7 @@ private:
     bool m_wasShowing = false;
     bool m_waited = false;
     bool m_ownDepth = false;
+    bool m_paused = false;
 };
 
 /* The selected saver over the whole screen. It ends as a saver does: a key, a

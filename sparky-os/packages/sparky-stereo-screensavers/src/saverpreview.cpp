@@ -170,6 +170,7 @@ QRect SaverPreview::place(QWindow **hostOut) const
 void SaverPreview::restart()
 {
     m_waited = false;
+    m_paused = false;
     m_runner.stop();
     m_surface.hide();
     m_follow.stop();
@@ -236,11 +237,27 @@ void SaverPreview::begin()
 
 void SaverPreview::follow()
 {
+    QWindow *real = nullptr;
+    const QRect now = place(&real);
+    // a window that is not shown (minimized, on another desktop) keeps no saver running
+    if (!real || !real->isExposed()) {
+        if (m_runner.running()) {
+            m_runner.stop();
+            m_surface.hide();
+            m_paused = true;
+            update();
+            Q_EMIT stateChanged();
+        }
+        return;
+    }
+    if (m_paused) {
+        m_paused = false;
+        restart();
+        return;
+    }
     if (!m_runner.running()) {
         return;
     }
-    QWindow *real = nullptr;
-    const QRect now = place(&real);
     if (now.size() != m_rect.size() || (now.isEmpty() != m_rect.isEmpty())) {
         restart(); // another size is another picture: the saver is drawn again at it
         return;
