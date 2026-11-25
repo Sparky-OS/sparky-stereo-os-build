@@ -2,12 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Translate the Plasma free-space notifier's decision into a Problems record."""
 
-import configparser
 import hashlib
 import json
 import locale
 import os
-from pathlib import Path
 import subprocess
 import sys
 
@@ -19,10 +17,7 @@ if sample and (state != 'low' or len(sample) != 2):
 package = 'sparky-stereo-storage-kcm'
 key = 'volume-' + hashlib.sha256(os.fsencode(volume)).hexdigest()
 engine = ['/usr/bin/sparky-stereo-problems']
-rc = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'sparky-storage-cleanuprc'
-config = configparser.ConfigParser(interpolation=None)
-config.read(rc)
-if state == 'recovered' or config.getint('General', 'scheduleMode', fallback=2) != 2:
+if state == 'recovered':
     sys.exit(subprocess.call([*engine, 'clear', '--person', package, key]))
 if sample:
     available, total = map(int, sample)

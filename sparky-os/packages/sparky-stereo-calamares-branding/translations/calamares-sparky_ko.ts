@@ -280,4 +280,43 @@
         <translation>Paweł과 Daniel이 모든 SparkyLinux 에디션을 위해 만들었습니다.</translation>
     </message>
 </context>
+<context>
+    <name>StorageCleanup</name>
+    <message>
+        <source>Choose when to clean the ticked items for this computer and the account you are creating. You can change this later in System Settings.</source>
+        <translation>이 컴퓨터와 지금 만드는 계정에서 선택한 항목을 언제 정리할지 선택하세요. 나중에 시스템 설정에서 바꿀 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Manually</source>
+        <translation>수동</translation>
+    </message>
+    <message>
+        <source>Review and confirm the items whenever you want to clean up.</source>
+        <translation>정리할 때마다 항목을 검토하고 확인합니다.</translation>
+    </message>
+    <message>
+        <source>Weekly</source>
+        <translation>매주</translation>
+    </message>
+    <message>
+        <source>Cleans the ticked items every week without asking again.</source>
+        <translation>선택한 항목을 매주 다시 묻지 않고 정리합니다.</translation>
+    </message>
+    <message>
+        <source>Every two weeks</source>
+        <translation>2주마다</translation>
+    </message>
+    <message>
+        <source>Cleans the ticked items every two weeks without asking again.</source>
+        <translation>선택한 항목을 2주마다 다시 묻지 않고 정리합니다.</translation>
+    </message>
+    <message>
+        <source>Monthly</source>
+        <translation>매월</translation>
+    </message>
+    <message>
+        <source>Cleans the ticked items every month without asking again.</source>
+        <translation>선택한 항목을 매월 다시 묻지 않고 정리합니다.</translation>
+    </message>
+</context>
 </TS>

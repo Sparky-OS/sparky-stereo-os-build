@@ -47,20 +47,44 @@ KCM.SimpleKCM {
             }
 
             QQC.ComboBox {
-                id: scheduleChoice
-                Kirigami.FormData.label: i18n("Schedule")
+                id: periodChoice
+                Kirigami.FormData.label: i18n("Period")
                 Layout.fillWidth: true
-                model: [i18n("Off"), i18n("Weekly reminder"), i18n("Remind me when space is low"), i18n("Weekly cleanup")]
-                currentIndex: kcm.schedule
+                textRole: "label"
+                valueRole: "value"
+                model: [
+                    {value: "manual", label: i18n("Manually")},
+                    {value: "weekly", label: i18n("Weekly")},
+                    {value: "fortnightly", label: i18n("Every two weeks")},
+                    {value: "monthly", label: i18n("Monthly")}
+                ]
+                currentIndex: Math.max(0, indexOfValue(kcm.period))
                 enabled: !kcm.busy
-                onActivated: {
-                    if (currentIndex === 3) {
-                        confirmSchedule.open()
-                    } else {
-                        kcm.setSchedule(currentIndex)
-                    }
-                }
-                Accessible.name: i18n("Schedule")
+                onActivated: kcm.setSchedule(currentValue, kcm.scheduledAction)
+                Accessible.name: i18n("Period")
+            }
+
+            QQC.ComboBox {
+                Kirigami.FormData.label: i18n("At that time")
+                Layout.fillWidth: true
+                textRole: "label"
+                valueRole: "value"
+                model: [
+                    {value: "review", label: i18n("Remind me and let me review")},
+                    {value: "automatic", label: i18n("Clean by itself")}
+                ]
+                currentIndex: Math.max(0, indexOfValue(kcm.scheduledAction))
+                enabled: !kcm.busy && kcm.period !== "manual"
+                onActivated: kcm.setSchedule(kcm.period, currentValue)
+                Accessible.name: i18n("At that time")
+            }
+
+            QQC.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: kcm.period === "manual" ? i18n("Review and confirm the items whenever you want to clean up.")
+                    : kcm.scheduledAction === "automatic" ? i18n("Cleans the ticked items at the chosen time without asking again.")
+                    : i18n("Open the reminder to review the ticked items before confirming removal.")
             }
 
             QQC.CheckBox {
@@ -71,6 +95,38 @@ KCM.SimpleKCM {
                     root.approved = []
                     kcm.chooseAdministrator(checked)
                 }
+            }
+        }
+
+        Kirigami.Heading {
+            level: 2
+            text: i18n("Last runs")
+        }
+
+        QQC.Label {
+            visible: kcm.runs.length === 0
+            text: i18n("No scheduled runs yet.")
+        }
+
+        Repeater {
+            model: kcm.runs
+            QQC.Label {
+                required property var modelData
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                readonly property string summary: modelData.outcome === "failed" ? i18n("Could not start")
+                    : modelData.outcome === "review" ? i18n("Reminder sent")
+                    : modelData.estimated ? i18n("Estimated space freed: %1", kcm.formatSize(modelData.bytes))
+                    : i18n("Space freed: %1", kcm.formatSize(modelData.bytes))
+                readonly property string kinds: Object.keys(modelData.kinds).map(kind => {
+                    const [id, optionId] = kind.split(".")
+                    const cleaner = kcm.cleaners.find(group => group.id === id)
+                    const option = cleaner ? cleaner.options.find(item => item.id === optionId) : null
+                    return option ? cleaner.label + " — " + option.label : cleaner ? cleaner.label : kind
+                }).join(", ")
+                text: [modelData.date + " · " + modelData.mount + " · " + summary,
+                       kinds, modelData.failures ? i18n("Entries needing review: %1", modelData.failures) : "",
+                       modelData.aptDeferred ? i18n("APT items deferred until the next run.") : ""].filter(Boolean).join("\n")
             }
         }
 
@@ -254,17 +310,4 @@ KCM.SimpleKCM {
         }
     }
 
-    QQC.Dialog {
-        id: confirmSchedule
-        anchors.centerIn: parent
-        title: i18n("Weekly cleanup")
-        modal: true
-        standardButtons: QQC.Dialog.Ok | QQC.Dialog.Cancel
-        QQC.Label { text: i18n("Review selected caches each week before removing them?"); wrapMode: Text.Wrap }
-        onAccepted: {
-            kcm.setSchedule(3)
-            scheduleChoice.currentIndex = Qt.binding(() => kcm.schedule)
-        }
-        onRejected: scheduleChoice.currentIndex = Qt.binding(() => kcm.schedule)
-    }
 }

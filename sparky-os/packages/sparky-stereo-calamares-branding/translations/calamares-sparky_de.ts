@@ -280,4 +280,43 @@
         <translation>Gemacht von Paweł und Daniel für jede SparkyLinux-Edition.</translation>
     </message>
 </context>
+<context>
+    <name>StorageCleanup</name>
+    <message>
+        <source>Choose when to clean the ticked items for this computer and the account you are creating. You can change this later in System Settings.</source>
+        <translation>Wählen Sie, wann die markierten Elemente für diesen Computer und das neue Benutzerkonto bereinigt werden. Sie können dies später in den Systemeinstellungen ändern.</translation>
+    </message>
+    <message>
+        <source>Manually</source>
+        <translation>Manuell</translation>
+    </message>
+    <message>
+        <source>Review and confirm the items whenever you want to clean up.</source>
+        <translation>Prüfen und bestätigen Sie die Elemente, wenn Sie eine Bereinigung starten möchten.</translation>
+    </message>
+    <message>
+        <source>Weekly</source>
+        <translation>Wöchentlich</translation>
+    </message>
+    <message>
+        <source>Cleans the ticked items every week without asking again.</source>
+        <translation>Bereinigt die markierten Elemente jede Woche ohne weitere Rückfrage.</translation>
+    </message>
+    <message>
+        <source>Every two weeks</source>
+        <translation>Alle zwei Wochen</translation>
+    </message>
+    <message>
+        <source>Cleans the ticked items every two weeks without asking again.</source>
+        <translation>Bereinigt die markierten Elemente alle zwei Wochen ohne weitere Rückfrage.</translation>
+    </message>
+    <message>
+        <source>Monthly</source>
+        <translation>Monatlich</translation>
+    </message>
+    <message>
+        <source>Cleans the ticked items every month without asking again.</source>
+        <translation>Bereinigt die markierten Elemente jeden Monat ohne weitere Rückfrage.</translation>
+    </message>
+</context>
 </TS>

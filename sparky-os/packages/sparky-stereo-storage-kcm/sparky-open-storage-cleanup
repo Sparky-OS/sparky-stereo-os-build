@@ -6,7 +6,7 @@ import sys
 
 
 if (len(sys.argv) not in (2, 3) or not sys.argv[1].startswith("/")
-        or (len(sys.argv) == 3 and sys.argv[2] not in ("preview", "caches"))):
+        or (len(sys.argv) == 3 and sys.argv[2] not in ("preview", "caches", "admin-preview"))):
     sys.exit(2)
 token = base64.urlsafe_b64encode(os.fsencode(sys.argv[1])).decode("ascii")
 if len(sys.argv) == 3:

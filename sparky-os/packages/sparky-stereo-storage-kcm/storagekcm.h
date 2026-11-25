@@ -17,12 +17,13 @@ class StorageKcm : public KQuickConfigModule
     Q_PROPERTY(bool busy MEMBER m_busy NOTIFY changed)
     Q_PROPERTY(bool readOnly MEMBER m_readOnly NOTIFY changed)
     Q_PROPERTY(bool administrator MEMBER m_admin NOTIFY changed)
-    Q_PROPERTY(int schedule READ schedule NOTIFY changed)
+    Q_PROPERTY(QString period MEMBER m_period NOTIFY changed)
+    Q_PROPERTY(QString scheduledAction MEMBER m_scheduledAction NOTIFY changed)
+    Q_PROPERTY(QVariantList runs MEMBER m_runs NOTIFY changed)
     Q_PROPERTY(int temporaryAge READ temporaryAge NOTIFY changed)
 public:
     StorageKcm(QObject *parent, const KPluginMetaData &data, const QVariantList &args);
     QVariantList volumes() const;
-    int schedule() const;
     int temporaryAge() const;
 
     Q_INVOKABLE void chooseVolume(const QString &path);
@@ -30,7 +31,7 @@ public:
     Q_INVOKABLE void setOption(const QString &cleaner, const QString &option, bool value);
     Q_INVOKABLE void preview();
     Q_INVOKABLE void clean(const QStringList &approved);
-    Q_INVOKABLE void setSchedule(int mode);
+    Q_INVOKABLE void setSchedule(const QString &period, const QString &action);
     Q_INVOKABLE void setTemporaryAge(int days);
     Q_INVOKABLE QString formatSize(qint64 bytes) const;
 
@@ -42,6 +43,7 @@ private:
     QVariantMap describeItem(QVariantMap item) const;
     void activate(const QVariantList &args);
     void catalogue();
+    void loadSchedule();
     void runBleachBit(const QStringList &args, const QString &field, const QByteArray &input = {});
     QString m_volume = QStringLiteral("/");
     QVariantList m_cleaners;
@@ -53,4 +55,7 @@ private:
     bool m_admin = false;
     QString m_openPreview;
     bool m_cachesOnly = false;
+    QString m_period = QStringLiteral("manual");
+    QString m_scheduledAction = QStringLiteral("review");
+    QVariantList m_runs;
 };
