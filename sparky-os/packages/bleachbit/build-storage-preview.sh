@@ -32,11 +32,14 @@ cat "$work/entry" debian/changelog > "$work/changelog"
 mv -- "$work/changelog" debian/changelog
 python3 "$toolkit/repo/reproducible.py" normalize-tree "$SOURCE_DATE_EPOCH" .
 case "${2:-}" in
-    --plain) ;;
-    '') PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 6.0.6-1+stereo3d1+lc1 --toolkit "$toolkit" ;;
+    --plain|--source-only) ;;
+    ''|--lean-source-only) PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 6.0.6-1+stereo3d1+lc1 --toolkit "$toolkit" ;;
     *) exit 2 ;;
 esac
-dpkg-buildpackage -us -uc -j4
+case "${2:-}" in
+    --source-only|--lean-source-only) dpkg-source -b . ;;
+    *) dpkg-buildpackage -us -uc -j4 ;;
+esac
 mkdir -p -- "$OUT"
 for artifact in ../bleachbit_*; do
     case "$artifact" in

@@ -4,7 +4,7 @@ Forwarded: no
 Last-Update: 2026-11-25
 
 diff --git a/bleachbit/CLI.py b/bleachbit/CLI.py
-index 5675e93..4be7135 100644
+index 5675e93..0ee8ab6 100644
 --- a/bleachbit/CLI.py
 +++ b/bleachbit/CLI.py
 @@ -9,8 +9,10 @@ Command line interface
@@ -18,7 +18,7 @@ index 5675e93..4be7135 100644
  import sys
  
  from bleachbit.Cleaner import backends, create_simple_cleaner, register_cleaners
-@@ -239,6 +241,15 @@ def parse_cmd_line(argv=None):
+@@ -239,6 +241,17 @@ def parse_cmd_line(argv=None):
                        # TRANSLATORS: Help for the --preview command on the CLI,
                        # and 'preview' is a verb
                        help=_("preview files to be deleted and other changes"))
@@ -29,12 +29,14 @@ index 5675e93..4be7135 100644
 +                          help=_("limit preview and cleaning to the mounted filesystem"))
 +        parser.add_option("--approved-stdin", action="store_true",
 +                          help=_("read a JSON array of approved preview item IDs from standard input"))
++        parser.add_option("--temporary-age-days", type="int", default=7,
++                          help=_("minimum age of temporary files in days"))
 +        parser.add_option("--set-option", metavar="CLEANER.OPTION",
 +                          help=_("set one option in the saved cleaner selection"))
      parser.add_option("-c", "--clean", action="store_true",
                        # TRANSLATORS: Help for the --clean command on the CLI
                        help=_("run cleaners to delete files and make other permanent changes"))
-@@ -357,6 +368,55 @@ def process_cmd_line():
+@@ -357,6 +370,60 @@ def process_cmd_line():
                '--preview, --clean, --shred'))
          sys.exit(1)
  
@@ -66,13 +68,18 @@ index 5675e93..4be7135 100644
 +        try:
 +            approved = None
 +            if options.clean:
-+                approved = json.loads(sys.stdin.read(16 * 1024 * 1024 + 1))
++                encoded = sys.stdin.read(16 * 1024 * 1024 + 1)
++                if len(encoded) > 16 * 1024 * 1024:
++                    raise ValueError(_("Too many approved preview items."))
++                approved = json.loads(encoded)
 +                if not isinstance(approved, list) or any(
 +                        not isinstance(item, str) or not re.fullmatch(r'[0-9a-f]{64}', item)
 +                        for item in approved):
 +                    raise ValueError(_("Expected an array of approved preview item IDs."))
 +                approved = set(approved)
-+            mode = Structured.Structured(options.volume, approved)
++            if not 1 <= options.temporary_age_days <= 365:
++                raise ValueError(_("Temporary file age must be between 1 and 365 days."))
++            mode = Structured.Structured(options.volume, approved, options.temporary_age_days)
 +            operations = args_to_operations(args, options.preset, options.all_but_warning, excludes)
 +            if operations:
 +                for _step in Worker.Worker(CliCallback(quiet=True), options.clean,
@@ -156,10 +163,10 @@ index 90892c8..abaa16b 100755
                      # allow GTK+ to process the idle loop
 diff --git a/bleachbit/Structured.py b/bleachbit/Structured.py
 new file mode 100644
-index 0000000..7480d24
+index 0000000..9b20623
 --- /dev/null
 +++ b/bleachbit/Structured.py
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,265 @@
 +# SPDX-License-Identifier: GPL-3.0-or-later
 +"""Volume-specific preview and confirmation for BleachBit frontends."""
 +
@@ -243,9 +250,10 @@ index 0000000..7480d24
 +class Structured:
 +    """Filter the real Worker commands before allowing any changes."""
 +
-+    def __init__(self, volume, approved=None):
++    def __init__(self, volume, approved=None, temporary_age=7):
 +        self.volume = os.path.normpath(volume)
 +        self.approved = approved
++        self.temporary_age = temporary_age
 +        self.items = []
 +        self.errors = []
 +        self.seen = set()
@@ -272,10 +280,18 @@ index 0000000..7480d24
 +        private = os.environ.get('TMPDIR')
 +        if private and os.path.isabs(private):
 +            private = os.path.normpath(private)
-+            with open_directory(private) as folder:
-+                info = os.fstat(folder)
-+                if info.st_uid == os.getuid() and info.st_mode & 0o777 == 0o700:
-+                    directories.add(private)
++            home = os.path.normpath(os.path.expanduser('~'))
++            preserved = [os.path.join(home, name) for name in ('Documents', 'Downloads', 'Desktop',
++                         'Pictures', 'Music', 'Videos', '.config', '.local')]
++            if private != home and not any(private == path or private.startswith(path + '/')
++                                          for path in preserved):
++                try:
++                    with open_directory(private) as folder:
++                        info = os.fstat(folder)
++                        if info.st_uid == os.getuid() and info.st_mode & 0o777 == 0o700:
++                            directories.add(private)
++                except OSError as error:
++                    self.blocked('system.tmp', str(error))
 +        for path in sorted(directories):
 +            try:
 +                with open_directory(path) as folder:
@@ -364,7 +380,7 @@ index 0000000..7480d24
 +                if operation == 'system.tmp':
 +                    if os.getuid() != 0 and info.st_uid != os.getuid():
 +                        return
-+                    cutoff = time.time() - 7 * 24 * 3600
++                    cutoff = time.time() - self.temporary_age * 24 * 3600
 +                    if max(info.st_atime, info.st_mtime, info.st_ctime) > cutoff:
 +                        return
 +                result = {
