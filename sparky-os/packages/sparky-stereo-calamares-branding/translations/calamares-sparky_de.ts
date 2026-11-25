@@ -318,5 +318,21 @@
         <source>Cleans the ticked items every month without asking again.</source>
         <translation>Bereinigt die markierten Elemente jeden Monat ohne weitere Rückfrage.</translation>
     </message>
+    <message>
+        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>Die Standardbereinigung kann alte temporäre Dateien, Programm-Caches, archivierte Protokolle, X11-Fehlerprotokolle, Finder-Metadaten, Windows-Vorschaubild-Caches, heruntergeladene APT-Pakete und Paketlisten entfernen.</translation>
+    </message>
+    <message>
+        <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>
+        <translation>Sie kann auch Firefox-Lesezeichensicherungen und Absturzberichte, Vim-Wiederherstellungsdateien, den Inhalt lokaler Postfächer und unzugestellte Nachrichten entfernen, auch aus Warteschlangen deinstallierter Mailprogramme.</translation>
+    </message>
+    <message>
+        <source>Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected.</source>
+        <translation>Die Speicherbereinigung lässt Systemjournale, das Löschen des Auslagerungsspeichers und das Komprimieren der Firefox- und Thunderbird-Datenbanken aus, auch wenn sie in BleachBit ausgewählt sind.</translation>
+    </message>
+    <message>
+        <source>Documents, pictures, downloads and settings are never cleaned.</source>
+        <translation>Dokumente, Bilder, Downloads und Einstellungen werden bei der Bereinigung nie entfernt.</translation>
+    </message>
 </context>
 </TS>

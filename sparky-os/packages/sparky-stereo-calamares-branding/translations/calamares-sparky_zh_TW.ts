@@ -318,5 +318,21 @@
         <source>Cleans the ticked items every month without asking again.</source>
         <translation>每月清理勾選的項目，無須再次確認。</translation>
     </message>
+    <message>
+        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>預設清理可能移除舊的暫存檔、應用程式快取、輪替後的記錄、X11 錯誤記錄、Finder 中繼資料、Windows 縮圖快取、APT 下載的套件及套件清單。</translation>
+    </message>
+    <message>
+        <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>
+        <translation>清理也可能移除 Firefox 的書籤備份與當機報告、Vim 的復原檔、本機信箱中的郵件及未投遞郵件，包括已解除安裝的郵件程式佇列中殘留的郵件。</translation>
+    </message>
+    <message>
+        <source>Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected.</source>
+        <translation>即使在 BleachBit 中勾選這些項目，儲存空間清理也會跳過清除系統日誌、抹除交換空間以及整理 Firefox 和 Thunderbird 的資料庫。</translation>
+    </message>
+    <message>
+        <source>Documents, pictures, downloads and settings are never cleaned.</source>
+        <translation>清理絕不會刪除文件、圖片、下載的檔案或設定。</translation>
+    </message>
 </context>
 </TS>

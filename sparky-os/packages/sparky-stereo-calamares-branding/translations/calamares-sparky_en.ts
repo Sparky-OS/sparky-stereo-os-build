@@ -318,5 +318,21 @@
         <source>Cleans the ticked items every month without asking again.</source>
         <translation>Cleans the ticked items every month without asking again.</translation>
     </message>
+    <message>
+        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</translation>
+    </message>
+    <message>
+        <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>
+        <translation>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</translation>
+    </message>
+    <message>
+        <source>Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected.</source>
+        <translation>Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected.</translation>
+    </message>
+    <message>
+        <source>Documents, pictures, downloads and settings are never cleaned.</source>
+        <translation>Documents, pictures, downloads and settings are never cleaned.</translation>
+    </message>
 </context>
 </TS>

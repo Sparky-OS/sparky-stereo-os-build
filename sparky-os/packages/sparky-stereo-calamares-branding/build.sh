@@ -5,10 +5,11 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION='20261125~sparky9~0+lc1'
+VERSION='20261125.1~sparky9~0+lc1'
 PACKAGE=sparky-stereo-calamares-branding
 DEPENDS='calamares, libstereo-layer1 (>= 1.4.1), qml6-module-qtquick-window'
 RECOMMENDS='calamares (>= 3.4.3~sparky9~4-1+stereo3d1)'
+python3 "$HERE/../sparky-stereo-storage-kcm/tests/check-default-summary.py" "$HERE/.."
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.calamares-branding.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
