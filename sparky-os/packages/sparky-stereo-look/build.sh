@@ -23,7 +23,7 @@ OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 sparky_provenance_init "$IMAGE" "$HERE"
 TREE=$(cd "$HERE/../../.." && pwd)
-VERSION=${VERSION:-20261125~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261125.1~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -89,10 +89,13 @@ build() { # dir package: the Lean Code package and its source, then the gate tha
 D=$WORK/sparky-stereo-look
 T=$D/$LNF/org.sparkystereo.desktop
 mkdir -p "$T/contents" "$D/etc/xdg" "$D/usr/share/kglobalaccel" "$D/usr/share/plasma/desktoptheme" "$D/usr/share/color-schemes"
-cp "$HERE/default/color-schemes/SparkyStereoOxygenDark.colors" "$D/usr/share/color-schemes/"   # Oxygen Dark with a readable active title
+cp "$HERE/default/color-schemes/SparkyStereoOxygenDark.colors" "$D/usr/share/color-schemes/"   # Oxygen Dark, every text at 4.5:1 or more (row 68)
 # Konsole's Breeze (Konsole 26.08.3, data/color-schemes/Breeze.colorscheme) with its intense red at 4.5:1 on its background
 # (queue row 68); Konsole looks for a scheme in the data folders before its built-in copy, and a person's own copy wins
 install -D -m 644 "$HERE/default/konsole/Breeze.colorscheme" "$D/usr/share/konsole/Breeze.colorscheme"
+# KDE's original Breeze stays selectable under its own name, "Breeze (KDE's original colours)" (the file above shadows the
+# built-in one of the same name; Daniel, 2026-10-08: "do not remove functionality")
+install -D -m 644 "$HERE/default/konsole/BreezeKDEOriginal.colorscheme" "$D/usr/share/konsole/BreezeKDEOriginal.colorscheme"
 # Sparky Stereo Oxygen: Oxygen's Plasma style with every background at 91 % alpha, foreground inherited from Oxygen
 cp -a "$HERE/default/desktoptheme/sparky-stereo-oxygen" "$D/usr/share/plasma/desktoptheme/"
 cp "$HERE/default/kglobalaccel/org.sparkystereo.systemmonitor.desktop" "$D/usr/share/kglobalaccel/"
@@ -120,7 +123,7 @@ install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input
 install -D -m 644 "$HERE/default/needrestart.conf" "$D/etc/needrestart/conf.d/90-sparky-stereo.conf"
 install -D -m 644 "$HERE/default/flathub.flatpakrepo" "$D/usr/share/flatpak/remotes.d/flathub.flatpakrepo"
 control "$D" sparky-stereo-look \
-	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-sounds, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, python3, xdg-user-dirs, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk (>= 20261123~sparky9~0+lc1), kde-style-oxygen-qt5, plasma5-integration, fonts-oxygen, qml6-module-qtquick, libstereo-layer1 (>= 1.22.0)" \
+	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-sounds, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, python3, xdg-user-dirs, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk (>= 20261125~sparky9~0+lc1), kde-style-oxygen-qt5, plasma5-integration, fonts-oxygen, qml6-module-qtquick, libstereo-layer1 (>= 1.22.0)" \
 	"sparkyos-artwork, sparky-stereo-look-kubabbar-glass" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
@@ -131,9 +134,10 @@ control "$D" sparky-stereo-look \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
 	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)." \
 	"In Dolphin's split view the inactive pane's background is translucent. The colours are" \
-	"Oxygen Dark with a readable active window title and its negative, positive and" \
-	"link texts at 4.5:1 or more (Sparky Stereo Oxygen Dark). Konsole's Breeze colours" \
-	"have their bright red (the root prompt, errors) at 4.5:1 or more." \
+	"Oxygen Dark with every text at 4.5:1 or more on its own backgrounds, in focused and" \
+	"unfocused windows, hues kept (Sparky Stereo Oxygen Dark). Konsole's Breeze colours" \
+	"have their bright red (the root prompt, errors) at 4.5:1 or more; KDE's original" \
+	"Breeze stays selectable as \"Breeze (KDE's original colours)\"." \
 	"Search lists installed applications first, then settings. Power actions and" \
 	"unit conversion remain available. Currency rates refresh only when converting a currency." \
 	"Web search and the online dictionary are off by default." \
@@ -168,7 +172,11 @@ Copyright The Oxygen Project, GPL; only its background SVGs are changed (91 % al
 foreground artwork is inherited; licence texts in /usr/share/plasma/desktoptheme/sparky-stereo-oxygen/.
 Konsole's Breeze colour scheme (/usr/share/konsole/Breeze.colorscheme): Konsole 26.08.3's
 data/color-schemes/Breeze.colorscheme, Copyright the Konsole developers (KDE), GPL-2.0-or-later, Konsole's
-licence; one value changed (Color1Intense, 2026, Daniel Ramos (Capitain Jack)).
+licence; one value changed (Color1Intense, 2026, Daniel Ramos (Capitain Jack)). KDE's original, unchanged but for its
+Description, is /usr/share/konsole/BreezeKDEOriginal.colorscheme.
+Sparky Stereo Oxygen Dark colour scheme: KDE Oxygen's Oxygen Dark (Filip Fila, Oxygen merge request 122), Copyright the
+Oxygen team, GPL; its active window title text (255,232,223) is the value of Benoit Marchand's Oxygen commit 31fa64d2
+(merge request 156), merged upstream on 2026-10-19; texts brought to 4.5:1 (2026, Daniel Ramos (Capitain Jack)).
 On Debian systems the GPL is in /usr/share/common-licenses/GPL-2.
 EOF
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/sparky-stereo-look/README"
@@ -185,7 +193,12 @@ rm -f "$D/$LNF/org.kde.sparkyblack.desktop/metadata.desktop"
 cp "$HERE/sparkyblack/splash/Splash.qml" "$D/$LNF/org.kde.sparkyblack.desktop/contents/splash/Splash.qml"   # bottomRect fix
 cp "$HERE/sparkyblack/metadata.json" "$D/$LNF/org.kde.sparkyblack.desktop/"
 cp "$HERE/sparkyblack/defaults" "$D/$LNF/org.kde.sparkyblack.desktop/contents/defaults"
+# Sparky Stereo Oxygen: Debian's KDE Oxygen colours with every text at 4.5:1 or more, under its own name; Debian's Oxygen
+# stays selectable (queue row 68)
+install -D -m 644 "$HERE/sparkyblack/color-schemes/SparkyStereoOxygen.colors" "$D/usr/share/color-schemes/SparkyStereoOxygen.colors"
 cp -a /usr/share/plasma/desktoptheme/sparkyblack "$D/usr/share/plasma/desktoptheme/"
+# the Plasma style's own colours with every text at 4.5:1 or more on its backgrounds (queue row 68)
+install -m 644 "$HERE/sparkyblack/desktoptheme/colors" "$D/usr/share/plasma/desktoptheme/sparkyblack/colors"
 localize_theme "$D/usr/share/plasma/desktoptheme/sparkyblack/metadata.desktop" "$HERE/sparkyblack/plasma-style-l10n.ini"
 rsync -a --no-owner --no-group --exclude=.directory /usr/share/icons/sparkyblack "$D/usr/share/icons/"   # .directory: a root-only folder-view file
 localize_theme "$D/usr/share/icons/sparkyblack/index.theme" "$HERE/sparkyblack/icon-theme-l10n.ini"
@@ -199,7 +212,8 @@ control "$D" sparky-stereo-look-sparkyblack "sparky-stereo-look, kwin-style-auro
 	"splash, names the cursor that exists, and uses the qt6ct style instead of" \
 	"QtCurve, which has no Qt 6 build), the Plasma style, icons and cursor, the" \
 	"Plymouth theme sparky-lines, the SDDM theme sparky-stereo-black (a Qt 6 port) and the GRUB" \
-	"background (in /usr/share/sparky-stereo/grub, not activated)."
+	"background (in /usr/share/sparky-stereo/grub, not activated). Its colours are Sparky" \
+	"Stereo Oxygen: KDE's Oxygen with every text at 4.5:1 or more; Oxygen stays selectable."
 cat >"$D/usr/share/doc/sparky-stereo-look-sparkyblack/copyright" <<'EOF'
 Sparky black.
 Global theme, Plasma style, icons, cursor, GRUB background: Copyright Daniel Ramos (Capitain Jack),
@@ -208,6 +222,8 @@ Plymouth sparky-lines: a modified Debian 8 "Jessie" lines theme, GPL-2.0-or-late
 SDDM sparky-stereo-black: David Edmundson, Pawel Pijanowski (pavroo), Daniel Ramos (Capitain Jack);
 derived from the Breeze SDDM theme; ported to Qt 6 by Daniel Ramos (Capitain Jack) 2026.
 Splash: Marco Martin (KDE, Oxygen), with the bottomRect fix by Daniel Ramos (Capitain Jack).
+Sparky Stereo Oxygen colour scheme: KDE's Oxygen colour scheme (Debian's plasma-theme-oxygen), Copyright the Oxygen
+team, GPL; texts brought to 4.5:1 and named Sparky Stereo Oxygen (2026, Daniel Ramos (Capitain Jack)).
 On Debian systems the GPL is in /usr/share/common-licenses/.
 EOF
 build "$D" sparky-stereo-look-sparkyblack
@@ -223,17 +239,20 @@ cp -a "$SB/contents/splash" "$T/contents/"
 cp "$HERE/sparkyblack/splash/Splash.qml" "$T/contents/splash/Splash.qml"   # bottomRect fix
 cp -a "$QP" "$D/usr/share/plasma/desktoptheme/"
 cp -a "$QPDECO" "$D/usr/share/aurorae/themes/"
-cp "$QP"/color-schemes/*.colors "$D/usr/share/color-schemes/"
+# Zinjanthr0pus's four colour schemes with every text at 4.5:1 or more (queue row 68), from this recipe
+cp "$HERE"/qplatinum/color-schemes/*.colors "$D/usr/share/color-schemes/"
 control "$D" sparky-stereo-look-qplatinum \
 	"sparky-stereo-look-sparkyblack, kwin-style-aurorae, qt6ct" "" \
 	"QPlatinum look: the System 8 Platinum appearance" \
 	"Zinjanthr0pus's QPlatinum Plasma style and colour schemes and the" \
 	"QPlatinum22p window decoration, as a global theme with Sparky black's" \
-	"icons, cursor and splash."
+	"icons, cursor and splash. Every text of the four colour schemes reads at" \
+	"4.5:1 or more on its own backgrounds."
 cat >"$D/usr/share/doc/sparky-stereo-look-qplatinum/copyright" <<'EOF'
 QPlatinum look.
 QPlatinum Plasma style and colour schemes: Copyright Zinjanthr0pus, AGPL-3.0 (the LICENSE
-file in /usr/share/plasma/desktoptheme/QPlatinum; its metadata says GPLv3).
+file in /usr/share/plasma/desktoptheme/QPlatinum; its metadata says GPLv3). The four colour schemes' texts
+brought to 4.5:1, hues kept (2026, Daniel Ramos (Capitain Jack)).
 QPlatinum22p window decoration: Niels / Zinjanthr0pus, GPL-3.0
 (https://github.com/nielsvm/kde-aurorae-platinum; LICENSE in its theme folder).
 Global theme definition: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later.

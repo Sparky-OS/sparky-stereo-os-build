@@ -435,18 +435,179 @@ def parse_rgb(value):
     return parts if len(parts) == 3 else None
 
 
+# ---------------------------------------------------------------------------- KDE's inactive-window colours
+# A port of what KColorScheme does to a scheme's colours in a window without focus (KF6 kcolorscheme.cpp, StateEffects and
+# the Selection set's ChangeSelectionColor branch) with KColorUtils' arithmetic (kguiaddons kcolorutils.cpp and
+# kcolorspaces.cpp: HCY on gamma 2.2, Rec. 709 luma), QColor's 16-bit channels and 8-bit rounding included, so a variant
+# can keep its texts at 4.5:1 in unfocused windows too (queue row 68). Checked against KColorScheme itself in the lane.
+
+def _q16(x):
+    return round(min(1.0, max(0.0, x)) * 65535) / 65535.0
+
+
+def _to8(f):
+    x = round(min(1.0, max(0.0, f)) * 65535)
+    return (x - (x >> 8) + 0x80) >> 8
+
+
+def _norm(a):
+    return a if 0.0 < a < 1.0 else (0.0 if a <= 0.0 or a != a else 1.0)
+
+
+_YC = (0.2126, 0.7152, 0.0722)
+
+
+def _hcy(c):
+    r, g, b = (_norm(x) ** 2.2 for x in c)
+    y = r * _YC[0] + g * _YC[1] + b * _YC[2]
+    p, n = max(r, g, b), min(r, g, b)
+    d = 6.0 * (p - n)
+    if n == p:
+        h = 0.0
+    elif r == p:
+        h = (g - b) / d
+    elif g == p:
+        h = (b - r) / d + 1.0 / 3.0
+    else:
+        h = (r - g) / d + 2.0 / 3.0
+    ch = 0.0 if r == g == b else max((y - n) / y, (p - y) / (1 - y))
+    return [h, ch, y]
+
+
+def _from_hcy(h, c, y):
+    h = h % 1.0 if h % 1.0 > 0 else 0.0
+    c, y = _norm(c), _norm(y)
+    hs = h * 6.0
+    if hs < 1.0:
+        th = hs; tm = _YC[0] + _YC[1] * th
+    elif hs < 2.0:
+        th = 2.0 - hs; tm = _YC[1] + _YC[0] * th
+    elif hs < 3.0:
+        th = hs - 2.0; tm = _YC[1] + _YC[2] * th
+    elif hs < 4.0:
+        th = 4.0 - hs; tm = _YC[2] + _YC[1] * th
+    elif hs < 5.0:
+        th = hs - 4.0; tm = _YC[2] + _YC[0] * th
+    else:
+        th = 6.0 - hs; tm = _YC[0] + _YC[2] * th
+    if tm >= y:
+        tp = y + y * c * (1.0 - tm) / tm
+        to = y + y * c * (th - tm) / tm
+        tn = y - y * c
+    else:
+        tp = y + (1.0 - y) * c
+        to = y + (1.0 - y) * c * (th - tm) / (1.0 - tm)
+        tn = y - (1.0 - y) * c * tm / (1.0 - tm)
+    ig = lambda v: _norm(v) ** (1.0 / 2.2)   # noqa: E731
+    order = [(tp, to, tn), (to, tp, tn), (tn, tp, to), (tn, to, tp), (to, tn, tp), (tp, tn, to)][min(5, int(hs))]
+    return [_q16(ig(v)) for v in order]
+
+
+def _luma(c):
+    return _hcy(c)[2]
+
+
+def _mixf(a, b, t):
+    return a + (b - a) * t
+
+
+def _kmix(c1, c2, bias):
+    if bias <= 0.0:
+        return c1
+    if bias >= 1.0:
+        return c2
+    return [_q16(_mixf(a, b, bias)) for a, b in zip(c1, c2)]
+
+
+def _ratio(y1, y2):
+    return (max(y1, y2) + 0.05) / (min(y1, y2) + 0.05)
+
+
+def _ktint(base, color, amount):
+    if amount <= 0.0:
+        return base
+    if amount >= 1.0:
+        return color
+    by = _luma(base)
+    rg = 1.0 + (_ratio(by, _luma(color)) + 1.0) * amount ** 3
+    u, lo, a = 1.0, 0.0, 0.5
+    for _ in range(12):
+        a = 0.5 * (lo + u)
+        ry = _mixf(by, _luma(_kmix(base, color, a ** 0.3)), a)
+        if _ratio(by, ry) > rg:
+            u = a
+        else:
+            lo = a
+    h, c, _y = _hcy(_kmix(base, color, a ** 0.3))
+    return _from_hcy(h, c, _mixf(by, _luma(_kmix(base, color, a ** 0.3)), a))
+
+
+def _effects(cfg):
+    """The [ColorEffects:Inactive] group as KColorScheme reads it (defaults for an inactive window)."""
+    g = 'ColorEffects:Inactive'
+    truth = lambda v, d: d if v is None else str(v).strip().lower() in ('true', '1')   # noqa: E731
+    num = lambda k, d: float(cfg.get(g, k)) if cfg.get(g, k) not in (None, '') else d   # noqa: E731
+    enabled = truth(cfg.get(g, 'Enable'), False)
+    eff = {'change_selection': truth(cfg.get(g, 'ChangeSelectionColor'), truth(cfg.get(g, 'Enable'), True)),
+           'intensity': 0, 'color': 0, 'contrast': 0}
+    if enabled:
+        eff.update(intensity=int(num('IntensityEffect', 0)), color=int(num('ColorEffect', 1)), contrast=int(num('ContrastEffect', 2)),
+                   ia=num('IntensityAmount', 0.0), ca=num('ColorAmount', -0.9), ka=num('ContrastAmount', 0.25),
+                   col=[x / 255.0 for x in (parse_rgb(cfg.get(g, 'Color') or '') or [112, 111, 110])])
+    return eff
+
+
+def _global(c, e):
+    if e['intensity'] in (1, 2, 3):
+        h, ch, y = _hcy(c)
+        if e['intensity'] == 1:
+            y, ch = _norm(y + e['ia']), _norm(ch)
+        elif e['intensity'] == 2:
+            y = _norm(y * (1.0 - e['ia']))
+        else:
+            y = 1.0 - _norm((1.0 - y) * (1.0 - e['ia']))
+        c = _from_hcy(h, ch, y)
+    if e['color'] == 1:
+        h, ch, y = _hcy(c)
+        c = _from_hcy(h, _norm(ch * (1.0 - e['ca'])), _norm(y))
+    elif e['color'] == 2:
+        c = _kmix(c, e['col'], e['ca'])
+    elif e['color'] == 3:
+        c = _ktint(c, e['col'], e['ca'])
+    return c
+
+
+def inactive_colours(fg, bg_normal, backgrounds, eff, tint=None):
+    """A text and its backgrounds as KColorScheme gives them in an unfocused window: tint (the selection colour, for a
+    selected row drawn from the Window set), then the contrast effect against the normal background, then the effects."""
+    f = [x / 255.0 for x in fg]
+    bn = [x / 255.0 for x in bg_normal]
+    bs = [[x / 255.0 for x in b] for b in backgrounds]
+    if tint is not None:
+        t = [x / 255.0 for x in tint]
+        bn = _ktint(bn, t, 0.4)
+        bs = [_ktint(b, t, 0.4) for b in bs]
+    if eff['contrast'] == 1:
+        f = _kmix(f, bn, eff['ka'])
+    elif eff['contrast'] == 2:
+        f = _ktint(f, bn, eff['ka'])
+    f = _global(f, eff)
+    bs = [_global(b, eff) for b in bs]
+    return [_to8(x) for x in f], [[_to8(x) for x in b] for b in bs]
+
+
 def mix(rgb, t, end):
     return [round(c + (end - c) * t) for c in rgb]
 
 
-def reach(colours, backgrounds, target=4.5):
+def reach(colours, backgrounds, target=4.5, also=None):
     """The map's colours moved together, one shared step at a time, towards white (dark backgrounds) or black (light ones)
-    until every one reaches the target on every background: one shared step keeps the map's lightness ladder, so colours
-    that differ in lightness for a person without hues still differ."""
+    until every one reaches the target on every background (and passes `also`, the unfocused-window check): one shared
+    step keeps the map's lightness ladder, so colours that differ in lightness for a person without hues still differ."""
     end = 255 if max(luminance(b) for b in backgrounds) < 0.18 else 0
     for step in range(0, 201):
         moved = [mix(c, step / 200.0, end) for c in colours]
-        if all(contrast(c, b) >= target for c in moved for b in backgrounds):
+        if all(contrast(c, b) >= target for c in moved for b in backgrounds) and (also is None or also(moved)):
             return moved
     return moved
 
@@ -454,6 +615,8 @@ def reach(colours, backgrounds, target=4.5):
 def write_variant(base_file, target_file, kind):
     maps = json.loads((SHARE / 'maps.json').read_text())[kind]
     cfg = KConfigFile(base_file)
+    eff = _effects(cfg)
+    selection = parse_rgb(cfg.get('Colors:Selection', 'BackgroundNormal') or '')
     for g in GROUPS:
         group = f'Colors:{g}'
         if cfg.group(group) is None:
@@ -464,7 +627,19 @@ def write_variant(base_file, target_file, kind):
             continue
         side = 'dark' if luminance(backs[0]) < 0.18 else 'light'
         roles = [r for r, key in ROLE_KEYS.items() if cfg.get(group, key) is not None]
-        for role, rgb in zip(roles, reach([maps[side][r] for r in roles], backs)):
+        # in an unfocused window: the group's own texts, and for Window also a selected row drawn from it
+        views = [] if g == 'Selection' and eff['change_selection'] else [None]
+        if g == 'Window' and eff['change_selection'] and selection:
+            views.append(selection)
+
+        def unfocused(moved, backs=backs, views=views):
+            for c in moved:
+                for tint in views:
+                    f, bs = inactive_colours(c, backs[0], backs, eff, tint)
+                    if any(contrast(f, b) < 4.5 for b in bs):
+                        return False
+            return True
+        for role, rgb in zip(roles, reach([maps[side][r] for r in roles], backs, also=unfocused)):
             cfg.set(group, ROLE_KEYS[role], ','.join(str(c) for c in rgb))
     base_name = cfg.get('General', 'Name') or base_file.stem
     cfg.set('General', 'Name', f'{base_name} ({KIND_PHRASES[kind]})')

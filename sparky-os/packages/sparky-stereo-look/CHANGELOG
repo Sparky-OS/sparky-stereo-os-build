@@ -1,3 +1,26 @@
+20261125.1~sparky9~0 (2026-11-25)
+  * Every text of the edition's looks reads at 4.5:1 or more (WCAG 2.2, 1.4.3) on its group's normal and alternate
+    background, in focused and in unfocused windows, as KColorScheme itself gives the colours, each hue kept as close as
+    the ratio allows (queue row 68; Daniel, 2026-11-25: "yes, fix them. bring them to a readable level"): Sparky Stereo
+    Oxygen Dark (its visited texts, its Selection group and every other text the measure found; the Selection group's
+    alternate background, a blue left from Oxygen, is now the selection's orange) and the default Plasma style's own
+    colours; Sparky Black's colours, now its own scheme Sparky Stereo Oxygen (KDE's Oxygen corrected; Oxygen stays
+    selectable), and its Plasma style's colours; QPlatinum's four schemes, now carried in this recipe. Where a text moved,
+    the meaningful pairs (negative, positive and neutral against each other, link against visited, negative and positive
+    against the normal text) are kept as far apart as they were, for normal vision and seven kinds of colour vision, or
+    at 5 (CIEDE2000), except where a background leaves too narrow a band (listed in the row's tables). An alternate
+    background moves, lightness only, only where no text can read on both. Earthtones Platinum's unfocused windows no
+    longer fade their texts toward the background (its colour fade stays): with that fade a readable text had to be
+    near black and lost its colour. Colour groups and keys a scheme left to KDE's defaults are written out as KDE gives
+    them, corrected.
+  * KDE's original Breeze for Konsole stays selectable as "Breeze (KDE's original colours)", in ten languages
+    (/usr/share/konsole/BreezeKDEOriginal.colorscheme), beside the edition's Breeze, which shadows Konsole's built-in one
+    of the same name (Daniel, 2026-10-08: "do not remove functionality").
+  * Sparky Stereo Oxygen Dark's active window title text (255,232,223), set by the edition on 2026-10-31, is the value of
+    Benoit Marchand's commit 31fa64d2 in KDE's Oxygen ("OxygenDark: Improve active titlebar text contrast", merge
+    request 156), merged upstream on 2026-10-19: credited in ATTRIBUTIONS.md and the copyright file.
+  * Depends on sparky-stereo-gtk (>= 20261125~sparky9~0+lc1), whose GTK themes take the same corrected colours.
+
 20261125~sparky9~0 (2026-11-25)
   * The two contrast failures of the edition's look are fixed for everyone (queue row 68; the accessibility study's answer 5,
     accepted by Daniel on 2026-10-14: "The two contrast failures are fixed for everyone, and the hues become a switch"):
