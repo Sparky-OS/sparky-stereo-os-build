@@ -8,17 +8,17 @@ import org.kde.kirigami as Kirigami
 KCM.SimpleKCM {
     id: root
     property var approved: []
-    property bool reviewed: false
     function selectItem(id, selected) {
         approved = selected ? approved.concat([id]) : approved.filter(item => item !== id)
     }
 
     ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
-        RowLayout {
+        Kirigami.FormLayout {
             Layout.fillWidth: true
-            QQC.Label { text: i18n("Volume") }
+
             QQC.ComboBox {
+                Kirigami.FormData.label: i18n("Volume")
                 Layout.fillWidth: true
                 model: kcm.volumes
                 textRole: "label"
@@ -31,19 +31,9 @@ KCM.SimpleKCM {
                 }
                 Accessible.name: i18n("Volume")
             }
-        }
-        QQC.CheckBox {
-            text: i18n("Show administrator items")
-            checked: kcm.administrator
-            enabled: !kcm.busy
-            onClicked: {
-                root.approved = []
-                kcm.chooseAdministrator(checked)
-            }
-        }
-        RowLayout {
-            QQC.Label { text: i18n("Minimum age of temporary files (days)") }
+
             QQC.SpinBox {
+                Kirigami.FormData.label: i18n("Minimum age of temporary files (days)")
                 from: 1
                 to: 365
                 value: kcm.temporaryAge
@@ -55,15 +45,48 @@ KCM.SimpleKCM {
                     kcm.setTemporaryAge(value)
                 }
             }
-        }
-        RowLayout {
-            QQC.Button {
-                text: i18n("Preview")
+
+            QQC.ComboBox {
+                id: scheduleChoice
+                Kirigami.FormData.label: i18n("Schedule")
+                Layout.fillWidth: true
+                model: [i18n("Off"), i18n("Weekly reminder"), i18n("Remind me when space is low"), i18n("Weekly cleanup")]
+                currentIndex: kcm.schedule
+                enabled: !kcm.busy
+                onActivated: {
+                    if (currentIndex === 3) {
+                        confirmSchedule.open()
+                    } else {
+                        kcm.setSchedule(currentIndex)
+                    }
+                }
+                Accessible.name: i18n("Schedule")
+            }
+
+            QQC.CheckBox {
+                text: i18n("Show administrator items")
+                checked: kcm.administrator
                 enabled: !kcm.busy
                 onClicked: {
                     root.approved = []
-                    root.reviewed = true
-                    kcm.preview()
+                    kcm.chooseAdministrator(checked)
+                }
+            }
+        }
+
+        RowLayout {
+            QQC.Button {
+                readonly property bool canClean: !kcm.readOnly && root.approved.length > 0
+                text: canClean ? i18n("Clean up…") : i18n("Preview")
+                enabled: !kcm.busy
+                highlighted: true
+                onClicked: {
+                    if (canClean) {
+                        confirm.open()
+                    } else {
+                        root.approved = []
+                        kcm.preview()
+                    }
                 }
             }
             QQC.BusyIndicator { running: kcm.busy; visible: running }
@@ -77,40 +100,76 @@ KCM.SimpleKCM {
 
         QQC.Label {
             text: i18n("No items to review on this volume.")
-            visible: root.reviewed && !kcm.busy && !kcm.items.length && !kcm.errors.length
+            visible: kcm.previewed && !kcm.busy && !kcm.items.length && !kcm.errors.length
         }
 
         Repeater {
             model: kcm.errors
-            delegate: QQC.Label {
+            delegate: ColumnLayout {
                 required property var modelData
                 Layout.fillWidth: true
-                text: [modelData.operation, modelData.path, modelData.reason].filter(Boolean).join(" — ")
-                wrapMode: Text.WrapAnywhere
+                QQC.Label {
+                    readonly property var names: [modelData.cleanerLabel, modelData.optionLabel].filter(Boolean)
+                    text: names.join(" — ")
+                    visible: text !== ""
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                QQC.Label {
+                    text: modelData.reason
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                QQC.Label {
+                    text: modelData.path || ""
+                    visible: text !== ""
+                    opacity: 0.75
+                    Layout.fillWidth: true
+                    wrapMode: Text.WrapAnywhere
+                }
             }
         }
 
         Repeater {
             model: kcm.items
-            delegate: QQC.CheckBox {
+            delegate: ColumnLayout {
                 required property var modelData
                 Layout.fillWidth: true
-                text: i18n("%1 · %2 · %3", modelData.label, modelData.path,
-                           modelData.estimated ? i18n("%1 (estimate)", kcm.formatSize(modelData.bytes))
-                                               : kcm.formatSize(modelData.bytes))
-                checked: root.approved.includes(modelData.id)
-                enabled: !kcm.busy && !kcm.readOnly
-                QQC.ToolTip.text: [modelData.description, modelData.warning].filter(Boolean).join("\n")
-                QQC.ToolTip.visible: hovered && QQC.ToolTip.text !== ""
-                Accessible.description: QQC.ToolTip.text
-                onToggled: root.selectItem(modelData.id, checked)
-            }
-        }
+                spacing: Kirigami.Units.smallSpacing
 
-        QQC.Button {
-            text: i18n("Clean up…")
-            enabled: !kcm.busy && !kcm.readOnly && root.approved.length > 0
-            onClicked: confirm.open()
+                QQC.CheckBox {
+                    readonly property var names: [modelData.cleanerLabel, modelData.optionLabel].filter(Boolean)
+                    text: names.length ? names.join(" — ") : modelData.label
+                    font.bold: true
+                    checked: root.approved.includes(modelData.id)
+                    enabled: !kcm.busy && !kcm.readOnly
+                    Accessible.description: [modelData.description, modelData.warning, modelData.path].filter(Boolean).join("\n")
+                    onToggled: root.selectItem(modelData.id, checked)
+                }
+                QQC.Label {
+                    text: modelData.description || modelData.label
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                QQC.Label {
+                    text: modelData.warning || ""
+                    visible: text !== ""
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                }
+                QQC.Label {
+                    text: modelData.estimated ? i18n("%1 (estimate)", kcm.formatSize(modelData.bytes))
+                                              : kcm.formatSize(modelData.bytes)
+                    Layout.fillWidth: true
+                }
+                QQC.Label {
+                    text: modelData.path
+                    opacity: 0.75
+                    Layout.fillWidth: true
+                    wrapMode: Text.WrapAnywhere
+                }
+            }
         }
 
         QQC.TextField {
@@ -179,21 +238,6 @@ KCM.SimpleKCM {
         }
 
 
-        Kirigami.Heading { level: 2; text: i18n("Schedule") }
-        QQC.ComboBox {
-            Layout.fillWidth: true
-            model: [i18n("Off"), i18n("Weekly reminder"), i18n("Remind me when space is low"), i18n("Weekly cleanup")]
-            currentIndex: kcm.schedule
-            enabled: !kcm.busy
-            onActivated: {
-                if (currentIndex === 3) {
-                    confirmSchedule.open()
-                } else {
-                    kcm.setSchedule(currentIndex)
-                }
-            }
-            Accessible.name: i18n("Schedule")
-        }
     }
 
     QQC.Dialog {
@@ -216,7 +260,11 @@ KCM.SimpleKCM {
         title: i18n("Weekly cleanup")
         modal: true
         standardButtons: QQC.Dialog.Ok | QQC.Dialog.Cancel
-        QQC.Label { text: i18n("Allow weekly cleanup of selected generated caches?"); wrapMode: Text.Wrap }
-        onAccepted: kcm.setSchedule(3)
+        QQC.Label { text: i18n("Review selected caches each week before removing them?"); wrapMode: Text.Wrap }
+        onAccepted: {
+            kcm.setSchedule(3)
+            scheduleChoice.currentIndex = Qt.binding(() => kcm.schedule)
+        }
+        onRejected: scheduleChoice.currentIndex = Qt.binding(() => kcm.schedule)
     }
 }

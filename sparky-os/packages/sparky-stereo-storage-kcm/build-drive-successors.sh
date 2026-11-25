@@ -27,8 +27,8 @@ successor()
 }
 
 successor dolphin "$pool/d/dolphin/dolphin_26.08.0-1+stereo3d8+lc1.dsc" \
-    4:26.08.0-1+stereo3d10 "$packages/dolphin/storage-cleanup.patch" \
+    4:26.08.0-1+stereo3d9 "$packages/dolphin/storage-cleanup.patch" \
     'Open Storage Cleanup from a mounted device in the Places menu.'
 successor plasma-workspace "$pool/p/plasma-workspace/plasma-workspace_6.7.4-2+stereo3d10+lc1.dsc" \
-    4:6.7.4-2+stereo3d12 "$packages/plasma-workspace/patches/s12-0001-freespacenotifier-hand-low-space-to-Problems.patch" \
+    4:6.7.4-2+stereo3d11 "$packages/plasma-workspace/patches/s11-0001-freespacenotifier-hand-low-space-to-Problems.patch" \
     'Offer drive-scoped Storage Cleanup through Problems at the existing low-space threshold.'

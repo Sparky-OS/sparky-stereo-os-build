@@ -13,6 +13,7 @@ class StorageKcm : public KQuickConfigModule
     Q_PROPERTY(QVariantList cleaners MEMBER m_cleaners NOTIFY changed)
     Q_PROPERTY(QVariantList items MEMBER m_items NOTIFY changed)
     Q_PROPERTY(QVariantList errors MEMBER m_errors NOTIFY changed)
+    Q_PROPERTY(bool previewed MEMBER m_previewed NOTIFY changed)
     Q_PROPERTY(bool busy MEMBER m_busy NOTIFY changed)
     Q_PROPERTY(bool readOnly MEMBER m_readOnly NOTIFY changed)
     Q_PROPERTY(bool administrator MEMBER m_admin NOTIFY changed)
@@ -37,6 +38,8 @@ Q_SIGNALS:
     void changed();
 
 private:
+    QStringList selectedOperations() const;
+    QVariantMap describeItem(QVariantMap item) const;
     void activate(const QVariantList &args);
     void catalogue();
     void runBleachBit(const QStringList &args, const QString &field, const QByteArray &input = {});
@@ -44,6 +47,7 @@ private:
     QVariantList m_cleaners;
     QVariantList m_items;
     QVariantList m_errors;
+    bool m_previewed = false;
     bool m_busy = false;
     bool m_readOnly = false;
     bool m_admin = false;

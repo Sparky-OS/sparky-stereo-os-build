@@ -89,6 +89,7 @@ void StorageKcm::setTemporaryAge(int days)
     settings.setValue(u"temporaryAge"_s, days);
     settings.sync();
     m_items.clear();
+    m_previewed = false;
     if (settings.status() != QSettings::NoError) {
         m_errors = {QVariantMap{{u"reason"_s, i18n("Could not save the minimum age.")}}};
     }
@@ -105,6 +106,7 @@ void StorageKcm::chooseVolume(const QString &path)
     m_cachesOnly = false;
     m_readOnly = volume.isReadOnly();
     m_items.clear();
+    m_previewed = false;
     m_errors.clear();
     Q_EMIT changed();
 }
@@ -116,6 +118,7 @@ void StorageKcm::chooseAdministrator(bool admin)
     }
     m_admin = admin;
     m_items.clear();
+    m_previewed = false;
     m_cleaners.clear();
     catalogue();
 }
@@ -128,31 +131,65 @@ void StorageKcm::catalogue()
 void StorageKcm::setOption(const QString &cleaner, const QString &option, bool value)
 {
     m_items.clear();
+    m_previewed = false;
     runBleachBit({u"--json"_s, u"--set-option"_s, cleaner + u'.' + option,
                   value ? u"true"_s : u"false"_s}, u"cleaners"_s);
 }
 
-void StorageKcm::preview()
+QStringList StorageKcm::selectedOperations() const
 {
-    QStringList args{u"--json"_s, u"--preview"_s, u"--volume"_s, m_volume};
-    if (m_cachesOnly && !m_admin) {
-        for (const auto &group : std::as_const(m_cleaners)) {
-            const QVariantMap cleaner = group.toMap();
-            const QString id = cleaner.value(u"id"_s).toString();
-            if (id == u"firefox"_s || id == u"thunderbird"_s || id == u"evolution"_s || id == u"waterfox"_s) {
-                for (const auto &option : cleaner.value(u"options"_s).toList()) {
-                    const QVariantMap item = option.toMap();
-                    if (item.value(u"id"_s).toString() == u"cache"_s && item.value(u"checked"_s).toBool()) {
-                        args << id + u".cache"_s;
-                    }
-                }
+    if (!m_cachesOnly || m_admin) {
+        return {u"--preset"_s};
+    }
+
+    QStringList operations;
+    for (const auto &group : m_cleaners) {
+        const auto cleaner = group.toMap();
+        const QString id = cleaner.value(u"id"_s).toString();
+        if (id != u"firefox"_s && id != u"thunderbird"_s && id != u"evolution"_s && id != u"waterfox"_s) {
+            continue;
+        }
+        for (const auto &choice : cleaner.value(u"options"_s).toList()) {
+            const auto option = choice.toMap();
+            if (option.value(u"id"_s) == u"cache"_s && option.value(u"checked"_s).toBool()) {
+                operations << id + u".cache"_s;
             }
         }
-    } else {
-        args << u"--preset"_s;
     }
-    args << u"--temporary-age-days"_s << QString::number(temporaryAge());
-    runBleachBit(args, u"items"_s);
+    return operations;
+}
+
+QVariantMap StorageKcm::describeItem(QVariantMap item) const
+{
+    const auto operation = item.value(u"operation"_s).toString();
+    const auto separator = operation.indexOf(u'.');
+    const auto cleanerId = operation.isEmpty() ? item.value(u"cleaner"_s).toString() : operation.section(u'.', 0, 0);
+    const auto optionId = separator < 0 ? item.value(u"option"_s).toString() : operation.mid(separator + 1);
+    for (const auto &entry : m_cleaners) {
+        const auto cleaner = entry.toMap();
+        if (cleaner.value(u"id"_s).toString() != cleanerId) {
+            continue;
+        }
+        item.insert(u"cleanerLabel"_s, cleaner.value(u"label"_s));
+        for (const auto &choice : cleaner.value(u"options"_s).toList()) {
+            const auto option = choice.toMap();
+            if (option.value(u"id"_s).toString() == optionId) {
+                item.insert(u"optionLabel"_s, option.value(u"label"_s));
+                item.insert(u"description"_s, option.value(u"description"_s));
+                item.insert(u"warning"_s, option.value(u"warning"_s));
+                break;
+            }
+        }
+        break;
+    }
+    return item;
+}
+
+void StorageKcm::preview()
+{
+    const QStringList args{u"--json"_s, u"--preview"_s, u"--volume"_s, m_volume};
+    const QStringList age{u"--temporary-age-days"_s, QString::number(temporaryAge())};
+    runBleachBit(args + selectedOperations() + age, u"items"_s);
 }
 
 void StorageKcm::clean(const QStringList &approved)
@@ -161,8 +198,9 @@ void StorageKcm::clean(const QStringList &approved)
         return;
     }
     const QByteArray input = QJsonDocument(QJsonArray::fromStringList(approved)).toJson(QJsonDocument::Compact);
-    runBleachBit({u"--json"_s, u"--clean"_s, u"--volume"_s, m_volume, u"--preset"_s,
-                  u"--approved-stdin"_s, u"--temporary-age-days"_s, QString::number(temporaryAge())}, u"clean"_s, input);
+    const QStringList args{u"--json"_s, u"--clean"_s, u"--volume"_s, m_volume};
+    const QStringList confirm{u"--approved-stdin"_s, u"--temporary-age-days"_s, QString::number(temporaryAge())};
+    runBleachBit(args + selectedOperations() + confirm, u"clean"_s, input);
 }
 
 void StorageKcm::setSchedule(int mode)
@@ -255,30 +293,19 @@ void StorageKcm::runBleachBit(const QStringList &args, const QString &field, con
             m_cleaners = result.value("cleaners"_L1).toArray().toVariantList();
         } else if (startedVolume == m_volume) {
             m_readOnly = result.value("read_only"_L1).toBool();
-            m_errors = result.value("errors"_L1).toArray().toVariantList();
+            m_errors.clear();
+            for (const auto &error : result.value("errors"_L1).toArray()) {
+                m_errors.append(describeItem(error.toObject().toVariantMap()));
+            }
             if (field == u"items"_s) {
                 m_items.clear();
+                m_previewed = true;
                 for (const auto &candidate : result.value("items"_L1).toArray()) {
-                    auto row = candidate.toObject().toVariantMap();
-                    for (const auto &group : std::as_const(m_cleaners)) {
-                        const auto cleaner = group.toMap();
-                        if (cleaner.value(u"id"_s) != row.value(u"cleaner"_s)) {
-                            continue;
-                        }
-                        for (const auto &choice : cleaner.value(u"options"_s).toList()) {
-                            const auto option = choice.toMap();
-                            if (option.value(u"id"_s) == row.value(u"option"_s)) {
-                                row.insert(u"description"_s, option.value(u"description"_s));
-                                row.insert(u"warning"_s, option.value(u"warning"_s));
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                    m_items.append(row);
+                    m_items.append(describeItem(candidate.toObject().toVariantMap()));
                 }
             } else {
                 m_items.clear();
+                m_previewed = true;
                 const auto cleaned = result.value("items"_L1).toArray().size();
                 m_errors.prepend(QVariantMap{{u"reason"_s, i18n("Items cleaned: %1", cleaned)}});
             }
