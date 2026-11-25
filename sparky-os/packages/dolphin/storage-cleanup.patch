@@ -1,0 +1,34 @@
+Description: Offer drive-scoped Storage Cleanup
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-25
+
+--- a/src/panels/places/placespanel.cpp
++++ b/src/panels/places/placespanel.cpp
+@@ -18,6 +18,7 @@
+ #include "views/draganddrophelper.h"
+ 
+ #include <KFilePlacesModel>
++#include <KDialogJobUiDelegate>
+ #include <KIO/CommandLauncherJob>
+ #include <KIO/DropJob>
+ #include <KIO/Job>
+@@ -191,6 +192,18 @@
+     auto *placesModel = static_cast<KFilePlacesModel *>(model());
+     const QUrl url = placesModel->url(index);
+     const Solid::Device device = placesModel->deviceForIndex(index);
++
++    const auto access = device.as<Solid::StorageAccess>();
++    const QString launcher = QStandardPaths::findExecutable(QStringLiteral("sparky-open-storage-cleanup"));
++    if (access && access->isAccessible() && !access->filePath().isEmpty() && !launcher.isEmpty()) {
++        auto action = menu->addAction(QIcon::fromTheme(QStringLiteral("drive-harddisk")),
++                                      i18nd("kcm_sparkystereo_storage_cleanup", "Clean up…"));
++        connect(action, &QAction::triggered, menu, [launcher, path = access->filePath()] {
++            auto job = new KIO::CommandLauncherJob(launcher, {path});
++            job->setUiDelegate(new KDialogJobUiDelegate(KJobUiDelegate::AutoErrorHandlingEnabled));
++            job->start();
++        });
++    }
+ 
+     const auto volume = device.as<Solid::StorageVolume>();
+     const auto block = device.as<Solid::Block>();

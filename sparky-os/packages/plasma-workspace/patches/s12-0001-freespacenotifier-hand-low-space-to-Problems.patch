@@ -1,0 +1,46 @@
+Description: Offer drive-scoped Storage Cleanup
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-25
+
+--- a/freespacenotifier/freespacenotifier.cpp
++++ b/freespacenotifier/freespacenotifier.cpp
+@@ -21,6 +21,9 @@
+ #include <Solid/StorageAccess>
+ 
+ #include <QFileInfo>
++#include <QProcess>
++#include <QSettings>
++#include <QStandardPaths>
+ 
+ #include <chrono>
+ 
+@@ -80,12 +83,28 @@
+         const int limit = qMin(fixedLimit, percLimit);
+         const qint64 avail = available / (1024 * 1024); // to MiB
+ 
++        const auto observe = [this](const QString &state) {
++            const auto helper = QStringLiteral("/usr/libexec/sparky-storage-cleanup-space");
++            return QFileInfo(helper).isExecutable() && QProcess::startDetached(helper, {state, m_path});
++        };
+         if (avail >= limit) {
++            observe(QStringLiteral("recovered"));
+             if (m_notification) {
+                 m_notification->close();
+             }
+             m_lastAvail = avail;
+             return;
++        }
++
++        const auto config = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation)
++            + QStringLiteral("/sparky-storage-cleanuprc");
++        const bool lowSpaceMode = QSettings(config, QSettings::IniFormat).value(QStringLiteral("scheduleMode"), 2).toInt() == 2;
++        if (lowSpaceMode && observe(QStringLiteral("low"))) {
++            m_lastAvail = avail;
++            return;
++        }
++        if (!lowSpaceMode) {
++            observe(QStringLiteral("recovered"));
+         }
+ 
+         const int availPercent = int(100 * available / size);
