@@ -53,6 +53,12 @@ if [[ $component == stereo-layer ]]; then
     git -C "$input" archive "$revision" > "$work/layer-source.tar"
     mounts+=(--env "LAYER_REVISION=$revision")
 fi
+if [[ $component == stereo-advanced-weather-widget ]]; then
+    revision=${WIDGET_REVISION:?full widget commit ID}
+    [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+    git -C "$input" archive "$revision" contents metadata.json LICENSE 'translate/*.po' > "$work/widget-source.tar"
+    mounts+=(--env "WIDGET_REVISION=$revision")
+fi
 if [[ -n ${CPUSET:-} ]]; then mounts+=(--cpuset-cpus "$CPUSET"); fi
 cleanup() {
     local id
