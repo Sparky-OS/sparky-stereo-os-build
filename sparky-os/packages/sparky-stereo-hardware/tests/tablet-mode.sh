@@ -90,6 +90,18 @@ if command -v kreadconfig6 >/dev/null 2>&1; then
 	printf '[Windows]\nFocusPolicy=ClickToFocus\n' > "$XDG_CONFIG_HOME/kwinrc"
 	check "convertible, a kwinrc of the person's without the key" "$(read_im $T/convertible)" "$K"
 	check "and the person's other keys stay" "$(XDG_CONFIG_DIRS=$D:/etc/xdg kreadconfig6 --file kwinrc --group Windows --key FocusPolicy)" ClickToFocus
+	# Plasma Keyboard for Fcitx 5 (row 71): on a computer with a touch screen of its own, nothing elsewhere; the person's choice wins
+	read_fx() { (SPARKY_STEREO_SYSFS=$1; export SPARKY_STEREO_SYSFS; SPARKY_STEREO_HAS_TABLET_MODE=$HERE/bin/sparky-stereo-has-tablet-mode SPARKY_STEREO_TABLET_MODE_DIR=$D
+		unset XDG_CONFIG_DIRS; . "$HERE/share/plasma-env/sparky-stereo-tablet-mode.sh"
+		kreadconfig6 --file plasmakeyboardrc --group General --key showWithFcitx --default false); }
+	rm -f "$XDG_CONFIG_HOME/plasmakeyboardrc"
+	check "Fcitx 5 keyboard: convertible, a new person" "$(read_fx $T/convertible)" true
+	check "Fcitx 5 keyboard: the slider" "$(read_fx $T/slider)" true
+	check "Fcitx 5 keyboard: notebook without a touch screen" "$(read_fx $T/laptop)" false
+	check "Fcitx 5 keyboard: desktop with a touch monitor" "$(read_fx $T/desktop-touch)" false
+	printf '[General]\nshowWithFcitx=false\n' > "$XDG_CONFIG_HOME/plasmakeyboardrc"
+	check "Fcitx 5 keyboard: convertible, the person turned it off" "$(read_fx $T/convertible)" false
+	rm -f "$XDG_CONFIG_HOME/plasmakeyboardrc"
 else
 	echo "tablet-mode: kreadconfig6 is not installed, the KConfig rows were not run"
 	[ "${SPARKY_STEREO_NEED_KCONFIG:-0}" = 0 ] || fail=$((fail + 1))
