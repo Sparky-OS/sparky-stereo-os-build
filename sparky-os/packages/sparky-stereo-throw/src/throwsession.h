@@ -11,6 +11,7 @@
 #include "networkscreen.h"
 #include "streamer.h"
 
+#include <QElapsedTimer>
 #include <QJsonObject>
 #include <QObject>
 #include <QTimer>
@@ -52,6 +53,10 @@ public:
 Q_SIGNALS:
     void stateChanged(const QString &state, const QString &detail);
     void finished();
+    // the device played the stream with this sound (seconds from LOAD to its first PLAYING), or did not start playing with it
+    // in time
+    void soundPlayed(const QString &sound, double startSeconds);
+    void soundNotStarted(const QString &sound);
 
 private:
     void fail(const QString &context, const QString &message, const QStringList &args, const QString &english);
@@ -69,6 +74,13 @@ private:
     CastChannel m_channel;
     QTimer m_fetchTimeout;
     QTimer m_poll;
+    QTimer m_playTimeout;
+    QElapsedTimer m_sinceLoad;
+    // wall clock times (milliseconds since the epoch) the status gives: the LOAD sent, the last MEDIA_STATUS, the first PLAYING
+    qint64 m_loadAt = -1;
+    qint64 m_statusAt = -1;
+    qint64 m_firstPlayingAt = -1;
+    bool m_played = false;
     QString m_transportId;
     QString m_sessionId;
     bool m_loadSent = false;

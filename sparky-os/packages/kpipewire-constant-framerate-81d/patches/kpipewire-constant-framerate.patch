@@ -1,0 +1,199 @@
+Description: Keep a constant frame rate on a still source when asked
+ A compositor sends a new frame only when the screen changes. With
+ PipeWireBaseEncodedStream::setConstantFramerate(true), the last frame that
+ carries a picture is encoded again once per frame interval of
+ maxFramerate() while no new frame comes, so a player of the live stream
+ always gets its next picture; the encoder already gives a repeated frame
+ its elapsed time (a10-reviewed-sender.patch). Off by default: a recording
+ or a remote desktop session keeps sending frames on change only.
+ Measured on a real Chromecast (Sparky Stereo OS, queue row 81, part D): a
+ still desktop gave two pictures and then none, and the receiver buffered
+ for ever; at a constant 30 frames a second it played. The repeat timer was
+ made in initialize() with 100 ms, after start() had set the rate, so its
+ first interval now follows the constant rate when it is on.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Origin: vendor, Sparky Stereo OS
+Forwarded: no
+Last-Update: 2026-11-25
+---
+--- a/src/pipewirebaseencodedstream.h	2026-11-25 11:06:38.699759727 -0300
++++ b/src/pipewirebaseencodedstream.h	2026-11-25 11:06:38.738296398 -0300
+@@ -65,6 +65,15 @@
+     void setMaxFramerate(quint32 numerator, quint32 denominator = 1);
+ 
+     /**
++     * Keeps the frame rate constant on a still source. A compositor sends a new frame only when the screen changes;
++     * with this on, the last frame is encoded again once per frame interval of maxFramerate() while no new frame
++     * comes, so a player of the live stream always gets its next picture. Off by default: a recording or a remote
++     * desktop session keeps sending frames on change only.
++     */
++    void setConstantFramerate(bool constant);
++    bool constantFramerate() const;
++
++    /**
+      * Defines how many frames are kept in the encoding buffer.
+      * New frames after the buffer is full will be dropped.
+      *
+--- a/src/pipewirebaseencodedstream.cpp	2026-11-25 11:06:38.706584405 -0300
++++ b/src/pipewirebaseencodedstream.cpp	2026-11-25 11:06:38.748778375 -0300
+@@ -28,6 +28,7 @@
+     std::optional<uint> m_fd;
+     Fraction m_maxFramerate;
+     int m_maxPendingFrames = 50;
++    bool m_constantFramerate = false;
+     bool m_active = false;
+     bool m_encoderPaused = false;
+     PipeWireBaseEncodedStream::Encoder m_encoder = PipeWireBaseEncodedStream::NoEncoder;
+@@ -135,6 +136,28 @@
+     setMaxFramerate({numerator, denominator});
+ }
+ 
++void PipeWireBaseEncodedStream::setConstantFramerate(bool constant)
++{
++    if (d->m_constantFramerate == constant) {
++        return;
++    }
++    d->m_constantFramerate = constant;
++    if (d->m_produce) {
++        // produce runs in another thread
++        QMetaObject::invokeMethod(
++            d->m_produce.get(),
++            [produce = d->m_produce.get(), constant]() {
++                produce->setConstantFramerate(constant);
++            },
++            Qt::QueuedConnection);
++    }
++}
++
++bool PipeWireBaseEncodedStream::constantFramerate() const
++{
++    return d->m_constantFramerate;
++}
++
+ void PipeWireBaseEncodedStream::setMaxPendingFrames(int maxPendingFrames)
+ {
+     if (d->m_maxPendingFrames == maxPendingFrames) {
+@@ -206,6 +229,7 @@
+     d->m_produce->setTargetBitrate(d->m_targetBitrate);
+     d->m_produce->m_h264MaximumQuantizer = d->m_h264MaximumQuantizer;
+     d->m_produce->setMaxPendingFrames(d->m_maxPendingFrames);
++    d->m_produce->setConstantFramerate(d->m_constantFramerate);
+     d->m_produce->setEncodingPreference(d->m_encodingPreference);
+     d->m_produce->setColorRange(d->m_colorRange);
+     d->m_produce->moveToThread(d->m_produceThread.get());
+--- a/src/pipewireproduce_p.h	2026-11-25 11:06:38.712443100 -0300
++++ b/src/pipewireproduce_p.h	2026-11-25 11:06:38.749204496 -0300
+@@ -63,6 +63,8 @@
+ 
+     Fraction maxFramerate() const;
+     void setMaxFramerate(const Fraction &framerate);
++    void setConstantFramerate(bool constant);
++    int frameRepeatInterval() const;
+ 
+     void setEncoderPaused(bool paused);
+     int maxPendingFrames() const;
+@@ -138,6 +140,8 @@
+ 
+     QScopedPointer<QTimer> m_frameRepeatTimer;
+     bool m_enableFrameRepeat = true;
++    // the last frame is encoded again at the maximum frame rate while no new frame comes
++    bool m_constantFramerate = false;
+     PipeWireFrame m_lastFrame;
+ 
+     std::thread m_passthroughThread;
+--- a/src/pipewireproduce.cpp	2026-11-25 11:06:38.716771671 -0300
++++ b/src/pipewireproduce.cpp	2026-11-25 11:32:03.842948250 -0300
+@@ -104,10 +104,23 @@
+      */
+     m_frameRepeatTimer.reset(new QTimer);
+     m_frameRepeatTimer->setSingleShot(true);
+-    m_frameRepeatTimer->setInterval(100);
++    // the constant rate may have been set before this timer exists (start() sets it, then queues initialize())
++    m_frameRepeatTimer->setInterval(m_constantFramerate ? frameRepeatInterval() : 100);
+     connect(m_frameRepeatTimer.data(), &QTimer::timeout, this, [this]() {
+         auto f = m_lastFrame;
+-        m_lastFrame = {};
++        if (m_constantFramerate) {
++            // A still source: keep the picture coming at the stream's rate. The encoder gives a repeated frame its
++            // elapsed time, so the timeline stays monotonic.
++            if (!f.dmabuf && !f.dataFrame) {
++                return;
++            }
++            m_frameRepeatTimer->start();
++            if (m_encoderPaused || m_pendingFilterFrames + 1 > m_maxPendingFrames) {
++                return;
++            }
++        } else {
++            m_lastFrame = {};
++        }
+         aboutToEncode(f);
+         if (!m_encoder->filterFrame(f)) {
+             return;
+@@ -127,15 +140,30 @@
+ {
+     m_maxFramerate = framerate;
+ 
+-    const double framesPerSecond = static_cast<double>(framerate.numerator) / framerate.denominator;
+     if (m_frameRepeatTimer) {
+-        m_frameRepeatTimer->setInterval((1000 / framesPerSecond) * 2);
++        m_frameRepeatTimer->setInterval(frameRepeatInterval());
+     }
+     if (m_stream) {
+         m_stream->setMaxFramerate(framerate);
+     }
+ }
+ 
++void PipeWireProduce::setConstantFramerate(bool constant)
++{
++    m_constantFramerate = constant;
++    if (m_frameRepeatTimer) {
++        m_frameRepeatTimer->setInterval(frameRepeatInterval());
++    }
++}
++
++int PipeWireProduce::frameRepeatInterval() const
++{
++    // one frame interval when the rate is kept constant; otherwise two, to flush the last frame through the encoder once
++    const double framesPerSecond = static_cast<double>(m_maxFramerate.numerator) / m_maxFramerate.denominator;
++    const double interval = 1000.0 / framesPerSecond;
++    return int(m_constantFramerate ? interval : interval * 2);
++}
++
+ int PipeWireProduce::maxPendingFrames() const
+ {
+     return m_maxPendingFrames;
+@@ -422,7 +450,10 @@
+     }
+     auto f = frame;
+ 
+-    m_lastFrame = frame;
++    // a frame with no picture (a cursor update, an empty buffer) is never the one repeated at a constant rate
++    if (!m_constantFramerate || frame.dmabuf || frame.dataFrame) {
++        m_lastFrame = frame;
++    }
+     if (m_enableFrameRepeat) {
+         m_frameRepeatTimer->start();
+     }
+--- a/autotests/TestEncoder.cpp	2026-11-25 11:07:26.997870863 -0300
++++ b/autotests/TestEncoder.cpp	2026-11-25 11:07:27.026069747 -0300
+@@ -412,6 +412,20 @@
+         }
+     }
+ 
++    void testConstantFramerateInterval()
++    {
++        // a still source: the last frame is encoded again once per frame interval when the rate is kept constant,
++        // and once after two intervals (the flush) when it is not
++        TestProduce produce({30, 1});
++        QCOMPARE(produce.frameRepeatInterval(), 66);
++        produce.setConstantFramerate(true);
++        QCOMPARE(produce.frameRepeatInterval(), 33);
++        produce.setMaxFramerate({60, 1});
++        QCOMPARE(produce.frameRepeatInterval(), 16);
++        produce.setConstantFramerate(false);
++        QCOMPARE(produce.frameRepeatInterval(), 33);
++    }
++
+     void testPausedProducerRejectsInput()
+     {
+         TestProduce produce;

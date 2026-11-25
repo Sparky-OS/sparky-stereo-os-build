@@ -101,7 +101,8 @@ Plan Daemon::planFor(const Device &device) const
         row.video = false;
     }
     const KConfigGroup group = choiceGroup(device.id);
-    return Codecs::plan(row, group.readEntry("Codec", QString()), group.readEntry("Mode", QString()));
+    return Codecs::plan(row, group.readEntry("Codec", QString()), group.readEntry("Mode", QString()), group.readEntry("Sound", QString()),
+                        group.readEntry("SoundsFailed", QStringList()), row.video ? Codecs::encodable() : QStringList());
 }
 
 QJsonObject Daemon::describe(const Device &device) const
@@ -129,6 +130,22 @@ QJsonObject Daemon::describe(const Device &device) const
         });
     }
     const bool video = row.video && !device.group;
+    // the sounds the stream's container carries, best first, with what this device did with each (kept by its identity)
+    const QStringList played = group.readEntry("SoundsPlayed", QStringList());
+    const QStringList failed = group.readEntry("SoundsFailed", QStringList());
+    const KConfigGroup starts = group.group(QStringLiteral("SoundStart"));
+    QJsonArray sounds;
+    for (const QString &id : Codecs::soundsFor(plan.info.format)) {
+        const Sound s = Codecs::sound(id);
+        sounds.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), Codecs::soundLabel(s)},
+                                  {QStringLiteral("lossless"), s.lossless}, {QStringLiteral("channels"), s.channels},
+                                  {QStringLiteral("played"), played.contains(id)}, {QStringLiteral("failed"), failed.contains(id)},
+                                  {QStringLiteral("about"), Codecs::soundAbout(s)},
+                                  {QStringLiteral("startSeconds"), starts.readEntry(id, -1.0)}});
+    }
+    Plan automatic = plan;
+    Codecs::pickSound(automatic, QString(), failed);
+    const Sound autoSound = Codecs::sound(automatic.info.audioCodec);
     QJsonObject o{
         {QStringLiteral("id"), device.id},
         {QStringLiteral("name"), device.name},
@@ -151,6 +168,13 @@ QJsonObject Daemon::describe(const Device &device) const
         {QStringLiteral("level"), video && row.codecRow(plan.info.codec) ? row.codecRow(plan.info.codec)->level : QString()},
         {QStringLiteral("container"), plan.info.format},
         {QStringLiteral("sound"), Codecs::soundWords(plan).translated()},
+        {QStringLiteral("soundId"), plan.info.audioCodec},
+        {QStringLiteral("choiceSound"), group.readEntry("Sound", QString())},
+        {QStringLiteral("autoSoundLabel"), Codecs::soundLabel(autoSound)},
+        // the sound a Throw now carries, in plain words, and how long this device took to start with it the last time
+        {QStringLiteral("soundAbout"), plan.info.audioCodec.isEmpty() ? QString() : Codecs::soundAbout(Codecs::sound(plan.info.audioCodec))},
+        {QStringLiteral("soundStart"), starts.readEntry(plan.info.audioCodec, -1.0)},
+        {QStringLiteral("sounds"), sounds},
         {QStringLiteral("limited"), plan.limited.translated()},
         {QStringLiteral("planError"), plan.error.translated()},
         {QStringLiteral("state"), QStringLiteral("idle")},
@@ -205,6 +229,28 @@ QString Daemon::SetChoice(const QString &id, const QString &codec, const QString
     return json(describe(*device));
 }
 
+QString Daemon::SetSound(const QString &id, const QString &sound)
+{
+    const auto device = m_discovery.device(id);
+    if (!device) {
+        return json(QJsonObject{{QStringLiteral("error"), QStringLiteral("no device %1 has been found").arg(id)}});
+    }
+    const Plan plan = planFor(*device);
+    if (!sound.isEmpty() && !Codecs::soundsFor(plan.info.format).contains(sound)) {
+        return json(QJsonObject{{QStringLiteral("error"), QStringLiteral("the %1 stream cannot carry %2").arg(plan.info.format, sound)}});
+    }
+    // kept per device by its identity, with the codec and the mode
+    KConfigGroup group = choiceGroup(id);
+    if (sound.isEmpty()) {
+        group.deleteEntry("Sound");
+    } else {
+        group.writeEntry("Sound", sound);
+    }
+    group.sync();
+    Q_EMIT DevicesChanged();
+    return json(describe(*device));
+}
+
 QString Daemon::Status(const QString &id)
 {
     if (auto session = m_sessions.value(id)) {
@@ -250,6 +296,32 @@ QString Daemon::Throw(const QString &id)
         m_lastState.insert(id, {state, detail});
         Q_EMIT StateChanged(id, state, detail);
         Q_EMIT DevicesChanged();
+    });
+    // what this device played, or did not start playing in time, kept by its identity: the next Throw's sound follows it
+    connect(session, &ThrowSession::soundPlayed, this, [id](const QString &sound, double startSeconds) {
+        KConfigGroup group = choiceGroup(id);
+        // how long it took the device to start with this sound, the last time: the page says it in plain words
+        if (startSeconds >= 0) {
+            group.group(QStringLiteral("SoundStart")).writeEntry(sound, startSeconds);
+        }
+        QStringList played = group.readEntry("SoundsPlayed", QStringList());
+        QStringList failed = group.readEntry("SoundsFailed", QStringList());
+        if (!played.contains(sound)) {
+            played.append(sound);
+        }
+        failed.removeAll(sound);
+        group.writeEntry("SoundsPlayed", played);
+        group.writeEntry("SoundsFailed", failed);
+        group.sync();
+    });
+    connect(session, &ThrowSession::soundNotStarted, this, [id](const QString &sound) {
+        KConfigGroup group = choiceGroup(id);
+        QStringList failed = group.readEntry("SoundsFailed", QStringList());
+        if (!failed.contains(sound)) {
+            failed.append(sound);
+        }
+        group.writeEntry("SoundsFailed", failed);
+        group.sync();
     });
     connect(session, &ThrowSession::finished, this, [this, id, session] {
         QTimer::singleShot(0, session, &QObject::deleteLater);

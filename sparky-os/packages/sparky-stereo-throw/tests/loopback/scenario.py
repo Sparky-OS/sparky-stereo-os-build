@@ -22,6 +22,8 @@ STUDY = "5d7a9c4e81ab4c3d9e2f000000000083"
 HALL = "5d7a9c4e81ab4c3d9e2f000000000084"
 DEN = "5d7a9c4e81ab4c3d9e2f000000000085"
 KITCHEN = "5d7a9c4e81ab4c3d9e2f000000000086"
+PLAYER = "5d7a9c4e81ab4c3d9e2f000000000087"  # its player is Chromium in a media element
+STUCK = "5d7a9c4e81ab4c3d9e2f000000000088"  # it fetches and never plays
 TONE_HZ = 997
 CATALOGUE = {"ja_JP": "ja"}  # a locale and the folder of its catalogues
 rows = []
@@ -366,9 +368,9 @@ def stop(id_):
 
 def main():
     # --- discovery
-    found = wait_for(lambda: (lambda d: d if len(d) >= 6 else None)(devices()), 30) or devices()
-    row("D1", "the six devices announced on the network are found by themselves (ids)",
-        sorted([LIVING, BEDROOM, STUDY, HALL, DEN, KITCHEN]), sorted(found))
+    found = wait_for(lambda: (lambda d: d if len(d) >= 8 else None)(devices()), 30) or devices()
+    row("D1", "the eight devices announced on the network are found by themselves (ids)",
+        sorted([LIVING, BEDROOM, STUDY, HALL, DEN, KITCHEN, PLAYER, STUCK]), sorted(found))
     d = found.get(LIVING, {})
     row("D2", "a device as it names itself: name, model, address", ("Living room TV", "Chromecast", "10.81.0.1"),
         (d.get("name"), d.get("model"), d.get("address")))
@@ -382,7 +384,7 @@ def main():
     except (json.JSONDecodeError, KeyError):
         names = []
     row("D4", "the devices are listed in the order of their names",
-        ["Bedroom TV", "Den TV", "Hall TV", "Kitchen speaker", "Living room TV", "Study screen"], names)
+        ["Bedroom TV", "Den TV", "Hall TV", "Kitchen speaker", "Living room TV", "Player TV", "Stuck TV", "Study screen"], names)
 
     # --- a Throw to a first-generation Chromecast
     name = f"Virtual-{LIVING}"
@@ -501,8 +503,8 @@ def main():
     info = probe_info(LIVING, n) or {}
     acodec = next((x.get("codec_name") for x in info.get("streams", []) if x.get("codec_type") == "audio"), None)
     samples = audio_pcm(cap) if cap else []
-    row("A2", f"a {TONE_HZ} Hz tone played into it is in the stream the device fetched, at that frequency (FLAC in Matroska)",
-        ("flac", True), (acodec, tone_at(samples, TONE_HZ)))
+    row("A2", f"a {TONE_HZ} Hz tone played into it is in the stream the device fetched, at that frequency (24-bit PCM in Matroska, the default sound since 0.3.0)",
+        ("pcm_s24le", True), (acodec, tone_at(samples, TONE_HZ)))
     a_on = audio_onset(samples)
     a_t = audio_start(cap) + a_on if a_on is not None else None
     v_t = video_red_onset(cap) if cap else None
@@ -595,7 +597,7 @@ def main():
     except OSError:
         fixture = None
     time.sleep(2)
-    for rid, dev, codec, mode, expect in (("E2", DEN, "h264", "1920x1080@30", ("h264", 1920, 1080, "video/x-matroska", "flac")),
+    for rid, dev, codec, mode, expect in (("E2", DEN, "h264", "1920x1080@30", ("h264", 1920, 1080, "video/x-matroska", "pcm_s24le")),
                                          ("E3", LIVING, "vp8", "1920x1080@30", ("vp8", 1920, 1080, "video/webm", "opus"))):
         choose(dev, codec, mode)
         k = len(loads(dev)) + 1
@@ -785,7 +787,7 @@ def restart_daemon(lang):
         f.write("\n".join(record) + "\n")
     log("restart " + "; ".join(record))
     if holds:
-        wait_for(lambda: (lambda d: d if len(d) >= 6 else None)(devices()), 30)
+        wait_for(lambda: (lambda d: d if len(d) >= 8 else None)(devices()), 30)
     return holds
 
 
@@ -837,7 +839,8 @@ def pages():
     row("C5", "the daemon's own words in the session's language (pt_BR): the process that owns its name was started in "
         "pt_BR, then the short words, the generation, the sound", (True, "1ª a 3ª geração", True, True),
         (in_pt, d.get("short"), d.get("generation", "").startswith("Chromecast, primeira"),
-         d.get("sound", "").startswith("FLAC, 24 bits")))
+         d.get("sound", "").startswith("PCM, 24 bits, 48 kHz, 2 canais (sem perdas)")))
+    words_rows(in_pt)
     third = page("living-room-pt_BR", ["--args", f"device={LIVING}"], "pt_BR")
     row("C3", "the device's page in Brazilian Portuguese (caption \"Throw (jogar)\", setup requests) is captured",
         (True, True, True), (any(c.startswith("Throw (jogar)") for c in third["captions"]), third["asked"] > 0, third["captured"]))
@@ -851,6 +854,224 @@ def pages():
     log(f"back in the session's language: {restart_daemon(None)}")
 
 
+def status_of(id_):
+    rc, out, _ = run(CLI, "status", id_)
+    try:
+        return json.loads(out) if rc == 0 else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def picture_rate(path):
+    """Pictures a second in a captured stream: video packets over the span of their times."""
+    rc, out, _ = run("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", path)
+    times = [float(x) for x in out.split() if x.replace(".", "", 1).isdigit()]
+    if len(times) < 2 or times[-1] <= times[0]:
+        return 0.0, len(times)
+    return (len(times) - 1) / (times[-1] - times[0]), len(times)
+
+
+def partd():
+    """Part D: a receiver that plays like one, the picture that keeps coming, the sound by the table and by choice, the
+    device's messages in the log, and a Throw that does not play ended and said."""
+    rc, _ = throw(PLAYER, 40)
+    t0, first = time.monotonic(), None
+    while time.monotonic() - t0 < 45:
+        st = status_of(PLAYER)
+        if st.get("playerState") == "PLAYING" and (st.get("currentTime") or 0) > 2:
+            first = round(time.monotonic() - t0, 1)
+            break
+        time.sleep(1)
+    log(f"DP1 the stand-in played after {first} s; status {status_of(PLAYER)}")
+    row("DP1", "a receiver that plays like one (Chromium in a media element) plays a Throw of a still screen: PLAYING, its time "
+        "past 2 s, within 45 s", True, first is not None)
+    time.sleep(5)
+    stop(PLAYER)
+    wait_for(lambda: probe_info(PLAYER, 1), 60)
+    cap = capture(PLAYER, 1)
+    rate, count = picture_rate(cap) if cap else (0.0, 0)
+    log(f"DP2 {count} pictures, {rate:.1f} a second in {cap}")
+    row("DP2", "the picture keeps coming on a still screen: at least 20 pictures a second in the stream the device fetched", True, rate >= 20)
+    info = probe_info(PLAYER, 1) or {}
+    audio = next((x for x in info.get("streams", []) if x.get("codec_type") == "audio"), {})
+    row("DP3", "the sound is the table's pick: PCM 24 bit, 2 channels, in Matroska", ("pcm_s24le", 2, True),
+        (audio.get("codec_name"), audio.get("channels"), "matroska" in (info.get("format") or {}).get("format_name", "")))
+    text = open(os.path.join(OUT, "throwd.log")).read()
+    load = next(iter(loads(PLAYER)), {})
+    token = (load.get("contentId", "").rsplit("/", 1)[-1].split(".")[0]) if load else ""
+    row("DP4", "every Cast message is in the daemon's debug log (the device's MEDIA_STATUS in, the LOAD out), the stream's token taken out",
+        (True, True, False), ("cast in" in text and "MEDIA_STATUS" in text, "cast out" in text and '"type":"LOAD"' in text,
+                              bool(token) and token in text))
+    rc, _ = throw(STUCK, 40)
+    wait_for(lambda: (lambda d: d if d.get("state") == "failed" else None)(devices().get(STUCK, {})), 90)
+    d = devices().get(STUCK, {})
+    log(f"DP5 {d.get('state')}: {d.get('detail')}")
+    row("DP5", "a Throw the device does not play is ended within 60 s and said, with what the device said", ("failed", True),
+        (d.get("state"), "did not start playing within 60 seconds (it said BUFFERING" in (d.get("detail") or "")))
+    row("DP6", "the sound that did not start is kept for that device: its next Throw takes FLAC", "flac", d.get("soundId"))
+    run(CLI, "sound", LIVING, "ac3-5.1")
+    n = len(loads(LIVING)) + 1
+    throw_for(LIVING, 6)
+    wait_for(lambda: probe_info(LIVING, n), 60)
+    info = probe_info(LIVING, n) or {}
+    audio = next((x for x in info.get("streams", []) if x.get("codec_type") == "audio"), {})
+    run(CLI, "sound", LIVING, "-")
+    row("DP7", "Dolby Digital 5.1 chosen on the device's page: the stream carries AC-3 with 6 channels", ("ac3", 6),
+        (audio.get("codec_name"), audio.get("channels")))
+    rc, out, _ = run(CLI, "sound", DEN, "pcm24")
+    row("DP8", "PCM chosen for a stream that cannot carry it (HEVC in MP4) is refused, the choice unchanged", (1, ""),
+        (rc, devices().get(DEN, {}).get("choiceSound", "")))
+
+
+def words_rows(in_pt):
+    """Part D, second half: a sound's name and what it means in the person's language, how long the device took to start,
+    and a kept failure that carries a sound's name rendered by the problems engine in another language."""
+    d = devices().get(PLAYER, {}) if in_pt else {}
+    pcm = next((s for s in d.get("sounds", []) if s.get("id") == "pcm24"), {})
+    log(f"DW1 {json.dumps(pcm, ensure_ascii=False)} soundAbout={d.get('soundAbout')!r} soundStart={d.get('soundStart')}")
+    row("DW1", "the device's page in pt_BR: the sound's name in Portuguese, what it means in plain words, the seconds the device "
+        "took to start with it (the stand-in played it in part D)", ("PCM, 24 bits", True, True, True),
+        (pcm.get("label"), (pcm.get("about") or "").startswith("Sem perdas"), (pcm.get("startSeconds") or -1) > 0,
+         (d.get("soundAbout") or "").startswith("Sem perdas") and (d.get("soundStart") or -1) > 0))
+    env = dict(os.environ, **language_env("pt_BR"))
+    out = subprocess.run(["sparky-stereo-problems", "list", "--json", "sparky-stereo-throw"], capture_output=True, text=True,
+                         env=env, timeout=60).stdout
+    try:
+        items = json.loads(out)
+    except json.JSONDecodeError:
+        items = []
+    stuck = next((p for p in (items if isinstance(items, list) else []) if p.get("key") == f"throw:{STUCK}"), {})
+    log(f"DW2 {stuck.get('lang')}: {stuck.get('text')}")
+    row("DW2", "the kept failure of the Throw that did not start, read in pt_BR from the problems engine: its sentence and the "
+        "sound's name inside it in Portuguese", ("pt_BR", True, True),
+        (stuck.get("lang"), "não começou a tocar em 60 segundos" in (stuck.get("text") or ""),
+         "som PCM, 24 bits" in (stuck.get("text") or "")))
+
+
+def dependent_rows():
+    """Part D, second half: a client of KPipeWire that does not ask for a constant frame rate keeps KPipeWire's own behaviour
+    on the new library. Spectacle (in the rig image that has it) records the still screen for about 12 s as MP4 (H.264;
+    VP9, its default, gives no live picture in KPipeWire 6.7.4); a second request to record ends the recording. Its pictures
+    are counted: a few, never the Throw's constant rate."""
+    import shutil
+    if not shutil.which("spectacle"):
+        log("DK1 not run: no Spectacle in this rig image")
+        return
+    cfg = os.path.join(os.environ["HOME"], ".config", "spectaclerc")
+    os.makedirs(os.path.dirname(cfg), exist_ok=True)
+    with open(cfg, "w") as f:
+        f.write("[VideoSave]\npreferredVideoFormat=2\n")
+    rec = os.path.join(OUT, "spectacle-still.mp4")
+    log_path = os.path.join(OUT, "spectacle.log")
+    # a window on the screen (the still pair) for the click that picks the screen: Spectacle's screen recording asks KWin
+    # which screen (queryWindowInfo) and waits for a click, given here through KWin's fake input (/tools/bin/fakeinput)
+    fixture = subprocess.Popen(["/tools/bin/capturefixture", os.path.join(OUT, "pair.png"), "640", "360", "stereo"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(3)
+    kwin_script("for (const w of workspace.windowList()) { if (w.desktopFileName == 'org.kde.kwin.capturefixture') {"
+                " w.frameGeometry = {x: 100, y: 100, width: w.frameGeometry.width, height: w.frameGeometry.height}; } }")
+    time.sleep(1)
+    with open(log_path, "w") as lf:
+        # libx264, as the Throw's rows use (KWin draws on the NVIDIA card here, whose NVENC path gave Spectacle no frame)
+        first = subprocess.Popen(["spectacle", "--background", "--nonotify", "--record", "s", "--output", rec], stdout=lf, stderr=lf,
+                                 env=dict(os.environ, QT_LOGGING_RULES="org.kde.spectacle*=true;kpipewire*=true",
+                                          KPIPEWIRE_FORCE_ENCODER="libx264"))
+        time.sleep(4)
+        click = subprocess.run(["/tools/bin/fakeinput", "m:300,250", "s:200", "b:272"], stdout=lf, stderr=lf, timeout=30)
+        log(f"DK1 the click that picks the screen: exit {click.returncode}")
+        # the screen changes six times, once every 2 s: KPipeWire's own behaviour gives a picture or two for each change,
+        # a constant rate would give 30 a second
+        for i in range(6):
+            time.sleep(2)
+            kwin_script("for (const w of workspace.windowList()) { if (w.desktopFileName == 'org.kde.kwin.capturefixture') {"
+                        " w.frameGeometry = {x: %d, y: 100, width: w.frameGeometry.width, height: w.frameGeometry.height}; } }"
+                        % (100 + 40 * (i + 1)))
+        second = subprocess.run(["spectacle", "--background", "--nonotify", "--record", "s", "--output", rec], stdout=lf,
+                                stderr=lf, timeout=60)
+        try:
+            first.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            first.kill()
+    fixture.terminate()
+    lib = subprocess.run(["dpkg-query", "-W", "-f", "${Version}", "libkpipewirerecord6"], capture_output=True, text=True).stdout
+    rate, count = picture_rate(rec) if os.path.exists(rec) else (0.0, 0)
+    rc, codec, _ = run("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", rec)
+    rc, dur, _ = run("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", rec)
+    log(f"DK1 KPipeWire {lib}: Spectacle wrote {os.path.exists(rec)} ({codec.strip()}, {dur.strip()} s): {count} pictures, "
+        f"{rate:.1f} a second; second request exit {second.returncode}")
+    row("DK1", "Spectacle's screen recording on this KPipeWire (a client that did not ask for a constant rate) of a screen that "
+        "changes six times in 12 s: at least one picture, and fewer than 30 (a constant rate gives about 30 a second)", (True, True),
+        (count > 0, count < 30))
+
+
+def cpu_seconds(pid):
+    """The processor time of a process so far (user and system), in seconds."""
+    try:
+        fields = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()
+        return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def gpu_sample():
+    """What the host's GPUs say this instant: NVIDIA's encoder and GPU use (nvidia-smi), the AMD card's busy share (its sysfs
+    file); every GPU here also serves the station, so these are contended figures."""
+    out = {}
+    rc, text, _ = run("nvidia-smi", "--query-gpu=utilization.encoder,utilization.gpu", "--format=csv,noheader,nounits", timeout=10)
+    if rc == 0 and text.strip():
+        enc, gpu = [x.strip() for x in text.strip().splitlines()[0].split(",")]
+        out.update(nvencPercent=float(enc), nvidiaPercent=float(gpu))
+    import glob
+    for f in glob.glob("/sys/class/drm/card*/device/gpu_busy_percent"):
+        try:
+            if open(os.path.join(os.path.dirname(f), "vendor")).read().strip() == "0x1002":
+                out["amdBusyPercent"] = float(open(f).read())
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def cost_rows():
+    """Part D, second half (step 4): the cost of a still screen. A Throw of the still screen to a software device that fetches
+    the stream (no player decoding beside it) runs 35 s; between 10 s and 30 s the daemon's and KWin's processor time and
+    the GPUs are sampled, then the pictures a second of the stream the device fetched are counted. The encoder is the one
+    KPIPEWIRE_FORCE_ENCODER names (h264_vaapi, h264_nvenc, libx264), else KPipeWire's own choice."""
+    encoder = os.environ.get("KPIPEWIRE_FORCE_ENCODER", "KPipeWire's choice")
+    daemon = name_owner_pid()
+    kwin_pid = next((p for p in os.listdir("/proc") if p.isdigit() and
+                     open(f"/proc/{p}/comm").read().strip() == "kwin_wayland"), None)
+    n = len(loads(LIVING)) + 1
+    rc, _ = throw(LIVING, 40)
+    time.sleep(10)
+    d0, k0, w0 = cpu_seconds(daemon), cpu_seconds(kwin_pid), time.monotonic()
+    samples = []
+    while time.monotonic() - w0 < 20:
+        samples.append(gpu_sample())
+        time.sleep(1)
+    d1, k1, w1 = cpu_seconds(daemon), cpu_seconds(kwin_pid), time.monotonic()
+    time.sleep(5)
+    stop(LIVING)
+    wait_for(lambda: probe_info(LIVING, n), 60)
+    cap = capture(LIVING, n)
+    rate, count = picture_rate(cap) if cap else (0.0, 0)
+    span = w1 - w0
+
+    def mean(key):
+        vals = [s[key] for s in samples if key in s]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    cost = {"encoder": encoder, "throw": rc, "pictures": count, "picturesPerSecond": round(rate, 1),
+            "daemonCpuPercent": round(100 * (d1 - d0) / span, 1) if d0 is not None and d1 is not None else None,
+            "kwinCpuPercent": round(100 * (k1 - k0) / span, 1) if k0 is not None and k1 is not None else None,
+            "nvencPercent": mean("nvencPercent"), "nvidiaPercent": mean("nvidiaPercent"), "amdBusyPercent": mean("amdBusyPercent"),
+            "load": open("/proc/loadavg").read().split()[0]}
+    with open(os.path.join(OUT, "cost.json"), "w") as f:
+        json.dump(cost, f, indent=1)
+    log(f"CK1 {json.dumps(cost)}")
+    row("CK1", f"a Throw of a still screen with {encoder}: it ran, and the stream's pictures a second (the cost is in cost.json)",
+        (0, True), (rc, rate >= 20))
+
+
 def make_pair():
     from PIL import Image
     pair = Image.new("RGB", (3840, 1080), (255, 0, 0))
@@ -859,7 +1080,7 @@ def make_pair():
 
 
 try:
-    if CLI == "sparky-stereo-throw":
+    if CLI == "sparky-stereo-throw" and os.environ.get("THROW_ROWS") != "dependent":
         # the installed package only: the session bus started the daemon from its service file (session.sh)
         try:
             text = open(os.path.join(OUT, "activation.txt")).read()
@@ -868,8 +1089,19 @@ try:
         row("S1", "the session bus starts the installed daemon from its D-Bus service file (its executable)",
             True, "executable /usr/lib/x86_64-linux-gnu/libexec/sparky-stereo-throwd" in text)
     make_pair()
-    main()
-    pages()
+    # a file "only-partd" beside this script runs part D's rows alone (a development loop)
+    if os.environ.get("THROW_ROWS") == "cost":
+        # the cost of a still screen alone (step 4 of part D's second half; the lane's encoder rows)
+        cost_rows()
+    elif os.environ.get("THROW_ROWS") == "dependent":
+        # a client of KPipeWire that did not ask for a constant rate, alone (its session has KWin's fake input)
+        dependent_rows()
+    elif os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "only-partd")):
+        partd()
+    else:
+        main()
+        partd()
+        pages()
 finally:
     with open(os.path.join(OUT, "rows.tsv"), "w") as f:
         f.write("row\tclaim\texpected\tmeasured\tresult\n")

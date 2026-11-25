@@ -21,7 +21,7 @@ QTextStream err(stderr);
 int usage()
 {
     err << i18nc("@info:usage the command's help; keep the words in angle brackets' meaning",
-                 "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n");
+                 "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-] | sound <id> <sound|->\n");
     return 2;
 }
 } // namespace
@@ -129,6 +129,18 @@ int main(int argc, char **argv)
         const QString codec = args.at(2) == QLatin1String("-") ? QString() : args.at(2);
         const QString mode = args.size() == 4 && args.at(3) != QLatin1String("-") ? args.at(3) : QString();
         const QDBusReply<QString> reply = throwd.call(QStringLiteral("SetChoice"), id, codec, mode);
+        if (!reply.isValid()) {
+            err << reply.error().message() << '\n';
+            return 1;
+        }
+        const QJsonObject answer = QJsonDocument::fromJson(reply.value().toUtf8()).object();
+        out << QJsonDocument(answer).toJson(QJsonDocument::Indented);
+        return answer.contains(QStringLiteral("error")) ? 1 : 0;
+    }
+    if (verb == QLatin1String("sound") && args.size() == 3) {
+        // "-" leaves the sound to the table: the best stereo sound the stream carries that has not failed on this device
+        const QString sound = args.at(2) == QLatin1String("-") ? QString() : args.at(2);
+        const QDBusReply<QString> reply = throwd.call(QStringLiteral("SetSound"), id, sound);
         if (!reply.isValid()) {
             err << reply.error().message() << '\n';
             return 1;

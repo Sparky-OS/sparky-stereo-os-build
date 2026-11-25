@@ -60,8 +60,8 @@ msgid "%1 (model %2) is not in the device table. Its Throw uses the limits of th
 msgstr "%1 (modèle %2) n’est pas dans la table des appareils. Son Throw utilise les limites du premier Chromecast : 1920x1080 à 30 images par seconde, H.264."
 
 msgctxt "@info:usage the command's help; keep the words in angle brackets' meaning"
-msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
-msgstr "Utilisation : sparky-stereo-throw list | throw <id> [--wait SECONDES] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-]\n"
+msgid "Usage: sparky-stereo-throw list | throw <id> [--wait SECONDS] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-] | sound <id> <sound|->\n"
+msgstr "Utilisation : sparky-stereo-throw list | throw <id> [--wait SECONDES] | stop <id> | info <id> | volume <id> <0..1|-> [mute|unmute] | status <id> | choose <id> <codec|-> [<mode>|-] | sound <id> <sound|->\n"
 
 msgctxt "@title notification the subject of a kept Throw problem"
 msgid "A Throw could not go on"
@@ -131,14 +131,6 @@ msgctxt "@info a device gets less than it can show; %1 and %3 sizes, %2 codecs, 
 msgid "It shows up to %1 in %2; this computer has no encoder for it, so it gets %3 in %4."
 msgstr "Il affiche jusqu’à %1 en %2 ; cet ordinateur n’a pas d’encodeur pour cela, il reçoit donc %3 en %4."
 
-msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
-msgid "Opus, %1 kHz, %2 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"
-msgstr "Opus, %1 kHz, %2 canaux (compressé : le flux WebM que l’appareil accepte ne transporte que de l’Opus ou du Vorbis)"
-
-msgctxt "@info the sound a Throw carries; %1 kilohertz, %2 channels"
-msgid "FLAC, 24 bit, %1 kHz, %2 channels (lossless)"
-msgstr "FLAC, 24 bits, %1 kHz, %2 canaux (sans perte)"
-
 msgctxt "@info a Throw cannot start as chosen; %1 is the Cast device's name, %2 why"
 msgid "The Throw to %1 cannot start as chosen: %2. Choose another codec or mode on its page."
 msgstr "Le Throw vers %1 ne peut pas démarrer comme choisi : %2. Choisissez un autre codec ou mode sur sa page."
@@ -166,6 +158,58 @@ msgstr "groupe d’enceintes"
 msgctxt "@info a Cast model in a few words, from the device table"
 msgid "not in the table"
 msgstr "absent de la table"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (compressed: the WebM stream the device takes carries Opus or Vorbis only)"
+msgstr "%1, %2 kHz, %3 canaux (compressé : le flux WebM que l’appareil accepte ne transporte que de l’Opus ou du Vorbis)"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (lossless)"
+msgstr "%1, %2 kHz, %3 canaux (sans perte)"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz, %3 channels"
+msgid "%1, %2 kHz, %3 channels (compressed)"
+msgstr "%1, %2 kHz, %3 canaux (compressé)"
+
+msgctxt "@info the sound a Throw carries; %1 a sound, %2 kilohertz"
+msgid "%1, %2 kHz (the device, or the television or receiver behind it, decodes it; a stereo source plays on the front speakers)"
+msgstr "%1, %2 kHz (l’appareil, ou le téléviseur ou l’ampli derrière lui, le décode ; une source stéréo joue sur les enceintes avant)"
+
+msgctxt "@info why a Throw cannot be made as chosen; %1 a sound, %2 a codec"
+msgid "the stream of %2 cannot carry %1 sound"
+msgstr "le flux %2 ne peut pas transporter le son %1"
+
+msgctxt "@info a Throw ended; %1 the Cast device's name, %2 seconds, %3 the device's player state, %4 its time in seconds, %5 a sound"
+msgid "%1 did not start playing within %2 seconds (it said %3, at %4 s). The Throw has ended. It carried %5 sound; the next Throw to it takes another one, or choose one on its page."
+msgstr "%1 n’a pas commencé la lecture en %2 secondes (il a indiqué %3, à %4 s). Le Throw est terminé. Il transportait le son %5 ; le prochain Throw vers lui en prend un autre, ou choisissez-en un sur sa page."
+
+msgctxt "@item a sound format; keep the format's name"
+msgid "PCM, 24 bit"
+msgstr "PCM, 24 bits"
+
+msgctxt "@item a sound format; keep the format's name"
+msgid "FLAC, 24 bit"
+msgstr "FLAC, 24 bits"
+
+msgctxt "@item a sound format; keep the format's name"
+msgid "PCM, 16 bit"
+msgstr "PCM, 16 bits"
+
+msgctxt "@info what a sound format means for a person"
+msgid "Six channels, for a television or receiver with 5.1 speakers, which decodes them. A stereo source plays on the front speakers only: nothing is spread to the other speakers."
+msgstr "Six canaux, pour un téléviseur ou un ampli avec des enceintes 5.1, qui les décode. Une source stéréo ne joue que sur les enceintes avant : rien n’est réparti sur les autres enceintes."
+
+msgctxt "@info what a sound format means for a person; %1 megabits a second"
+msgid "Lossless: the sound exactly as this computer plays it, not compressed. It takes the most of the network, about %1 Mbit/s."
+msgstr "Sans perte : le son exactement tel que cet ordinateur le joue, non compressé. C’est ce qui prend le plus de réseau, environ %1 Mbit/s."
+
+msgctxt "@info what a sound format means for a person"
+msgid "Lossless: the sound exactly as this computer plays it, packed smaller without leaving anything out."
+msgstr "Sans perte : le son exactement tel que cet ordinateur le joue, compacté sans rien laisser de côté."
+
+msgctxt "@info what a sound format means for a person"
+msgid "Compressed: a smaller stream that leaves out some of the sound, which few people hear."
+msgstr "Compressé : un flux plus petit qui laisse de côté une partie du son, ce que peu de gens entendent."
 
 msgctxt "@info a Cast device's model and what the model name tells; %1 model, %2 generation"
 msgid "%1 — %2"
@@ -330,3 +374,23 @@ msgstr "Mode :"
 msgctxt "@label the sound a Throw sends"
 msgid "Sound:"
 msgstr "Son :"
+
+msgctxt "@label the sound format a Throw sends"
+msgid "Sound format:"
+msgstr "Format du son :"
+
+msgctxt "@item a sound this device played; %1 its name"
+msgid "%1 (played on this device)"
+msgstr "%1 (lu sur cet appareil)"
+
+msgctxt "@item a sound this device did not start playing; %1 its name"
+msgid "%1 (did not start on this device)"
+msgstr "%1 (n’a pas démarré sur cet appareil)"
+
+msgctxt "@item a sound this device played; %1 its name, %2 seconds"
+msgid "%1 (played on this device, started after %2 s)"
+msgstr "%1 (lu sur cet appareil, démarré après %2 s)"
+
+msgctxt "@info how long this device took to start with this sound; %1 seconds"
+msgid "On this device it started %1 s after the Throw began: until then the television shows its own loading screen, and then its picture stays about that far behind this screen."
+msgstr "Sur cet appareil, il a démarré %1 s après le début du Throw : jusque-là, le téléviseur affiche son propre écran de chargement, puis son image reste à peu près autant en retard sur cet écran."

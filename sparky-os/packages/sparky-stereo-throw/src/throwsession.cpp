@@ -8,6 +8,7 @@
 #include <KLocalizedString>
 #include <KSharedConfig>
 
+#include <QDateTime>
 #include <QJsonArray>
 
 namespace Throw
@@ -16,6 +17,11 @@ namespace Throw
 namespace
 {
 constexpr int FetchTimeoutMs = 20000;
+// A Throw that does not play is ended and said, never left as "throwing" before a loading screen. Measured on a real
+// Chromecast (row 81, part D): with a still screen the kit's reference stream started 1 to 2 s after LOAD with PCM sound,
+// 17 s with AC-3, 21 s with FLAC and 40 s with AAC; this daemon's own stream (0.3.0) 1.2 to 1.4 s with PCM and AC-3 and
+// steadily 38 to 44 s with FLAC; E-AC-3 and Vorbis did not start in 45 s. 60 s covers the slowest start with a margin.
+constexpr int PlayTimeoutMs = 60000;
 const QString CtxDevice = QStringLiteral("@info a Throw failed; %1 is the Cast device's name, %2 the reason it gave");
 } // namespace
 
@@ -92,6 +98,25 @@ ThrowSession::ThrowSession(const Device &device, const ModelRow &row, const Plan
             m_channel.getMediaStatus(m_transportId);
         }
     });
+    m_playTimeout.setSingleShot(true);
+    m_playTimeout.setInterval(PlayTimeoutMs);
+    connect(&m_playTimeout, &QTimer::timeout, this, [this] {
+        // what the device said, then the Throw is ended; the sound it carried is recorded as not started on this device
+        const QString player = m_media.value(QStringLiteral("playerState")).toString();
+        const QString reason = m_media.value(QStringLiteral("idleReason")).toString();
+        const QString said = player.isEmpty() ? QStringLiteral("nothing") : (reason.isEmpty() ? player : player + QLatin1Char(' ') + reason);
+        const QString at = QString::number(m_media.value(QStringLiteral("currentTime")).toDouble(), 'f', 1);
+        const QString sound = Codecs::sound(m_plan.info.audioCodec).label;
+        Q_EMIT soundNotStarted(m_plan.info.audioCodec);
+        fail(QStringLiteral("@info a Throw ended; %1 the Cast device's name, %2 seconds, %3 the device's player state, %4 its time in seconds, "
+                            "%5 a sound"),
+             QStringLiteral("%1 did not start playing within %2 seconds (it said %3, at %4 s). The Throw has ended. It carried %5 sound; the next "
+                            "Throw to it takes another one, or choose one on its page."),
+             {m_device.name, QString::number(PlayTimeoutMs / 1000), said, at, sound},
+             QStringLiteral("%1 did not start playing within %2 seconds (it said %3, at %4 s). The Throw has ended. It carried %5 sound; the next "
+                            "Throw to it takes another one, or choose one on its page.")
+                 .arg(m_device.name, QString::number(PlayTimeoutMs / 1000), said, at, sound));
+    });
     m_fetchTimeout.setSingleShot(true);
     m_fetchTimeout.setInterval(FetchTimeoutMs);
     connect(&m_fetchTimeout, &QTimer::timeout, this, [this] {
@@ -161,6 +186,12 @@ QJsonObject ThrowSession::status() const
         {QStringLiteral("sound"), m_plan.info.audioCodec},
         {QStringLiteral("sink"), sinkName()},
         {QStringLiteral("listen"), m_streamer.listenAddress().toString()},
+        // the times a person lives with: the device's time t shows what this computer had encoded at readerZeroAt + t, so
+        // at statusAt the device is (statusAt - readerZeroAt) / 1000 - currentTime seconds behind the screen
+        {QStringLiteral("loadAt"), double(m_loadAt)},
+        {QStringLiteral("statusAt"), double(m_statusAt)},
+        {QStringLiteral("firstPlayingAt"), double(m_firstPlayingAt)},
+        {QStringLiteral("readerZeroAt"), double(m_streamer.readerZeroAt())},
     };
 }
 
@@ -200,6 +231,7 @@ void ThrowSession::teardown()
     m_stopping = true;
     m_fetchTimeout.stop();
     m_poll.stop();
+    m_playTimeout.stop();
     m_channel.close();
     m_streamer.stop();
     m_screen.close();
@@ -219,9 +251,13 @@ void ThrowSession::onReceiverStatus(const QJsonObject &status, int)
         if (!m_loadSent && !m_transportId.isEmpty()) {
             m_loadSent = true;
             const QString url = m_streamer.url();
-            qCInfo(THROW) << "asking" << m_device.name << "to load" << url;
+            // the stream's address without its token: the token is what lets a reader fetch the stream
+            qCInfo(THROW) << "asking" << m_device.name << "to load" << QString(url).section(QLatin1Char('/'), 0, -2) + QStringLiteral("/(token)");
             m_channel.load(m_transportId, url, m_streamer.contentType());
             m_fetchTimeout.start();
+            m_playTimeout.start();
+            m_sinceLoad.start();
+            m_loadAt = QDateTime::currentMSecsSinceEpoch();
         }
         return;
     }
@@ -239,7 +275,21 @@ void ThrowSession::onMediaStatus(const QJsonObject &payload)
     for (const auto &value : statuses) {
         const QJsonObject status = value.toObject();
         m_media = status;
+        m_statusAt = QDateTime::currentMSecsSinceEpoch();
         const QString player = status.value(QStringLiteral("playerState")).toString();
+        // the device plays once its time has run past a second: a real Chromecast says PLAYING at its time 0 and then buffers
+        // there for ever with some sounds (E-AC-3, Vorbis; FLAC, Opus and MP3 for tens of seconds), measured on 2026-11-25,
+        // so the first PLAYING alone is not playing; it began playing at the status's time less its own time
+        const double current = status.value(QStringLiteral("currentTime")).toDouble();
+        if (player == QLatin1String("PLAYING") && !m_played && current >= 1.0) {
+            // the device plays: the sound it carries is recorded as played on this device, with how long it took
+            m_played = true;
+            m_firstPlayingAt = m_statusAt - qint64(current * 1000);
+            m_playTimeout.stop();
+            const double seconds = m_sinceLoad.isValid() ? qMax(0.0, m_sinceLoad.elapsed() / 1000.0 - current) : -1;
+            qCInfo(THROW) << m_device.name << "plays, " << seconds << "s after LOAD, with" << m_plan.info.audioCodec;
+            Q_EMIT soundPlayed(m_plan.info.audioCodec, seconds);
+        }
         if ((player == QLatin1String("PLAYING") || player == QLatin1String("BUFFERING")) && m_state == QLatin1String("starting")) {
             Tell::clear(m_device.id);
             Tell::event(QStringLiteral("throwStarted"), i18nc("@info:status a Throw runs; %1 is the Cast device's name", "Throwing to %1.", m_device.name));

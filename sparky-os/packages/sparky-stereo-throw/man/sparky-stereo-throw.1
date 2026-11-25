@@ -27,6 +27,10 @@ sparky-stereo-throw \- throw the desktop to Google Cast devices
 .I id
 .IR codec | \-
 .RI [ mode | \- ]
+.br
+.B sparky-stereo-throw sound
+.I id
+.IR sound | \-
 .SH DESCRIPTION
 The command of the Throw service (org.sparky.Throw on the session bus). \fBlist\fR prints the Cast devices found on
 the network as JSON: identity, name, model, what the model name tells, address, the mode a Throw uses and the state of
@@ -37,16 +41,21 @@ its receiver's status). \fBvolume\fR sets the device's volume (0 to 1, or \- to 
 device. \fBstatus\fR prints what a running Throw's device reports (its player state and idle reason) and the bytes it
 fetched. \fBchoose\fR keeps a codec (h264, hevc, vp9, vp8, av1) and a mode (\fIW\fRx\fIH\fR@\fIHz\fR) for the device,
 \- for the table's choice; a choice the device does not take is refused, and a Throw whose choice this computer cannot
-encode is refused with the reason, never made in another codec.
+encode is refused with the reason, never made in another codec. \fBsound\fR keeps the sound for the device (pcm24,
+flac, pcm16, opus, aac, vorbis, mp3, ac3\-5.1, eac3\-5.1), \- for the table's choice; a sound the stream cannot carry
+is refused. A Throw the device does not play within 60 seconds is ended and said with what the device reported.
 .PP
 While a Throw runs, a sound output named "Throw: \fIdevice\fR" exists; what plays into it travels with the picture
-(FLAC in Matroska and MP4, Opus in WebM). A speaker or a group gets the sound alone (FLAC in Ogg).
+(by default the best stereo sound the stream carries that has not failed on that device: 24-bit PCM in Matroska, FLAC
+in MP4, Opus in WebM). A speaker or a group gets the sound alone (FLAC in Ogg). The picture keeps coming on a still
+screen: the last frame is encoded again at the mode's rate.
 The picture and the sound travel unencrypted between this computer and the device, as the device's own player fetches
 them; the stream's server listens on the address facing the device and answers that device only.
 .SH FILES
 .TP
 .I ~/.config/sparky-stereo-throwrc
-[Device][\fIid\fR] Codec= and Mode=\fIW\fRx\fIH\fR@\fIHz\fR: the codec and mode chosen for that device (\fBchoose\fR, or its page).
+[Device][\fIid\fR] Codec=, Mode=\fIW\fRx\fIH\fR@\fIHz\fR and Sound=: what was chosen for that device (\fBchoose\fR,
+\fBsound\fR, or its page); SoundsPlayed= and SoundsFailed=: the sounds that device played, or did not start playing.
 .TP
 .I /usr/share/sparky-stereo-throw/devices.json
 The device table: what each model plays.
