@@ -203,7 +203,11 @@ KCM.SimpleKCM {
         modal: true
         standardButtons: QQC.Dialog.Ok | QQC.Dialog.Cancel
         QQC.Label { text: i18n("Remove the selected items?"); wrapMode: Text.Wrap }
-        onAccepted: kcm.clean(root.approved)
+        onAccepted: {
+            const approved = root.approved
+            root.approved = []
+            kcm.clean(approved)
+        }
     }
 
     QQC.Dialog {
