@@ -20,3 +20,8 @@ override_dh_auto_install:
 		--subject "@title notification the subject of a kept Throw problem|A Throw could not go on"
 
 # dh_auto_test runs ctest: the hand-written CastMessage against pychromecast's generated module, both ways
+
+# the problems engine's library lives in its own folder with no shlibs file (as sparky-stereo-cec's build reads it):
+# found there, and its package is named in Depends
+override_dh_shlibdeps:
+	dh_shlibdeps -l$(shell pkg-config --variable=libdir sparky-stereo-problems) -- --ignore-missing-info
