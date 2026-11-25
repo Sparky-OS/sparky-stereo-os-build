@@ -1,0 +1,40 @@
+From: Vlad Zahorodnii
+Date: Mon, 20 Jul 2026 08:58:17 +0300
+Subject: [PATCH] Fix announcing input method protocols
+
+Backport of KWin merge request 9601 (commits 296e7c17 "Fix announcing
+input method protocols" and 5bc7c913 "Announce privileged protocols to
+input method", Vlad Zahorodnii, merged on master 2026-07-21) to 6.7.4,
+whose filter has no sandbox branch: the check that keeps zwp_input_method_v1
+and zwp_input_panel_v1 to KWin's own input method sat below the early
+"not blacklisted, allowed" return and never ran, so any client could bind
+them (a Fcitx 5 started by D-Bus activation in a Plasma Keyboard session
+replaced KWin's input panel, row 71). The input method's own connection
+gets every interface, as upstream's second commit has it.
+
+Origin: backport, https://invent.kde.org/plasma/kwin/-/merge_requests/9601
+Author: Vlad Zahorodnii
+Applied-Upstream: master, 296e7c175e63923f4d064c04b636ae956915d37d and 5bc7c91394e64e80112b920fe7e082cbca377b60
+Last-Update: 2026-11-25
+Assisted-by: Claude Opus 5.5 (the backport to 6.7.4's filter)
+---
+ src/wayland_server.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/wayland_server.cpp b/src/wayland_server.cpp
+index 6e9b638..4523282 100644
+--- a/src/wayland_server.cpp
++++ b/src/wayland_server.cpp
+@@ -168,6 +168,12 @@ public:
+             return false;
+         }
+ 
++        if (client == waylandServer()->inputMethodConnection()) {
++            return true;
++        } else if (inputmethodInterfaces.contains(interfaceName)) {
++            return false;
++        }
++
+         if (!interfacesBlackList.contains(interfaceName)) {
+             return true;
+         }

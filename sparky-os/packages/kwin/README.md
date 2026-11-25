@@ -1,3 +1,13 @@
+## A keyboard that is not the input method hears a second touch and keeps the field in view (+stereo3d67)
+
+`prepare-source-67.sh STAGED_66_DIR OUT TOOLKIT` takes the staged +66 source (row 81's stage, its .dsc checked by hash; the orig tarball and its signature from the published pool) and adds three patches for queue row 71, where Plasma Keyboard is the on-screen keyboard of Fcitx 5 in the Japanese, Korean and Chinese sessions: a second program with a layer-shell window, not KWin's input method.
+s67-0001 carries Vlad Zahorodnii's merge request 9601 (master 296e7c17 and 5bc7c913) to 6.7.4's filter, where the check that keeps `zwp_input_method_v1` and `zwp_input_panel_v1` to KWin's own input method stood below the early "not blacklisted" return and never ran: a Fcitx 5 started by D-Bus activation in a Latin session took KWin's input panel (found by row 71's rig).
+s67-0002 adds `testShowRequestedOnFocusedField` and `testOnScreenKeyboardKeepsFieldInView` to testInputMethod (red on +66: 24 pass, these two fail; the mock input method's panel is an overlay there, as Fcitx 5's candidate popup is).
+s67-0003: every request of a text field for the keyboard (text-input v2 and v3 `show_input_panel`, the internal context's request), also from a field that already has the focus, is said as the scriptable D-Bus signal `showRequested()` of `org.kde.kwin.VirtualKeyboard`, so a keyboard that is not the input method shows on a second touch as KWin's own does (KWin's own rule still decides: touch or pen, "Only when in Tablet Mode").
+`setOnScreenKeyboardShown(bool)` on the same interface: the calling process's shown layer-shell window, found by the caller's process and never by coordinates it sends, is kept clear of as KWin's own input panel is (`Window::setVirtualKeyboardGeometry`: the focused window ends where the keys begin, full-screen and desktop windows and the "overlay" option as before) while KWin's own panel is not shown at the bottom, and text-input v2 hears the overlap in `input_panel_state`; the window gets its place back when the keyboard says it is hidden, its window closes or its program leaves the bus.
+No protocol a client speaks changes.
+`build-67.sh` takes build-66.sh's seven arguments with the staged +66 binaries as PREVIOUS_DIR and an empty PREVIOUS_SIBLINGS_FILE; testInputMethod joins `test-in-container.sh`'s list (and its session-bus list).
+
 ## A network screen is a screen like the others (+stereo3d66)
 
 `prepare-source-66.sh STAGED_65_DIR OUT TOOLKIT` takes the staged +65 source (row 862's stage) and adds four edition patches and one catalogue patch for queue row 81 (Throw to a Cast device).

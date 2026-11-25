@@ -1,0 +1,23 @@
+plasma-keyboard (6.7.4-2+stereo3d2) unstable; urgency=medium
+
+  * Sparky Stereo OS, row 71's second round
+    (0002-Fcitx-5-mode-a-second-touch-the-field-in-view-a-readable-sentence.patch):
+    - A second touch on a text field that already has the focus shows the
+      keyboard again in Fcitx 5 mode, as in every other session: KWin
+      6.7.4-2+stereo3d67 says on D-Bus that a field asked for the keyboard
+      (org.kde.kwin.VirtualKeyboard.showRequested) and KWin's own rule
+      decides (touch or pen, "Only when in Tablet Mode").
+    - The field typed into stays in view above the keys, as for KWin's own
+      keyboard: the keyboard tells KWin when it is shown and hidden
+      (setOnScreenKeyboardShown), and KWin moves or shortens the focused
+      window to end where the keys begin, and gives its place back.
+    - The keyboard shows on the screen of the touched field, as KWin's own
+      keyboard does: its window wants KWin's active output, and a keyboard
+      shown on another screen is shown again there.
+    - "Fcitx 5 does not answer" is readable: the system's negative-text
+      colour, lightened just enough for a contrast of 4.5:1 or more on the
+      keyboard (it was dark red on near black).
+    - The candidates Fcitx 5 hands over are logged (debug), for the rig.
+    Depends on kwin-wayland (>= 4:6.7.4-2+stereo3d67~). Tests in
+    autotests/fcitxbridgetest: the field asks again, KWin is told, the
+    keyboard follows the touched screen.
