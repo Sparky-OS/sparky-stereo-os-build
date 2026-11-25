@@ -319,8 +319,8 @@
         <translation>Bereinigt die markierten Elemente jeden Monat ohne weitere Rückfrage.</translation>
     </message>
     <message>
-        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
-        <translation>Die Standardbereinigung kann alte temporäre Dateien, Programm-Caches, archivierte Protokolle, X11-Fehlerprotokolle, Finder-Metadaten, Windows-Vorschaubild-Caches, heruntergeladene APT-Pakete und Paketlisten entfernen.</translation>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>Die Standardbereinigung kann alte temporäre Dateien und temporäre Dateien von Word oder PowerPoint, Programm-Caches, archivierte Protokolle, X11-Fehlerprotokolle, Finder-Metadaten, Windows-Vorschaubild-Caches, heruntergeladene APT-Pakete und Paketlisten entfernen.</translation>
     </message>
     <message>
         <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>

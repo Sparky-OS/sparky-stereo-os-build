@@ -319,8 +319,8 @@
         <translation>선택한 항목을 매월 다시 묻지 않고 정리합니다.</translation>
     </message>
     <message>
-        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
-        <translation>기본 정리에서는 오래된 임시 파일, 앱 캐시, 보관된 로그, X11 오류 로그, Finder 메타데이터, Windows 썸네일 캐시, APT에서 내려받은 패키지와 패키지 목록을 삭제할 수 있습니다.</translation>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>기본 정리에서는 오래된 임시 파일과 Word 또는 PowerPoint가 남긴 임시 파일, 앱 캐시, 보관된 로그, X11 오류 로그, Finder 메타데이터, Windows 썸네일 캐시, APT에서 내려받은 패키지와 패키지 목록을 삭제할 수 있습니다.</translation>
     </message>
     <message>
         <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>

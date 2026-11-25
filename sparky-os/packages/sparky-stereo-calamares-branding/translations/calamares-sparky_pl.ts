@@ -319,8 +319,8 @@
         <translation>Czyści zaznaczone elementy co miesiąc bez ponownego pytania.</translation>
     </message>
     <message>
-        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
-        <translation>Domyślne czyszczenie może usunąć stare pliki tymczasowe, pamięci podręczne aplikacji, zarchiwizowane dzienniki, dzienniki błędów X11, metadane Findera, pamięci podręczne miniatur Windows oraz pakiety pobrane przez APT i listy pakietów.</translation>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>Domyślne czyszczenie może usunąć stare pliki tymczasowe i pliki tymczasowe pozostawione przez Worda lub PowerPointa, pamięci podręczne aplikacji, zarchiwizowane dzienniki, dzienniki błędów X11, metadane Findera, pamięci podręczne miniatur Windows oraz pakiety pobrane przez APT i listy pakietów.</translation>
     </message>
     <message>
         <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>

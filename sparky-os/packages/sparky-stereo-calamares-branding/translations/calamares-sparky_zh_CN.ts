@@ -319,8 +319,8 @@
         <translation>每月清理勾选的项目，无需再次确认。</translation>
     </message>
     <message>
-        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
-        <translation>默认清理可能移除旧的临时文件、应用缓存、轮转后的日志、X11 错误日志、Finder 元数据、Windows 缩略图缓存、APT 下载的软件包以及软件包列表。</translation>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>默认清理可能移除旧的临时文件和 Word 或 PowerPoint 遗留的临时文件，以及应用缓存、轮转后的日志、X11 错误日志、Finder 元数据、Windows 缩略图缓存、APT 下载的软件包和软件包列表。</translation>
     </message>
     <message>
         <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>

@@ -26,7 +26,7 @@ ScrollView {
             textFormat: Text.PlainText
             wrapMode: Text.WordWrap
             text: [
-                qsTr("Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists."),
+                qsTr("Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists."),
                 qsTr("It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs."),
                 qsTr("Storage Cleanup skips system journals, swap wiping and Firefox and Thunderbird database compaction, even though BleachBit has them selected."),
                 qsTr("Documents, pictures, downloads and settings are never cleaned.")

@@ -319,8 +319,8 @@
         <translation>チェックした項目を毎月、再確認せずにクリーンアップします。</translation>
     </message>
     <message>
-        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
-        <translation>既定のクリーンアップでは、古い一時ファイル、アプリのキャッシュ、切り替え済みのログ、X11 のエラーログ、Finder のメタデータ、Windows のサムネイルキャッシュ、APT がダウンロードしたパッケージやパッケージ一覧が削除されることがあります。</translation>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>既定のクリーンアップでは、古い一時ファイルや Word または PowerPoint が残した一時ファイル、アプリのキャッシュ、切り替え済みのログ、X11 のエラーログ、Finder のメタデータ、Windows のサムネイルキャッシュ、APT がダウンロードしたパッケージやパッケージ一覧が削除されることがあります。</translation>
     </message>
     <message>
         <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>

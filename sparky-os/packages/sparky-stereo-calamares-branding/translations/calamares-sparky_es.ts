@@ -319,8 +319,8 @@
         <translation>Limpia los elementos marcados cada mes sin volver a preguntar.</translation>
     </message>
     <message>
-        <source>Default cleanup can remove old temporary files, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
-        <translation>La limpieza predeterminada puede eliminar archivos temporales antiguos, cachés de aplicaciones, registros archivados, registros de errores de X11, metadatos del Finder, cachés de miniaturas de Windows, paquetes descargados por APT y listas de paquetes.</translation>
+        <source>Default cleanup can remove old temporary files and temporary files left by Word or PowerPoint, app caches, rotated logs, X11 error logs, Finder metadata, Windows thumbnail caches, downloaded APT packages and package lists.</source>
+        <translation>La limpieza predeterminada puede eliminar archivos temporales antiguos y archivos temporales de Word o PowerPoint, cachés de aplicaciones, registros archivados, registros de errores de X11, metadatos del Finder, cachés de miniaturas de Windows, paquetes descargados por APT y listas de paquetes.</translation>
     </message>
     <message>
         <source>It can also remove Firefox bookmark backups and crash reports, Vim recovery files, local mailbox contents and undelivered mail, including queues from removed mail programs.</source>
