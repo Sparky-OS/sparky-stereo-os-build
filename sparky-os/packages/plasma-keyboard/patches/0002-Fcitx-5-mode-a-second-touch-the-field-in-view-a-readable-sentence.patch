@@ -6,25 +6,29 @@ Description: Fcitx 5 mode: a second touch, the field kept in view, a readable se
  bridge tells KWin when its keyboard is shown and hidden
  (setOnScreenKeyboardShown), and KWin keeps the focused window clear of the
  keyboard's window as it does for its own panel; a KWin that cannot is said
- once in the log. "Fcitx 5 does not answer" is drawn in the system's
- negative-text colour, lightened just enough for a contrast of 4.5:1 on the
- keyboard. The candidates Fcitx 5 hands over are logged in the debug category.
- Tests: testShownAgainWhenTheFieldAsks and testKWinToldWhenShown in
- autotests/fcitxbridgetest.
+ once in the log. The keyboard shows on the screen of the touched field: its
+ layer window wants the active screen, and a keyboard already shown on another
+ screen is shown again where KWin's active output is
+ (org.kde.KWin.activeOutputName). "Fcitx 5 does not answer" is drawn in the
+ system's negative-text colour, lightened just enough for a contrast of 4.5:1
+ on the keyboard. The candidates Fcitx 5 hands over are logged in the debug
+ category. Tests: testShownAgainWhenTheFieldAsks, testKWinToldWhenShown and
+ testFollowsTheTouchedScreen in autotests/fcitxbridgetest.
 Author: Daniel Campos Ramos
 Origin: vendor, Sparky Stereo OS (row 71, second round), branch order71b of KDE's plasma/plasma-keyboard at v6.7.4
 Forwarded: no
 Last-Update: 2026-11-25
 ---
+Commit 1e71bea: Fcitx 5 mode: the keyboard shows on the screen of the touched field
 Commit 5a59d52: Fcitx 5 mode: a second touch, the field kept in view, a readable sentence
 
- 4 files changed, 112 insertions(+), 2 deletions(-)
+ 7 files changed, 192 insertions(+), 2 deletions(-)
 
 diff --git a/autotests/fcitxbridgetest.cpp b/autotests/fcitxbridgetest.cpp
-index 635ecd8..2521804 100644
+index 635ecd8..a9f36d6 100644
 --- a/autotests/fcitxbridgetest.cpp
 +++ b/autotests/fcitxbridgetest.cpp
-@@ -44,13 +44,21 @@ public:
+@@ -44,13 +44,37 @@ public:
          m_willShow = willShow;
          Q_EMIT activeChanged();
      }
@@ -43,19 +47,53 @@ index 635ecd8..2521804 100644
      Q_SCRIPTABLE void activeChanged();
 +    // a text field asked for the keyboard, also one that already has the focus
 +    Q_SCRIPTABLE void showRequested();
++};
++
++// KWin's org.kde.KWin on /KWin: the output of the last input (kwin src/dbusinterface.h)
++class FakeKWinMain : public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", "org.kde.KWin")
++public:
++    QString m_activeOutput = u"Virtual-0"_s;
++    int m_asked = 0;
++public Q_SLOTS:
++    Q_SCRIPTABLE QString activeOutputName()
++    {
++        ++m_asked;
++        return m_activeOutput;
++    }
  };
  
  // Fcitx 5: org.fcitx.Fcitx.VirtualKeyboard1 on /virtualkeyboard of org.fcitx.Fcitx5 (fcitx5 src/ui/virtualkeyboard)
-@@ -216,6 +224,8 @@ private Q_SLOTS:
+@@ -216,6 +240,9 @@ private Q_SLOTS:
      void testInputMethods();
      void testHideKey();
      void testPlainTypingWhenFcitxRefuses();
 +    void testShownAgainWhenTheFieldAsks();
 +    void testKWinToldWhenShown();
++    void testFollowsTheTouchedScreen();
  
  private:
      void setUpStandIns();
-@@ -518,5 +528,46 @@ void FcitxBridgeTest::testPlainTypingWhenFcitxRefuses()
+@@ -228,6 +255,7 @@ private:
+     FakeFcitxKeyboard *m_fcitxKeyboard = nullptr;
+     FakeFcitxBackend *m_backend = nullptr;
+     FakeFcitxController *m_controller = nullptr;
++    FakeKWinMain *m_kwinMain = nullptr;
+     FcitxBridge *m_bridge = nullptr;
+     int m_round = 0;
+ };
+@@ -254,6 +282,8 @@ void FcitxBridgeTest::setUpStandIns()
+     QVERIFY(m_kwinBus.registerObject(u"/VirtualKeyboard"_s,
+                                      m_kwin,
+                                      QDBusConnection::ExportAllProperties | QDBusConnection::ExportScriptableSlots | QDBusConnection::ExportScriptableSignals));
++    m_kwinMain = new FakeKWinMain;
++    QVERIFY(m_kwinBus.registerObject(u"/KWin"_s, m_kwinMain, QDBusConnection::ExportScriptableSlots));
+     QVERIFY(m_kwinBus.registerService(u"org.kde.KWin"_s));
+     m_fcitxKeyboard = new FakeFcitxKeyboard(m_fcitxBus, m_backendBus);
+     m_backend = new FakeFcitxBackend;
+@@ -518,5 +548,65 @@ void FcitxBridgeTest::testPlainTypingWhenFcitxRefuses()
      QVERIFY(m_backend->m_keys.isEmpty());
  }
  
@@ -100,10 +138,29 @@ index 635ecd8..2521804 100644
 +    QTRY_COMPARE(m_kwin->m_shownSaid, (QList<bool>{true, false}));
 +}
 +
++void FcitxBridgeTest::testFollowsTheTouchedScreen()
++{
++    startBridge();
++    if (QTest::currentTestResolved()) {
++        return;
++    }
++    QSignalSpy named(m_bridge, SIGNAL(activeOutputNamed(QString)));
++    QVERIFY(named.isValid());
++    m_kwin->setState(true, true);
++    QTRY_VERIFY(m_bridge->isVisible());
++    // a field on another screen asks while the keyboard is shown: the bridge asks KWin where the last touch was, so the
++    // keyboard's window can be shown again on that screen
++    m_kwinMain->m_activeOutput = u"Virtual-1"_s;
++    Q_EMIT m_kwin->showRequested();
++    QTRY_VERIFY(!named.isEmpty());
++    QCOMPARE(named.last().at(0).toString(), u"Virtual-1"_s);
++    QVERIFY(m_bridge->isVisible());
++}
++
  QTEST_MAIN(FcitxBridgeTest)
  #include "fcitxbridgetest.moc"
 diff --git a/src/fcitx/fcitxbridge.cpp b/src/fcitx/fcitxbridge.cpp
-index fd09fdb..3f7b0ea 100644
+index fd09fdb..1e3f312 100644
 --- a/src/fcitx/fcitxbridge.cpp
 +++ b/src/fcitx/fcitxbridge.cpp
 @@ -227,6 +227,9 @@ bool FcitxBridge::start()
@@ -146,7 +203,37 @@ index fd09fdb..3f7b0ea 100644
  void FcitxBridge::askKWinWhetherToShow()
  {
      // KWin's own rule for showing a keyboard on the active text field: the last input came from a touch screen or a pen,
-@@ -353,6 +379,7 @@ void FcitxBridge::updateVisible()
+@@ -271,9 +297,29 @@ void FcitxBridge::askKWinWhetherToShow()
+     });
+ }
+ 
++void FcitxBridge::askKWinActiveOutput()
++{
++    // KWin's active output follows the last touch, and a layer surface that wants the active screen is put there when it
++    // is mapped: a keyboard already shown on another screen than the touched field is shown again on that one
++    auto ask = QDBusMessage::createMethodCall(s_kwinName, u"/KWin"_s, u"org.kde.KWin"_s, u"activeOutputName"_s);
++    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(ask), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
++        call->deleteLater();
++        const QDBusPendingReply<QString> reply = *call;
++        if (reply.isError()) {
++            qCWarning(PlasmaKeyboard) << "Cannot read KWin's active output:" << reply.error().message();
++            return;
++        }
++        Q_EMIT activeOutputNamed(reply.value());
++    });
++}
++
+ void FcitxBridge::setKWinWantsKeyboard(bool wants)
+ {
+     m_kwinWants = wants;
++    if (wants && m_visible) {
++        askKWinActiveOutput();
++    }
+     if (wants) {
+         askFcitxToShow();
+     } else {
+@@ -353,6 +399,7 @@ void FcitxBridge::updateVisible()
      if (m_visible != visible) {
          m_visible = visible;
          qCDebug(PlasmaKeyboard) << "Fcitx 5 keyboard visible:" << visible;
@@ -154,7 +241,7 @@ index fd09fdb..3f7b0ea 100644
          Q_EMIT visibleChanged();
      }
  }
-@@ -458,7 +485,7 @@ void FcitxBridge::fcitxPreeditArea(const QString &text)
+@@ -458,7 +505,7 @@ void FcitxBridge::fcitxPreeditArea(const QString &text)
  
  void FcitxBridge::fcitxCandidateArea(const QStringList &candidates, bool hasPrev, bool hasNext, int pageIndex, int globalCursorIndex)
  {
@@ -164,10 +251,19 @@ index fd09fdb..3f7b0ea 100644
      m_hasPrev = hasPrev;
      m_hasNext = hasNext;
 diff --git a/src/fcitx/fcitxbridge.h b/src/fcitx/fcitxbridge.h
-index 20d7ba7..254d131 100644
+index 20d7ba7..80e30a2 100644
 --- a/src/fcitx/fcitxbridge.h
 +++ b/src/fcitx/fcitxbridge.h
-@@ -124,6 +124,7 @@ Q_SIGNALS:
+@@ -115,6 +115,8 @@ public:
+     void fcitxInputMethodListChanged();
+ 
+ Q_SIGNALS:
++    // KWin's active output (the screen of the last touch), asked when a field requests the keyboard while it is shown
++    void activeOutputNamed(const QString &name);
+     void visibleChanged();
+     void plainTypingChanged();
+     void problemChanged();
+@@ -124,6 +126,7 @@ Q_SIGNALS:
  
  private Q_SLOTS:
      void kwinActiveChanged();
@@ -175,15 +271,16 @@ index 20d7ba7..254d131 100644
  
  private:
      void askFcitxToShow();
-@@ -138,6 +139,7 @@ private:
+@@ -138,6 +141,8 @@ private:
      void readCurrentInputMethod();
      void updateLayoutLocale();
      void updateVisible();
 +    void tellKWinShown(bool shown);
++    void askKWinActiveOutput();
      uint keycodeFor(uint keysym) const;
  
      QDBusConnection m_bus;
-@@ -148,6 +150,7 @@ private:
+@@ -148,6 +153,7 @@ private:
      bool m_kwinWants = false;
      bool m_fcitxShown = false;
      bool m_visible = false;
@@ -191,6 +288,71 @@ index 20d7ba7..254d131 100644
      bool m_plainTyping = false;
      bool m_backendAvailable = false;
      QString m_problem;
+diff --git a/src/fcitx/fcitxinputitem.cpp b/src/fcitx/fcitxinputitem.cpp
+index 1eb2fea..5d07cb5 100644
+--- a/src/fcitx/fcitxinputitem.cpp
++++ b/src/fcitx/fcitxinputitem.cpp
+@@ -11,6 +11,7 @@
+ #include <QInputMethod>
+ #include <QKeyEvent>
+ #include <QQuickWindow>
++#include <QScreen>
+ #include <QtGui/private/qxkbcommon_p.h>
+ #include <qpa/qwindowsysteminterface.h>
+ 
+@@ -44,6 +45,7 @@ void FcitxInputItem::setBridge(FcitxBridge *bridge)
+     m_bridge = bridge;
+     if (m_bridge) {
+         connect(m_bridge, &FcitxBridge::visibleChanged, this, &FcitxInputItem::updateVisibility);
++        connect(m_bridge, &FcitxBridge::activeOutputNamed, this, &FcitxInputItem::followActiveOutput);
+     }
+     Q_EMIT bridgeChanged();
+     updateVisibility();
+@@ -70,6 +72,19 @@ void FcitxInputItem::updateVisibility()
+     }
+ }
+ 
++void FcitxInputItem::followActiveOutput(const QString &name)
++{
++    // the touched field is on another screen than the keyboard: mapped again, its layer surface goes to KWin's active
++    // output (the window wants the active screen)
++    QQuickWindow *win = window();
++    if (!win || !m_bridge || !m_bridge->isVisible() || !win->isVisible() || !win->screen() || win->screen()->name() == name) {
++        return;
++    }
++    qCDebug(PlasmaKeyboard) << "The touched field is on" << name << "and the keyboard on" << win->screen()->name() << "- shown there";
++    win->setVisible(false);
++    updateVisibility();
++}
++
+ QVariant FcitxInputItem::inputMethodQuery(Qt::InputMethodQuery query) const
+ {
+     switch (query) {
+diff --git a/src/fcitx/fcitxinputitem.h b/src/fcitx/fcitxinputitem.h
+index f56ebc7..c583d22 100644
+--- a/src/fcitx/fcitxinputitem.h
++++ b/src/fcitx/fcitxinputitem.h
+@@ -50,6 +50,7 @@ protected:
+ private:
+     void sendKeyEvent(QKeyEvent *event, bool release);
+     void updateVisibility();
++    void followActiveOutput(const QString &name);
+ 
+     QPointer<FcitxBridge> m_bridge;
+ };
+diff --git a/src/main.cpp b/src/main.cpp
+index 3a00d12..b85532f 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -130,6 +130,8 @@ int main(int argc, char **argv)
+                                                             | LayerShellQt::Window::AnchorRight));
+             layer->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
+             layer->setExclusiveZone(0);
++            // on the screen of the last touch, as KWin places its own input panel on its active output
++            layer->setWantsToBeOnActiveScreen(true);
+         });
+         view.setInitialProperties({{QStringLiteral("bridge"), QVariant::fromValue(bridge)}});
+         view.load(QUrl(QStringLiteral("qrc:/qt/qml/org/kde/plasma/keyboard/FcitxMain.qml")));
 diff --git a/src/qml/FcitxCandidateBar.qml b/src/qml/FcitxCandidateBar.qml
 index 760b09c..ba01418 100644
 --- a/src/qml/FcitxCandidateBar.qml

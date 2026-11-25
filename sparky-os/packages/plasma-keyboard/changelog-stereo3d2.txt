@@ -11,9 +11,13 @@ plasma-keyboard (6.7.4-2+stereo3d2) unstable; urgency=medium
       keyboard: the keyboard tells KWin when it is shown and hidden
       (setOnScreenKeyboardShown), and KWin moves or shortens the focused
       window to end where the keys begin, and gives its place back.
+    - The keyboard shows on the screen of the touched field, as KWin's own
+      keyboard does: its window wants KWin's active output, and a keyboard
+      shown on another screen is shown again there.
     - "Fcitx 5 does not answer" is readable: the system's negative-text
       colour, lightened just enough for a contrast of 4.5:1 or more on the
       keyboard (it was dark red on near black).
     - The candidates Fcitx 5 hands over are logged (debug), for the rig.
     Depends on kwin-wayland (>= 4:6.7.4-2+stereo3d67~). Tests in
-    autotests/fcitxbridgetest: the field asks again, KWin is told.
+    autotests/fcitxbridgetest: the field asks again, KWin is told, the
+    keyboard follows the touched screen.
