@@ -839,7 +839,8 @@ def pages():
     row("C5", "the daemon's own words in the session's language (pt_BR): the process that owns its name was started in "
         "pt_BR, then the short words, the generation, the sound", (True, "1ª a 3ª geração", True, True),
         (in_pt, d.get("short"), d.get("generation", "").startswith("Chromecast, primeira"),
-         d.get("sound", "").startswith("PCM, 24 bit, 48 kHz, 2 canais (sem perdas)")))
+         d.get("sound", "").startswith("PCM, 24 bits, 48 kHz, 2 canais (sem perdas)")))
+    words_rows(in_pt)
     third = page("living-room-pt_BR", ["--args", f"device={LIVING}"], "pt_BR")
     row("C3", "the device's page in Brazilian Portuguese (caption \"Throw (jogar)\", setup requests) is captured",
         (True, True, True), (any(c.startswith("Throw (jogar)") for c in third["captions"]), third["asked"] > 0, third["captured"]))
@@ -920,6 +921,31 @@ def partd():
     rc, out, _ = run(CLI, "sound", DEN, "pcm24")
     row("DP8", "PCM chosen for a stream that cannot carry it (HEVC in MP4) is refused, the choice unchanged", (1, ""),
         (rc, devices().get(DEN, {}).get("choiceSound", "")))
+
+
+def words_rows(in_pt):
+    """Part D, second half: a sound's name and what it means in the person's language, how long the device took to start,
+    and a kept failure that carries a sound's name rendered by the problems engine in another language."""
+    d = devices().get(PLAYER, {}) if in_pt else {}
+    pcm = next((s for s in d.get("sounds", []) if s.get("id") == "pcm24"), {})
+    log(f"DW1 {json.dumps(pcm, ensure_ascii=False)} soundAbout={d.get('soundAbout')!r} soundStart={d.get('soundStart')}")
+    row("DW1", "the device's page in pt_BR: the sound's name in Portuguese, what it means in plain words, the seconds the device "
+        "took to start with it (the stand-in played it in part D)", ("PCM, 24 bits", True, True, True),
+        (pcm.get("label"), (pcm.get("about") or "").startswith("Sem perdas"), (pcm.get("startSeconds") or -1) > 0,
+         (d.get("soundAbout") or "").startswith("Sem perdas") and (d.get("soundStart") or -1) > 0))
+    env = dict(os.environ, **language_env("pt_BR"))
+    out = subprocess.run(["sparky-stereo-problems", "list", "--json", "sparky-stereo-throw"], capture_output=True, text=True,
+                         env=env, timeout=60).stdout
+    try:
+        items = json.loads(out)
+    except json.JSONDecodeError:
+        items = []
+    stuck = next((p for p in (items if isinstance(items, list) else []) if p.get("key") == f"throw:{STUCK}"), {})
+    log(f"DW2 {stuck.get('lang')}: {stuck.get('text')}")
+    row("DW2", "the kept failure of the Throw that did not start, read in pt_BR from the problems engine: its sentence and the "
+        "sound's name inside it in Portuguese", ("pt_BR", True, True),
+        (stuck.get("lang"), "não começou a tocar em 60 segundos" in (stuck.get("text") or ""),
+         "som PCM, 24 bits" in (stuck.get("text") or "")))
 
 
 def make_pair():

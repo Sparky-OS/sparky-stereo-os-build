@@ -82,6 +82,16 @@ QStringList soundsFor(const QString &format);
 // the sound of a plan: the person's choice when the container carries it (else an error), otherwise the best stereo
 // sound the container carries that has not failed on this device
 void pickSound(Plan &plan, const QString &chosen, const QStringList &failedOnDevice);
+// a sound's name in the person's language: a bit depth is words, a format's own name (Opus, Dolby Digital) stays
+QString soundLabel(const Sound &s);
+// the message context of a sound's name when it is words (empty for a format's own name)
+QString soundLabelContext(const Sound &s);
+// an argument of a sentence in the person's language: a sound's English name becomes its translated name, other text stays
+QString localArg(const QString &arg);
+// the sound whose English name this is (an empty Sound when none is)
+Sound soundNamed(const QString &label);
+// what a sound means for a person, in plain words: lossless or compressed, how much of the network, 5.1 and its speakers
+QString soundAbout(const Sound &s);
 }
 
 } // namespace Throw

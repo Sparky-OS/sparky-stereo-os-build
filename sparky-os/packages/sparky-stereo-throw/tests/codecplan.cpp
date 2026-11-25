@@ -68,6 +68,18 @@ int main(int argc, char **argv)
     row("HEVC in MP4: FLAC (no PCM in MP4)", QStringLiteral("mp4 flac"), QStringLiteral("%1 %2").arg(p.info.format, p.info.audioCodec));
     p = Codecs::plan(speaker, QString(), QString(), QString(), none, all);
     row("a speaker: FLAC in Ogg", QStringLiteral("ogg flac"), QStringLiteral("%1 %2").arg(p.info.format, p.info.audioCodec));
+    // the words (part D, second half): a bit depth is words with a message of its own, a format's own name stays
+    row("a sound's name that is words has a message context; a format's own name has none", QStringLiteral("true false false"),
+        QStringLiteral("%1 %2 %3")
+            .arg(Codecs::soundLabelContext(Codecs::sound(QStringLiteral("pcm24"))).isEmpty() ? QStringLiteral("false") : QStringLiteral("true"),
+                 Codecs::soundLabelContext(Codecs::sound(QStringLiteral("opus"))).isEmpty() ? QStringLiteral("false") : QStringLiteral("true"),
+                 Codecs::soundLabelContext(Codecs::sound(QStringLiteral("ac3-5.1"))).isEmpty() ? QStringLiteral("false") : QStringLiteral("true")));
+    row("an argument that is a sound's English name is found; other text stays as it is", QStringLiteral("flac|Living room"),
+        Codecs::soundNamed(QStringLiteral("FLAC, 24 bit")).id + QLatin1Char('|') + Codecs::localArg(QStringLiteral("Living room")));
+    row("what a sound means: PCM's network rate, 5.1 never upmixed", QStringLiteral("true true"),
+        QStringLiteral("%1 %2").arg(
+            Codecs::soundAbout(Codecs::sound(QStringLiteral("pcm24"))).contains(QStringLiteral("about 2.3 Mbit/s")) ? QStringLiteral("true") : QStringLiteral("false"),
+            Codecs::soundAbout(Codecs::sound(QStringLiteral("ac3-5.1"))).contains(QStringLiteral("nothing is spread")) ? QStringLiteral("true") : QStringLiteral("false")));
     out << (failed ? "RESULT: FAIL" : "RESULT: PASS") << " (" << failed << " rows not as expected)\n";
     return failed;
 }

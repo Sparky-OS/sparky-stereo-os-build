@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "tell.h"
+#include "codecs.h"
 #include "logging.h"
 
 #include <KConfigGroup>
@@ -27,7 +28,7 @@ QString translated(const QString &context, const QString &message, const QString
     const QByteArray m = message.toUtf8();
     KLocalizedString text = ki18nc(c.constData(), m.constData());
     for (const auto &arg : args) {
-        text = text.subs(arg);
+        text = text.subs(Codecs::localArg(arg));
     }
     return text.toString();
 }
@@ -36,13 +37,27 @@ void keep(const QString &key, const QString &message, const QStringList &args, c
 {
     QList<QByteArray> bytes;
     std::vector<const char *> argv;
+    // a sound's name that is words goes to the engine as a message of its own (CONTEXT|MSGID), so the kept sentence shows it
+    // in the language of whoever reads it later (sparky-stereo-problems.h, DETAILS "args")
+    QJsonArray detailArgs;
+    bool words = false;
     for (const auto &arg : args) {
         bytes.append(arg.toUtf8());
+        const QString context = Codecs::soundLabelContext(Codecs::soundNamed(arg));
+        if (context.isEmpty()) {
+            detailArgs.append(arg);
+        } else {
+            detailArgs.append(QJsonArray{QString(context + QLatin1Char('|') + arg)});
+            words = true;
+        }
     }
     for (const auto &b : bytes) {
         argv.push_back(b.constData());
     }
-    const QJsonObject details{{QStringLiteral("severity"), severity}, {QStringLiteral("text_en"), english}};
+    QJsonObject details{{QStringLiteral("severity"), severity}, {QStringLiteral("text_en"), english}};
+    if (words) {
+        details.insert(QStringLiteral("args"), detailArgs);
+    }
     const QByteArray json = QJsonDocument(details).toJson(QJsonDocument::Compact);
     if (ssp_keep(SSP_PERSON, Package, key.toUtf8().constData(), message.toUtf8().constData(), argv.data(), int(argv.size()), json.constData()) != 0) {
         qCWarning(THROW) << "the problems engine did not keep" << key << ":" << ssp_error_en();

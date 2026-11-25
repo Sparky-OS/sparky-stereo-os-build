@@ -248,6 +248,7 @@ void ThrowSession::onReceiverStatus(const QJsonObject &status, int)
             m_channel.load(m_transportId, url, m_streamer.contentType());
             m_fetchTimeout.start();
             m_playTimeout.start();
+            m_sinceLoad.start();
         }
         return;
     }
@@ -270,7 +271,9 @@ void ThrowSession::onMediaStatus(const QJsonObject &payload)
             // the device plays: the sound it carries is recorded as played on this device
             m_played = true;
             m_playTimeout.stop();
-            Q_EMIT soundPlayed(m_plan.info.audioCodec);
+            const double seconds = m_sinceLoad.isValid() ? m_sinceLoad.elapsed() / 1000.0 : -1;
+            qCInfo(THROW) << m_device.name << "plays, " << seconds << "s after LOAD, with" << m_plan.info.audioCodec;
+            Q_EMIT soundPlayed(m_plan.info.audioCodec, seconds);
         }
         if ((player == QLatin1String("PLAYING") || player == QLatin1String("BUFFERING")) && m_state == QLatin1String("starting")) {
             Tell::clear(m_device.id);

@@ -6,6 +6,8 @@
 #include <KLocalizedString>
 #include <KPipeWire/PipeWireEncodedStream>
 
+#include <QLocale>
+
 namespace Throw
 {
 
@@ -25,7 +27,7 @@ QString Said::translated() const
     }
     KLocalizedString s = ki18nc(context.toUtf8().constData(), message.toUtf8().constData());
     for (const auto &arg : args) {
-        s = s.subs(arg);
+        s = s.subs(Codecs::localArg(arg));
     }
     return s.toString();
 }
@@ -231,6 +233,67 @@ Sound sound(const QString &id)
         }
     }
     return {};
+}
+
+Sound soundNamed(const QString &label)
+{
+    for (const Sound &s : sounds()) {
+        if (s.label == label) {
+            return s;
+        }
+    }
+    return {};
+}
+
+QString soundLabel(const Sound &s)
+{
+    // each a literal call, so the table check finds it (po/tools/check-sources.py)
+    if (s.id == QLatin1String("pcm24")) {
+        return i18nc("@item a sound format; keep the format's name", "PCM, 24 bit");
+    }
+    if (s.id == QLatin1String("flac")) {
+        return i18nc("@item a sound format; keep the format's name", "FLAC, 24 bit");
+    }
+    if (s.id == QLatin1String("pcm16")) {
+        return i18nc("@item a sound format; keep the format's name", "PCM, 16 bit");
+    }
+    return s.label;
+}
+
+QString soundLabelContext(const Sound &s)
+{
+    const bool words = s.id == QLatin1String("pcm24") || s.id == QLatin1String("flac") || s.id == QLatin1String("pcm16");
+    return words ? QStringLiteral("@item a sound format; keep the format's name") : QString();
+}
+
+QString localArg(const QString &arg)
+{
+    const Sound s = soundNamed(arg);
+    return s.id.isEmpty() ? arg : soundLabel(s);
+}
+
+QString soundAbout(const Sound &s)
+{
+    if (s.channels > 2) {
+        return i18nc("@info what a sound format means for a person",
+                     "Six channels, for a television or receiver with 5.1 speakers, which decodes them. A stereo source plays on the "
+                     "front speakers only: nothing is spread to the other speakers.");
+    }
+    if (s.lossless && s.encoder.startsWith(QLatin1String("pcm_"))) {
+        const int bits = s.encoder == QLatin1String("pcm_s24le") ? 24 : 16;
+        // stereo at 48 kHz: 48000 samples a second, two channels
+        const double mbits = 48000.0 * bits * 2 / 1e6;
+        return i18nc("@info what a sound format means for a person; %1 megabits a second",
+                     "Lossless: the sound exactly as this computer plays it, not compressed. It takes the most of the network, "
+                     "about %1 Mbit/s.",
+                     QLocale().toString(mbits, 'f', 1));
+    }
+    if (s.lossless) {
+        return i18nc("@info what a sound format means for a person",
+                     "Lossless: the sound exactly as this computer plays it, packed smaller without leaving anything out.");
+    }
+    return i18nc("@info what a sound format means for a person",
+                 "Compressed: a smaller stream that leaves out some of the sound, which few people hear.");
 }
 
 QStringList soundsFor(const QString &format)

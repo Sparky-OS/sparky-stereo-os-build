@@ -128,7 +128,10 @@ KCM.SimpleKCM {
                 const rows = [{value: "", text: i18ndc("sparky-stereo-throw", "@item the table's choice; %1 what it is", "Automatic (%1)", page.current.autoSoundLabel || "")}]
                 for (const s of (page.current.sounds || [])) {
                     let text = s.label
-                    if (s.played) {
+                    if (s.played && s.startSeconds >= 0) {
+                        text = i18ndc("sparky-stereo-throw", "@item a sound this device played; %1 its name, %2 seconds", "%1 (played on this device, started after %2 s)",
+                                      s.label, Math.round(s.startSeconds))
+                    } else if (s.played) {
                         text = i18ndc("sparky-stereo-throw", "@item a sound this device played; %1 its name", "%1 (played on this device)", s.label)
                     } else if (s.failed) {
                         text = i18ndc("sparky-stereo-throw", "@item a sound this device did not start playing; %1 its name", "%1 (did not start on this device)", s.label)
@@ -145,6 +148,22 @@ KCM.SimpleKCM {
             text: page.current.sound || ""
             wrapMode: Text.Wrap
             Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+        }
+        QQC2.Label {
+            // what the sound means for a person, in plain words, and what a slower start means on this device
+            visible: text.length > 0
+            text: {
+                let words = page.current.soundAbout || ""
+                if (page.current.soundStart >= 0) {
+                    words += " " + i18ndc("sparky-stereo-throw", "@info how long this device took to start with this sound; %1 seconds",
+                                          "On this device it started %1 s after the Throw began; until then the television shows its own loading screen.",
+                                          Math.round(page.current.soundStart))
+                }
+                return words.trim()
+            }
+            wrapMode: Text.Wrap
+            Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+            font: Kirigami.Theme.smallFont
         }
         Kirigami.InlineMessage {
             Layout.fillWidth: true
