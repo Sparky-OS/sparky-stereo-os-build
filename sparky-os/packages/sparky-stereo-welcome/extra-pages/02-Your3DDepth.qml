@@ -60,6 +60,27 @@ Welcome.Page {
                 GradientStop { position: 1.0; color: "#1b2a3a" }
             }
             StereoDepth.depth: StereoDepth.Sunk
+
+            // a sun and a row of hills: the wallpaper's own picture, which shows its depth (its edges keep their 2D place)
+            Rectangle {
+                x: Math.round(drawing.width * 0.84)
+                y: Math.round(drawing.height * 0.06)
+                width: Math.round(drawing.height * 0.16)
+                height: width
+                radius: width / 2
+                color: "#f2c14e"
+            }
+            Repeater {
+                model: 5
+                Rectangle {
+                    x: Math.round(drawing.width * (0.03 + index * 0.2))
+                    y: Math.round(drawing.height * 0.88)
+                    width: Math.round(drawing.width * 0.13)
+                    height: Math.round(drawing.height * 0.08)
+                    radius: height / 2
+                    color: "#5d8fc4"
+                }
+            }
         }
 
         // the window: at the screen
