@@ -17,12 +17,13 @@ Origin: vendor, Sparky Stereo OS (row 71), branch order71 of KDE's plasma/plasma
 Forwarded: no
 Last-Update: 2026-11-25
 ---
+Commit dbc9df7: Fcitx 5 mode: never start Fcitx 5 by calling it
 Commit 7455023: Fcitx 5 mode: make the layout markers and the Japanese and Chinese links at install
 Commit 87b8c29: Fcitx 5 mode: at the screen's plane, no zone, and fixes from the session rig
 Commit f0c7f92: Fcitx 5 mode: make the links to Plasma Keyboard's own layouts at install
 Commit 2117aea: Plasma Keyboard as the on-screen keyboard of Fcitx 5
 
- 21 files changed, 2565 insertions(+), 3 deletions(-)
+ 21 files changed, 2574 insertions(+), 3 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index db9e0da..a4f267d 100644
@@ -889,10 +890,10 @@ index 0000000..6cb4e2b
 +};
 diff --git a/src/fcitx/fcitxbridge.cpp b/src/fcitx/fcitxbridge.cpp
 new file mode 100644
-index 0000000..4867d9c
+index 0000000..fd09fdb
 --- /dev/null
 +++ b/src/fcitx/fcitxbridge.cpp
-@@ -0,0 +1,646 @@
+@@ -0,0 +1,655 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -943,6 +944,15 @@ index 0000000..4867d9c
 +
 +// How long Fcitx 5 has to answer a request to show its keyboard before the keys type plain text
 +constexpr int s_answerTimeoutMs = 1500;
++
++// A call to Fcitx 5 never starts it: a Fcitx 5 started by D-Bus activation is not KWin's input method (it would bind KWin's
++// input method protocol beside it and take KWin's input panel), so an absent Fcitx 5 answers "no such service" instead
++QDBusMessage fcitxCall(const QString &service, const QString &path, const QString &interface, const QString &method)
++{
++    QDBusMessage message = QDBusMessage::createMethodCall(service, path, interface, method);
++    message.setAutoStartService(false);
++    return message;
++}
 +
 +QHash<uint, uint> usKeycodes()
 +{
@@ -1176,7 +1186,7 @@ index 0000000..4867d9c
 +    }
 +    // Puts Fcitx 5 in its on-screen keyboard mode, which makes its keyboard addon the user interface; the addon then
 +    // calls ShowVirtualKeyboard on this keyboard
-+    auto show = QDBusMessage::createMethodCall(s_fcitxName, s_fcitxKeyboardPath, s_fcitxKeyboardInterface, u"ShowVirtualKeyboard"_s);
++    auto show = fcitxCall(s_fcitxName, s_fcitxKeyboardPath, s_fcitxKeyboardInterface, u"ShowVirtualKeyboard"_s);
 +    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(show), this);
 +    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
 +        call->deleteLater();
@@ -1258,7 +1268,7 @@ index 0000000..4867d9c
 +        m_fakeKeyboard->sendKeysym(keysym, !release);
 +        return;
 +    }
-+    auto key = QDBusMessage::createMethodCall(s_backendName, s_backendPath, s_backendInterface, u"ProcessKeyEvent"_s);
++    auto key = fcitxCall(s_backendName, s_backendPath, s_backendInterface, u"ProcessKeyEvent"_s);
 +    key << keysym << keycodeFor(keysym) << states << release << uint(QDateTime::currentMSecsSinceEpoch() & 0xffffffff);
 +    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(key), this);
 +    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, keysym, release](QDBusPendingCallWatcher *call) {
@@ -1275,24 +1285,24 @@ index 0000000..4867d9c
 +
 +void FcitxBridge::selectCandidate(int index)
 +{
-+    auto call = QDBusMessage::createMethodCall(s_backendName, s_backendPath, s_backendInterface, u"SelectCandidate"_s);
++    auto call = fcitxCall(s_backendName, s_backendPath, s_backendInterface, u"SelectCandidate"_s);
 +    call << index;
 +    m_bus.asyncCall(call);
 +}
 +
 +void FcitxBridge::previousPage()
 +{
-+    m_bus.asyncCall(QDBusMessage::createMethodCall(s_backendName, s_backendPath, s_backendInterface, u"PrevPage"_s));
++    m_bus.asyncCall(fcitxCall(s_backendName, s_backendPath, s_backendInterface, u"PrevPage"_s));
 +}
 +
 +void FcitxBridge::nextPage()
 +{
-+    m_bus.asyncCall(QDBusMessage::createMethodCall(s_backendName, s_backendPath, s_backendInterface, u"NextPage"_s));
++    m_bus.asyncCall(fcitxCall(s_backendName, s_backendPath, s_backendInterface, u"NextPage"_s));
 +}
 +
 +void FcitxBridge::switchInputMethod(const QString &uniqueName)
 +{
-+    auto call = QDBusMessage::createMethodCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"SetCurrentIM"_s);
++    auto call = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"SetCurrentIM"_s);
 +    call << uniqueName;
 +    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(call), this);
 +    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *switched) {
@@ -1303,7 +1313,7 @@ index 0000000..4867d9c
 +
 +void FcitxBridge::hide()
 +{
-+    m_bus.asyncCall(QDBusMessage::createMethodCall(s_fcitxName, s_fcitxKeyboardPath, s_fcitxKeyboardInterface, u"HideVirtualKeyboard"_s));
++    m_bus.asyncCall(fcitxCall(s_fcitxName, s_fcitxKeyboardPath, s_fcitxKeyboardInterface, u"HideVirtualKeyboard"_s));
 +    m_answerTimer.stop();
 +    m_kwinWants = false;
 +    updateVisible();
@@ -1372,7 +1382,7 @@ index 0000000..4867d9c
 +void FcitxBridge::refreshInputMethods()
 +{
 +    // AvailableInputMethods: a(ssssssb) uniqueName, name, nativeName, icon, label, languageCode, configurable
-+    auto available = QDBusMessage::createMethodCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"AvailableInputMethods"_s);
++    auto available = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"AvailableInputMethods"_s);
 +    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(available), this);
 +    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
 +        call->deleteLater();
@@ -1400,7 +1410,7 @@ index 0000000..4867d9c
 +
 +void FcitxBridge::readInputMethodGroup(const QHash<QString, QVariantMap> &known)
 +{
-+    auto group = QDBusMessage::createMethodCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"CurrentInputMethodGroup"_s);
++    auto group = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"CurrentInputMethodGroup"_s);
 +    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(group), this);
 +    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, known](QDBusPendingCallWatcher *call) {
 +        call->deleteLater();
@@ -1410,7 +1420,7 @@ index 0000000..4867d9c
 +            return;
 +        }
 +        // InputMethodGroupInfo(group): s default layout, a(ss) uniqueName and layout, in the order the person set
-+        auto info = QDBusMessage::createMethodCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"InputMethodGroupInfo"_s);
++        auto info = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"InputMethodGroupInfo"_s);
 +        info << groupReply.value();
 +        auto infoWatcher = new QDBusPendingCallWatcher(m_bus.asyncCall(info), this);
 +        connect(infoWatcher, &QDBusPendingCallWatcher::finished, this, [this, known](QDBusPendingCallWatcher *infoCall) {
@@ -1439,7 +1449,7 @@ index 0000000..4867d9c
 +
 +void FcitxBridge::readCurrentInputMethod()
 +{
-+    auto current = QDBusMessage::createMethodCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"CurrentInputMethod"_s);
++    auto current = fcitxCall(s_fcitxName, s_controllerPath, s_controllerInterface, u"CurrentInputMethod"_s);
 +    auto watcher = new QDBusPendingCallWatcher(m_bus.asyncCall(current), this);
 +    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *call) {
 +        call->deleteLater();
