@@ -1,0 +1,75 @@
+Description: Verify the privately staged entry before unlinking it
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-25
+
+--- a/bleachbit/Structured.py
++++ b/bleachbit/Structured.py
+@@ -61,6 +61,55 @@
+ def identity(info):
+     return [info.st_dev, info.st_ino, info.st_uid, info.st_mode, info.st_nlink,
+             info.st_size, info.st_blocks, info.st_ctime_ns, info.st_mtime_ns]
++
++
++def rename_without_replacing(source_fd, source, target_fd, target):
++    """Return a staged entry without overwriting a new arrival at its old name."""
++    import ctypes
++
++    renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
++    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
++                          ctypes.c_char_p, ctypes.c_uint)
++    if renameat2(source_fd, os.fsencode(source), target_fd, os.fsencode(target), 1):
++        err = ctypes.get_errno()
++        raise OSError(err, os.strerror(err), target)
++
++
++def remove_reviewed_path(cmd, parent, name, fd):
++    """Unlink a checked entry inside a newly created private directory."""
++    import fcntl
++    import secrets
++
++    room = '.bleachbit-' + secrets.token_hex(16)
++    os.mkdir(room, mode=0o700, dir_fd=parent)
++    empty = True
++    try:
++        with open_path(room, parent, os.O_DIRECTORY) as holding:
++            os.rename(name, 'entry', src_dir_fd=parent, dst_dir_fd=holding)
++            empty = False
++            try:
++                # Renaming itself changes ctime. Both observations must now
++                # describe the original, still open inode in the private room.
++                moved = os.stat('entry', dir_fd=holding, follow_symlinks=False)
++                if identity(moved) != identity(os.fstat(fd)):
++                    raise OSError(_('This item changed since the preview.'))
++                if fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_WRLCK:
++                    raise OSError(_('This item is currently open or mapped.'))
++                cmd.execute_scoped(holding, 'entry', fd)
++                empty = True
++            finally:
++                if not empty:
++                    try:
++                        rename_without_replacing(holding, 'entry', parent, name)
++                        empty = True
++                    except OSError as error:
++                        # Report where the intact entry was retained if a
++                        # concurrent writer took its original name.
++                        location = os.path.join(os.readlink(f'/proc/self/fd/{holding}'), 'entry')
++                        raise OSError(error.errno, error.strerror, location) from error
++    finally:
++        if empty:
++            os.rmdir(room, dir_fd=parent)
+ 
+ 
+ def catalog():
+@@ -251,7 +300,10 @@
+                 raise OSError(_('This item changed since the preview.'))
+             if fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_WRLCK:
+                 raise OSError(_('This item is currently open or mapped.'))
+-            cmd.execute_scoped(parent, name, fd)
++            if is_truncate:
++                cmd.execute_scoped(parent, name, fd)
++            else:
++                remove_reviewed_path(cmd, parent, name, fd)
+         finally:
+             os.close(fd)
+             signal.signal(signal.SIGIO, previous)

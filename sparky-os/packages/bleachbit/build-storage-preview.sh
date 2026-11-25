@@ -16,8 +16,8 @@ cp -- "$source_archive/$dsc" "$source_archive/bleachbit_6.0.6-1.debian.tar.xz" .
 cp -- "$source_archive/bleachbit_6.0.6.orig.tar.gz" "$source_archive/bleachbit_6.0.6.orig.tar.gz.asc" .
 dpkg-source -x "$dsc" source
 cd source
-cp -- "$here/patches/structured-preview.patch" debian/patches/
-printf '%s\n' structured-preview.patch >> debian/patches/series
+cp -- "$here/patches/structured-preview.patch" "$here/patches/scoped-unlink.patch" debian/patches/
+printf '%s\n' structured-preview.patch scoped-unlink.patch >> debian/patches/series
 dpkg-source --before-build .
 date=$(date -Ru -d "@$SOURCE_DATE_EPOCH")
 cat > "$work/entry" <<EOF
