@@ -74,6 +74,7 @@ docker run --name "$name" --pull=never --platform linux/amd64 --ulimit core=1 --
     --mount "type=bind,source=$previous,target=/previous,readonly" \
     --mount "type=bind,source=$archive,target=/archive,readonly" \
     --mount "type=bind,source=$published,target=/round,readonly" \
+    --mount "type=bind,source=$work/recipe/tools/copy-recipe.py,target=/tools/copy-recipe.py,readonly" \
     --mount "type=bind,source=$work/recipe/tools/https-only-apt.sh,target=/run/https-only-apt.sh,readonly" \
     --mount type=bind,source=/etc/ssl/certs/ca-certificates.crt,target=/run/host-ca.crt,readonly \
     "$image" bash -ec 'sh /run/https-only-apt.sh; bash /toolkit/repo/build-weather-cohort-inner.sh >/out/build.log 2>&1'
