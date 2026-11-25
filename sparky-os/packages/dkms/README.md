@@ -22,14 +22,19 @@ So `dkms-sign-unsigned.service` (ORDER 374) runs `dkms-sign-unsigned first-boot`
 It does not run in a live session (`boot=live`) or a container. The package enables it and never starts it; on a system that already runs, it runs once at the next boot, where the check costs well under a second when every module is signed.
 systemd's `ConditionFirstBoot=` cannot mark that boot here (machine-id(5), "First Boot Semantics"; systemd.unit(5)): the image's /etc/machine-id is empty, which is not a first boot, and Calamares writes a machine ID into the installed system (its machineid module, `systemd-style: uuid`). A missing or `uninitialized` one would make it a first boot, but systemd would then also preset every unit, and a first boot ends with the startup phase, so a signing cut short by a shutdown would never run again; the mark does not end until the step has run.
 sparky-stereo-boot keeps this machine's certificate next to shim on the EFI system partition, with a GRUB entry that enrolls it.
-Its messages are in the nine languages, in `debian/problems-lang`, made into journal catalogs at build time.
+Its messages are in the ten languages, in `debian/problems-lang`, made into journal catalogs at build time.
+
+A rebuild only to sign happens where a module without a signature can be refused, and nowhere else (ORDER 666): with Secure Boot on in the firmware (the `SecureBoot` variable, as `mokutil --sb-state` reads it), when that state cannot be read, or on a kernel that enforces signatures by itself (`/sys/module/module/parameters/sig_enforce` says `Y`).
+With Secure Boot off, with a firmware that has none (Apple's before the T2 chip, among others) or after a start without EFI, `dkms-sign-unsigned` says which it found, builds nothing and writes no first-boot mark, so the first start after Secure Boot is turned on signs the modules.
+`dkms-sign-unsigned state` prints what it found.
+DKMS itself still signs every module it builds, as upstream does: that costs nothing extra.
 
 Sources:
 - `debian/` is Debian's packaging as Viorel Cernateanu's merge request proposes it for 3.4.4: https://salsa.debian.org/debian/dkms/-/merge_requests/8, commit 03eded2e6673be1e5889efad13e46fd755cb9458 (open on 2026-11-01). Our changes: `openssl` and `sparky-stereo-problems` in dkms's Depends (debian/control), `sparky-stereo-problems` in Build-Depends, `debian/scripts/dkms-sign-unsigned` with its call in `debian/dkms.postinst`, its install line in `debian/dkms.install` and its catalogs in `debian/rules`, `debian/dkms.dkms-sign-unsigned.service` with its `dh_installsystemd` line in `debian/rules`, `debian/dkms.postrm`, `debian/problems-lang`, and our changelog entries; `provenance.sh` sets the maintainer fields at build time.
 - The upstream tree is https://github.com/dkms-project/dkms, tag v3.4.4, commit cb2790f3d900598d5e55865540f45a049a696e66, tree acfb0ae90df39ecdf90b083183c1f3bc489da3b8, the same tree as the GitHub release tarball that Debian's pristine-tar records. `build.sh` checks both.
 
 Versions and pins:
-- `3.4.4-1+sparky4`, the `+sparkyN` of a package the edition carries newer than Debian (as openrgb and protontricks). Lean Code adds `+lc1`.
+- `3.4.4-1+sparky5`, the `+sparkyN` of a package the edition carries newer than Debian (as openrgb and protontricks). Lean Code adds `+lc1`.
 - The edition's repository is at 1001 (`sparky-stereo`), so this build is the candidate over Debian's 3.2.2-1 (500) and over NVIDIA's 3.4.4-1 in its CUDA repository (100, `91sparky-stereo-cuda`); `sparky-stereo-only-ours` blocks Debian's builds once it is regenerated from a repository that has these packages.
 - A person who wants another build writes their own pins, as `sparky-stereo-apt`'s README shows.
 

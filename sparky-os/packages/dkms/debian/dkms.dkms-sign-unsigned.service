@@ -3,9 +3,14 @@
 # key. The installed system signs those modules once, in the background of its first boot, and marks itself done; a
 # module that cannot be signed is kept by sparky-stereo-problems with its repair. A live session and a container have
 # no modules of their own to sign.
+# ORDER 666: where no module needs a signature (Secure Boot off or absent, a BIOS start) the step says so and builds
+# nothing, and leaves no mark, so it signs at the first start after Secure Boot is turned on. It starts after the
+# hardware layer has settled NVIDIA's driver on a machine without the card (sparky-stereo-hardware-nvidia-card.service,
+# ordering only), so a module that is about to leave is not built again to be signed.
 [Unit]
 Description=Sign the DKMS modules built without a signature, once, at the first boot
 Documentation=man:dkms(8)
+After=sparky-stereo-hardware-nvidia-card.service
 ConditionPathExists=!/var/lib/dkms/dkms-sign-unsigned.first-boot
 ConditionKernelCommandLine=!boot=live
 ConditionVirtualization=!container
