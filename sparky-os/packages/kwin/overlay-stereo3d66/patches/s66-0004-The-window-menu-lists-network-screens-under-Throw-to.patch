@@ -1,0 +1,173 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 03:44:13 +0000
+Subject: [PATCH] useractions: network screens under Throw to
+
+The window menu keeps Move to Screen for the computer's own screens (offered too to bring a window back
+from a network screen) and lists the outputs flagged as networked under Throw to, by their device
+names, as Daniel's design for every network screen says.
+
+Assisted-by: Claude Opus 5.5
+---
+diff --git a/src/useractions.cpp b/src/useractions.cpp
+index a753692..cd9a8a6 100644
+--- a/src/useractions.cpp
++++ b/src/useractions.cpp
+@@ -32,6 +32,7 @@
+ #include "pointer_input.h"
+ #include "scripting/scripting.h"
+ #include "useractions.h"
++#include "core/backendoutput.h"
+ #include "virtualdesktops.h"
+ #include "window.h"
+ #include "workspace.h"
+@@ -73,6 +74,7 @@ UserActionsMenu::UserActionsMenu(QObject *parent)
+     , m_menu(nullptr)
+     , m_desktopMenu(nullptr)
+     , m_screenMenu(nullptr)
++    , m_throwMenu(nullptr)
+     , m_activityMenu(nullptr)
+     , m_scriptsMenu(nullptr)
+     , m_resizeOperation(nullptr)
+@@ -305,6 +307,7 @@ void UserActionsMenu::discard()
+     m_menu = nullptr;
+     m_desktopMenu = nullptr;
+     m_screenMenu = nullptr;
++    m_throwMenu = nullptr;
+     m_activityMenu = nullptr;
+     m_scriptsMenu = nullptr;
+ }
+@@ -323,12 +326,26 @@ void UserActionsMenu::menuAboutToShow()
+     } else {
+         initDesktopPopup();
+     }
+-    if (workspace()->outputs().count() == 1 || (!m_window->isMovable() && !m_window->isMovableAcrossScreens())) {
++    // "Move to Screen" keeps the computer's own screens; the network screens are under "Throw to"
++    const auto outputs = workspace()->outputs();
++    const qsizetype networkScreens = std::ranges::count_if(outputs, [](LogicalOutput *output) {
++        return output->backendOutput()->isNetworked();
++    });
++    const qsizetype ownScreens = outputs.count() - networkScreens;
++    const bool movable = m_window->isMovable() || m_window->isMovableAcrossScreens();
++    const bool onNetworkScreen = m_window->output() && m_window->output()->backendOutput()->isNetworked();
++    if (!movable || ownScreens == 0 || (ownScreens == 1 && !onNetworkScreen)) {
+         delete m_screenMenu;
+         m_screenMenu = nullptr;
+     } else {
+         initScreenPopup();
+     }
++    if (!movable || networkScreens == 0) {
++        delete m_throwMenu;
++        m_throwMenu = nullptr;
++    } else {
++        initThrowPopup();
++    }
+ 
+     m_menu->setPalette(m_window->palette());
+     m_resizeOperation->setEnabled(m_window->isResizable());
+@@ -429,6 +446,21 @@ void UserActionsMenu::initScreenPopup()
+     action->setIcon(QIcon::fromTheme(QStringLiteral("computer")));
+ }
+ 
++void UserActionsMenu::initThrowPopup()
++{
++    if (m_throwMenu) {
++        return;
++    }
++
++    m_throwMenu = new QMenu(m_menu);
++    connect(m_throwMenu, &QMenu::aboutToShow, this, &UserActionsMenu::throwPopupAboutToShow);
++
++    QAction *action = m_throwMenu->menuAction();
++    // right after "Move to Screen", or where it would be
++    m_menu->insertAction(m_activityMenu ? m_activityMenu->menuAction() : m_minimizeOperation, action);
++    action->setText(i18nc("@item:inmenu the network screens (Cast devices, phones) a window can be thrown to", "Throw &to"));
++}
++
+ void UserActionsMenu::initActivityPopup()
+ {
+     if (m_activityMenu) {
+@@ -547,6 +579,10 @@ void UserActionsMenu::screenPopupAboutToShow()
+     const auto outputs = workspace()->outputs();
+     for (int i = 0; i < outputs.count(); ++i) {
+         LogicalOutput *output = outputs[i];
++        if (output->backendOutput()->isNetworked()) {
++            // a network screen is listed under "Throw to"
++            continue;
++        }
+         // assumption: there are not more than 9 screens attached.
+         QAction *action = m_screenMenu->addAction(i18nc("@item:inmenu List of all Screens to send a window to. First argument is a number, second the output identifier. E.g. Screen 1 (HDMI1)",
+                                                         "Screen &%1 (%2)", (i + 1), output->name()));
+@@ -562,6 +598,36 @@ void UserActionsMenu::screenPopupAboutToShow()
+     }
+ }
+ 
++void UserActionsMenu::throwPopupAboutToShow()
++{
++    if (!m_throwMenu) {
++        return;
++    }
++    m_throwMenu->clear();
++
++    if (!m_window) {
++        return;
++    }
++    m_throwMenu->setPalette(m_window->palette());
++    QActionGroup *group = new QActionGroup(m_throwMenu);
++
++    for (LogicalOutput *output : workspace()->outputs()) {
++        BackendOutput *device = output->backendOutput();
++        if (!device->isNetworked()) {
++            continue;
++        }
++        // the device's own name, as the person knows it
++        QString name = device->model().isEmpty() ? output->name() : device->model();
++        QAction *action = m_throwMenu->addAction(name.replace(QLatin1Char('&'), QLatin1String("&&")));
++        connect(action, &QAction::triggered, this, [this, output]() {
++            m_window->sendToOutput(output);
++        });
++        action->setCheckable(true);
++        action->setChecked(output == m_window->output());
++        group->addAction(action);
++    }
++}
++
+ void UserActionsMenu::activityPopupAboutToShow()
+ {
+     if (!m_activityMenu) {
+diff --git a/src/useractions.h b/src/useractions.h
+index cfe346b..10a25e8 100644
+--- a/src/useractions.h
++++ b/src/useractions.h
+@@ -128,6 +128,10 @@ private Q_SLOTS:
+      * the Window.
+      */
+     void screenPopupAboutToShow();
++    /**
++     * Adjusts the throw popup to the current values and the location of the Window.
++     */
++    void throwPopupAboutToShow();
+     /**
+      * Adjusts the activity popup to the current values and the location of
+      * the Window.
+@@ -153,6 +157,10 @@ private:
+      * Creates the Move to Screen sub-menu.
+      */
+     void initScreenPopup();
++    /**
++     * Creates the Throw to popup: the network screens, by their devices' names.
++     */
++    void initThrowPopup();
+     /**
+      * Creates activity popup.
+      * I'm going with checkable ones instead of "copy to" and "move to" menus; I *think* it's an easier way.
+@@ -185,6 +193,10 @@ private:
+      * The move to screen sub menu.
+      */
+     QMenu *m_screenMenu;
++    /**
++     * The Throw to submenu: the outputs flagged as networked.
++     */
++    QMenu *m_throwMenu;
+     /**
+      * The activities sub menu.
+      */

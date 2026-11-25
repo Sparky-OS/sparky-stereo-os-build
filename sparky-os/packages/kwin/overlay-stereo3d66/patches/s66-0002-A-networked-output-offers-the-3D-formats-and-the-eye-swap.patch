@@ -1,0 +1,206 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 03:44:13 +0000
+Subject: [PATCH] A networked output offers the 3D formats and the eye swap of a monitor
+
+An output made for a device on the network without split eyes gets the VirtualStereo and StereoSwapEyes
+capabilities, so Display Settings offers its Anaglyph and Other stereo formats switches and its eye swap.
+VirtualOutput and DrmVirtualOutput make the format twins of its 2D mode from those switches, as a monitor's
+(DrmConnector::withVirtualStereoModes), the device's mode being its native raster: side by side half, top
+and bottom, rows, columns and checkerboard (left eye first; the swap gives the other order), side by side
+(full) for a mode two eyes wide, the modern and CRT anaglyph twins; not frame sequential, since a stream
+sends a frame on damage, not at every refresh. A twin the switches no longer offer goes
+with the screen back in 2D. It arrives in 2D at the device mode; the configuration store gives back the
+format, switches and swap the person chose for that device (its persistent name is the output's
+identity) when the saved mode is a twin of the device's current mode. Split-eye outputs are unchanged.
+
+Assisted-by: Claude Opus 5.5
+---
+diff --git a/src/backends/drm/drm_virtual_output.cpp b/src/backends/drm/drm_virtual_output.cpp
+index 97276b8..a02146a 100644
+--- a/src/backends/drm/drm_virtual_output.cpp
++++ b/src/backends/drm/drm_virtual_output.cpp
+@@ -144,6 +144,15 @@ void DrmVirtualOutput::applyChanges(const OutputConfiguration &config)
+         next.modes = newModes;
+     }
+ 
++    if (offersNetworkFormats()) {
++        // a network screen makes the format twins of its 2D mode from the person's switches, as a monitor does;
++        // a twin the switches no longer offer goes, and the screen is back in 2D
++        next.modes = withNetworkFormatModes(next.modes, next.anaglyph, next.otherStereoFormats);
++        if (next.currentMode && !next.modes.contains(next.currentMode)) {
++            next.currentMode = nullptr;
++        }
++    }
++
+     next.desiredMode = props->desiredMode.value_or(m_state.desiredMode);
+     if (props->currentMode) {
+         next.currentMode = props->currentMode->match(next.modes);
+diff --git a/src/backends/virtual/virtual_output.cpp b/src/backends/virtual/virtual_output.cpp
+index ada3d87..ae44f44 100644
+--- a/src/backends/virtual/virtual_output.cpp
++++ b/src/backends/virtual/virtual_output.cpp
+@@ -148,6 +148,15 @@ void VirtualOutput::applyChanges(const OutputConfiguration &config)
+         next.modes = newModes;
+     }
+ 
++    if (offersNetworkFormats()) {
++        // a network screen makes the format twins of its 2D mode from the person's switches, as a monitor does;
++        // a twin the switches no longer offer goes, and the screen is back in 2D
++        next.modes = withNetworkFormatModes(next.modes, next.anaglyph, next.otherStereoFormats);
++        if (next.currentMode && !next.modes.contains(next.currentMode)) {
++            next.currentMode = nullptr;
++        }
++    }
++
+     next.desiredMode = props->desiredMode.value_or(m_state.desiredMode);
+     if (props->currentMode) {
+         next.currentMode = props->currentMode->match(next.modes);
+diff --git a/src/core/backendoutput.cpp b/src/core/backendoutput.cpp
+index 09ff360..926e685 100644
+--- a/src/core/backendoutput.cpp
++++ b/src/core/backendoutput.cpp
+@@ -369,6 +369,10 @@ void BackendOutput::initializeVirtualOutput(const VirtualOutputProperties &prope
+     information.initialVirtualMode = modeline;
+     if (properties.splitEye) {
+         information.capabilities |= Capability::VirtualStereo;
++    } else if (properties.networked) {
++        // a network screen offers the 3D formats and the eye swap a monitor offers: the device behind it
++        // (a television behind a Cast device) takes the packing the person chooses for it
++        information.capabilities |= Capability::VirtualStereo | Capability::StereoSwapEyes;
+     }
+     setInformation(information);
+ 
+@@ -386,6 +390,59 @@ void BackendOutput::initializeVirtualOutput(const VirtualOutputProperties &prope
+     setState(state);
+ }
+ 
++bool BackendOutput::offersNetworkFormats() const
++{
++    return isNetworked() && !isSplitEyeDisplay();
++}
++
++QList<std::shared_ptr<OutputMode>> BackendOutput::withNetworkFormatModes(const QList<std::shared_ptr<OutputMode>> &modes, bool anaglyph, bool otherStereoFormats)
++{
++    using Flag = OutputModeline::Flag;
++    // the 2D modes stay, the twins are made again from them; a twin already made is kept as the same object
++    QList<std::shared_ptr<OutputMode>> result;
++    QList<std::shared_ptr<OutputMode>> previousTwins;
++    for (const auto &mode : modes) {
++        if (mode->flags() & Flag::VirtualStereo) {
++            previousTwins.append(mode);
++        } else {
++            result.append(mode);
++        }
++    }
++    const auto bases = result;
++    for (const auto &base : bases) {
++        if (base->flags() & Flag::Custom) {
++            continue;
++        }
++        // a monitor's twins under a monitor's conditions (DrmConnector::withVirtualStereoModes); a network screen's
++        // mode is its native raster
++        QList<Flag> layouts;
++        if (otherStereoFormats) {
++            // every packing left eye first: the output's eye swap gives the other order
++            layouts << Flag::Stereo3DSideBySideHalf << Flag::Stereo3DTopAndBottom;
++            // a mode two eyes wide: each eye whole in its half
++            if (isTwoEyesWide(base->size())) {
++                layouts << Flag::Stereo3DSideBySideFull;
++            }
++            // the interleaved packings of a passive panel
++            layouts << Flag::Stereo3DRowsLeftFirst << Flag::Stereo3DColumnsLeftFirst << Flag::Stereo3DCheckerboardLeftFirst;
++            // frame sequential is not offered: a stream sends a frame on damage, not at every refresh, so alternate
++            // frames cannot carry alternate eyes
++        }
++        if (anaglyph) {
++            layouts << Flag::Stereo3DAnaglyphModern << Flag::Stereo3DAnaglyphCrt;
++        }
++        for (const Flag layout : layouts) {
++            const OutputModeline twin(base->size(), base->refreshRate(), Flag::VirtualStereo | layout);
++            if (auto previous = twin.match(previousTwins)) {
++                result.append(previous);
++            } else {
++                result.append(std::make_shared<OutputMode>(twin));
++            }
++        }
++    }
++    return result;
++}
++
+ const Edid &BackendOutput::edid() const
+ {
+     return m_information.edid;
+diff --git a/src/core/backendoutput.h b/src/core/backendoutput.h
+index 361901d..700142b 100644
+--- a/src/core/backendoutput.h
++++ b/src/core/backendoutput.h
+@@ -262,6 +262,14 @@ public:
+ 
+     bool isPlaceholder() const;
+     bool isNetworked() const;
++    /**
++     * A network screen that is not split into eyes: it offers the 3D formats and the eye swap of a monitor.
++     */
++    bool offersNetworkFormats() const;
++    /**
++     * The 2D modes of @p modes with the format twins a network screen offers for the given switches.
++     */
++    static QList<std::shared_ptr<OutputMode>> withNetworkFormatModes(const QList<std::shared_ptr<OutputMode>> &modes, bool anaglyph, bool otherStereoFormats);
+     bool isNonDesktop() const;
+     OutputTransform panelOrientation() const;
+     bool wideColorGamut() const;
+diff --git a/src/outputconfigurationstore.cpp b/src/outputconfigurationstore.cpp
+index d51e2c0..639376f 100644
+--- a/src/outputconfigurationstore.cpp
++++ b/src/outputconfigurationstore.cpp
+@@ -521,7 +521,11 @@ OutputConfiguration OutputConfigurationStore::setupToConfig(Setup *setup, const
+         });
+ 
+         std::optional<OutputModeline> effectiveMode = output->initialVirtualMode();
+-        if (!effectiveMode && state.mode && canRestoreVirtualMode(output, *state.mode, state.anaglyph.value_or(false), state.otherStereoFormats.value_or(false), state.customModes)) {
++        // a network screen arrives in 2D at the device's mode; the 3D format the person chose for that device
++        // comes back when it is a twin of that mode
++        if (output->offersNetworkFormats() && state.mode && canRestoreVirtualMode(output, *state.mode, state.anaglyph.value_or(false), state.otherStereoFormats.value_or(false), state.customModes)) {
++            effectiveMode = state.mode;
++        } else if (!effectiveMode && state.mode && canRestoreVirtualMode(output, *state.mode, state.anaglyph.value_or(false), state.otherStereoFormats.value_or(false), state.customModes)) {
+             effectiveMode = state.mode;
+         } else if (!effectiveMode && state.mode) {
+             // Note that a custom mode can potentially have a matching object in the output->modes()
+@@ -568,7 +572,7 @@ OutputConfiguration OutputConfigurationStore::setupToConfig(Setup *setup, const
+ 
+         *ret.changeSet(output) = OutputChangeSet{
+             .currentMode = effectiveMode,
+-            .desiredMode = output->initialVirtualMode().has_value() ? output->initialVirtualMode() : state.mode,
++            .desiredMode = output->offersNetworkFormats() ? effectiveMode : (output->initialVirtualMode().has_value() ? output->initialVirtualMode() : state.mode),
+             .enabled = output->initialVirtualMode() ? true : setupState.enabled,
+             .pos = setupState.position,
+             .scale = state.scaleSetting,
+@@ -618,7 +622,7 @@ OutputConfiguration OutputConfigurationStore::setupToConfig(Setup *setup, const
+             .autoBrightnessCurve = state.autoBrightnessCurve,
+             .abmLevel = state.abmLevel,
+             .anaglyph = state.anaglyph,
+-            .otherStereoFormats = output->initialVirtualMode() ? output->isSplitEyeDisplay() : (glassesTwinChosen ? std::optional<bool>(true) : state.otherStereoFormats),
++            .otherStereoFormats = output->initialVirtualMode() && !output->offersNetworkFormats() ? output->isSplitEyeDisplay() : (glassesTwinChosen ? std::optional<bool>(true) : state.otherStereoFormats),
+             .stereoGlasses = stereoGlasses,
+             .headsetView = state.headsetView,
+         };
+@@ -726,7 +730,9 @@ OutputConfiguration OutputConfigurationStore::generateConfig(const QList<Backend
+         existingData.mode = restoreScanType(output, existingData.mode, existingData.modeScanTypeKnown, existingData.anaglyph.value_or(false), existingData.otherStereoFormats.value_or(false), existingData.customModes);
+ 
+         std::optional<OutputModeline> modeline = output->initialVirtualMode();
+-        if (!modeline && existingData.mode && canRestoreVirtualMode(output, *existingData.mode, existingData.anaglyph.value_or(false), existingData.otherStereoFormats.value_or(false), existingData.customModes)) {
++        if (output->offersNetworkFormats() && existingData.mode && canRestoreVirtualMode(output, *existingData.mode, existingData.anaglyph.value_or(false), existingData.otherStereoFormats.value_or(false), existingData.customModes)) {
++            modeline = existingData.mode;
++        } else if (!modeline && existingData.mode && canRestoreVirtualMode(output, *existingData.mode, existingData.anaglyph.value_or(false), existingData.otherStereoFormats.value_or(false), existingData.customModes)) {
+             modeline = existingData.mode;
+         } else if (!modeline && existingData.mode) {
+             // Note that a custom mode can potentially have a matching object in the output->modes()
+@@ -817,7 +823,7 @@ OutputConfiguration OutputConfigurationStore::generateConfig(const QList<Backend
+             .autoBrightnessCurve = existingData.autoBrightnessCurve,
+             .abmLevel = existingData.abmLevel.value_or(0),
+             .anaglyph = existingData.anaglyph.value_or(false),
+-            .otherStereoFormats = output->initialVirtualMode() ? output->isSplitEyeDisplay() : (glassesTwinChosen || existingData.otherStereoFormats.value_or(output->otherStereoFormats())),
++            .otherStereoFormats = output->initialVirtualMode() && !output->offersNetworkFormats() ? output->isSplitEyeDisplay() : (glassesTwinChosen || existingData.otherStereoFormats.value_or(output->otherStereoFormats())),
+             .stereoGlasses = stereoGlasses,
+         };
+         if (setupState) {
