@@ -6,7 +6,8 @@
 # and its SHA-256, the successor's version, the binary package that gains the dependency on the page, and the changelog line.
 # The shape is plasma-workspace/build-job-tray-menu.sh's (skill edition-packaging, one patch on a staged predecessor).
 # Inside an isolated build container: /work owned scratch, /repo the published tree, /predecessor the predecessor's files,
-# /toolkit sparky-os, /archive the link gate's folder, /siblings the page's own package (the link gate resolves the new Depends there).
+# /toolkit sparky-os, /archive the link gate's folder, /siblings the page's own package (the link gate resolves the new Depends there)
+# with the edition's policy package, /previous the predecessor's packages with that policy package.
 set -euo pipefail
 trap 'chown -R 1000:1000 /work' EXIT
 : "${SOURCE_DATE_EPOCH:?}" "${SOURCE_DATE_RFC2822:?}" "${PROJECT:?kscreen, kscreenlocker, powerdevil or plasma-workspace}"
@@ -79,5 +80,5 @@ ls /siblings/*.deb > /work/siblings.txt
 chown -R builder:builder /work
 python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/source
 cd /work/source
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR="$SRC" SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH=/work/link-scratch SPARKY_LC_SIBLINGS_FILE=/work/siblings.txt dpkg-buildpackage -us -uc -j4 > /work/build.log 2>&1
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/previous SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH=/work/link-scratch SPARKY_LC_SIBLINGS_FILE=/work/siblings.txt dpkg-buildpackage -us -uc -j4 > /work/build.log 2>&1
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
