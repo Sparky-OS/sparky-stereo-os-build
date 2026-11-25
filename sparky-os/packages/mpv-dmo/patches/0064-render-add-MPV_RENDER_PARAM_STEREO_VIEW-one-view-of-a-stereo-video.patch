@@ -1,0 +1,435 @@
+From 548f995f233c865050248743dac7ee5f51c7e754 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 25 Nov 2026 12:00:00 -0300
+Subject: [PATCH] render: add MPV_RENDER_PARAM_STEREO_VIEW, one view of a
+ stereo video per render call
+
+A client of the render API that shows a 3D video on a stereo surface of
+its own (one framebuffer per eye, as a toolkit's stereo widget gives)
+had no way to get one view: mpv_render_context_render() draws the frame
+as it is, and the frame of a stereo video holds both views side by
+side.
+
+MPV_RENDER_PARAM_STEREO_VIEW takes an mpv_render_stereo_view. With
+mpv_render_context_get_info() it says whether the current frame holds
+two views (the frame is a full side by side pair, left view first,
+which is what the video-stereo filter hands over) and the size to give
+the target of one view, so that a view is never resized on its way to
+the compositor: the size the target is shown at, counted in the view's
+own samples. With mpv_render_context_render() view 1 or 2 draws that
+view alone into the target, with the on-screen display drawn once per
+view at the same place; the second view repeats the frame of the first.
+View 0, or no parameter, is the frame as it is: a client that does not
+pass the parameter gets exactly what it got before.
+
+The value is outside the sequence of mpv_render_param_type (0x53560001)
+so that it cannot meet a value added to the sequence later. No symbol
+is added and no existing one changes; the software renderer answers
+MPV_ERROR_NOT_IMPLEMENTED.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ DOCS/interface-changes/render-stereo-view.txt |   1 +
+ include/mpv/render.h                          |  53 +++++++
+ video/out/gpu/libmpv_gpu.c                    |  16 +-
+ video/out/gpu/video.c                         |  19 ++-
+ video/out/gpu/video.h                         |   1 +
+ video/out/libmpv.h                            |   4 +
+ video/out/vo_libmpv.c                         | 138 ++++++++++++++++--
+ 7 files changed, 219 insertions(+), 13 deletions(-)
+ create mode 100644 DOCS/interface-changes/render-stereo-view.txt
+
+diff --git a/DOCS/interface-changes/render-stereo-view.txt b/DOCS/interface-changes/render-stereo-view.txt
+new file mode 100644
+index 0000000..d25b580
+--- /dev/null
++++ b/DOCS/interface-changes/render-stereo-view.txt
+@@ -0,0 +1 @@
++add `MPV_RENDER_PARAM_STEREO_VIEW` to the render API: one view of a stereo video per render call, for API users that render once per eye
+diff --git a/include/mpv/render.h b/include/mpv/render.h
+index 99aadeb..c053893 100644
+--- a/include/mpv/render.h
++++ b/include/mpv/render.h
+@@ -422,6 +422,27 @@ typedef enum mpv_render_param_type {
+      * See MPV_RENDER_PARAM_SW_STRIDE for alignment requirements.
+      */
+     MPV_RENDER_PARAM_SW_POINTER = 20,
++    /**
++     * One view of a stereo video per render call.
++     * Valid for mpv_render_context_render() and mpv_render_context_get_info().
++     * Type: mpv_render_stereo_view*
++     *
++     * mpv hands every 3D video over as two views side by side, left view
++     * first, each at the resolution it has, whatever the packing of the file
++     * (--video-stereo). A render call normally draws that frame as it is. With
++     * this parameter a call draws one view of it, so that an API user whose
++     * toolkit renders once per eye gets each eye from its own call. The call
++     * for the second view draws the frame the call for the first view drew:
++     * call for the first view, then for the second.
++     *
++     * The parameter is ignored (the frame is drawn as it is) while the video's
++     * frames do not hold two views: ask with mpv_render_context_get_info().
++     * A libmpv without this parameter answers MPV_ERROR_NOT_IMPLEMENTED there.
++     *
++     * The value is outside the sequence of the other parameters on purpose, so
++     * that it cannot meet a number given to another parameter later.
++     */
++    MPV_RENDER_PARAM_STEREO_VIEW = 0x53560001,
+ } mpv_render_param_type;
+ 
+ /**
+@@ -518,6 +539,38 @@ typedef enum mpv_render_frame_info_flag {
+     MPV_RENDER_FRAME_INFO_BLOCK_VSYNC     = 1 << 3,
+ } mpv_render_frame_info_flag;
+ 
++/**
++ * For MPV_RENDER_PARAM_STEREO_VIEW.
++ */
++typedef struct mpv_render_stereo_view {
++    /**
++     * mpv_render_context_render(): the view to draw. 0 draws the frame as it
++     * is (as without the parameter), 1 the first view (the left eye's), 2 the
++     * second (the right eye's).
++     */
++    int view;
++    /**
++     * The size, in pixels, at which the target is shown, or 0 and 0 if it is
++     * shown at its own size. The view is placed in the target as a 2D video of
++     * the view's shape is placed in a window of this size (aspect, pan and
++     * scan, alignment). A target of the size mpv_render_context_get_info()
++     * gives for this shown size gets the view sample for sample, with nothing
++     * resized: whoever shows the target does the one resize.
++     */
++    int shown_w, shown_h;
++    /**
++     * mpv_render_context_get_info() only, set by mpv: how many views the
++     * frames of the current video hold (2, 1, or 0 with no video).
++     */
++    int views;
++    /**
++     * mpv_render_context_get_info() only, set by mpv when views is 2: the
++     * size of a target for one view that holds shown_w x shown_h measured in
++     * the view's own samples. 0 when shown_w or shown_h is not positive.
++     */
++    int target_w, target_h;
++} mpv_render_stereo_view;
++
+ /**
+  * Information about the next video frame that will be rendered. Can be
+  * retrieved with MPV_RENDER_PARAM_NEXT_FRAME_INFO.
+diff --git a/video/out/gpu/libmpv_gpu.c b/video/out/gpu/libmpv_gpu.c
+index 1b13c79..ed47cbc 100644
+--- a/video/out/gpu/libmpv_gpu.c
++++ b/video/out/gpu/libmpv_gpu.c
+@@ -16,6 +16,9 @@ struct priv {
+     struct libmpv_gpu_context *context;
+ 
+     struct gl_video *renderer;
++
++    // The target of a render call shows one view of a frame that holds two
++    bool one_view;
+ };
+ 
+ struct native_resource_entry {
+@@ -153,6 +156,15 @@ static void resize(struct render_backend *ctx, struct mp_rect *src,
+     gl_video_resize(p->renderer, src, dst, osd);
+ }
+ 
++static void set_view(struct render_backend *ctx, int view)
++{
++    struct priv *p = ctx->priv;
++
++    p->one_view = view >= 0;
++    gl_video_set_view(p->renderer, MPMAX(view, 0));
++    gl_video_set_view_target(p->renderer, p->one_view);
++}
++
+ static int get_target_size(struct render_backend *ctx, mpv_render_param *params,
+                            int *out_w, int *out_h)
+ {
+@@ -187,7 +199,8 @@ static int render(struct render_backend *ctx, mpv_render_param *params,
+                                              &(int){0});
+ 
+     struct ra_fbo target = {.tex = tex, .flip = flip};
+-    gl_video_render_frame(p->renderer, frame, &target, RENDER_FRAME_DEF);
++    gl_video_render_frame(p->renderer, frame, &target, RENDER_FRAME_DEF |
++                          (p->one_view ? RENDER_FRAME_VIEW : 0));
+     p->context->fns->done_frame(p->context, frame->display_synced);
+ 
+     return 0;
+@@ -241,6 +254,7 @@ const struct render_backend_fns render_backend_gpu = {
+     .reset = reset,
+     .update_external = update_external,
+     .resize = resize,
++    .set_view = set_view,
+     .get_target_size = get_target_size,
+     .render = render,
+     .get_image = get_image,
+diff --git a/video/out/gpu/video.c b/video/out/gpu/video.c
+index 55903ba..f70f418 100644
+--- a/video/out/gpu/video.c
++++ b/video/out/gpu/video.c
+@@ -246,6 +246,8 @@ struct gl_video {
+     // The fields above are those of the view in use; the other view's are here
+     int view;
+     struct view_state other_view;
++    // The target shows one view: its OSD is drawn once
++    bool view_target;
+ 
+     // temporary during rendering
+     struct compute_info pass_compute; // compute shader metadata for this pass
+@@ -656,6 +658,14 @@ void gl_video_set_view(struct gl_video *p, int view)
+     p->view = view;
+ }
+ 
++// The target shows one view of a stereo video (a libmpv user that renders
++// once per eye), so the OSD and the subtitles are drawn once over it, not
++// once in each half of a target that holds both views.
++void gl_video_set_view_target(struct gl_video *p, bool view_target)
++{
++    p->view_target = view_target;
++}
++
+ static void gl_video_reset_hooks(struct gl_video *p)
+ {
+     for (int i = 0; i < p->num_tex_hooks; i++)
+@@ -3048,7 +3058,8 @@ static void pass_draw_osd(struct gl_video *p, int osd_flags, int frame_flags,
+     if ((osd_flags & OSD_DRAW_SUB_ONLY) && (osd_flags & OSD_DRAW_OSD_ONLY))
+         return;
+ 
+-    int stereo3d = frame_flags & RENDER_FRAME_CONTROLS ? 0 : p->image_params.stereo3d;
++    int stereo3d = (frame_flags & RENDER_FRAME_CONTROLS) || p->view_target
++                 ? 0 : p->image_params.stereo3d;
+     mpgl_osd_generate(p->osd, rect, pts, stereo3d, osd_flags);
+ 
+     timer_pool_start(p->osd_timer);
+@@ -3742,8 +3753,10 @@ void gl_video_resize(struct gl_video *p,
+ 
+     gl_video_reset_surfaces(p);
+ 
+-    if (p->osd)
+-        mpgl_osd_resize(p->osd, p->osd_rect, p->image_params.stereo3d);
++    if (p->osd) {
++        mpgl_osd_resize(p->osd, p->osd_rect,
++                        p->view_target ? 0 : p->image_params.stereo3d);
++    }
+ }
+ 
+ static void frame_perf_data(struct pass_info pass[], struct mp_frame_perf *out)
+diff --git a/video/out/gpu/video.h b/video/out/gpu/video.h
+index 547e2be..2cb1c6b 100644
+--- a/video/out/gpu/video.h
++++ b/video/out/gpu/video.h
+@@ -211,6 +211,7 @@ void gl_video_config(struct gl_video *p, struct mp_image_params *params);
+ void gl_video_render_frame(struct gl_video *p, struct vo_frame *frame,
+                            const struct ra_fbo *fbo, int flags);
+ void gl_video_set_view(struct gl_video *p, int view);
++void gl_video_set_view_target(struct gl_video *p, bool view_target);
+ void gl_video_resize(struct gl_video *p,
+                      struct mp_rect *src, struct mp_rect *dst,
+                      struct mp_osd_res *osd);
+diff --git a/video/out/libmpv.h b/video/out/libmpv.h
+index 02efefb..e66ebef 100644
+--- a/video/out/libmpv.h
++++ b/video/out/libmpv.h
+@@ -69,6 +69,10 @@ struct render_backend_fns {
+     // Update screen area.
+     void (*resize)(struct render_backend *ctx, struct mp_rect *src,
+                    struct mp_rect *dst, struct mp_osd_res *osd);
++    // Draw one view of a frame that holds two (0 or 1), each with rectangles
++    // and an interpolation history of its own, or the frame as it is (-1).
++    // Called before resize() and render(). Optional.
++    void (*set_view)(struct render_backend *ctx, int view);
+     // Get target surface size from mpv_render_context_render() arguments.
+     int (*get_target_size)(struct render_backend *ctx, mpv_render_param *params,
+                            int *out_w, int *out_h);
+diff --git a/video/out/vo_libmpv.c b/video/out/vo_libmpv.c
+index a91016d..d773f74 100644
+--- a/video/out/vo_libmpv.c
++++ b/video/out/vo_libmpv.c
+@@ -93,6 +93,13 @@ struct mpv_render_context {
+     struct vo_frame *cur_frame;
+     struct mp_image_params img_params;
+     int vp_w, vp_h;
++    // One view of a stereo video per render call (MPV_RENDER_PARAM_STEREO_VIEW):
++    // whether the last call drew one view, the size its target is shown at,
++    // and where each view comes from and goes in that target
++    bool one_view;
++    int shown_w, shown_h;
++    struct mp_rect view_src[2], view_dst;
++    struct mp_osd_res view_osd;
+     bool flip;
+     bool imgfmt_supported[IMGFMT_END - IMGFMT_START];
+     bool need_reconfig;
+@@ -333,10 +340,81 @@ bool mp_render_context_acquire(mpv_render_context *ctx)
+     return atomic_compare_exchange_strong(&ctx->in_use, &prev, true);
+ }
+ 
++// Whether the video's frames hold two views side by side, left view first,
++// as the automatic filter hands over every 3D video (--video-stereo), and the
++// renderer can draw one of them. ctx->lock must be held.
++static bool has_stereo_views(struct mpv_render_context *ctx)
++{
++    return ctx->vo && ctx->renderer->fns->set_view &&
++           ctx->img_params.stereo3d == MP_STEREO3D_SBSL && ctx->img_params.w >= 2;
++}
++
++// Where the two views of the frame come from, and where a view goes in a
++// target of vp_w x vp_h that is shown at shown_w x shown_h. The view is placed
++// as a 2D video of the view's shape is placed in a window of the shown size.
++// A target of the size vo_get_stereo_layer() gives for that window (the window
++// measured in the view's own samples, *layer_w x *layer_h for one view) gets
++// the view sample for sample; any other target gets it resized.
++// The frame has the shape of both views here (this VO does not set
++// VO_CAP_STEREO_VIEW), so one view is half its width with the same sample
++// aspect ratio. ctx->lock must be held.
++static void get_stereo_view_rects(struct mpv_render_context *ctx,
++                                  int vp_w, int vp_h, int shown_w, int shown_h,
++                                  struct mp_rect src[2], struct mp_rect *dst,
++                                  struct mp_osd_res *osd,
++                                  int *layer_w, int *layer_h)
++{
++    struct mp_image_params one = ctx->img_params;
++    one.w /= 2;
++    one.crop = (struct mp_rect){0};
++
++    if (shown_w <= 0 || shown_h <= 0) {
++        shown_w = vp_w;
++        shown_h = vp_h;
++    }
++
++    struct mp_osd_res shown_osd;
++    mp_get_src_dst_rects(ctx->log, ctx->vo_opts, ctx->vo->driver->caps, &one,
++                         shown_w, shown_h, 1.0, &src[0], dst, &shown_osd);
++
++    struct mp_rect pair = src[0], native_dst;
++    pair.x1 += mp_rect_w(src[0]);
++    int lw = 0, lh = 0;
++    bool layer = vo_get_stereo_layer(shown_w, shown_h, &pair, dst, &lw, &lh,
++                                     &native_dst);
++    if (layer_w)
++        *layer_w = layer ? lw / 2 : shown_w;
++    if (layer_h)
++        *layer_h = layer ? lh : shown_h;
++
++    double kx = vp_w / (double)shown_w, ky = vp_h / (double)shown_h;
++    if (layer && lw / 2 == vp_w && lh == vp_h) {
++        *dst = native_dst;
++    } else {
++        *dst = (struct mp_rect){lrint(dst->x0 * kx), lrint(dst->y0 * ky),
++                                lrint(dst->x1 * kx), lrint(dst->y1 * ky)};
++    }
++    *osd = (struct mp_osd_res){
++        .w = vp_w, .h = vp_h,
++        .ml = dst->x0, .mr = vp_w - dst->x1,
++        .mt = dst->y0, .mb = vp_h - dst->y1,
++        .display_par = ky / kx,
++    };
++
++    src[1] = src[0];
++    src[1].x0 += one.w;
++    src[1].x1 += one.w;
++}
++
+ int mpv_render_context_render(mpv_render_context *ctx, mpv_render_param *params)
+ {
+     mp_mutex_lock(&ctx->lock);
+ 
++    mpv_render_stereo_view *stereo_view =
++        get_mpv_render_param(params, MPV_RENDER_PARAM_STEREO_VIEW, NULL);
++    int view = stereo_view && (stereo_view->view == 1 || stereo_view->view == 2) &&
++               has_stereo_views(ctx) ? stereo_view->view : 0;
++
+     int do_render =
+         !GET_MPV_RENDER_PARAM(params, MPV_RENDER_PARAM_SKIP_RENDERING, int, 0);
+ 
+@@ -349,23 +427,45 @@ int mpv_render_context_render(mpv_render_context *ctx, mpv_render_param *params)
+             return err;
+         }
+ 
++        int shown_w = view ? stereo_view->shown_w : 0;
++        int shown_h = view ? stereo_view->shown_h : 0;
++
+         if (ctx->vo && (ctx->vp_w != vp_w || ctx->vp_h != vp_h ||
+-                        ctx->need_resize))
++                        ctx->need_resize || ctx->one_view != !!view ||
++                        ctx->shown_w != shown_w || ctx->shown_h != shown_h))
+         {
+             ctx->vp_w = vp_w;
+             ctx->vp_h = vp_h;
++            ctx->one_view = view;
++            ctx->shown_w = shown_w;
++            ctx->shown_h = shown_h;
+ 
+             m_config_cache_update(ctx->vo_opts_cache);
+ 
+-            struct mp_rect src, dst;
+-            struct mp_osd_res osd;
+-            mp_get_src_dst_rects(ctx->log, ctx->vo_opts, ctx->vo->driver->caps,
+-                                &ctx->img_params, vp_w, abs(vp_h),
+-                                1.0, &src, &dst, &osd);
+-
+-            ctx->renderer->fns->resize(ctx->renderer, &src, &dst, &osd);
++            if (view) {
++                get_stereo_view_rects(ctx, vp_w, abs(vp_h), shown_w, shown_h,
++                                      ctx->view_src, &ctx->view_dst,
++                                      &ctx->view_osd, NULL, NULL);
++            } else {
++                struct mp_rect src, dst;
++                struct mp_osd_res osd;
++                mp_get_src_dst_rects(ctx->log, ctx->vo_opts,
++                                    ctx->vo->driver->caps, &ctx->img_params,
++                                    vp_w, abs(vp_h), 1.0, &src, &dst, &osd);
++
++                if (ctx->renderer->fns->set_view)
++                    ctx->renderer->fns->set_view(ctx->renderer, -1);
++                ctx->renderer->fns->resize(ctx->renderer, &src, &dst, &osd);
++            }
+         }
+         ctx->need_resize = false;
++
++        // Each view has its rectangles and its interpolation history
++        if (view) {
++            ctx->renderer->fns->set_view(ctx->renderer, view - 1);
++            ctx->renderer->fns->resize(ctx->renderer, &ctx->view_src[view - 1],
++                                       &ctx->view_dst, &ctx->view_osd);
++        }
+     }
+ 
+     if (ctx->need_reconfig)
+@@ -383,7 +483,9 @@ int mpv_render_context_render(mpv_render_context *ctx, mpv_render_param *params)
+     }
+     ctx->need_reset = false;
+ 
+-    struct vo_frame *frame = ctx->next_frame;
++    // The second view is drawn from the frame the first view was drawn from,
++    // so that the two eyes never show two moments
++    struct vo_frame *frame = view == 2 ? NULL : ctx->next_frame;
+     int64_t wait_present_count = ctx->present_count;
+     if (frame) {
+         ctx->next_frame = NULL;
+@@ -478,6 +580,24 @@ int mpv_render_context_get_info(mpv_render_context *ctx,
+         res = 0;
+         break;
+     }
++    case MPV_RENDER_PARAM_STEREO_VIEW: {
++        if (!ctx->renderer->fns->set_view)
++            break;
++        mpv_render_stereo_view *info = param.data;
++        info->views = !ctx->vo || ctx->img_params.w <= 0 ? 0 :
++                      has_stereo_views(ctx) ? 2 : 1;
++        info->target_w = info->target_h = 0;
++        if (info->views == 2 && info->shown_w > 0 && info->shown_h > 0) {
++            struct mp_rect src[2], dst;
++            struct mp_osd_res osd;
++            m_config_cache_update(ctx->vo_opts_cache);
++            get_stereo_view_rects(ctx, info->shown_w, info->shown_h,
++                                  info->shown_w, info->shown_h, src, &dst,
++                                  &osd, &info->target_w, &info->target_h);
++        }
++        res = 0;
++        break;
++    }
+     default:;
+     }
+ 
