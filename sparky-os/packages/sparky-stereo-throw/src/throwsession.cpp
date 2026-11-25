@@ -8,6 +8,7 @@
 #include <KLocalizedString>
 #include <KSharedConfig>
 
+#include <QDateTime>
 #include <QJsonArray>
 
 namespace Throw
@@ -184,6 +185,12 @@ QJsonObject ThrowSession::status() const
         {QStringLiteral("sound"), m_plan.info.audioCodec},
         {QStringLiteral("sink"), sinkName()},
         {QStringLiteral("listen"), m_streamer.listenAddress().toString()},
+        // the times a person lives with: the device's time t shows what this computer had encoded at readerZeroAt + t, so
+        // at statusAt the device is (statusAt - readerZeroAt) / 1000 - currentTime seconds behind the screen
+        {QStringLiteral("loadAt"), double(m_loadAt)},
+        {QStringLiteral("statusAt"), double(m_statusAt)},
+        {QStringLiteral("firstPlayingAt"), double(m_firstPlayingAt)},
+        {QStringLiteral("readerZeroAt"), double(m_streamer.readerZeroAt())},
     };
 }
 
@@ -249,6 +256,7 @@ void ThrowSession::onReceiverStatus(const QJsonObject &status, int)
             m_fetchTimeout.start();
             m_playTimeout.start();
             m_sinceLoad.start();
+            m_loadAt = QDateTime::currentMSecsSinceEpoch();
         }
         return;
     }
@@ -266,10 +274,12 @@ void ThrowSession::onMediaStatus(const QJsonObject &payload)
     for (const auto &value : statuses) {
         const QJsonObject status = value.toObject();
         m_media = status;
+        m_statusAt = QDateTime::currentMSecsSinceEpoch();
         const QString player = status.value(QStringLiteral("playerState")).toString();
         if (player == QLatin1String("PLAYING") && !m_played) {
             // the device plays: the sound it carries is recorded as played on this device
             m_played = true;
+            m_firstPlayingAt = m_statusAt;
             m_playTimeout.stop();
             const double seconds = m_sinceLoad.isValid() ? m_sinceLoad.elapsed() / 1000.0 : -1;
             qCInfo(THROW) << m_device.name << "plays, " << seconds << "s after LOAD, with" << m_plan.info.audioCodec;

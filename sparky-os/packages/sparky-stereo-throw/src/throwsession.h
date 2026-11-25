@@ -76,6 +76,10 @@ private:
     QTimer m_poll;
     QTimer m_playTimeout;
     QElapsedTimer m_sinceLoad;
+    // wall clock times (milliseconds since the epoch) the status gives: the LOAD sent, the last MEDIA_STATUS, the first PLAYING
+    qint64 m_loadAt = -1;
+    qint64 m_statusAt = -1;
+    qint64 m_firstPlayingAt = -1;
     bool m_played = false;
     QString m_transportId;
     QString m_sessionId;

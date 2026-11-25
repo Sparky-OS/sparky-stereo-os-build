@@ -169,11 +169,30 @@ for (const e of ["loadstart", "loadedmetadata", "loadeddata", "canplay", "canpla
                                 if (e === "playing") waiting = false; });
 }
 v.src = "/relay";
+// a screen that carries the wall clock as a code (the kit's clock page: 28 cells across the top band, white first, black
+// last, 26 bits of the milliseconds mod 2^26 between them) is read back here: this machine's clock minus the code is the
+// delay from the computer's screen to this player's picture; null when the picture carries no such code
+const canvas = document.createElement("canvas"), g = canvas.getContext("2d", {willReadFrequently: true});
+function clockLag() {
+  const w = v.videoWidth, h = v.videoHeight;
+  if (!w || !h || v.readyState < 2) return null;
+  canvas.width = w; canvas.height = h; g.drawImage(v, 0, 0, w, h);
+  const cells = 28, y = Math.round(h * 0.06), row = g.getImageData(0, y, w, 1).data, bits = [];
+  for (let i = 0; i < cells; i++) {
+    const x = Math.floor((i + 0.5) * w / cells) * 4;
+    bits.push((row[x] + row[x + 1] + row[x + 2]) / 3 > 128 ? 1 : 0);
+  }
+  if (bits[0] !== 1 || bits[cells - 1] !== 0) return null;
+  let value = 0;
+  for (let i = 1; i < cells - 1; i++) value = value * 2 + bits[i];
+  const lag = ((Date.now() % 67108864) - value + 67108864) % 67108864;
+  return lag < 600000 ? lag : null;
+}
 function report() {
   const b = v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0;
   const body = {readyState: v.readyState, networkState: v.networkState, currentTime: v.currentTime, paused: v.paused,
     waiting, ended: v.ended, buffered: b, width: v.videoWidth, height: v.videoHeight, events: events.splice(0),
-    error: v.error ? (v.error.code + " " + v.error.message) : null};
+    error: v.error ? (v.error.code + " " + v.error.message) : null, clockLagMs: clockLag()};
   fetch("/report", {method: "POST", body: JSON.stringify(body)}).catch(() => {});
 }
 setInterval(report, 250);
@@ -285,6 +304,11 @@ class Player:
             changed = {k: state.get(k) for k in ("readyState", "paused", "waiting", "error", "ended")} != \
                 {k: self.last.get(k) for k in ("readyState", "paused", "waiting", "error", "ended")}
             self.last = state
+        lag = state.get("clockLagMs")
+        if lag is not None and now - getattr(self, "lag_logged", 0.0) >= 1.0:
+            # the delay read back from a picture that carries the clock (the kit's clock page), once a second
+            self.lag_logged = now
+            log({"event": "clock", "t": round(now - self.started, 2), "lagMs": lag, "currentTime": state.get("currentTime")})
         if changed or state.get("events"):
             log({"event": "player", "t": round(now - self.started, 2), **{k: state.get(k) for k in
                  ("readyState", "networkState", "currentTime", "paused", "waiting", "ended", "buffered", "width", "height",

@@ -5,7 +5,8 @@
 # interface in the container's own network namespace (nothing routes out of it), a system bus and Avahi on that interface
 # only, the software Cast devices each at its own address and host name, announced as _googlecast._tcp; then the
 # person's session as uid 1000 (session.sh). KWin +stereo3d66 from /debs66, and the Throw package from /throwdebs when
-# given (the installed rows), else the build tree in /tools/bin with KWin's permission checks off (the development rows).
+# given, with every other package in that folder (0.3.0 needs KPipeWire +stereo3d10's runtime packages), in one dpkg call
+# (the installed rows), else the build tree in /tools/bin with KWin's permission checks off (the development rows).
 # Usage: setup.sh OUT_DIR
 set -u
 OUT=${1:?out dir}
@@ -20,9 +21,9 @@ ip -brief addr > "$OUT/net.txt"
 ip route >> "$OUT/net.txt"
 dpkg -i /debs66/*.deb > "$OUT/dpkg-kwin66.log" 2>&1 || { echo "KWin +66 did not install"; tail -20 "$OUT/dpkg-kwin66.log"; exit 1; }
 if [ -d /throwdebs ]; then
-    dpkg -i /throwdebs/sparky-stereo-throw_*.deb > "$OUT/dpkg-throw.log" 2>&1 || { echo "the Throw package did not install"; tail -20 "$OUT/dpkg-throw.log"; exit 1; }
+    dpkg -i $(ls /throwdebs/*.deb | grep -v -- '-dbgsym_') > "$OUT/dpkg-throw.log" 2>&1 || { echo "the Throw package did not install"; tail -20 "$OUT/dpkg-throw.log"; exit 1; }
 fi
-dpkg-query -W kwin-wayland sparky-stereo-throw > "$OUT/installed.txt" 2>/dev/null
+dpkg-query -W kwin-wayland sparky-stereo-throw libkpipewire6 libkpipewirerecord6 > "$OUT/installed.txt" 2>/dev/null
 # Avahi on the dummy interface only, IPv4, no workstation record
 sed -i -e 's/^#\?allow-interfaces=.*/allow-interfaces=dummy0/' -e 's/^#\?use-ipv6=.*/use-ipv6=no/' \
     -e 's/^#\?publish-workstation=.*/publish-workstation=no/' /etc/avahi/avahi-daemon.conf

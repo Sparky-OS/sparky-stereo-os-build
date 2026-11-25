@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "streamer.h"
+
+#include <QDateTime>
 #include "logging.h"
 
 #include <QHash>
@@ -300,6 +302,7 @@ bool Streamer::start(const Plan &plan, quint64 objectSerial, quint32 node, const
         return false;
     }
     m_clock.start();
+    m_clockEpochMs = QDateTime::currentMSecsSinceEpoch();
     if (!m_sink.start(sinkName, sinkDescription, plan.audioRate, plan.audioChannels)) {
         m_error = QStringLiteral("the sound sink could not be made: %1").arg(m_sink.error());
         return false;

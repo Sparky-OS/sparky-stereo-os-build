@@ -75,6 +75,11 @@ public:
     {
         return m_bytes;
     }
+    // the stream clock's time of this reader's time 0 (its first packet), -1 before it
+    qint64 firstMs() const
+    {
+        return m_firstMs;
+    }
     static int writeCallback(void *opaque, const uint8_t *buf, int size);
 
 private:
@@ -119,6 +124,12 @@ public:
     {
         return m_writer ? m_writer->bytes() : m_bytesBefore;
     }
+    // the wall clock (milliseconds since the epoch) of the reader's time 0: a device that plays at its time t shows what the
+    // computer had encoded at this plus t; -1 while no reader has begun
+    qint64 readerZeroAt() const
+    {
+        return m_writer && m_writer->firstMs() >= 0 ? m_clockEpochMs + m_writer->firstMs() : -1;
+    }
     QHostAddress listenAddress() const
     {
         return m_server.serverAddress();
@@ -148,6 +159,7 @@ private:
     QTcpSocket *m_client = nullptr;
     std::unique_ptr<Muxer> m_writer;
     QElapsedTimer m_clock;
+    qint64 m_clockEpochMs = 0; // the wall clock when m_clock started
     bool m_announced = false;
     bool m_gotVideo = false;
     qint64 m_bytesBefore = 0;

@@ -948,6 +948,41 @@ def words_rows(in_pt):
          "som PCM, 24 bits" in (stuck.get("text") or "")))
 
 
+def dependent_rows():
+    """Part D, second half: a client of KPipeWire that does not ask for a constant frame rate keeps KPipeWire's own behaviour
+    on the new library. Spectacle (in the rig image that has it) records the still screen for about 12 s as MP4 (H.264;
+    VP9, its default, gives no live picture in KPipeWire 6.7.4); a second request to record ends the recording. Its pictures
+    are counted: a few, never the Throw's constant rate."""
+    import shutil
+    if not shutil.which("spectacle"):
+        log("DK1 not run: no Spectacle in this rig image")
+        return
+    cfg = os.path.join(os.environ["HOME"], ".config", "spectaclerc")
+    os.makedirs(os.path.dirname(cfg), exist_ok=True)
+    with open(cfg, "w") as f:
+        f.write("[VideoSave]\npreferredVideoFormat=2\n")
+    rec = os.path.join(OUT, "spectacle-still.mp4")
+    log_path = os.path.join(OUT, "spectacle.log")
+    with open(log_path, "w") as lf:
+        first = subprocess.Popen(["spectacle", "--background", "--nonotify", "--record", "s", "--output", rec], stdout=lf, stderr=lf)
+        time.sleep(12)
+        second = subprocess.run(["spectacle", "--background", "--nonotify", "--record", "s", "--output", rec], stdout=lf,
+                                stderr=lf, timeout=60)
+        try:
+            first.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            first.kill()
+    lib = subprocess.run(["dpkg-query", "-W", "-f", "${Version}", "libkpipewirerecord6"], capture_output=True, text=True).stdout
+    rate, count = picture_rate(rec) if os.path.exists(rec) else (0.0, 0)
+    rc, codec, _ = run("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", rec)
+    rc, dur, _ = run("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", rec)
+    log(f"DK1 KPipeWire {lib}: Spectacle wrote {os.path.exists(rec)} ({codec.strip()}, {dur.strip()} s): {count} pictures, "
+        f"{rate:.1f} a second; second request exit {second.returncode}")
+    row("DK1", "Spectacle's screen recording of a still screen on this KPipeWire (a client that did not ask for a constant rate): "
+        "a recording with fewer than 10 pictures, not one a frame interval apart", (True, True),
+        (os.path.exists(rec) and count > 0, 0 < count < 10))
+
+
 def make_pair():
     from PIL import Image
     pair = Image.new("RGB", (3840, 1080), (255, 0, 0))
@@ -972,6 +1007,7 @@ try:
         main()
         partd()
         pages()
+        dependent_rows()
 finally:
     with open(os.path.join(OUT, "rows.tsv"), "w") as f:
         f.write("row\tclaim\texpected\tmeasured\tresult\n")
