@@ -341,7 +341,7 @@ Last-Update: 2026-11-25
      <group name="Media Browser">
 --- /dev/null
 +++ b/src/speech/vibespeechjob.cpp
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,278 @@
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 +
@@ -399,7 +399,8 @@ Last-Update: 2026-11-25
 +    connect(&m_server, &QProcess::readyReadStandardOutput, this, &VibeSpeechJob::readServerOutput);
 +    connect(&m_server, &QProcess::errorOccurred, this, [this]() { complete(i18n("Could not start Vibe's speech server: %1", m_server.errorString())); });
 +    connect(&m_server, &QProcess::finished, this, [this]() {
-+        const QString detail = QString::fromUtf8(m_server.readAllStandardError().right(4096)).trimmed();
++        static const QRegularExpression terminalFormatting(u"\\x{1b}\\[[0-?]*[ -/]*[@-~]"_s);
++        const QString detail = QString::fromUtf8(m_server.readAllStandardError().right(4096)).remove(terminalFormatting).trimmed().section(u'\n', -1);
 +        complete(detail.isEmpty() ? i18n("Vibe's speech server stopped.") : i18n("Vibe's speech server stopped: %1", detail));
 +    });
 +}
