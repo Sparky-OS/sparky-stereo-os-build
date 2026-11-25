@@ -309,6 +309,18 @@ def find_data(sub, name, user_first=True):
     return None
 
 
+def scheme_digest(path):
+    """SHA-256 of a scheme's groups, keys and values, comments and blank lines left out: the installed file is the Lean Code
+    form of the authored one (its comments are stripped), and both must give one digest."""
+    cfg = KConfigFile(path)
+    lines = []
+    for header, body in cfg.groups:
+        for line in body:
+            if line.strip() and not line.lstrip().startswith('#'):
+                lines.append(f'[{header}]{line.strip()}')
+    return hashlib.sha256('\n'.join(lines).encode()).hexdigest()
+
+
 def scheme_name(path):
     return KConfigFile(path).get('General', 'Name') or path.stem
 
@@ -339,7 +351,7 @@ def set_scheme(kind, saved):
     shipped = find_data('color-schemes', target + '.colors', user_first=False)
     target_file = None
     if shipped is not None and base_file is not None and \
-            KConfigFile(shipped).get('General', 'X-Sparky-Colour-Vision-Base-SHA256') == sha(base_file):
+            KConfigFile(shipped).get('General', 'X-Sparky-Colour-Vision-Base-SHA256') == scheme_digest(base_file):
         target_file = shipped
     elif base_file is None:
         return {'id': 'scheme', 'state': 'failed', 'name': base, 'error': 'no-scheme'}
@@ -442,7 +454,7 @@ def write_variant(base_file, target_file, kind):
     for lang in LANGUAGES:
         local = cfg.get('General', f'Name[{lang}]') or base_name
         cfg.set('General', f'Name[{lang}]', f'{local} ({tr(KIND_PHRASES[kind], lang, KIND_CONTEXT)})')
-    cfg.set('General', 'X-Sparky-Colour-Vision-Base-SHA256', sha(base_file))
+    cfg.set('General', 'X-Sparky-Colour-Vision-Base-SHA256', scheme_digest(base_file))
     cfg.path = Path(target_file)
     cfg.save()
 
