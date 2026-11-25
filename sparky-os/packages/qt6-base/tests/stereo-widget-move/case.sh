@@ -5,7 +5,9 @@
 #   KIND memcheck: under Valgrind's memcheck (--undef-value-errors=no, every error kept)
 #   KIND lag:      with WAYLAND_DEBUG=client, then lag.py over the wire log
 # LIBDIR (optional): a folder whose libraries come first (LD_LIBRARY_PATH), for a development build's libQt6Widgets.so.6
-# and libQt6WaylandClient.so.6. Results in /out/KIND-MODE.
+# and libQt6WaylandClient.so.6. OUTPUT_SCALE (optional, 1.25 or 1.5): the output's scale, set as Display Settings sets
+# it, by kscreen-doctor in a setup KWin before the case's own (row 50's second round; the image needs libkscreen-bin).
+# Results in /out/KIND-MODE.
 set -u
 KIND=$1 MODE=$2 STEPS=$3 WAIT=$4
 OUT=/out/$KIND-$MODE
@@ -14,6 +16,14 @@ export HOME=/tmp/home XDG_RUNTIME_DIR=/tmp/rt XDG_CONFIG_HOME=/tmp/home/.config
 mkdir -p -m 700 "$XDG_RUNTIME_DIR"; mkdir -p "$XDG_CONFIG_HOME"
 printf '[StereoDepth]\nSunkLimit=10\nPoppedLimit=4\n' > "$XDG_CONFIG_HOME/kwinrc"
 printf '[Daemon]\nAutolock=false\nLockOnResume=false\nTimeout=0\n' > "$XDG_CONFIG_HOME/kscreenlockerrc"
+if [ -n "${OUTPUT_SCALE:-}" ]; then
+	kwin_wayland --virtual --socket=setup --width 1920 --height 1080 > "$OUT/setup-kwin.log" 2>&1 &
+	SPID=$!
+	for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/setup" ] && break; sleep 0.1; done; sleep 1.5
+	WAYLAND_DISPLAY=setup kscreen-doctor "output.Virtual-0.scale.$OUTPUT_SCALE" > "$OUT/setup-scale.txt" 2>&1; sleep 1.5
+	WAYLAND_DISPLAY=setup kscreen-doctor -o 2>/dev/null | sed "s/\x1b\[[0-9;]*m//g" >> "$OUT/setup-scale.txt"
+	kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null; rm -f "$XDG_RUNTIME_DIR"/setup*
+fi
 KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1 KWIN_WAYLAND_NO_PERMISSION_CHECKS=1 \
 	kwin_wayland --virtual --socket=w --width 1920 --height 1080 > "$OUT/kwin.log" 2>&1 &
 KPID=$!

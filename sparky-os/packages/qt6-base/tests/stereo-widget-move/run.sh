@@ -12,7 +12,8 @@
 #                  widget, and how many of those reached the screen (reported; the expectation is ROW863_LAG_MAX, by
 #                  default no limit, so the number is measured, not judged)
 # The KWin session draws on the NVIDIA card through CDI when GPU=nvidia (loops belong there), else the AMD render node;
-# the test program always draws with llvmpipe. --cpus 4, --network none, --ulimit core=1, uid 1000.
+# the test program always draws with llvmpipe. ROW863_OUTPUT_SCALE: the output's scale (case.sh's OUTPUT_SCALE).
+# --cpus 4, --network none, --ulimit core=1, uid 1000.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 IMAGE=$1 RESULTS=$(mkdir -p "$2" && cd "$2" && pwd -P) LIBDIR=${3:-}
@@ -24,6 +25,7 @@ echo "load at start: $(cut -d' ' -f1-3 /proc/loadavg)" | tee "$RESULTS/load.txt"
 gpu=(--device /dev/dri/renderD128 --group-add 125)
 [ "${GPU:-amd}" = nvidia ] && gpu=(--device nvidia.com/gpu=0 --device /dev/dri/renderD129:/dev/dri/renderD128 --group-add 125)
 lib=(); [ -n "$LIBDIR" ] && lib=(--mount "type=bind,src=$(cd "$LIBDIR" && pwd -P),dst=/variant,readonly" -e LIBDIR=/variant)
+[ -n "${ROW863_OUTPUT_SCALE:-}" ] && lib+=(-e "OUTPUT_SCALE=$ROW863_OUTPUT_SCALE")
 docker image inspect "$IMAGE" > /dev/null
 run() { # NAME COMMAND...
 	local name=$PREFIX-$1; shift
