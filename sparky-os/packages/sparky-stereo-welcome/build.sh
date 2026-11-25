@@ -63,6 +63,12 @@ The pages are shown by KDE's Welcome Center (plasma-welcome, by Felipe Kinoshita
 KDE community, GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL), which is not part of this package.
 SparkyLinux's own first-run window, Sparky Welcome, is Paweł "pavroo" Pijanowski's work.
 
+Files: usr/share/locale/de/* usr/share/locale/es/* usr/share/locale/pl/*
+    Sparky Welcome's own words for its buttons and headings in these languages are kept as its translators made them
+    (sparky-welcome's lang files, first made by Piotr "MoroS" Mrożek; translators as sparky-welcome's copyright file
+    names them: Roy, jidan, Goro86, depaz, Jouko Tiilikainen, nemomen, Yodel Sinatra, ChourS, XalisRatt).
+    License: GPL-3+
+
 License:
 
     This package is free software; you can redistribute it and/or modify
