@@ -32,7 +32,7 @@ The pages
 -------------
 - `00-SparkyStereoOS.qml`, the first page: the edition in one screen, the screens it shows 3D on, where Display Configuration is (a button opens it), the credit line.
 - `01-PointAndType.qml`: the window under the pointer gets the keys; why, in Daniel Ramos's words; how to change it (a button opens Window Behavior).
-- `extra-pages/01-TouchAndTabletMode.qml`: what a tap does where the mouse keeps its own click setting, as measured, and the on-screen keyboard and the panels in tablet mode; buttons for General Behavior and Virtual Keyboard. `show: true`; `show: Welcome.Distro.flag("TouchScreen")` shows it only on a computer with a touch screen of its own.
+- `extra-pages/01-TouchAndTabletMode.qml`: what a tap does where the mouse keeps its own click setting, as measured, and the on-screen keyboard and the panels in tablet mode; buttons for General Behavior and Virtual Keyboard. Shown only on a computer with a touch screen of its own (`show: Welcome.Distro.flag("TouchScreen")`; Daniel, 2026-11-25: "Only with a touch screen").
 - `extra-pages/02-SparkyWorld.qml`: every element of Sparky Welcome, with its own address or command.
 - `extra-pages/03-HelpTest.qml`: what the screens can do in 3D (`stereo-display-info`), copied; the edition's tracker.
 
