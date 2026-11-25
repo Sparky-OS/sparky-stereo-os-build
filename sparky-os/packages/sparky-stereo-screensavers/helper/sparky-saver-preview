@@ -1,0 +1,203 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Run one screensaver for the Screensavers page, off the session's display.
+
+The saver runs on a private Xvfb, as the stereo show's controller runs it
+(/usr/lib/gl-stereo/savers/controller.py, whose pieces this program uses), and
+its finished pictures go to the page over the show's frame channel: one sealed
+memory file per picture, one picture outstanding.
+
+  sparky-saver-preview [--size WxH] [--separation SHARE] [--option ARG]... SAVER FRAME_FD
+
+A saver of the stereo catalogue is drawn by the gl-stereo layer as a pair
+(the picture is two views wide). Any other XScreenSaver program draws with
+Xlib on a window this program makes; its picture is one view.
+--separation is the layer's share of one view's width, in percent; the page
+works it out from the person's depth limits for the size the pair is shown at.
+
+It ends when its standard input closes or on SIGTERM. Exit status and the one
+line on standard error say why it ended when nobody asked:
+  3 not-offered     the catalogue names another build of the saver or the layer
+  4 not-installed   no such saver program
+  5 no-display      the private display did not start
+  6 ended           the saver ended by itself (its status follows)
+  7 no-picture      the saver drew nothing within the wait
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import select
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+SAVERS = Path(os.environ.get('SPARKY_SAVER_LIB', '/usr/lib/gl-stereo/savers'))
+SHARE = Path(os.environ.get('SPARKY_SAVER_SHARE', '/usr/share/gl-stereo'))
+HACKS = Path('/usr/libexec/xscreensaver')
+sys.path.insert(0, str(SAVERS))
+WAIT = float(os.environ.get('SPARKY_SAVER_WAIT', '20'))
+
+
+def stop(status, kind, detail=''):
+    print('sparky-saver-preview: %s: %s' % (kind, detail), file=sys.stderr, flush=True)
+    raise SystemExit(status)
+
+
+def size(value):
+    if not re.fullmatch(r'\d+x\d+', value):
+        raise argparse.ArgumentTypeError('use WIDTHxHEIGHT')
+    width, height = map(int, value.split('x'))
+    if not (64 <= width <= 1280 and 64 <= height <= 1440) or width % 2:
+        raise argparse.ArgumentTypeError('one view is 64 to 1280 wide (even) and 64 to 1440 high')
+    return width, height
+
+
+def share(value):
+    number = float(value)
+    if not 0 <= number <= 10:
+        raise argparse.ArgumentTypeError('the share is 0 to 10 percent of one view')
+    return number
+
+
+def option(value):
+    # one argument of the saver's own command line, as its description file lists them
+    if not re.fullmatch(r'[-+]?[A-Za-z0-9_.:,#/ =%+-]{1,120}', value) or '..' in value:
+        raise argparse.ArgumentTypeError('not a saver option')
+    return value
+
+
+def clean_environment(display):
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith('GL_STEREO') or key in ('LD_PRELOAD', 'DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY'):
+            env.pop(key)
+    env['PATH'] = str(HACKS) + ':' + env.get('PATH', os.defpath)
+    env['DISPLAY'] = display
+    return env
+
+
+def with_geometry(command, width, height):
+    command = list(command)
+    if '-geometry' in command:
+        command[command.index('-geometry') + 1] = '%dx%d' % (width, height)
+    else:
+        command += ['-geometry', '%dx%d' % (width, height)]
+    return command
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    parser.add_argument('--size', type=size, default=(640, 360))
+    parser.add_argument('--separation', type=share)
+    parser.add_argument('--option', type=option, action='append', default=[])
+    parser.add_argument('saver')
+    parser.add_argument('frame_fd', type=int)
+    args = parser.parse_args()
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,40}', args.saver):
+        stop(4, 'not-installed', args.saver)
+    width, height = args.size
+    try:
+        import catalogue
+        import flat
+        from controller import read_display
+        entries = {entry.get('id'): entry for entry in json.loads((SHARE / 'catalogue.json').read_text())}
+    except (ImportError, OSError, ValueError) as error:
+        stop(4, 'not-installed', 'the stereo savers package: %s' % error)
+    entry = entries.get(args.saver)
+    one_view = entry is None
+    if one_view:
+        if not flat.installed(args.saver):
+            stop(4, 'not-installed', str(flat.HACKS / args.saver))
+    else:
+        reasons = catalogue.diagnose(entry)
+        if reasons:
+            stop(3, 'not-offered', '; '.join(catalogue.describe(reason, short=True) for reason in reasons))
+    channel = socket.socket(fileno=args.frame_fd)
+    read, write = os.pipe()
+    xvfb = subprocess.Popen(['Xvfb', '-displayfd', str(write), '-screen', '0', '2560x1440x24', '-ac', '-nolisten', 'tcp'],
+                            pass_fds=(write,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.close(write)
+    saver = None
+
+    def finish(*_):
+        for process in (saver, xvfb):
+            if process and process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM) if process is saver else process.terminate()
+                except ProcessLookupError:
+                    pass
+        for process in (saver, xvfb):
+            if process:
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+    signal.signal(signal.SIGTERM, lambda *_: (finish(), os._exit(0)))
+    try:
+        try:
+            display = read_display(read)
+        except RuntimeError as error:
+            stop(5, 'no-display', str(error))
+        finally:
+            os.close(read)
+        env = clean_environment(display)
+        if one_view:
+            try:
+                grabber = flat.Grabber(display, width, height)
+            except (RuntimeError, ValueError) as error:
+                stop(5, 'no-display', str(error))
+            saver = subprocess.Popen(flat.command(args.saver, grabber.window, args.option), env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            env.update(entry['environment'])
+            if args.separation is not None and 'GL_STEREO_SEPARATION' in entry['environment']:
+                env['GL_STEREO_SEPARATION'] = '%.6g' % args.separation
+            env['GL_STEREO_FRAME_FD'] = str(channel.fileno())
+            os.set_inheritable(channel.fileno(), True)
+            command = [str(SAVERS / 'announce')] + with_geometry(entry['command'], width, height) + args.option
+            saver = subprocess.Popen(command, env=env, pass_fds=(channel.fileno(),), start_new_session=True,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print('started %s %s %dx%d' % (args.saver, 'flat' if one_view else 'pair', width, height), flush=True)
+        started = time.monotonic()
+        sequence, pending, last = 0, False, None
+        while True:
+            ready = select.select([sys.stdin] + ([channel] if one_view else []), [], [], 0.05)[0]
+            if sys.stdin in ready and not os.read(sys.stdin.fileno(), 64):
+                return 0
+            status = saver.poll()
+            if status is not None:
+                stop(6, 'ended', 'status %d' % status)
+            if not one_view:
+                continue    # the layer hands its pairs to the page itself; the page says when none comes
+            if channel in ready:
+                if len(channel.recv(8)) != 4:
+                    return 0
+                pending = False
+            if pending or time.monotonic() - (last or 0) < 0.05:
+                continue
+            data = grabber.picture()
+            if data is None:
+                continue
+            if not any(data[index] for index in range(0, len(data), 4099)) and time.monotonic() - started < 1.5:
+                continue    # nothing drawn yet
+            sequence += 1
+            fd = flat.sealed(data)
+            try:
+                header = struct.pack('<4s7I', b'SD3F', 1, width, height, width * 4, sequence, len(data), 1)
+                socket.send_fds(channel, [header], [fd])
+            except OSError:
+                return 0
+            finally:
+                os.close(fd)
+            pending, last = True, time.monotonic()
+    finally:
+        finish()
+
+
+if __name__ == '__main__':
+    sys.exit(main())
