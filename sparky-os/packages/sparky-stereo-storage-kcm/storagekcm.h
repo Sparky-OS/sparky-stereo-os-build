@@ -20,6 +20,7 @@ class StorageKcm : public KQuickConfigModule
     Q_PROPERTY(QString period MEMBER m_period NOTIFY changed)
     Q_PROPERTY(QString scheduledAction MEMBER m_scheduledAction NOTIFY changed)
     Q_PROPERTY(QVariantList runs MEMBER m_runs NOTIFY changed)
+    Q_PROPERTY(QString unavailableVolume MEMBER m_unavailableVolume NOTIFY changed)
     Q_PROPERTY(int temporaryAge READ temporaryAge NOTIFY changed)
 public:
     StorageKcm(QObject *parent, const KPluginMetaData &data, const QVariantList &args);
@@ -58,4 +59,5 @@ private:
     QString m_period = QStringLiteral("manual");
     QString m_scheduledAction = QStringLiteral("review");
     QVariantList m_runs;
+    QString m_unavailableVolume;
 };

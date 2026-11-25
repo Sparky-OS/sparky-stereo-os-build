@@ -76,6 +76,11 @@ void StorageKcm::activate(const QVariantList &args)
     const auto url = QByteArray::fromBase64(activation.constFirst().toLatin1(), QByteArray::Base64UrlEncoding);
     const QString path = QString::fromUtf8(url);
     chooseVolume(path);
+    if (!path.isEmpty() && m_volume != path) {
+        m_unavailableVolume = path;
+        Q_EMIT changed();
+        return;
+    }
     if (m_volume == path && activation.size() == 2) {
         m_openPreview = activation.last();
         if (m_openPreview == u"admin-preview"_s && !m_admin) {
@@ -138,6 +143,7 @@ void StorageKcm::chooseVolume(const QString &path)
         return;
     }
     m_volume = volume.rootPath();
+    m_unavailableVolume.clear();
     m_cachesOnly = false;
     m_readOnly = volume.isReadOnly();
     m_items.clear();

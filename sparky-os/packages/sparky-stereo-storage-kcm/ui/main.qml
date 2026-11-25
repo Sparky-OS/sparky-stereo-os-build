@@ -14,6 +14,12 @@ KCM.SimpleKCM {
 
     ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: kcm.unavailableVolume !== ""
+            type: Kirigami.MessageType.Warning
+            text: i18n("The requested volume is unavailable: %1", kcm.unavailableVolume)
+        }
         Kirigami.FormLayout {
             Layout.fillWidth: true
 
