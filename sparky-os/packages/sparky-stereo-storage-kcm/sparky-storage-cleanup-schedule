@@ -51,20 +51,22 @@ def config(path=CONFIG):
 
 def read_settings(path=CONFIG):
     section = config(path)['General']
+    age = section.getint('temporaryAge', 7)
     period = section.get('schedulePeriod')
+    if not 1 <= age <= 365:
+        raise ValueError('Invalid temporary-file age')
     if period is None:
         legacy = section.getint('scheduleMode', 2)
         if legacy in (1, 3) and path != SYSTEM_CONFIG:
             return {'period': 'weekly', 'action': 'review', 'legacyCaches': legacy == 3,
                     'legacy': True, 'mount': section.get('scheduleMount', '/'),
-                    'since': int(path.stat().st_mtime), 'age': section.getint('temporaryAge', 7)}
-        return {'period': 'manual', 'action': 'review'}
+                    'since': int(path.stat().st_mtime), 'age': age}
+        return {'period': 'manual', 'action': 'review', 'age': age}
     action = section.get('scheduleAction')
     mount = section.get('scheduleMount', '')
-    age = section.getint('temporaryAge', 7)
     since = section.getint('scheduleSince', 0)
     if (period not in PERIODS or action not in ACTIONS or not (mount == '@home' or os.path.isabs(mount))
-            or not 1 <= age <= 365 or since <= 0):
+            or since <= 0):
         raise ValueError('Invalid storage cleanup settings')
     return {'period': period, 'action': action, 'mount': mount,
             'since': since, 'age': age}
@@ -101,6 +103,15 @@ def set_schedule(period, action, mount):
         data['General'].update(schedulePeriod=period, scheduleAction=action, scheduleMount=mount,
                                scheduleSince=str(int(time.time())))
         data['General'].pop('scheduleMode', None)
+        store(CONFIG, data.write, 0o644 if SYSTEM else 0o600)
+
+
+def set_age(days):
+    if not 1 <= days <= 365:
+        raise ValueError('Invalid temporary-file age')
+    with state_lock():
+        data = config()
+        data['General']['temporaryAge'] = str(days)
         store(CONFIG, data.write, 0o644 if SYSTEM else 0o600)
 
 
@@ -229,8 +240,11 @@ def run():
             return
         records = history()
         boundary = due(settings, now)
-        if boundary is None or any(entry.get('settings') == settings and entry.get('due') == boundary
-                                   for entry in records):
+        identity = {key: value for key, value in settings.items() if key != 'age'}
+        if boundary is None or any(
+                entry.get('due') == boundary
+                and all(entry.get('settings', {}).get(key) == value for key, value in identity.items())
+                for entry in records):
             return
         mount = settings['mount']
         effective = settings
@@ -274,6 +288,8 @@ def main():
     edit.add_argument('period', choices=PERIODS)
     edit.add_argument('action', choices=ACTIONS)
     edit.add_argument('mount')
+    age = subs.add_parser('set-age')
+    age.add_argument('days', type=int)
     installer = subs.add_parser('install')
     installer.add_argument('account')
     installer.add_argument('period', choices=PERIODS)
@@ -281,6 +297,8 @@ def main():
     if args.command == 'set':
         set_schedule(args.period, args.action, args.mount)
         problem('clear', 'weekly')
+    elif args.command == 'set-age':
+        set_age(args.days)
     elif args.command == 'install':
         install_choice(args.account, args.period)
     elif args.command == 'show-system':

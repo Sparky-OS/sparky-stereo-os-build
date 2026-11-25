@@ -45,6 +45,7 @@ private:
     void activate(const QVariantList &args);
     void catalogue();
     void loadSchedule();
+    void editSchedule(const QStringList &arguments);
     void runBleachBit(const QStringList &args, const QString &field, const QByteArray &input = {});
     QString m_volume = QStringLiteral("/");
     QVariantList m_cleaners;

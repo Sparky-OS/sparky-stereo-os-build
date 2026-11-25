@@ -120,11 +120,18 @@ QString StorageKcm::formatSize(qint64 bytes) const
 
 int StorageKcm::temporaryAge() const
 {
-    return QSettings(configPath(), QSettings::IniFormat).value(u"temporaryAge"_s, 7).toInt();
+    const auto config = m_admin ? u"/etc/sparky-storage-cleanup.conf"_s : configPath();
+    return QSettings(config, QSettings::IniFormat).value(u"temporaryAge"_s, 7).toInt();
 }
 
 void StorageKcm::setTemporaryAge(int days)
 {
+    if (m_admin) {
+        m_items.clear();
+        m_previewed = false;
+        editSchedule({u"set-age"_s, QString::number(days)});
+        return;
+    }
     QSettings settings(configPath(), QSettings::IniFormat);
     settings.setValue(u"temporaryAge"_s, days);
     settings.sync();
@@ -283,6 +290,11 @@ void StorageKcm::loadSchedule()
 
 void StorageKcm::setSchedule(const QString &period, const QString &action)
 {
+    editSchedule({m_admin ? u"schedule-set"_s : u"set"_s, period, action, m_volume});
+}
+
+void StorageKcm::editSchedule(const QStringList &arguments)
+{
     if (m_busy) {
         return;
     }
@@ -308,10 +320,10 @@ void StorageKcm::setSchedule(const QString &period, const QString &action)
     });
     if (m_admin) {
         const auto language = KLocalizedString::languages().join(u':');
-        job->start(u"/usr/bin/pkexec"_s, {u"/usr/libexec/sparky-storage-cleanup-admin"_s,
-                                         language, u"schedule-set"_s, period, action, m_volume});
+        job->start(u"/usr/bin/pkexec"_s, QStringList{u"/usr/libexec/sparky-storage-cleanup-admin"_s,
+                                         language} + arguments);
     } else {
-        job->start(u"/usr/libexec/sparky-storage-cleanup-schedule"_s, {u"set"_s, period, action, m_volume});
+        job->start(u"/usr/libexec/sparky-storage-cleanup-schedule"_s, arguments);
     }
     Q_EMIT changed();
 }
