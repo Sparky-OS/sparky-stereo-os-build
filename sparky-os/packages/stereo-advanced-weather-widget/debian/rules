@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+
+applet = org.kde.plasma.stereo-advanced-weather-widget
+usr = debian/stereo-advanced-weather-widget/usr
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	install -d "$(usr)/share/plasma/plasmoids/$(applet)"
+	cp -a contents metadata.json "$(usr)/share/plasma/plasmoids/$(applet)/"
+	rm -r "$(usr)/share/plasma/plasmoids/$(applet)/contents/locale"
+	for po in translate/*.po; do \
+		locale=$${po##*/}; \
+		dir="$(usr)/share/locale/$${locale%.po}/LC_MESSAGES"; \
+		install -d "$$dir"; \
+		msgfmt -o "$$dir/plasma_applet_$(applet).mo" "$$po" || exit $$?; \
+	done
+
+override_dh_installdocs:
+	dh_installdocs widget-source.commit LICENSE README.md

@@ -19,13 +19,13 @@ test -z "$(git -C "$tree" status --porcelain -- sparky-os tools/https-only-apt.s
     exit 1
 }
 case "$component" in
-    stereo-layer|kf6-kiconthemes|kf6-kirigami|plasma-runners-addons|sparky-stereo-weather-icons) ;;
+    stereo-layer|kf6-kiconthemes|kf6-kirigami|plasma-runners-addons|sparky-stereo-weather-icons|sparky-stereo-hardware|sparky-stereo-weather-settings|stereo-advanced-weather-widget) ;;
     *) exit 64 ;;
 esac
 [[ "$threads" =~ ^[1-4]$ ]]
 mkdir "$work"
 mkdir "$work/recipe"
-git -C "$tree" archive "$commit" sparky-os/repo sparky-os/lean sparky-os/packages/dpkg-stereo \
+git -C "$tree" archive "$commit" sparky-os/repo sparky-os/lean sparky-os/packages/dpkg-stereo tools/copy-recipe.py \
     "sparky-os/packages/$component" tools/https-only-apt.sh | tar -xf - -C "$work/recipe"
 export SOURCE_DATE_EPOCH
 SOURCE_DATE_EPOCH=$(git -C "$tree" log -1 --format=%ct "$commit" -- "sparky-os/packages/$component" sparky-os/repo/build-weather-cohort.sh sparky-os/repo/build-weather-cohort-inner.sh)
@@ -53,6 +53,12 @@ if [[ $component == stereo-layer ]]; then
     git -C "$input" archive "$revision" > "$work/layer-source.tar"
     mounts+=(--env "LAYER_REVISION=$revision")
 fi
+if [[ $component == stereo-advanced-weather-widget ]]; then
+    revision=${WIDGET_REVISION:?full widget commit ID}
+    [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+    git -C "$input" archive "$revision" contents metadata.json LICENSE README.md 'translate/*.po' > "$work/widget-source.tar"
+    mounts+=(--env "WIDGET_REVISION=$revision")
+fi
 if [[ -n ${CPUSET:-} ]]; then mounts+=(--cpuset-cpus "$CPUSET"); fi
 cleanup() {
     local id
@@ -74,6 +80,8 @@ docker run --name "$name" --pull=never --platform linux/amd64 --ulimit core=1 --
     --mount "type=bind,source=$previous,target=/previous,readonly" \
     --mount "type=bind,source=$archive,target=/archive,readonly" \
     --mount "type=bind,source=$published,target=/round,readonly" \
+    --mount "type=bind,source=$(command -v git),target=/usr/bin/git,readonly" \
+    --mount "type=bind,source=$work/recipe/tools/copy-recipe.py,target=/tools/copy-recipe.py,readonly" \
     --mount "type=bind,source=$work/recipe/tools/https-only-apt.sh,target=/run/https-only-apt.sh,readonly" \
     --mount type=bind,source=/etc/ssl/certs/ca-certificates.crt,target=/run/host-ca.crt,readonly \
     "$image" bash -ec 'sh /run/https-only-apt.sh; bash /toolkit/repo/build-weather-cohort-inner.sh >/out/build.log 2>&1'

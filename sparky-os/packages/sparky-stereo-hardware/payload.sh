@@ -61,6 +61,8 @@ install -Dm755 "$HERE/bin/sparky-stereo-opengl-default" "$D/usr/bin/sparky-stere
 install -Dm755 "$HERE/bin/sparky-stereo-nvidia-opengl" "$D/usr/bin/sparky-stereo-nvidia-opengl"
 install -m644 "$HERE/share/nvidia-opengl-programs" "$D/usr/share/sparky/sparky-stereo-hardware/"
 install -Dm644 "$HERE/share/plasma-env/sparky-stereo-opengl.sh" "$D/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh"
+install -Dm755 "$HERE/bin/sparky-stereo-weather-default" "$D/usr/bin/sparky-stereo-weather-default"
+install -Dm644 "$HERE/share/systemd/sparky-stereo-weather-default.service" "$D/usr/lib/systemd/system/sparky-stereo-weather-default.service"
 install -Dm644 "$HERE/share/systemd/sparky-stereo-opengl-default.service" "$D/usr/lib/systemd/system/sparky-stereo-opengl-default.service"
 install -Dm644 "$HERE/share/systemd-user/sparky-stereo-opengl.conf" "$D/usr/lib/systemd/user/plasma-kwin_wayland.service.d/sparky-stereo-opengl.conf"
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-opengl-default.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-opengl-default.rules"
@@ -72,7 +74,7 @@ install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/li
 
 sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
 	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15,LOCAL16 \
-	--subject LOCAL17=LOCAL18 --subject LOCAL19=LOCAL20 --subject LOCAL84=LOCAL85 --subject LOCAL86=LOCAL87 --subject LOCAL88=LOCAL89 --subject LOCAL90=LOCAL91 --subject LOCAL92=LOCAL93 \
+	--subject LOCAL17=LOCAL18 --subject LOCAL19=LOCAL20 --subject LOCAL114=LOCAL115 --subject LOCAL84=LOCAL85 --subject LOCAL86=LOCAL87 --subject LOCAL88=LOCAL89 --subject LOCAL90=LOCAL91 --subject LOCAL92=LOCAL93 \
 	--subject LOCAL61=LOCAL73,LOCAL74,LOCAL75,LOCAL76,LOCAL77,LOCAL78,LOCAL79,LOCAL80,LOCAL81,LOCAL82,LOCAL83,LOCAL108,LOCAL109,LOCAL110,LOCAL111,LOCAL112,LOCAL113
 
 # Persistent DisplayLink startup errors are reported once; vendor hotplug stays.

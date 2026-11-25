@@ -9,6 +9,21 @@ export SPARKY_LC_SIBLINGS_FILE=/out/candidate-siblings.txt SPARKY_LC_PREVIOUS_SI
 export SPARKY_LC_PREVIOUS_DIR=/previous
 recipe=/toolkit/packages/$COMPONENT
 case "$COMPONENT" in
+    sparky-stereo-hardware)
+        cp /published-siblings "$SPARKY_LC_SIBLINGS_FILE"
+        cp /published-siblings "$SPARKY_LC_PREVIOUS_SIBLINGS_FILE"
+        OUT=/out/generated bash "$recipe/build.sh"
+        descriptor=(generated/*.dsc)
+        dpkg-source -x "${descriptor[0]}" source
+        export DEB_BUILD_OPTIONS=parallel=1
+        (cd source && dpkg-buildpackage -S -us -uc -d)
+        mkdir rebuilt
+        mv ./*.dsc ./*.tar.xz ./*_source.* rebuilt/
+        (cd rebuilt && dpkg-source -x ./*.dsc build && cd build && dpkg-buildpackage -b -us -uc -d -j1)
+        mv rebuilt/*.deb rebuilt/*.dsc rebuilt/*.tar.xz rebuilt/*.changes rebuilt/*.buildinfo .
+        python3 -m lean.release check-debs /out/*+lc1_*.deb
+        exit
+        ;;
     kf6-kiconthemes)
         base=kf6-kiconthemes_6.32.0-1+stereo3d1+lc1.dsc
         digest=b7c6b0956a674b7df5c95d2ad7f374ee327794f4514b6bd11f84985e55954a45
@@ -47,6 +62,18 @@ case "$COMPONENT" in
         rm -r orig
         preserve=(--preserve-source 'src/*.h' 'Qt moc and QML registration read the authored declarations.'
                   --preserve-source 'src/*.cpp' 'Qt moc and QML registration read the authored sources.')
+        ;;
+    stereo-advanced-weather-widget)
+        cp -a "$recipe" source
+        tar -xf widget-source.tar -C source
+        printf '%s\n' "$WIDGET_REVISION" > source/widget-source.commit
+        version=$(dpkg-parsechangelog -l source/debian/changelog -S Version)
+        unset SPARKY_LC_PREVIOUS_DIR
+        ;;
+    sparky-stereo-weather-settings)
+        cp -a "$recipe" source
+        version=$(dpkg-parsechangelog -l source/debian/changelog -S Version)
+        unset SPARKY_LC_PREVIOUS_DIR
         ;;
     sparky-stereo-weather-icons)
         cp -a "$recipe" source
@@ -134,7 +161,11 @@ for file in /siblings/*.deb /siblings/*/*.deb; do
     case "$file" in *-dbgsym_*|*-lc-hr_*) ;; *) packages+=("$file");; esac
 done
 if (("${#packages[@]}")); then
-    dpkg -i "${packages[@]}"
+    install_packages=()
+    for file in "${packages[@]}"; do
+        case "$file" in */sparky-stereo-weather-settings_*) ;; *) install_packages+=("$file");; esac
+    done
+    if (("${#install_packages[@]}")); then dpkg -i "${install_packages[@]}"; fi
 fi
 python3 - "$COMPONENT" "${packages[@]}" <<'PY'
 from pathlib import Path
