@@ -4,7 +4,8 @@
 # Builds sparky-stereo-welcome: the edition's pages in KDE's Welcome Center (Plasma Welcome), shown first, before
 # KDE's own pages (ORDER 63 and 720). Needs python3, python3-pil, dpkg-deb, and what lean.standalone needs (node-acorn
 # to check the QML).
-# Last update 2026/11/25
+# Last update 2026/11/25 (milestone 2: the remaining pages, the Upgrade helper, Sparky Welcome's first run skipped, the
+# touch screen mark, the languages)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -16,8 +17,26 @@ VERSION=${VERSION}+lc1
 W=$(mktemp -d "${TMPDIR:-/tmp}/welcome-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
-mkdir -p "$D/DEBIAN" "$D/usr/share/plasma/plasma-welcome/first-pages" "$D/usr/share/$PKG/pictures" "$D/usr/share/doc/$PKG"
+DROPIN='usr/lib/systemd/user/app-sparky\x2dwelcome\x2dfirst@autostart.service.d'
+mkdir -p "$D/DEBIAN" "$D/usr/share/plasma/plasma-welcome/first-pages" "$D/usr/share/plasma/plasma-welcome/extra-pages" \
+	"$D/usr/share/$PKG/pictures" "$D/usr/share/$PKG/touch-screen/xdg" "$D/usr/share/doc/$PKG" "$D/usr/bin" "$D/$DROPIN" \
+	"$D/etc/xdg/plasma-workspace/env"
 install -m 644 "$HERE"/first-pages/*.qml "$D/usr/share/plasma/plasma-welcome/first-pages/"
+install -m 644 "$HERE"/extra-pages/*.qml "$D/usr/share/plasma/plasma-welcome/extra-pages/"
+install -m 755 "$HERE/bin/sparky-stereo-welcome-upgrade" "$D/usr/bin/"
+install -m 644 "$HERE/share/systemd-user/sparky-stereo-welcome.conf" "$D/$DROPIN/"
+install -m 644 "$HERE/share/plasma-env/sparky-stereo-welcome-touch.sh" "$D/etc/xdg/plasma-workspace/env/"
+install -m 644 "$HERE/share/touch-screen/xdg/plasma-welcomerc" "$D/usr/share/$PKG/touch-screen/xdg/"
+mkdir -p "$D/usr/lib/live/config"
+install -m 755 "$HERE/share/live/1187-sparky-stereo-welcome" "$D/usr/lib/live/config/"
+# the pages' words in the edition's languages: po/LANG.po, made from po/sparky-stereo-welcome.pot (tools/extract-messages.sh)
+for po in "$HERE"/po/*.po; do
+	[ -e "$po" ] || continue
+	lang=$(basename "$po" .po)
+	mkdir -p "$D/usr/share/locale/$lang/LC_MESSAGES"
+	msgfmt --check -o "$D/usr/share/locale/$lang/LC_MESSAGES/$PKG.mo" "$po"
+	chmod 644 "$D/usr/share/locale/$lang/LC_MESSAGES/$PKG.mo"
+done
 python3 "$HERE/tools/make-pictures.py" "$HERE/../sparky-stereo-calamares-branding/usr/share/calamares/branding/sparky-stereo" \
 	"$D/usr/share/$PKG/pictures"
 chmod 644 "$D/usr/share/$PKG/pictures"/*
@@ -70,7 +89,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: kscreen, kwin-common, libstereo-layer1 (>= 1.22.0), plasma-welcome (>= 6.7.4-1+stereo3d1~), qml6-module-qtquick-shapes, systemsettings
+Depends: kscreen, kwin-common, libstereo-layer1 (>= 1.23.4), plasma-welcome (>= 6.7.4-1+stereo3d2~), qml6-module-qtquick-shapes, systemsettings, sparky-about, sparky-aptus-appcenter, sparky-aptus-upgrade, sparky-remsu, sparky-stereo-info, sparky-su, sparky-system
 Breaks: sparky-stereo-info (<< 20261125~sparky9~0)
 Section: System
 Priority: optional
@@ -81,9 +100,13 @@ Description: Sparky Stereo OS pages in KDE's Welcome Center
   with the edition's pages first: Sparky Stereo OS in one screen, the 3D
   screens it shows the desktop on and where Display Configuration is; and Point,
   Then Type, on the window under the pointer getting the keys, why, and where
-  to change it. On a 3D screen the picture and the drawing have depth; on a 2D
-  screen the pages are flat.
+  to change it. After KDE's own pages: touch and tablet mode; every element of
+  SparkyLinux's own welcome window (Sparky Welcome, which stays in the menu and
+  no longer opens by itself at a first login); and what a tester can send. On
+  a 3D screen the picture and the drawing have depth; on a 2D screen the pages
+  are flat.
 EOF
+printf '%s\n' /etc/xdg/plasma-workspace/env/sparky-stereo-welcome-touch.sh >"$D/DEBIAN/conffiles"
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"

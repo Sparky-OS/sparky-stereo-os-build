@@ -1,0 +1,16 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/25
+# Copyright 2026 under the GNU GPL3 License
+# The Upgrade button of the Welcome Center's SparkyLinux page does what Sparky Welcome's own Upgrade does (its handler,
+# sparky-welcome 20250824 by Paweł Pijanowski): the system upgrade as root through remsu; the first time it is used, the
+# installation of the session's languages after it (sparky-locale through spsudo), and then the mark Sparky Welcome
+# leaves, /home/$USER/.sparky-welcome-first, as its handler leaves it, so neither window asks for the languages again.
+# Exits with the status of the step that failed; Plasma Welcome shows the reason on the page.
+mark=/home/$USER/.sparky-welcome-first
+if [ -f "$mark" ]; then
+	exec remsu /usr/bin/sparky-aptus-upgrade
+fi
+status=0
+remsu /usr/bin/sparky-aptus-upgrade && spsudo /usr/lib/sparky-aptus-appcenter/bin/sparky-locale || status=$?
+touch "$mark"
+exit "$status"
