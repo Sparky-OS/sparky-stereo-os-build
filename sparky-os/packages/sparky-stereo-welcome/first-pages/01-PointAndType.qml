@@ -125,6 +125,8 @@ Welcome.Page {
             }
             // the pointer, resting on this window
             Shape {
+                id: pointer
+
                 x: Math.round(parent.width * 0.55)
                 y: Math.round(parent.height * 0.45)
                 width: Math.round(drawing.height * 0.14)
@@ -137,12 +139,12 @@ Welcome.Page {
                     strokeWidth: 1.5
                     joinStyle: ShapePath.RoundJoin
                     startX: 0; startY: 0
-                    PathLine { x: 0; y: parent.height }
-                    PathLine { x: parent.width * 0.28; y: parent.height * 0.74 }
-                    PathLine { x: parent.width * 0.48; y: parent.height * 1.0 }
-                    PathLine { x: parent.width * 0.62; y: parent.height * 0.92 }
-                    PathLine { x: parent.width * 0.42; y: parent.height * 0.66 }
-                    PathLine { x: parent.width * 0.78; y: parent.height * 0.66 }
+                    PathLine { x: 0; y: pointer.height }
+                    PathLine { x: pointer.width * 0.28; y: pointer.height * 0.74 }
+                    PathLine { x: pointer.width * 0.48; y: pointer.height }
+                    PathLine { x: pointer.width * 0.62; y: pointer.height * 0.92 }
+                    PathLine { x: pointer.width * 0.42; y: pointer.height * 0.66 }
+                    PathLine { x: pointer.width * 0.78; y: pointer.height * 0.66 }
                     PathLine { x: 0; y: 0 }
                 }
             }
