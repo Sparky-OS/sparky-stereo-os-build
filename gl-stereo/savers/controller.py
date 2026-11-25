@@ -13,7 +13,9 @@ import sys
 import time
 from catalogue import Rotation, active, load, report
 from frames import receive, send
-from preferences import disabled_savers
+import flat
+from frames import Frame
+from preferences import disabled_savers, flat_savers
 
 def read_display(fd, timeout=5):
     deadline = time.monotonic() + timeout
@@ -38,6 +40,8 @@ class Controller:
         self.control, self.consumer = control, consumer
         self.state = dict(locked=False, display_on=False, on_ac=False)
         self.process = self.source = self.entry = None
+        self.grabber = None
+        self.grabbed = 0
         self.pending = None
         self.sequence = 0
         self.started = time.monotonic()
@@ -63,6 +67,8 @@ class Controller:
             except KeyError: pass
 
     def stop(self):
+        if self.grabber:
+            self.grabber.close(); self.grabber = None
         if self.source:
             try: self.selector.unregister(self.source)
             except KeyError: pass
@@ -77,8 +83,11 @@ class Controller:
 
     def start(self):
         if not active(self.state): return
-        self.entry = self.rotation.next(disabled_savers())
+        self.entry = self.rotation.next(disabled_savers(), {name for name in flat_savers() if flat.installed(name)})
         if not self.entry: return
+        if self.entry.get('flat'):
+            self.start_flat()
+            return
         self.source, writer = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         env = os.environ.copy()
         for key in list(env):
@@ -99,10 +108,40 @@ class Controller:
         self.watch_source()
         print('started',self.entry['id'],flush=True)
 
+    def start_flat(self):
+        """A 2D saver: one view, drawn with Xlib on a window here, the same picture handed over in both halves."""
+        env = os.environ.copy()
+        for key in list(env):
+            if key.startswith('GL_STEREO') or key in ('LD_PRELOAD','DISPLAY','WAYLAND_DISPLAY','XAUTHORITY'):
+                env.pop(key)
+        env['PATH'] = '/usr/libexec/xscreensaver:' + env.get('PATH', os.defpath)
+        env['DISPLAY'] = self.display
+        try:
+            self.grabber = flat.Grabber(self.display, 640, 360)
+            self.process = subprocess.Popen(flat.command(self.entry['id'], self.grabber.window), env=env, start_new_session=True,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, RuntimeError, ValueError) as error:
+            print('gl-stereo-savers: %s cannot start: %s' % (self.entry['id'], error), file=sys.stderr)
+            self.rotation.exclude(self.entry['id']); self.stop(); self.start(); return
+        self.started = time.monotonic()
+        self.grabbed = 0
+        print('started',self.entry['id'],'flat',flush=True)
+
+    def grab(self):
+        if not self.grabber or self.pending is not None or time.monotonic() - self.grabbed < .05: return
+        self.grabbed = time.monotonic()
+        data = self.grabber.picture(twice=True)
+        if data is None: return
+        self.sequence += 1
+        frame = Frame(flat.sealed(data), 2*self.grabber.width, self.grabber.height, self.sequence)
+        try: send(self.consumer,frame)
+        finally: frame.close()
+        self.pending = (self.sequence, 0, None, time.monotonic())
+
     def run(self):
         try:
             while True:
-                for key, _ in self.selector.select(.1):
+                for key, _ in self.selector.select(.04 if self.grabber else .1):
                     if key.data == 'control':
                         data, _, flags, _ = self.control.recvmsg(256)
                         if not data: return
@@ -135,11 +174,12 @@ class Controller:
                         if not ack: return
                         if self.pending is None or ack != struct.pack('<I',self.pending[0]):
                             raise ValueError('invalid frame acknowledgement')
-                        if self.pending[2] is self.source:
+                        if self.source is not None and self.pending[2] is self.source:
                             self.source.send(struct.pack('<I',self.pending[1]))
                         self.pending = None
                         self.started = time.monotonic()
                         self.watch_source()
+                self.grab()
                 if self.pending and time.monotonic() - self.pending[3] > 2:
                     raise TimeoutError('consumer stalled')
                 if self.process and self.pending is None and (self.process.poll() is not None or time.monotonic()-self.started > 5):

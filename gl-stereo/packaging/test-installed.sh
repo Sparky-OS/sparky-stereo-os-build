@@ -18,7 +18,7 @@ for name in egl-damage state announce quad quads quads-dlist quads-xform shader-
 done
 ln -sf /usr/lib/gl-stereo/libgl-stereo.so libgl-stereo.so
 ln -sf /usr/bin/gl-stereo-run gl-stereo-run
-for name in starfield announce controller.py frames.py catalogue.py preferences.py settings.py strings.json; do
+for name in starfield announce controller.py frames.py catalogue.py preferences.py flat.py; do
     ln -sf "/usr/lib/gl-stereo/savers/$name" "savers/$name"
 done
 ln -sf /usr/libexec/xscreensaver/rocks out/bin/rocks
@@ -48,6 +48,7 @@ python3 tests/settings-dialog.py
 python3 tests/saver-preferences.py
 python3 tests/saver-receipts.py
 python3 tests/saver-frames.py
+python3 tests/flat-savers.py
 python3 tests/starfield.py
 python3 tests/rocks.py
 python3 tests/rotation.py'

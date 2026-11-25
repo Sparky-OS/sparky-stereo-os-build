@@ -18,6 +18,11 @@ def disabled_savers():
     value=read_config().get('General','DisabledSavers',fallback='')
     return {name.strip() for name in value.split(',') if name.strip()}
 
+def flat_savers():
+    """The 2D savers the person ticked for the show; none unless ticked."""
+    value=read_config().get('General','FlatSavers',fallback='')
+    return {name.strip() for name in value.split(',') if name.strip()}
+
 def save_disabled(names):
     if any(not name or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789-' for c in name) for name in names):
         raise ValueError('invalid saver identifier')

@@ -73,7 +73,7 @@ install-savers: savers/starfield savers/announce
 	install -Dm644 savers/controller.py $(DESTDIR)$(PREFIX)/lib/gl-stereo/savers/controller.py
 	install -Dm644 savers/frames.py $(DESTDIR)$(PREFIX)/lib/gl-stereo/savers/frames.py
 	install -Dm644 savers/catalogue.py $(DESTDIR)$(PREFIX)/lib/gl-stereo/savers/catalogue.py
-	install -m644 savers/preferences.py savers/settings.py savers/strings.json $(DESTDIR)$(PREFIX)/lib/gl-stereo/savers/
+	install -m644 savers/preferences.py savers/flat.py $(DESTDIR)$(PREFIX)/lib/gl-stereo/savers/
 	install -Dm644 SCREENSAVER-DESIGN.md $(DESTDIR)$(PREFIX)/share/doc/gl-stereo/SCREENSAVER-DESIGN.md
 	install -Dm644 savers/README.md $(DESTDIR)$(PREFIX)/share/doc/gl-stereo/SAVERS.md
 	install -Dm644 savers/ROCKS-COPYRIGHT $(DESTDIR)$(PREFIX)/share/doc/gl-stereo/ROCKS-COPYRIGHT
@@ -81,4 +81,3 @@ install-savers: savers/starfield savers/announce
 install-catalogue:
 	python3 plasma/package-catalogue.py out/eligibility/catalogue.json $(DESTDIR)$(PREFIX)/share/gl-stereo/catalogue.json $(PREFIX)
 	python3 savers/make-index.py $(DESTDIR)$(PREFIX)/share/gl-stereo/savers.json
-	install -Dm644 savers/org.sparky.stereo-savers.desktop $(DESTDIR)$(PREFIX)/share/applications/org.sparky.stereo-savers.desktop
