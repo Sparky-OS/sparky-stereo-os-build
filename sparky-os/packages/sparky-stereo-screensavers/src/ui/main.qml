@@ -14,6 +14,8 @@ KCM.AbstractKCM {
     id: root
 
     framedView: false
+    implicitWidth: Kirigami.Units.gridUnit * 46
+    implicitHeight: Kirigami.Units.gridUnit * 34
     readonly property var current: list.currentIndex >= 0 ? (ticks, kcm.savers.get(list.currentIndex)) : ({})
     property int ticks: 0 // read again after a tick changes
 
@@ -46,6 +48,9 @@ KCM.AbstractKCM {
         }
         if (note === "cut") {
             return i18n("The preview does not fit in the window, so it shows one view. Make the window larger to see it in 3D.");
+        }
+        if (note === "own-depth") {
+            return i18n("The desktop did not say your depth limits, so this preview has the screensaver's own depth.");
         }
         return i18n("The desktop refused the 3D picture, so the preview shows one view.");
     }
@@ -94,24 +99,23 @@ KCM.AbstractKCM {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumWidth: Kirigami.Units.gridUnit * 9
             spacing: Kirigami.Units.smallSpacing
 
-            RowLayout {
+            Kirigami.SearchField {
+                id: search
                 Layout.fillWidth: true
-                Kirigami.SearchField {
-                    id: search
-                    Layout.fillWidth: true
-                }
-                QQC2.Label {
-                    text: i18n("%1 in 3D, %2 in 2D", kcm.savers.stereoCount, kcm.savers.flatCount)
-                    color: Kirigami.Theme.disabledTextColor
-                }
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                text: i18n("%1 in 3D, %2 in 2D", kcm.savers.stereoCount, kcm.savers.flatCount)
+                color: Kirigami.Theme.disabledTextColor
+                elide: Text.ElideRight
             }
 
             QQC2.ScrollView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Component.onCompleted: background.visible = true
 
                 ListView {
                     id: list
@@ -119,7 +123,11 @@ KCM.AbstractKCM {
                     clip: true
                     model: kcm.savers
                     currentIndex: -1
-                    Component.onCompleted: currentIndex = count > 0 ? 0 : -1
+                    Component.onCompleted: {
+                        const asked = kcm.initialSaver === "" ? -1 : kcm.savers.find(kcm.initialSaver);
+                        currentIndex = asked >= 0 ? asked : (count > 0 ? 0 : -1);
+                        positionViewAtIndex(currentIndex, ListView.Center);
+                    }
                     delegate: QQC2.ItemDelegate {
                         id: row
                         required property int index
@@ -160,13 +168,14 @@ KCM.AbstractKCM {
                 }
             }
 
-            RowLayout {
+            QQC2.Label {
                 Layout.fillWidth: true
-                QQC2.Label {
-                    Layout.fillWidth: true
-                    text: i18np("%1 screensaver in the show", "%1 screensavers in the show", kcm.savers.tickedCount)
-                    elide: Text.ElideRight
-                }
+                text: i18np("%1 screensaver in the show", "%1 screensavers in the show", kcm.savers.tickedCount)
+                elide: Text.ElideRight
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
                 QQC2.Button {
                     text: i18n("Only This One")
                     icon.name: "checkbox"
@@ -184,8 +193,8 @@ KCM.AbstractKCM {
         QQC2.ScrollView {
             id: side
             Layout.fillHeight: true
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 22
-            Layout.minimumWidth: Kirigami.Units.gridUnit * 22
+            Layout.preferredWidth: frame.implicitWidth + Kirigami.Units.largeSpacing * 2
+            Layout.minimumWidth: frame.implicitWidth + Kirigami.Units.largeSpacing * 2
             contentWidth: availableWidth
 
             ColumnLayout {
@@ -195,8 +204,8 @@ KCM.AbstractKCM {
                 Rectangle {
                     id: frame
                     Layout.alignment: Qt.AlignHCenter
-                    implicitWidth: 336
-                    implicitHeight: 192
+                    implicitWidth: 320
+                    implicitHeight: 180
                     color: "black"
                     radius: 0
 
@@ -226,7 +235,8 @@ KCM.AbstractKCM {
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                     font: Kirigami.Theme.smallFont
-                    text: preview.showing && preview.stereo && !preview.pairShown ? root.pairNoteText(preview.pairNote) : ""
+                    text: !preview.showing || !preview.stereo ? "" : !preview.pairShown ? root.pairNoteText(preview.pairNote)
+                        : preview.ownDepth ? root.pairNoteText("own-depth") : ""
                 }
                 RowLayout {
                     Layout.alignment: Qt.AlignHCenter
@@ -361,7 +371,7 @@ KCM.AbstractKCM {
             onClicked: KCM.KCMLauncher.openSystemSettings("kcm_screenlocker")
         }
         QQC2.Button {
-            text: i18nc("@action:button opens that settings page", "Display & Monitor…")
+            text: i18nc("@action:button opens that settings page", "Display && Monitor…")
             icon.name: "preferences-desktop-display"
             onClicked: KCM.KCMLauncher.openSystemSettings("kcm_kscreen")
         }

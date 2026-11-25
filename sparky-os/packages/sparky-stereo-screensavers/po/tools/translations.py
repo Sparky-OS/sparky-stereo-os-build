@@ -131,6 +131,11 @@ T = {
  'L’aperçu ne tient pas dans la fenêtre, il montre donc une seule vue. Agrandissez la fenêtre pour le voir en 3D.', 'Die Vorschau passt nicht in das Fenster und zeigt daher eine Ansicht. Vergrößern Sie das Fenster, um sie in 3D zu sehen.',
  'La vista previa no cabe en la ventana, por eso muestra una sola vista. Agrande la ventana para verla en 3D.', 'プレビューがウィンドウに収まらないため、1 つのビューを表示しています。3D で見るにはウィンドウを大きくしてください。',
  '미리 보기가 창에 맞지 않아 한쪽 시점만 표시합니다. 3D로 보려면 창을 크게 하십시오.', '预览在窗口中放不下，因此只显示一个视图。请放大窗口以 3D 方式查看。', '預覽在視窗中放不下，因此只顯示一個視圖。請放大視窗以 3D 方式檢視。'],
+"The desktop did not say your depth limits, so this preview has the screensaver's own depth.": [
+ 'Pulpit nie podał Twoich granic głębi, więc ten podgląd ma własną głębię wygaszacza.', 'A área de trabalho não informou os seus limites de profundidade, por isso esta prévia tem a profundidade própria do protetor de tela.',
+ 'Le bureau n’a pas indiqué vos limites de profondeur, cet aperçu a donc la profondeur propre à l’économiseur.', 'Die Arbeitsfläche hat Ihre Tiefengrenzen nicht mitgeteilt, daher hat diese Vorschau die eigene Tiefe des Bildschirmschoners.',
+ 'El escritorio no indicó sus límites de profundidad, por eso esta vista previa tiene la profundidad propia del salvapantallas.', 'デスクトップから奥行きの制限が伝えられなかったため、このプレビューはスクリーンセーバー独自の奥行きで表示されます。',
+ '데스크톱이 깊이 한도를 알려 주지 않아 이 미리 보기는 화면 보호기 자체의 깊이로 표시됩니다.', '桌面未提供您的深度限制，因此此预览使用屏幕保护程序自身的深度。', '桌面未提供您的深度限制，因此此預覽使用螢幕保護程式自身的深度。'],
 'The desktop refused the 3D picture, so the preview shows one view.': [
  'Pulpit odrzucił obraz 3D, więc podgląd pokazuje jeden widok.', 'A área de trabalho recusou a imagem 3D, por isso a prévia mostra uma só vista.',
  'Le bureau a refusé l’image 3D, l’aperçu montre donc une seule vue.', 'Die Arbeitsfläche hat das 3D-Bild abgelehnt, daher zeigt die Vorschau eine Ansicht.',
@@ -218,7 +223,7 @@ T = {
  '동영상 배경이 설치되어 있지 않습니다(패키지 %1). 배경 화면과 화면 잠금에서 동영상을 선택하려면 설치하십시오.', '未安装视频背景（软件包 %1）。请安装它，以便在“壁纸”和“屏幕锁定”中选择视频。', '未安裝影片背景（套件 %1）。請安裝它，以便在「桌布」和「螢幕鎖定」中選擇影片。'],
 '@action:button opens that settings page|Wallpaper…': ['Tapeta…', 'Papel de parede…', 'Fond d’écran…', 'Hintergrundbild …', 'Fondo de pantalla…', '壁紙…', '배경 화면…', '壁纸…', '桌布…'],
 '@action:button opens that settings page|Screen Locking…': ['Blokowanie ekranu…', 'Bloqueio de tela…', 'Verrouillage de l’écran…', 'Bildschirmsperre …', 'Bloqueo de pantalla…', 'スクリーンロック…', '화면 잠금…', '屏幕锁定…', '螢幕鎖定…'],
-'@action:button opens that settings page|Display & Monitor…': ['Ekran i monitor…', 'Tela e monitor…', 'Affichage et écran…', 'Anzeige & Monitor …', 'Pantalla y monitor…', 'ディスプレイとモニター…', '디스플레이 및 모니터…', '显示和监视器…', '顯示與螢幕…'],
+'@action:button opens that settings page|Display && Monitor…': ['Ekran i monitor…', 'Tela e monitor…', 'Affichage et écran…', 'Anzeige && Monitor …', 'Pantalla y monitor…', 'ディスプレイとモニター…', '디스플레이 및 모니터…', '显示和监视器…', '顯示與螢幕…'],
 '@action:button opens that settings page|Power Management…': ['Zarządzanie energią…', 'Gerenciamento de energia…', 'Gestion de l’énergie…', 'Energieverwaltung …', 'Gestión de energía…', '電源管理…', '전원 관리…', '电源管理…', '電源管理…'],
 "@action:button opens the wallpaper slide show's own settings|Stereo Variety (slide show)…": ['Stereo Variety (pokaz slajdów)…', 'Stereo Variety (apresentação de slides)…', 'Stereo Variety (diaporama)…', 'Stereo Variety (Diaschau) …', 'Stereo Variety (pase de diapositivas)…',
  'Stereo Variety（スライドショー）…', 'Stereo Variety(슬라이드 쇼)…', 'Stereo Variety（幻灯片）…', 'Stereo Variety（投影片）…'],

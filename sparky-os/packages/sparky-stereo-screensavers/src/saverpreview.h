@@ -27,6 +27,7 @@ class SaverPreview : public QQuickPaintedItem
     Q_PROPERTY(QString failureDetail READ failureDetail NOTIFY stateChanged)
     Q_PROPERTY(bool fullScreenOpen READ fullScreenOpen NOTIFY fullScreenChanged)
     Q_PROPERTY(double separation READ separation NOTIFY stateChanged)
+    Q_PROPERTY(bool ownDepth READ ownDepth NOTIFY stateChanged)
 
 public:
     explicit SaverPreview(QQuickItem *parent = nullptr);
@@ -45,6 +46,8 @@ public:
     QString failureDetail() const { return m_failureDetail; }
     bool fullScreenOpen() const { return m_full != nullptr; }
     double separation() const { return m_separation; }
+    /* The pair is shown with the saver's own separation because the compositor gave no limits. */
+    bool ownDepth() const { return m_ownDepth; }
 
     void paint(QPainter *painter) override;
     Q_INVOKABLE void fullScreen();
@@ -85,6 +88,7 @@ private:
     bool m_active = false;
     bool m_wasShowing = false;
     bool m_waited = false;
+    bool m_ownDepth = false;
 };
 
 /* The selected saver over the whole screen. It ends as a saver does: a key, a

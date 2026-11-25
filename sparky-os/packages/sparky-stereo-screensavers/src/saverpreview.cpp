@@ -150,6 +150,7 @@ QRect SaverPreview::place(QWindow **hostOut) const
     const QRect rect(x, y, w, h);
     const QRect page(offset, window()->size());
     if (w < 64 || h < 64 || !QRect(QPoint(0, 0), real->size()).contains(rect) || !page.contains(rect)) {
+        qCDebug(pairLog) << "preview place" << rect << "is not inside the window" << real->size() << "or the page" << page;
         return {};
     }
     // an ancestor that clips (a scrolled column) cuts the picture: the surface cannot be cut with it
@@ -157,6 +158,7 @@ QRect SaverPreview::place(QWindow **hostOut) const
         if (ancestor->clip()) {
             const QRectF shown = ancestor->mapRectToScene(QRectF(0, 0, ancestor->width(), ancestor->height())).translated(offset).adjusted(-0.5, -0.5, 0.5, 0.5);
             if (!shown.contains(QRectF(rect))) {
+                qCDebug(pairLog) << "preview place" << rect << "is cut by" << ancestor << shown;
                 return {};
             }
         }
@@ -197,6 +199,7 @@ void SaverPreview::begin()
     }
     view = QSize(qBound(64, view.width() & ~1, 1280), qBound(64, view.height(), 720));
     m_separation = -1;
+    m_ownDepth = false;
     m_pairNote.clear();
     if (m_stereo) {
         if (m_rect.isEmpty()) {
@@ -217,6 +220,7 @@ void SaverPreview::begin()
             } else if (m_surface.limits(screenWidth(real), view.width(), view.width(), &sunk, &popped)) {
                 m_separation = shareFor(sunk, view.width());
             } else {
+                m_ownDepth = true;
                 qCWarning(pairLog) << "the compositor gave no depth limits for the preview: the saver keeps its own separation";
             }
         }

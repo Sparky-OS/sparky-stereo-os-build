@@ -22,6 +22,7 @@ class SaversKcm : public KQuickConfigModule
     Q_PROPERTY(QString lockKind READ lockKind NOTIFY otherPagesChanged)
     Q_PROPERTY(QVariantList wallpaperKinds READ wallpaperKinds NOTIFY otherPagesChanged)
     Q_PROPERTY(bool varietyInstalled READ varietyInstalled CONSTANT)
+    Q_PROPERTY(QString initialSaver READ initialSaver CONSTANT)
 
 public:
     SaversKcm(QObject *parent, const KPluginMetaData &data);
@@ -39,6 +40,8 @@ public:
     QString lockKind() const { return m_lockKind; }
     QVariantList wallpaperKinds() const { return m_wallpaperKinds; }
     bool varietyInstalled() const;
+    /* The saver selected when the page opens: the first of the list, or the one a caller names (SPARKY_SAVER_SELECT). */
+    QString initialSaver() const { return qEnvironmentVariable("SPARKY_SAVER_SELECT"); }
 
     Q_INVOKABLE QString kindName(const QString &plugin) const;
     Q_INVOKABLE bool kindInstalled(const QString &plugin) const;
