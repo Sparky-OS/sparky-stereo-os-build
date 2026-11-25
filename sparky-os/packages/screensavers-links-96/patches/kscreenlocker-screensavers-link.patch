@@ -1,0 +1,33 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: kcm: link the Screensavers page from Screen Locking
+
+Daniel Ramos, 2026-10-14 and 2026-11-24 (queue row 96): the screensavers have a
+System Settings page of their own (sparky-stereo-screensavers: the list of
+every screensaver, a small preview, a full-screen preview, the show's times),
+and the pages a person looks on for it lead there: Display & Monitor, Power
+Management, Screen Locking and Wallpaper. Screen Locking gets a button in the page's actions, in its header.
+
+The button opens kcm_sparkystereo_screensavers through KCMLauncher, so the
+page opens inside System Settings; the patched package depends on
+sparky-stereo-screensavers, so the button never leads nowhere.
+The string carries no translation here: KDE forks take translations only from
+KDE's translation teams, the edition's catalogues are in
+sparky-os/translations/kscreenlocker-screensavers-link.po.patch.
+
+Assisted-by: Claude Fable 5.2
+---
+diff --git a/kcm/ui/main.qml b/kcm/ui/main.qml
+--- a/kcm/ui/main.qml
++++ b/kcm/ui/main.qml
+@@ -25,6 +25,11 @@
+             text: i18nc("@action:button", "Configure Appearance…")
+             icon.name: "edit-image-symbolic"
+             onTriggered: kcm.push("Appearance.qml")
++        },
++        Kirigami.Action {
++            text: i18nc("@action:button opens the Screensavers settings page", "Screensavers…")
++            icon.name: "preferences-desktop-screensaver"
++            onTriggered: KCM.KCMLauncher.openSystemSettings("kcm_sparkystereo_screensavers")
+         }
+     ]
+     ColumnLayout {

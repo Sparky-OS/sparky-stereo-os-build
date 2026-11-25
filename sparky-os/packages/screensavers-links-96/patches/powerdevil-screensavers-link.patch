@@ -1,0 +1,44 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: kcm: link the Screensavers page from Power Management
+
+Daniel Ramos, 2026-10-14 and 2026-11-24 (queue row 96): the screensavers have a
+System Settings page of their own (sparky-stereo-screensavers: the list of
+every screensaver, a small preview, a full-screen preview, the show's times),
+and the pages a person looks on for it lead there: Display & Monitor, Power
+Management, Screen Locking and Wallpaper. Power Management gets a button in its related pages, beside Graphics.
+
+The button opens kcm_sparkystereo_screensavers through KCMLauncher, so the
+page opens inside System Settings; the patched package depends on
+sparky-stereo-screensavers, so the button never leads nowhere.
+The string carries no translation here: KDE forks take translations only from
+KDE's translation teams, the edition's catalogues are in
+sparky-os/translations/powerdevil-screensavers-link.po.patch.
+
+Assisted-by: Claude Fable 5.2
+---
+diff --git a/kcm/ui/GlobalConfig.qml b/kcm/ui/GlobalConfig.qml
+--- a/kcm/ui/GlobalConfig.qml
++++ b/kcm/ui/GlobalConfig.qml
+@@ -374,6 +374,7 @@
+                 desktopSessionsPage.implicitWidth,
+                 activitiesPage.implicitWidth,
+                 graphicsPage.implicitWidth,
++                screensaversPage.implicitWidth,
+             )
+ 
+             MostUsedItem {
+@@ -430,6 +431,14 @@
+                 Layout.preferredWidth: relatedPagesLayout.maxPageButtonImplicitWidth
+                 onClicked: KCM.KCMLauncher.openSystemSettings("kcm_sparkystereo_graphics")
+             }
++            MostUsedItem {
++                id: screensaversPage
++                kcmIcon: "preferences-desktop-screensaver"
++                kcmName: i18nc("@text:button Name of KCM", "Screensavers")
++                Accessible.name: i18n("Open \"Screensavers\" settings page")
++                Layout.preferredWidth: relatedPagesLayout.maxPageButtonImplicitWidth
++                onClicked: KCM.KCMLauncher.openSystemSettings("kcm_sparkystereo_screensavers")
++            }
+         }
+     }
+ }
