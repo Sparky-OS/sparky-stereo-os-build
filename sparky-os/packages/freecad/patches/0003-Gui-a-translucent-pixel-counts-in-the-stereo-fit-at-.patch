@@ -1,7 +1,7 @@
-From 2114b4f1d57c573735e45e0a581dbd00710bb528 Mon Sep 17 00:00:00 2001
+From 4eb5a0d7737762958a362ad6d4d42a8652f1da66 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Wed, 25 Nov 2026 00:35:31 -0300
-Subject: [PATCH] Gui: a translucent pixel counts in the stereo fit at the
+Subject: [PATCH 3/4] Gui: a translucent pixel counts in the stereo fit at the
  weighted mean of what it shows
 
 The separation is the largest under which every pixel of the view stays
@@ -15,7 +15,11 @@ limit.
 The measuring pass is now drawn twice into a framebuffer with float colour,
 with linear fog from the camera to beyond the far plane: toward white in the
 first pass, toward black in the second, the background cleared to the
-screen's distance in the first and to 0 in the second.  Every fragment's own
+screen's distance in the first and to 0 in the second.  The fog is the viewer's own
+SoEnvironment node's (Coin's linear HAZE), changed without notification for
+the two passes and given back after them: that node is traversed after the
+pass's callback, and with its fog (none by default) it would switch a fog
+set with GL alone off again.  Every fragment's own
 colour is the same in both, so the difference of the two pictures is, at
 every pixel, the fog's share blended exactly as the layers are: the
 contribution-weighted mean distance (as KiCad's patch 0006 of the edition
@@ -32,15 +36,15 @@ translucent and unfogged.
 Forwarded: not-needed (FreeCAD's AI_POLICY.md and AGENTS.md; the edition's build)
 Assisted-by: Claude Opus 5.5 (Anthropic)
 ---
- src/Gui/View3DStereo.cpp          | 122 +++++++++++++++++++++++++-----
+ src/Gui/View3DStereo.cpp          | 139 +++++++++++++++++++++++++-----
  src/Gui/View3DStereo.h            |   8 ++
- src/Gui/View3DStereoFit.cpp       |  52 +++++++++++--
- src/Gui/View3DStereoFit.h         |   9 ++-
- tests/src/Gui/View3DStereoFit.cpp |  23 ++++--
- 5 files changed, 180 insertions(+), 34 deletions(-)
+ src/Gui/View3DStereoFit.cpp       |  52 +++++++++--
+ src/Gui/View3DStereoFit.h         |   9 +-
+ tests/src/Gui/View3DStereoFit.cpp |  23 +++--
+ 5 files changed, 197 insertions(+), 34 deletions(-)
 
 diff --git a/src/Gui/View3DStereo.cpp b/src/Gui/View3DStereo.cpp
-index 6983491..e77bd66 100644
+index 6983491..eb719b9 100644
 --- a/src/Gui/View3DStereo.cpp
 +++ b/src/Gui/View3DStereo.cpp
 @@ -72,6 +72,10 @@ constexpr int limitsPollMs = 250;
@@ -54,7 +58,7 @@ index 6983491..e77bd66 100644
  const char* const context = "Gui::View3DStereo";
  
  QString tr(const char* sentence)
-@@ -321,8 +325,49 @@ void View3DStereo::eyeNodeCallback(void* data, SoAction* action)
+@@ -321,8 +325,54 @@ void View3DStereo::eyeNodeCallback(void* data, SoAction* action)
      SoState* state = action->getState();
      if (self->measuring) {
          self->projection = SoProjectionMatrixElement::get(state);
@@ -88,14 +92,19 @@ index 6983491..e77bd66 100644
 +            // Once per pass, before the first shape (the annotations' paths pass this node again):
 +            // linear fog from the camera to beyond the far plane, toward white in the first pass and
 +            // toward black in the second, and the background, which a translucent shape may show,
-+            // at the screen's fog distance in the first and at 0 in the second
-+            const GLfloat white[4] = {1.0F, 1.0F, 1.0F, 1.0F};
-+            const GLfloat black[4] = {0.0F, 0.0F, 0.0F, 1.0F};
-+            glFogi(GL_FOG_MODE, GL_LINEAR);
-+            glFogf(GL_FOG_START, 0.0F);
-+            glFogf(GL_FOG_END, float(self->fogEnd));
-+            glFogfv(GL_FOG_COLOR, self->measuringPass == 1 ? white : black);
-+            glEnable(GL_FOG);
++            // at the screen's fog distance in the first and at 0 in the second. The fog is set on the
++            // viewer's own environment node, which is traversed after this node (and again on the
++            // delayed paths of translucent shapes and annotations): its fog, none by default, would
++            // switch off a fog set here with GL alone. Its fields change without notification, and
++            // measure() gives them back after the passes.
++            if (SoEnvironment* environment = self->viewer->getEnvironment()) {
++                const SbBool notify = environment->enableNotify(FALSE);
++                environment->fogType = SoEnvironment::HAZE;
++                environment->fogColor =
++                    self->measuringPass == 1 ? SbColor(1.0F, 1.0F, 1.0F) : SbColor(0.0F, 0.0F, 0.0F);
++                environment->fogVisibility = float(self->fogEnd);
++                environment->enableNotify(notify);
++            }
 +            const float background =
 +                self->measuringPass == 1 ? float((self->screenDistance + self->fogOffset) / self->fogEnd) : 0.0F;
 +            glClearColor(background, 0.0F, 0.0F, 0.0F);
@@ -105,7 +114,7 @@ index 6983491..e77bd66 100644
          return;
      }
      if (self->perspective || self->eyeSign == 0 || self->separation == 0.0) {
-@@ -407,12 +452,23 @@ void View3DStereo::measure()
+@@ -407,12 +457,23 @@ void View3DStereo::measure()
      // The measuring pass: the scene and its annotations from the camera between the eyes, into a
      // framebuffer of its own, single-sampled so that its depth can be read whatever the viewport's
      // anti-aliasing
@@ -133,7 +142,7 @@ index 6983491..e77bd66 100644
      }
      if (!measuringBuffer->isValid() || !measuringBuffer->bind()) {
          depthUnreadable = true;
-@@ -421,9 +477,10 @@ void View3DStereo::measure()
+@@ -421,9 +482,10 @@ void View3DStereo::measure()
          return;
      }
      measuring = true;
@@ -145,7 +154,7 @@ index 6983491..e77bd66 100644
      depthUnreadable = false;
      projectionSeen = false;
      if (SoCamera* camera = viewer->getSoRenderManager()->getCamera()) {
-@@ -431,7 +488,17 @@ void View3DStereo::measure()
+@@ -431,7 +493,29 @@ void View3DStereo::measure()
          perspective = !camera->isOfType(SoOrthographicCamera::getClassTypeId());
          focal = camera->focalDistance.getValue();
      }
@@ -153,6 +162,11 @@ index 6983491..e77bd66 100644
 +    SoGLRenderAction* action = viewer->getSoRenderManager()->getGLRenderAction();
 +    const SbBool depthWrite = action->getDelayedObjDepthWrite();
 +    action->setDelayedObjDepthWrite(floatBuffer ? depthWrite : TRUE);
++    // The environment's fog fields, which the passes change, as the person's view has them
++    SoEnvironment* environment = viewer->getEnvironment();
++    const int fogType = environment ? environment->fogType.getValue() : 0;
++    const SbColor fogColor = environment ? environment->fogColor.getValue() : SbColor(1.0F, 1.0F, 1.0F);
++    const float fogVisibility = environment ? environment->fogVisibility.getValue() : 0.0F;
 +    for (measuringPass = 1; measuringPass <= (floatBuffer ? 2 : 1); ++measuringPass) {
 +        drawnCount = 0;
 +        fogSet = false;
@@ -160,11 +174,18 @@ index 6983491..e77bd66 100644
 +    }
 +    measuringPass = 0;
 +    action->setDelayedObjDepthWrite(depthWrite);
++    if (environment && floatBuffer) {
++        const SbBool notify = environment->enableNotify(FALSE);
++        environment->fogType = fogType;
++        environment->fogColor = fogColor;
++        environment->fogVisibility = fogVisibility;
++        environment->enableNotify(notify);
++    }
 +    glDisable(GL_FOG);
      measuring = false;
      // Back to the left buffer of the viewport, which the left eye draws into
      widget->makeCurrent(QOpenGLWidget::LeftBuffer);
-@@ -457,19 +524,27 @@ void View3DStereo::sceneDrawn()
+@@ -457,19 +541,27 @@ void View3DStereo::sceneDrawn()
      if (w <= 0 || h <= 0) {
          return;
      }
@@ -204,7 +225,7 @@ index 6983491..e77bd66 100644
      }
  }
  
-@@ -507,6 +582,12 @@ void View3DStereo::fit()
+@@ -507,6 +599,12 @@ void View3DStereo::fit()
      pixels.sceneDepth = sceneDepth.empty() ? nullptr : sceneDepth.data();
      pixels.annotationDepth = annotationDepth.size() == sceneDepth.size() ? annotationDepth.data() : nullptr;
      pixels.count = sceneDepth.size();
@@ -217,7 +238,7 @@ index 6983491..e77bd66 100644
      pixels.screen = c;
      pixels.nearPlane = nearPlane;
      const StereoFitDistances measured = stereoFitDistances(pixels, distance);
-@@ -536,7 +617,8 @@ void View3DStereo::fit()
+@@ -536,7 +634,8 @@ void View3DStereo::fit()
          auto disparity = [&](double d) {
              return perspective ? k * t * (1.0 - c / d) : k * t * (d - c);
          };
