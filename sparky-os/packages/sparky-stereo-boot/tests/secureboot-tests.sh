@@ -2,7 +2,7 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
 # Tests of lib/secureboot.py on fake EFI system partitions: where the certificate goes, the GRUB entry it writes
-# in each of the nine languages, and what it says and keeps when the certificate cannot be placed (0.1.5); this
+# in each of the ten languages, and what it says and keeps when the certificate cannot be placed (0.1.5); this
 # computer's DKMS certificate beside it, its GRUB entry and, under a fake Secure Boot, the enrolment check (0.1.8);
 # the entries only where the firmware has Secure Boot (0.1.15).
 # Needs python3, openssl and sparky-stereo-problems; run as root in a container.
@@ -45,7 +45,7 @@ check "no certificate beside another loader's BOOTX64.EFI" "$(ls "$T/b/EFI/BOOT"
 mkdir -p "$T/c/EFI/other"; echo grub > "$T/c/EFI/other/grubx64.efi"
 check "no shim: no GRUB entry" "$(run c en_US.UTF-8 grub)" ""
 
-# the entry: title in the system's language, the steps in nine languages (the system's first), MokManager beside GRUB,
+# the entry: title in the system's language, the steps in ten languages (the system's first), MokManager beside GRUB,
 # and the fallback only under Secure Boot
 for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	out=$(run a $l.UTF-8 grub)
@@ -54,8 +54,8 @@ for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	name=$(sed -n 's/^LOCAL14="\(.*\)"$/\1/p' "$P/lang/$code")
 	check "$l: title" "$(echo "$out" | sed -n "s/^ *menuentry '\(.*\)' --id sparky-enroll {$/\1/p")" "$title"
 	check "$l: its language first" "$(echo "$out" | grep -m1 'echo "' | sed 's/^ *echo "\([^:]*\):.*/\1/')" "$name"
-	check "$l: nine languages" "$(echo "$out" | grep -c -E 'echo "(English|Polski|Português|Français|Deutsch|日本語|한국어|简体中文|繁體中文):')" 9
-	check "$l: the system's folder named" "$(echo "$out" | grep -c 'sparky-stereo-secureboot-2026.der')" 9
+	check "$l: ten languages" "$(echo "$out" | grep -c -E 'echo "(English|Polski|Português|Français|Deutsch|Español|日本語|한국어|简体中文|繁體中文):')" 10
+	check "$l: the system's folder named" "$(echo "$out" | grep -c 'sparky-stereo-secureboot-2026.der')" 10
 done
 out=$(run a de_DE.UTF-8 grub)
 check "MokManager from the system's folder, the partition found by file" "$(echo "$out" | grep -c -E 'search --no-floppy --file --set=sparky_mm /EFI/sparky/mmx64.efi|chainloader \(\$sparky_mm\)/EFI/sparky/mmx64.efi')" 2
@@ -136,8 +136,8 @@ for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	code=$l; case $l in pt_BR|zh_CN|zh_TW) ;; *) code=${l%_*} ;; esac
 	title=$(sed -n 's/^LOCAL62="\(.*\)"$/\1/p' "$P/lang/$code")
 	check "$l: DKMS title" "$(echo "$out" | sed -n "s/^ *menuentry [\"']\(.*\)[\"'] --id sparky-enroll-dkms {$/\1/p")" "$title"
-	check "$l: DKMS steps in nine languages" "$(echo "$out" | sed -n '/sparky-enroll-dkms/,/^ *}/p' | grep -c -E 'echo "(English|Polski|Português|Français|Deutsch|日本語|한국어|简体中文|繁體中文):')" 9
-	check "$l: the certificate named in each" "$(echo "$out" | grep -c 'dkms-this-computer.der')" 10
+	check "$l: DKMS steps in ten languages" "$(echo "$out" | sed -n '/sparky-enroll-dkms/,/^ *}/p' | grep -c -E 'echo "(English|Polski|Português|Français|Deutsch|Español|日本語|한국어|简体中文|繁體中文):')" 10
+	check "$l: the certificate named in each" "$(echo "$out" | grep -c 'dkms-this-computer.der')" 11
 done
 out=$(SPARKY_STEREO_ESP_UUID=ABCD-1234 run a en_US.UTF-8 grub)
 check "English title in double quotes, its apostrophe kept" "$(echo "$out" | grep -c "menuentry \"Secure Boot: enroll this computer's DKMS key\" --id sparky-enroll-dkms {")" 1
