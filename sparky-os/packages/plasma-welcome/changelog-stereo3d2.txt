@@ -1,0 +1,14 @@
+plasma-welcome (6.7.4-1+stereo3d2) unstable; urgency=medium
+
+  * Sparky Stereo OS: distro pages that come first (ORDER 63 and 720).
+    Pages in /usr/share/plasma/plasma-welcome/first-pages/ are shown before
+    the built-in Welcome page (after the live installer page in a live
+    environment); extra-pages/ still puts a distro's pages right before the
+    last page. The edition's first two pages (sparky-stereo-welcome) go
+    there. Nothing changes when the folder is empty
+    (0001-distro-pages-shown-first.patch).
+  * A distro page can read a switch of its own: Welcome.Distro.flag(key)
+    reads the [Distribution] group of plasma-welcomerc as KConfig reads it,
+    false when no file sets it. The edition's touch page can then be shown
+    only where its hardware layer finds a touch screen
+    (0002-distro-page-flag.patch).

@@ -1,0 +1,140 @@
+Description: Show distro pages that should come first, before the built-in pages
+ Distro pages in extra-pages/ are appended after the built-in pages, right
+ before the last one, so a distro cannot put a page in front of the user first:
+ its own introduction, or what a newcomer must know before anything else.
+ Pages in first-pages/ (DISTRO_CUSTOM_FIRST_PAGE_FOLDER,
+ /usr/share/plasma/plasma-welcome/first-pages/) are shown before the built-in
+ Welcome page, after the live installer page in a live environment, sorted by
+ name like extra-pages/; --pages finds them too. Nothing changes when the
+ folder is absent or empty.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor, https://github.com/Sparky-OS/plasma-welcome/tree/order63
+Bug-KDE: https://bugs.kde.org/499555
+Bug-Upstream: none for this change; searched on 2026-11-25: invent.kde.org/plasma/plasma-welcome commits from v6.7.4 to master and Plasma/6.7, its merge requests (distro, custom page, extra, intro, first page, order) and bugs.kde.org product plasma-welcome; bug 499555 asks for more control over the pages and upstream plans it (Oliver Beard, comment 1), with no code yet
+Forwarded: no
+Last-Update: 2026-11-25
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 71051f68..022e485e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -40,6 +40,7 @@ include(ECMDeprecationSettings)
+ include(ECMQtDeclareLoggingCategory)
+ 
+ set(DISTRO_CUSTOM_PAGE_FOLDER "/usr/share/plasma/plasma-welcome/extra-pages/" CACHE STRING "Folder on disk to find custom pages")
++set(DISTRO_CUSTOM_FIRST_PAGE_FOLDER "/usr/share/plasma/plasma-welcome/first-pages/" CACHE STRING "Folder on disk to find custom pages shown before the built-in ones")
+ set(DISTRO_CUSTOM_INTRO_FILE "/usr/share/plasma/plasma-welcome/intro-customization.desktop" CACHE STRING "File specifying custom intro content")
+ 
+ file(GLOB_RECURSE ALL_CLANG_FORMAT_SOURCE_FILES *.cpp *.h *.hpp *.c)
+diff --git a/README.md b/README.md
+index 9413e12f..bb3286e8 100644
+--- a/README.md
++++ b/README.md
+@@ -73,6 +73,8 @@ To make custom pages visible to the app, place them in `/usr/share/plasma/plasma
+ 
+ These two pages will be added into the wizard, with WelcomeToDistro shown first, and then InstallMediaCodecs.
+ 
++Pages that should come first, before the built-in "Welcome" page (after the live installer page in a live environment), go in `/usr/share/plasma/plasma-welcome/first-pages/` instead, named the same way. Keep them few: they are what the user sees before anything else.
++
+ Custom pages are QML files with a root item that inherit from `Kirigami.Page`. Any content within the page is supported, though to maintain visual consistency with existing pages, it is recommended to use `GenericPage`, `ScrollablePage` or `KCMPage` as the root item and set the `heading` and `description` properties, with any custom content going beneath them. You can reference [existing pages](src/qml/pages) when creating your own.
+ 
+ Because pages are written in QML without support for C++ support code, only functions that can be performed entirely with QML are available. If you have a specific use case that can't be supported with these tools, please [file a bug report](https://bugs.kde.org/enter_bug.cgi?product=plasma-welcome) detailing it.
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 1201b353..b94075d1 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -88,6 +88,7 @@ ecm_target_qml_sources(plasma-welcome
+ )
+ 
+ target_compile_definitions(plasma-welcome PRIVATE "DISTRO_CUSTOM_PAGE_FOLDER=\"${DISTRO_CUSTOM_PAGE_FOLDER}\"")
++target_compile_definitions(plasma-welcome PRIVATE "DISTRO_CUSTOM_FIRST_PAGE_FOLDER=\"${DISTRO_CUSTOM_FIRST_PAGE_FOLDER}\"")
+ target_compile_definitions(plasma-welcome PRIVATE "DISTRO_CUSTOM_INTRO_FILE=\"${DISTRO_CUSTOM_INTRO_FILE}\"")
+ 
+ target_link_libraries(plasma-welcome PRIVATE
+diff --git a/src/app.cpp b/src/app.cpp
+index bd1d3534..a7db5612 100644
+--- a/src/app.cpp
++++ b/src/app.cpp
+@@ -57,9 +57,8 @@ QString App::distroPagesDir() const
+     return QString::fromLatin1(DISTRO_CUSTOM_PAGE_FOLDER);
+ }
+ 
+-QStringList App::distroPages() const
++static QStringList pagesInFolder(const QString &dirname)
+ {
+-    const QString dirname = QStringLiteral(DISTRO_CUSTOM_PAGE_FOLDER);
+     const QDir distroPageDir = QDir(dirname);
+ 
+     if (!distroPageDir.exists() || distroPageDir.isEmpty()) {
+@@ -74,6 +73,21 @@ QStringList App::distroPages() const
+     return pages;
+ }
+ 
++QStringList App::distroPages() const
++{
++    return pagesInFolder(QStringLiteral(DISTRO_CUSTOM_PAGE_FOLDER));
++}
++
++QString App::distroFirstPagesDir() const
++{
++    return QString::fromLatin1(DISTRO_CUSTOM_FIRST_PAGE_FOLDER);
++}
++
++QStringList App::distroFirstPages() const
++{
++    return pagesInFolder(QStringLiteral(DISTRO_CUSTOM_FIRST_PAGE_FOLDER));
++}
++
+ // Workaround for lack of appstream info in snaps for advertised items on Discover page
+ bool App::isDistroSnapOnly() const
+ {
+diff --git a/src/app.h b/src/app.h
+index 9d478a7a..a790ab66 100644
+--- a/src/app.h
++++ b/src/app.h
+@@ -33,6 +33,8 @@ public:
+     QString installPrefix() const;
+     QString distroPagesDir() const;
+     QStringList distroPages() const;
++    QString distroFirstPagesDir() const;
++    QStringList distroFirstPages() const;
+     bool isDistroSnapOnly() const;
+ 
+     Q_PROPERTY(Mode mode MEMBER m_mode CONSTANT)
+@@ -40,6 +42,8 @@ public:
+     Q_PROPERTY(QString installPrefix READ installPrefix CONSTANT)
+     Q_PROPERTY(QString distroPagesDir READ distroPagesDir CONSTANT)
+     Q_PROPERTY(QStringList distroPages READ distroPages CONSTANT)
++    Q_PROPERTY(QString distroFirstPagesDir READ distroFirstPagesDir CONSTANT)
++    Q_PROPERTY(QStringList distroFirstPages READ distroFirstPages CONSTANT)
+     Q_PROPERTY(bool isDistroSnapOnly READ isDistroSnapOnly CONSTANT)
+     Q_PROPERTY(QString customIntroText MEMBER m_customIntroText CONSTANT)
+     Q_PROPERTY(QString customIntroIcon MEMBER m_customIntroIcon CONSTANT)
+diff --git a/src/qml/Main.qml b/src/qml/Main.qml
+index d7968cd6..38d76da9 100644
+--- a/src/qml/Main.qml
++++ b/src/qml/Main.qml
+@@ -131,6 +131,11 @@ Kirigami.ApplicationWindow {
+                 // Fallthrough
+ 
+             case Private.App.Welcome:
++                // Distro-specific pages that come before the built-in ones
++                for (let i in Private.App.distroFirstPages) {
++                    _pushPage(_createPage(Private.App.distroFirstPages[i], true));
++                }
++
+                 _pushPage(_createPage("Welcome.qml"));
+ 
+                 _pushPage(_createPage("Network.qml"));
+@@ -172,8 +177,9 @@ Kirigami.ApplicationWindow {
+                         }
+                     }
+ 
+-                    // Try as both a regular page and distro page
+-                    if (!tryPage(page) && !tryPage("file://" + Private.App.distroPagesDir + page)) {
++                    // Try as a regular page, then as a distro page of either folder
++                    if (!tryPage(page) && !tryPage("file://" + Private.App.distroPagesDir + page)
++                        && !tryPage("file://" + Private.App.distroFirstPagesDir + page)) {
+                         console.warn(warnStrings);
+                         _pushPage(_createErrorPage(error, false, true));
+                     }

@@ -1,0 +1,31 @@
+#!/bin/sh
+
+## Copyright (C) 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+## This program comes with ABSOLUTELY NO WARRANTY; for details see COPYING.
+
+## The live session's first run is KDE's Welcome Center in its live mode: its page with the installer (Calamares) first,
+## then the edition's pages and KDE's own. Its kded module opens it at every login of the live user (LiveEnvironment);
+## LiveInstaller names the installer's desktop entry. Written in the live user's own plasma-welcomerc, as
+## 1186-sparky-stereo-live writes the live user's power and lock settings: an installed system never has these keys,
+## and Sparky Welcome's first run stays skipped there as on an installed system (sparky-stereo-welcome's drop-in).
+
+Sparky_Stereo_Welcome ()
+{
+	if [ -e /var/lib/live/config/sparky-stereo-welcome ]; then
+		return
+	fi
+
+	if [ -d /home/${LIVE_USERNAME} ]; then
+		mkdir -p /home/${LIVE_USERNAME}/.config
+		cat > /home/${LIVE_USERNAME}/.config/plasma-welcomerc << FOO
+[General]
+LiveEnvironment=true
+LiveInstaller=calamares
+FOO
+		chown ${LIVE_USERNAME}:${LIVE_USERNAME} /home/${LIVE_USERNAME}/.config /home/${LIVE_USERNAME}/.config/plasma-welcomerc
+	fi
+
+	touch /var/lib/live/config/sparky-stereo-welcome
+}
+
+Sparky_Stereo_Welcome

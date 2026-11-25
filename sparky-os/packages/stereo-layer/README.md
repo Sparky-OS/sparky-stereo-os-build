@@ -12,3 +12,5 @@ Set `PUBLISHED_SIBLINGS` to a list of baseline package files as seen below /roun
 Set `SIBLINGS_DIR` to the local sibling packages grouped in directories named after their sources.
 For the weather applet build, the isolated currency test needs iproute2 in the builder or its Debian archives in `IP_FIXTURE_DIR`.
 The build records the committed recipe and leaves the descriptor, source files, binary packages, changes, buildinfo and build record in `WORK`.
+Set `NETWORK` to a Docker network name when `ARCHIVE`'s configuration names online archives instead of package bytes held in it; the default is `none`.
+The job reads the edition's published tree at `/round`, so a configuration that names it uses `file:/round`.

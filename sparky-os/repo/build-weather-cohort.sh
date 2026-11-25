@@ -68,7 +68,10 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
-docker run --name "$name" --pull=never --platform linux/amd64 --ulimit core=1 --cpus "$threads" --network none \
+# NETWORK: none (the default) for a link gate whose archive holds the package bytes; a network name when the archive
+# configuration names online archives (a lane that has no offline copy of them)
+network=${NETWORK:-none}
+docker run --name "$name" --pull=never --platform linux/amd64 --ulimit core=1 --cpus "$threads" --network "$network" \
     --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
     "${SPARKY_PROV_ARGS[@]}" "${mounts[@]}" \
     --env "COMPONENT=$component" --env "OWNER=$(id -u):$(id -g)" --env "THREADS=$threads" \

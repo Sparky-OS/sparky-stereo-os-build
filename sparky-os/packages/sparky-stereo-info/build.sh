@@ -11,23 +11,21 @@
 # Sparky Welcome's page (/usr/lib/sparky-welcome/index.html, sparky-welcome) is diverted the same way
 # and regenerated with the edition's heading and credit line (welcome-header.html) in place of
 # SparkyLinux's release name; the rest of the page is Sparky's own.
-# Sparky Welcome is the welcome at the first login: KDE's Welcome Center (plasma-welcome) stays installed
-# and in the menu, and its first-run window waits. /etc/xdg/plasma-welcomerc gives new accounts the
-# installed Welcome Center's version as LastSeenVersion (kded_plasma_welcome opens the first-run window
-# only when it is empty, and writes the person's own value at their first login); a trigger follows
-# plasma-welcome's upgrades, so a new account never sees the update page either, while an existing account
-# still gets it after an upgrade of Plasma, as KDE does.
+# KDE's Welcome Center (plasma-welcome) is the edition's first run (ORDER 63 and 720, Daniel 2026-11-18: "change sparky
+# first run to our custom kde first run"; its pages: sparky-stereo-welcome): from 20261125 this package no longer writes
+# /etc/xdg/plasma-welcomerc, which gave new accounts a LastSeenVersion so that the Welcome Center's first-run window
+# waited (20261016.1 to 20261104.1), and removes the file those versions wrote, when it still carries their mark.
 # KInfoCenter's About page reads /etc/xdg/kcm-about-distrorc, which Debian's desktop-base sets to Debian's
 # emblem and "forky/sid": it is diverted the same way and replaced by the edition's logo, name and website,
 # with the version taken from os-release (kcm-about-distrorc).
 # It also installs stereo-display-info, the command that prints what each display can do in
 # stereo 3D and deep colour (read from its EDID) and what it is doing now.
-# Last update 2026/11/04
+# Last update 2026/11/25
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261104.1~sparky9~0+lc1
+VERSION=20261125~sparky9~0+lc1
 PKG=sparky-stereo-info
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/info-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -100,18 +98,10 @@ aboutdistro() {
 	mv /etc/xdg/kcm-about-distrorc.new /etc/xdg/kcm-about-distrorc
 }
 welcomecenter() {
+	# the Welcome Center opens at a new account's first login again: the file versions 20261016.1 to 20261104.1
+	# wrote to keep it closed goes; a file the administrator wrote (without the mark) is left alone
 	f=/etc/xdg/plasma-welcomerc
-	# a file the administrator wrote is left alone
-	[ -f "$f" ] && ! grep -q '^# sparky-stereo-info' "$f" && return 0
-	v=$(dpkg-query -W -f '${Status} ${Version}' plasma-welcome 2>/dev/null | sed -n 's/^install ok installed \([0-9]*:\)\{0,1\}\([0-9][0-9.]*\).*/\2/p')
-	if [ -z "$v" ]; then
-		rm -f "$f"
-		return 0
-	fi
-	mkdir -p /etc/xdg
-	printf '# sparky-stereo-info: Sparky Welcome is the first-login welcome; the Welcome Center stays in the menu\n[General]\nLastSeenVersion=%s\n' "$v" >"$f.new"
-	chmod 644 "$f.new"
-	mv "$f.new" "$f"
+	if grep -q '^# sparky-stereo-info' "$f" 2>/dev/null; then rm -f "$f"; fi
 }
 case "$1" in
 	configure|triggered)
@@ -141,7 +131,7 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ] || [ "$1" = "abort-install" ]; then
 fi
 exit 0
 EOF
-printf 'interest-noawait /usr/lib/os-release.sparky\ninterest-noawait /etc/lsb-release.sparky\ninterest-noawait /usr/lib/sparky-welcome/index.html.sparky\ninterest-noawait /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kded/kded_plasma_welcome.so\n' >"$D/DEBIAN/triggers"
+printf 'interest-noawait /usr/lib/os-release.sparky\ninterest-noawait /etc/lsb-release.sparky\ninterest-noawait /usr/lib/sparky-welcome/index.html.sparky\n' >"$D/DEBIAN/triggers"
 chmod 755 "$D/DEBIAN/preinst" "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOF'
@@ -189,10 +179,9 @@ Homepage: https://sparkylinux.org
 Description: Sparky Stereo OS info
   The system's own name: Sparky Stereo OS 9 (Mashtabba), based on Debian 14
   (Forky), in os-release and lsb-release, keeping Sparky's ID and codename,
-  and in Sparky Welcome's heading with the edition's credit line. Sparky
-  Welcome is the welcome at the first login; KDE's Welcome Center stays in
-  the menu. KInfoCenter's About page shows the edition's logo, name and
-  website, with the version from os-release.
+  and in Sparky Welcome's heading with the edition's credit line.
+  KInfoCenter's About page shows the edition's logo, name and website, with
+  the version from os-release.
   Also the stereo-display-info command: what each display can do in stereo 3D
   and deep colour, and what it is doing now.
 EOF
