@@ -9,6 +9,7 @@ usr = debian/stereo-advanced-weather-widget/usr
 override_dh_auto_install:
 	install -d "$(usr)/share/plasma/plasmoids/$(applet)"
 	cp -a contents metadata.json "$(usr)/share/plasma/plasmoids/$(applet)/"
+	rm -r "$(usr)/share/plasma/plasmoids/$(applet)/contents/locale"
 	for po in translate/*.po; do \
 		locale=$${po##*/}; \
 		dir="$(usr)/share/locale/$${locale%.po}/LC_MESSAGES"; \
@@ -17,4 +18,4 @@ override_dh_auto_install:
 	done
 
 override_dh_installdocs:
-	dh_installdocs widget-source.commit LICENSE
+	dh_installdocs widget-source.commit LICENSE README.md

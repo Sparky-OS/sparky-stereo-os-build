@@ -56,7 +56,7 @@ fi
 if [[ $component == stereo-advanced-weather-widget ]]; then
     revision=${WIDGET_REVISION:?full widget commit ID}
     [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
-    git -C "$input" archive "$revision" contents metadata.json LICENSE 'translate/*.po' > "$work/widget-source.tar"
+    git -C "$input" archive "$revision" contents metadata.json LICENSE README.md 'translate/*.po' > "$work/widget-source.tar"
     mounts+=(--env "WIDGET_REVISION=$revision")
 fi
 if [[ -n ${CPUSET:-} ]]; then mounts+=(--cpuset-cpus "$CPUSET"); fi
