@@ -694,24 +694,99 @@ def locked():
     return 'event id "locked"' in text or "kscreenlocker: Greeter" in text
 
 
+NAME = "org.sparky.Throw"
+SERVICE_FILE = "/usr/share/dbus-1/services/org.sparky.Throw.service"
+# A file "activate-in-gap" beside this script makes every restart ask for the daemon's name while no process owns it, as
+# any client may at that moment: the proof that a restart cannot race (red with a hand-started copy, green through the bus).
+GAP_PROBE = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "activate-in-gap"))
+
+
+def bus_call(method, signature="", *args):
+    """A call to the session bus itself, through busctl (dbus-send cannot send an empty string); (ok, data)."""
+    cmd = ["busctl", f"--address={os.environ['DBUS_SESSION_BUS_ADDRESS']}", "--json=short", "call",
+           "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", method]
+    if signature:
+        cmd += [signature, *[str(a) for a in args]]
+    rc, out, _ = run(*cmd, timeout=30)
+    try:
+        return rc == 0, (json.loads(out)["data"] if out.strip() else None)
+    except (json.JSONDecodeError, KeyError):
+        return rc == 0, None
+
+
+def name_owner_pid():
+    ok, data = bus_call("GetConnectionUnixProcessID", "s", NAME)
+    return data[0] if ok and data else None
+
+
+def name_owned():
+    ok, data = bus_call("NameHasOwner", "s", NAME)
+    return bool(ok and data and data[0])
+
+
+def environ_of(pid):
+    try:
+        raw = open(f"/proc/{pid}/environ", "rb").read()
+    except OSError:
+        return {}
+    return dict(item.decode("utf-8", "replace").split("=", 1) for item in raw.split(b"\0") if b"=" in item)
+
+
+def language_env(lang):
+    """The language as a person's session gives it: LANGUAGE, LANG and LC_ALL together (gettext translates nothing while
+    LC_ALL is C, which the image's environment sets); without a language, the session's own values."""
+    if lang:
+        return {"LANGUAGE": CATALOGUE.get(lang, lang), "LANG": f"{lang}.UTF-8", "LC_ALL": f"{lang}.UTF-8"}
+    return {k: os.environ.get(k, "") for k in ("LANGUAGE", "LANG", "LC_ALL")}
+
+
 def restart_daemon(lang):
-    """The daemon again in a language (as a person's session starts it in theirs): ended by its PID, started with
-    LANGUAGE, LANG and LC_ALL set; its log goes to throwd-<lang>.log."""
+    """The daemon again in a language, as a person's session starts it in theirs. The session bus's activation
+    environment is set to the language first; the running daemon is ended; then the bus starts it from its service file.
+    Whatever asks for the name in between (a command, a page) makes the bus start it in that same language, so nothing
+    can race the restart. A copy started by hand could lose the name to the bus's own start in the session's language
+    (the trap in the skill). Without the service file (a development session) nothing can start the daemon but this
+    function, and its copy is started by hand. Then the name's owner is checked: its process must carry the language
+    (and be the copy, when started by hand). The record goes to throwd-<lang>.txt; returns whether the owner holds."""
     import signal
-    rc, out, _ = run("dbus-send", "--session", "--print-reply", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus",
-                     "org.freedesktop.DBus.GetConnectionUnixProcessID", "string:org.sparky.Throw")
-    pid = next((int(w) for line in out.splitlines() for w in line.split()[1:2] if "uint32" in line), None)
+    want = language_env(lang)
+    tag = lang or "C"
+    record = [f"language {tag}: {want}"]
+    installed = os.path.exists(SERVICE_FILE)
+    if installed:
+        pairs = dict(want, QT_LOGGING_RULES="org.sparky.throw.debug=true")
+        ok, _ = bus_call("UpdateActivationEnvironment", "a{ss}", len(pairs), *[x for kv in pairs.items() for x in kv])
+        record.append(f"the bus's activation environment set: {ok}")
+    pid = name_owner_pid()
     if pid:
         os.kill(pid, signal.SIGTERM)
-        wait_for(lambda: not os.path.exists(f"/proc/{pid}"), 10)
-    daemon = "/usr/lib/x86_64-linux-gnu/libexec/sparky-stereo-throwd"
-    if not os.path.exists(daemon):
-        daemon = "/tools/bin/sparky-stereo-throwd"
-    env = dict(os.environ, QT_LOGGING_RULES="org.sparky.throw.debug=true")
-    if lang:
-        env.update(LANGUAGE=CATALOGUE.get(lang, lang), LANG=f"{lang}.UTF-8", LC_ALL=f"{lang}.UTF-8")
-    subprocess.Popen([daemon], env=env, stdout=subprocess.DEVNULL, stderr=open(os.path.join(OUT, f"throwd-{lang or 'C'}.log"), "w"))
-    return bool(wait_for(lambda: (lambda d: d if len(d) >= 6 else None)(devices()), 30))
+        ended = wait_for(lambda: not os.path.exists(f"/proc/{pid}") and not name_owned(), 30)
+        record.append(f"ended pid {pid}: {bool(ended)}")
+    if GAP_PROBE:
+        rc, _, _ = run(CLI, "list")
+        record.append(f"asked for the name while nobody owned it ({CLI} list): exit {rc}")
+    started = None
+    if installed:
+        ok, data = bus_call("StartServiceByName", "su", NAME, 0)
+        record.append(f"StartServiceByName: {ok} {data} (1 started, 2 already running)")
+    else:
+        env = dict(os.environ, QT_LOGGING_RULES="org.sparky.throw.debug=true", **want)
+        started = subprocess.Popen(["/tools/bin/sparky-stereo-throwd"], env=env, stdout=subprocess.DEVNULL,
+                                   stderr=open(os.path.join(OUT, f"throwd-{tag}.log"), "w")).pid
+        record.append(f"started by hand (no service file on this bus): pid {started}")
+    owner = wait_for(name_owner_pid, 30)
+    env = environ_of(owner) if owner else {}
+    holds = bool(owner) and all(env.get(k, "") == v for k, v in want.items()) and started in (None, owner)
+    record.append(f"owner of {NAME}: pid {owner}, executable {os.path.realpath(f'/proc/{owner}/exe') if owner else None}, "
+                  f"{ {k: env.get(k) for k in want} }; started in that language: {holds}")
+    if installed:
+        record.append("its log: the session bus's output (setup.log), where every daemon the bus starts writes")
+    with open(os.path.join(OUT, f"throwd-{tag}.txt"), "w") as f:
+        f.write("\n".join(record) + "\n")
+    log("restart " + "; ".join(record))
+    if holds:
+        wait_for(lambda: (lambda d: d if len(d) >= 6 else None)(devices()), 30)
+    return holds
 
 
 def page(name, args=(), lang=None):
@@ -757,20 +832,23 @@ def pages():
     second = page("living-room", ["--args", f"device={LIVING}"])
     row("C2", "a device's page opens from the page's argument: it asks the device for its information (setup requests) "
         "and is captured", (True, True), (second["asked"] > 0, second["captured"]))
-    restart_daemon("pt_BR")
-    d = devices().get(LIVING, {})
-    row("C5", "the daemon's own words in the session's language (pt_BR): the short words, the generation, the sound",
-        ("1ª a 3ª geração", True, True), (d.get("short"), d.get("generation", "").startswith("Chromecast, primeira"),
-                                          d.get("sound", "").startswith("FLAC, 24 bits")))
+    in_pt = restart_daemon("pt_BR")
+    d = devices().get(LIVING, {}) if in_pt else {}
+    row("C5", "the daemon's own words in the session's language (pt_BR): the process that owns its name was started in "
+        "pt_BR, then the short words, the generation, the sound", (True, "1ª a 3ª geração", True, True),
+        (in_pt, d.get("short"), d.get("generation", "").startswith("Chromecast, primeira"),
+         d.get("sound", "").startswith("FLAC, 24 bits")))
     third = page("living-room-pt_BR", ["--args", f"device={LIVING}"], "pt_BR")
     row("C3", "the device's page in Brazilian Portuguese (caption \"Throw (jogar)\", setup requests) is captured",
         (True, True, True), (any(c.startswith("Throw (jogar)") for c in third["captions"]), third["asked"] > 0, third["captured"]))
-    restart_daemon("ja_JP")
+    in_ja = restart_daemon("ja_JP")
     pages_ja = page("devices-ja", [], "ja_JP")
     fourth = page("living-room-ja", ["--args", f"device={LIVING}"], "ja_JP")
-    row("C4", "the list and the device's page in Japanese (caption \"Throw (送る)\") are captured", (True, True, True),
-        (any(c.startswith("Throw (送る)") for c in fourth["captions"]), pages_ja["captured"], fourth["captured"]))
-    restart_daemon(None)
+    row("C4", "the list and the device's page in Japanese (caption \"Throw (送る)\") are captured, with the daemon that "
+        "owns its name started in Japanese", (True, True, True, True),
+        (any(c.startswith("Throw (送る)") for c in fourth["captions"]), pages_ja["captured"], fourth["captured"], in_ja))
+    # back to the session's language: nothing reads the daemon after it, so its check is logged (throwd-C.txt)
+    log(f"back in the session's language: {restart_daemon(None)}")
 
 
 def make_pair():
