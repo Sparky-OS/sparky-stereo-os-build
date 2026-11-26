@@ -88,19 +88,26 @@ if choice == 'accept':
     (out / 'fc-match.txt').write_text(family + '\n')
 else:
     assert not fonts and outcome, (len(fonts), outcome)
-    assert status == (0 if choice in ('refuse', 'close', 'skip-download') else 1), status
+    assert status == 0, status
 answer = subprocess.run(['chroot', target, 'debconf-communicate', 'ttf-mscorefonts-installer'],
                         input='GET msttcorefonts/accepted-mscorefonts-eula\n', text=True, capture_output=True,
                         env=dict(os.environ, DEBIAN_FRONTEND='noninteractive'))
 if choice == 'skip-download':
     assert notice and answer.returncode == 10, answer.stdout
     assert not (Path(target) / 'var/lib/dpkg/info/ttf-mscorefonts-installer.list').exists()
+elif choice == 'failed-download':
+    assert 'outcome=transfer-failed' in logfile.read_text()
+    state = subprocess.run(['chroot', target, 'dpkg-query', '-W', '-f', '${db:Status-Status}',
+                            'ttf-mscorefonts-installer'], text=True, capture_output=True)
+    assert (state.returncode, state.stdout) in ((0, 'config-files'), (1, '')), state
+    assert not subprocess.check_output(['chroot', target, 'dpkg', '--audit'], text=True)
+    (out / 'dpkg-state.txt').write_text((state.stdout or 'not-installed') + '\n')
 else:
     assert answer.returncode == 0, answer.stderr
-    assert answer.stdout.strip() == ('0 true' if choice in ('accept', 'failed-download') else '0 false'), answer.stdout
+    assert answer.stdout.strip() == ('0 true' if choice == 'accept' else '0 false'), answer.stdout
     state = subprocess.check_output(['chroot', target, 'dpkg-query', '-W', '-f', '${Status}',
                                      'ttf-mscorefonts-installer'], text=True)
-    assert state == ('install ok half-configured' if choice == 'failed-download' else 'install ok installed'), state
+    assert state == 'install ok installed', state
     (out / 'dpkg-state.txt').write_text(state + '\n')
 (out / 'debconf-answer.txt').write_text(answer.stdout)
 print(f'PASS private KWin Wayland {language} {choice}: exit={status}, fonts={len(fonts)}, notice={notice}')

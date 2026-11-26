@@ -567,8 +567,33 @@ hibernate_keeps_used_area() {
 	mkdir -p "$W/state"
 	printf '100 %s 1\n' "$W/dev/vdb3" >"$W/state/hibernate-deployed"
 	swaps "$W/s" "$W/dev/vdb3" 16777216 524288
-	hibernate_env INITRAMFS_RESUME_PATH="$W/resume-part" "$d" --hibernate-resume >"$W/log" 2>&1
+	meminfo "$W/m" 16326000 "$G"
+	hibernate_env MEMINFO_PATH="$W/m" CUSHION_SWAP_AREA="$W/dev/vdb3" INITRAMFS_RESUME_PATH="$W/resume-part" "$d" --hibernate-resume >"$W/log" 2>&1
 	[[ ! -e $W/actions ]] && grep -q 'retracts it when it is safe' "$W/log"
+}
+
+hibernate_releases_dedicated_partition() {
+	local d=$1
+	rm -rf "$W/state" "$W/actions"
+	mkdir -p "$W/state"
+	printf '100 %s 1\n' "$W/dev/vdb3" >"$W/state/hibernate-deployed"
+	swaps "$W/s" "$W/dev/vdb3" 16777216 524288
+	meminfo "$W/m" 16326000 $((10 * G))
+	hibernate_env MEMINFO_PATH="$W/m" INITRAMFS_RESUME_PATH="$W/resume-part" "$d" --hibernate-resume >"$W/log" 2>&1 &&
+		[[ $(cat "$W/actions") == "swapoff -- $W/dev/vdb3" ]] &&
+		grep -q 'switched off after reading back' "$W/log"
+}
+
+hibernate_reports_insufficient_memory() {
+	local d=$1 rc
+	rm -rf "$W/state" "$W/actions"
+	mkdir -p "$W/state"
+	printf '100 %s 1\n' "$W/dev/vdb3" >"$W/state/hibernate-deployed"
+	swaps "$W/s" "$W/dev/vdb3" 16777216 524288
+	meminfo "$W/m" 16326000 "$G"
+	hibernate_env MEMINFO_PATH="$W/m" INITRAMFS_RESUME_PATH="$W/resume-part" "$d" --hibernate-resume >"$W/log" 2>&1
+	rc=$?
+	[[ $rc == 1 && ! -e $W/actions ]] && kept_problem resume-swapoff 'headroom'
 }
 
 hibernate_already_on() {
@@ -1268,6 +1293,8 @@ suite() {
 	check hibernate-partition-not-in-fstab hibernate_partition_cycle "$d"
 	check hibernate-swap-file-from-offset hibernate_file_cycle "$d"
 	check hibernate-keeps-used-area hibernate_keeps_used_area "$d"
+	check hibernate-releases-dedicated-partition hibernate_releases_dedicated_partition "$d"
+	check hibernate-reports-insufficient-memory hibernate_reports_insufficient_memory "$d"
 	check hibernate-area-already-on hibernate_already_on "$d"
 	check hibernate-nothing-configured hibernate_nothing_configured "$d"
 	check hibernate-kernel-mismatch-logged hibernate_kernel_mismatch "$d"

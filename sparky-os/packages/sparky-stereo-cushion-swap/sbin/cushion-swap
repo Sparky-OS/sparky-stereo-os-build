@@ -18,7 +18,7 @@
 #   cushion-swap --problems          what is wrong, why and what to do, in the system's language
 #   cushion-swap --resume-target     where the hibernation image goes, and which setting says so
 #   cushion-swap --hibernate-deploy  switch that area on before hibernation
-#   cushion-swap --hibernate-resume  switch it off again after resume if unused
+#   cushion-swap --hibernate-resume  release a resume area activated for the image
 #   cushion-swap --stopped           the unit's ExecStopPost: says why the daemon is no longer running
 #   cushion-swap --wait-ready EPOCH  the package's check that a daemon started after EPOCH runs and protects
 #   cushion-swap --notify            starts the session's notifier, which shows every kept problem
@@ -248,9 +248,14 @@ json_str() {
 }
 problem_set() {
 	local code=$1 effect=$2 key=$3 arg body hash severity args="" english file
+	local repair=()
 	file=$(problem_file "$1")
 	shift 3
 	body="EFFECT=$effect"$'\n'"KEY=$key"
+	if [[ $code == no-area && $key == LOCAL1 ]]; then
+		repair=(--repair '["/usr/libexec/cushion-swap/repair-swap","cushion"]')
+		body+=$'\n'"${repair[1]}"
+	fi
 	for arg in "$@"; do body+=$'\n'"ARG=${arg//$'\n'/ }"; args+="${args:+,}$(json_str "${arg//$'\n'/ }")"; done
 	[[ ${PROBLEM_BODY[$code]:-} == "$body" && -e $file ]] && return 0
 	hash=$(printf '%s' "$body" | sha1sum) hash=${hash%% *}
@@ -261,11 +266,14 @@ problem_set() {
 	fi
 	text_into english en "$key" "$@"
 	PROBLEM_BODY[$code]=$body
-	log_err "$english"
+	if ((DRY_RUN)) || [[ $code != no-area ]]; then
+		log_err "$english"
+	fi
 	((DRY_RUN)) && return 0
 	case $effect in no) severity=failed ;; degraded) severity=degraded ;; *) severity=notice ;; esac
-	if ! "$PROBLEMS_BIN" keep --boot --quiet --severity "$severity" "$PROBLEM_PKG" "$code" "$key" \
+	if ! "$PROBLEMS_BIN" keep --boot --quiet --severity "$severity" "${repair[@]}" "$PROBLEM_PKG" "$code" "$key" \
 		--details "{\"args\":[$args],\"data\":{\"body\":\"$hash\"}}" 2>/dev/null; then
+		[[ $code != no-area ]] || log_err "$english"
 		log_err "cannot keep the problem $code ($PROBLEMS_BIN keep failed): the journal line above is all there is"
 	fi
 	STATUS_TEXT=""
@@ -1344,10 +1352,10 @@ hibernate_deploy() {
 	exit 0
 }
 
-# After resume: an area switched on only for the image goes off again when
-# nothing stayed in it. Pages left in it are retracted by Daniel's rules.
+# After resume: release an area activated for the image when its pages fit
+# back in memory. Under pressure the daemon can later release its own area.
 hibernate_resume() {
-	local since="" target="" switched=""
+	local since="" target="" switched="" used why output rc
 	[[ -e $HIBERNATE_MARK ]] || exit 0
 	read -r since target switched <"$HIBERNATE_MARK" 2>/dev/null
 	# Reset the quiet window even if the daemon slept for the entire operation.
@@ -1362,19 +1370,39 @@ hibernate_resume() {
 	swap_state "$target"
 	case $? in
 	0)
-		if ((SWAP_USED_KIB == 0)); then
-			local output rc
-			output=$("$SWAPOFF_BIN" -- "$target" 2>&1)
-			rc=$?
-			[[ -n $output ]] && printf '%s\n' "$output" >&2
-			if ((rc != 0)); then
-				log_err "after resume: swapoff $target failed (exit status $rc)"
-				problem_set resume-swapoff notice LOCAL15 "$target" "exit status $rc${output:+: ${output##*$'\n'}}"
+		used=$SWAP_USED_KIB
+		resolve_area
+		if ((used > 0)); then
+			why=""
+			if read_meminfo; then
+				compute_thresholds
+				if ((MEM_AVAILABLE_KIB <= used + RETRACT_MARGIN_KIB)); then
+					why="available memory is $(gib_str "$MEM_AVAILABLE_KIB"); reading back $(gib_str "$used") needs an additional $(gib_str "$RETRACT_MARGIN_KIB") of headroom"
+				fi
+			else
+				why="cannot safely read pages back: $MEMINFO_PATH $MEMINFO_WHY"
+			fi
+			if [[ -n $why ]]; then
+				if [[ $target == "$AREA" ]]; then
+					log "after resume: $target holds $(gib_str "$used"); the daemon retracts it when it is safe ($why)"
+					problem_clear resume-swapoff
+					exit 0
+				fi
+				problem_set resume-swapoff notice LOCAL15 "$target" "$why"
 				exit 1
 			fi
+		fi
+		output=$("$SWAPOFF_BIN" -- "$target" 2>&1)
+		rc=$?
+		[[ -n $output ]] && printf '%s\n' "$output" >&2
+		if ((rc != 0)); then
+			problem_set resume-swapoff notice LOCAL15 "$target" "exit status $rc${output:+: ${output##*$'\n'}}"
+			exit 1
+		fi
+		if ((used == 0)); then
 			log "after resume: $target was empty, switched off again"
 		else
-			log "after resume: $target holds $(gib_str "$SWAP_USED_KIB"); the daemon retracts it when it is safe"
+			log "after resume: $target switched off after reading back $(gib_str "$used")"
 		fi
 		;;
 	1) log "after resume: $target is already off" ;;
@@ -1659,6 +1687,15 @@ if ((RUN_ONCE)); then
 	STATUS_PID=""
 	run_cycle
 	exit 0
+fi
+
+if ((!DRY_RUN)) && [[ -z $AREA ]]; then
+	area_problem
+	MODE=waiting
+	MODE_REASON="waiting for a swap area in $CONFIG or $FSTAB_PATH"
+	CALIBRATION=idle
+	write_status no-area
+	exec sleep infinity
 fi
 
 mkdir -p "$STATE_DIR"

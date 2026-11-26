@@ -1,7 +1,8 @@
 [Unit]
 Description=Cushion Swap File (swap deployed under memory pressure)
 Documentation=file:///usr/share/doc/sparky-stereo-cushion-swap/README.md
-After=local-fs.target swap.target
+Wants=cushion-swap-settings.path
+After=local-fs.target swap.target cushion-swap-settings.path
 Before=systemd-oomd.service
 # Daniel's own host version stays in charge where it is installed.
 ConditionPathExists=!/etc/systemd/system/cgm-swap-parachute.service

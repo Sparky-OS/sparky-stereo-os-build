@@ -10,15 +10,18 @@ LANGPACKS_ERROR='新しいシステム用に選んだ言語のパッケージを
 CORE_FONTS='Microsoft 基本フォント：この端末で使用許諾契約を読み、質問に回答してください。'
 CORE_FONTS_ERROR='Microsoft フォントはインストールされていません。使用許諾契約を読み、同意するには、次のコマンドを実行してください：
 dpkg-reconfigure ttf-mscorefonts-installer
-dpkg --configure ttf-mscorefonts-installer'
+sudo dpkg --configure ttf-mscorefonts-installer'
 CORE_FONTS_PAUSE='Enter キーを押すとインストーラーに戻ります。'
 CORE_FONTS_TITLE='Microsoft の基本フォント'
 CORE_FONTS_ACCEPT='同意する'
 CORE_FONTS_DECLINE='同意しない'
 CORE_FONTS_CONTINUE='続行'
 CORE_FONTS_REFUSED='Microsoft のライセンスが拒否されたか、そのウィンドウが閉じられました。Microsoft フォントはインストールされていません。後でライセンスを読んで同意するには、次を実行してください：
-dpkg-reconfigure ttf-mscorefonts-installer'
+sudo dpkg-reconfigure ttf-mscorefonts-installer'
 CORE_FONTS_DOWNLOAD_ERROR='Microsoft フォントをダウンロードまたは設定できませんでした。接続とインストーラーのログを確認して、この手順をやり直してください。パッケージが未設定のままの場合は、次を実行してください：
-dpkg --configure ttf-mscorefonts-installer'
-CORE_FONTS_SKIPPED='パッケージをインストールする前に Microsoft フォントをスキップしました。後でインストールしてライセンスを読むには、次を実行してください：
-apt install ttf-mscorefonts-installer'
+sudo dpkg --configure ttf-mscorefonts-installer'
+CORE_FONTS_SKIPPED='Microsoft コアフォントは利用できません。後でインストールしてライセンスを読むには、端末で次のコマンドを実行してください。
+sudo apt install ttf-mscorefonts-installer'
+CORE_FONTS_REPOSITORY_ERROR='インストーラーはパッケージ一覧を更新できませんでした。接続を確認してから再試行してください。'
+CORE_FONTS_DECLARATION_ERROR='インストーラーは Microsoft コアフォントのダウンロードサイズと取得元を確認できませんでした。エディションのリポジトリを確認してから再試行してください。'
+CORE_FONTS_TRANSFER_ERROR='Microsoft コアフォントのダウンロードまたは設定を完了できませんでした。接続を確認してから再試行してください。'

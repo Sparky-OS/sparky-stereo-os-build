@@ -44,40 +44,43 @@ with tempfile.TemporaryDirectory() as tmp:
                     str(pkg / 'problems-lang'), str(w / 'catalog'), '--subject', 'LOCAL1'], check=True)
     module = importlib.machinery.SourceFileLoader('hibernate_check', str(helper)).load_module()
     real_call = module.call
-    state = dict(lid='b true\n', capability='s "yes"\n', status=0)
+    state = dict(capability='s "yes"\n', status=0)
     def call(command):
         if command[0] == 'busctl':
-            answer = state['lid'] if command[-1] == 'LidIsPresent' else state['capability']
-            return subprocess.CompletedProcess(command, state['status'], answer, 'fixture bus failure' if state['status'] else '')
+            return subprocess.CompletedProcess(command, state['status'], state['capability'],
+                                               'fixture bus failure' if state['status'] else '')
         if command[0] == 'journalctl':
             return subprocess.CompletedProcess(command, 0, 'Failed to put system to sleep: No space left on device\n', '')
         return real_call(command)
-    is_dir = Path.is_dir
-    def running(path):
-        return True if str(path) == '/run/systemd/system' else is_dir(path)
+    read_text = Path.read_text
+    def read_fixture(path, *args, **kwargs):
+        if str(path) == '/sys/power/state':
+            return 'freeze mem disk\n'
+        if str(path) == '/proc/cmdline':
+            return 'quiet\n'
+        return read_text(path, *args, **kwargs)
     def records(machine=False):
         scope = '--machine' if machine else '--person'
         p = subprocess.run(['sparky-stereo-problems', 'list', scope, '--json'], text=True, capture_output=True, check=True)
         return json.loads(p.stdout)
-    with patch.object(module, 'call', call), patch.object(Path, 'is_dir', running):
-        assert module.session_check() == 0
-        assert not records()
-        state['capability'] = 's "no"\n'
-        assert module.session_check() == 1 and records()
-        print('PASS unavailable hibernation is shown and kept for the person')
+    with patch.object(module, 'call', call), patch.object(Path, 'read_text', read_fixture):
+        assert module.boot_check() == 0 and not records(True)
+        state['capability'] = 's "na"\n'
+        assert module.boot_check() == 0 and module.boot_check() == 0
+        (problem,) = records(True)
+        assert problem['message'] == 'LOCAL7'
+        assert problem['repair'] == [[module.REPAIR, 'hibernate']], problem
+        assert problem['data']['notify'] is False, problem
+        print('PASS one repairable hibernation problem on the Problems page')
         state['capability'] = 's "challenge"\n'
-        assert module.session_check() == 0 and not records()
+        assert module.boot_check() == 0 and not records(True)
         state['status'] = 7
-        assert module.session_check() == 1 and records()
+        assert module.boot_check() == 0
+        (problem,) = records(True)
+        assert problem['message'] == 'LOCAL8' and not problem['repair'], problem
         state['status'] = 0
-        state['lid'] = 'b false\n'
-        assert module.session_check() == 0 and not records()
-        print('PASS command failure, repair check, and desktop non-applicability')
-        state['lid'] = 'b true\n'
-        (home / 'powerdevilrc').write_text('[Battery][SuspendAndShutdown]\nSleepMode=1\n[LowBattery][SuspendAndShutdown]\nSleepMode=2\n')
-        state['capability'] = 's "no"\n'
-        assert module.session_check() == 0 and not records()
-        print('PASS no capability warning when the person selected another sleep mode')
+        assert module.boot_check() == 0 and not records(True)
+        print('PASS the recorded system response explains a failed capability query')
         if os.geteuid() == 0:
             for operation, action in [('suspend-then-hibernate', 'suspend-after-failed-hibernate'),
                                       ('hybrid-sleep', 'suspend-after-failed-hybrid-sleep')]:

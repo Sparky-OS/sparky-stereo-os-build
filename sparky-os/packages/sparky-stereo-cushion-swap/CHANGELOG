@@ -1,3 +1,9 @@
+Version 0.3.6 (2026-11-26)
+  * Release a separate hibernation partition after resume if its pages fit
+    in memory with the configured headroom. Report a failed release.
+  * Wait for a settings change when no swap area is configured.
+
+-------------------------------------------------------------------------------
 Version 0.3.5 (2026-11-14)
   * ORDER 572: the installer's swap area is the Cushion Swap area from the first boot. The edition's installer wrote
     the swap area it made as an always-on line ("defaults"), so the area was on at every boot and the daemon, which

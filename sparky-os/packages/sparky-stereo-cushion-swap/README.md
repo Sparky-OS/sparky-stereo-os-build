@@ -326,12 +326,21 @@ Status
 /run/cushion-swap/status (read by the System Settings page and by
 "cushion-swap --status"): STATE (off, deployed, retracting, disabled,
 no-area, unknown, stopped), PROTECTION (yes, degraded, no), PROBLEMS,
-REASON, MODE (psi, compatibility), MODE_REASON, CALIBRATION (override,
-measured, pending, failed, unavailable), STARTED, PID, FAST, PACING,
+REASON, MODE (psi, compatibility, waiting), MODE_REASON, CALIBRATION (override,
+measured, pending, failed, unavailable, idle), STARTED, PID, FAST, PACING,
 MAX_ALLOC_MIB_S, CALIBRATED, AREA and the thresholds in use.
 "cushion-swap --status" exits 0 while memory is protected, 1 while it is
 protected with a problem kept, 2 when it is not protected, 3 when the
 daemon is not running and 4 when the state cannot be read.
+
+With no swap area configured the service reports the problem and waits.
+The settings watcher applies changes to /etc/fstab and /etc/default/cushion-swap.
+The hibernation hook releases the area it switched on for the image.
+If the area still holds pages, the hook checks
+available memory and the configured retraction margin before reading them back
+with swapoff. Under pressure the daemon can later release its own area.
+A refusal to release a dedicated hibernation partition, or a failed swapoff,
+is reported through Problems.
 
 Nothing fails silently
 -------------

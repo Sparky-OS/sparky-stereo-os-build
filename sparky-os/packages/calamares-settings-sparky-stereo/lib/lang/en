@@ -10,15 +10,18 @@ LANGPACKS_ERROR='The language packages chosen for the new system could not be ad
 CORE_FONTS='Microsoft core fonts: read and answer the licence question in this terminal.'
 CORE_FONTS_ERROR='The Microsoft fonts were not installed. To read and accept the licence, run:
 dpkg-reconfigure ttf-mscorefonts-installer
-dpkg --configure ttf-mscorefonts-installer'
+sudo dpkg --configure ttf-mscorefonts-installer'
 CORE_FONTS_PAUSE='Press Enter to return to the installer.'
 CORE_FONTS_TITLE='Microsoft core fonts'
 CORE_FONTS_ACCEPT='Accept'
 CORE_FONTS_DECLINE='Decline'
 CORE_FONTS_CONTINUE='Continue'
 CORE_FONTS_REFUSED='The Microsoft licence was declined or its window was closed. The Microsoft fonts were not installed. To read and accept the licence later, run:
-dpkg-reconfigure ttf-mscorefonts-installer'
+sudo dpkg-reconfigure ttf-mscorefonts-installer'
 CORE_FONTS_DOWNLOAD_ERROR='The Microsoft fonts could not be downloaded or configured. Check the connection and the installer log, then retry this step. If the package is left unconfigured, retry with:
-dpkg --configure ttf-mscorefonts-installer'
-CORE_FONTS_SKIPPED='The Microsoft fonts were skipped before installing the package. To install them later and read the licence, run:
-apt install ttf-mscorefonts-installer'
+sudo dpkg --configure ttf-mscorefonts-installer'
+CORE_FONTS_SKIPPED='The Microsoft core fonts are unavailable. To install them later and read the licence, run this command in a terminal.
+sudo apt install ttf-mscorefonts-installer'
+CORE_FONTS_REPOSITORY_ERROR='The installer could not refresh the package lists. Check your connection before trying again.'
+CORE_FONTS_DECLARATION_ERROR='The installer could not verify the download size and source for the Microsoft core fonts. Check the edition repository before trying again.'
+CORE_FONTS_TRANSFER_ERROR='The Microsoft core fonts download or setup could not finish. Check your connection before trying again.'

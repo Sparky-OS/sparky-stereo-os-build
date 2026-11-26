@@ -10,15 +10,18 @@ LANGPACKS_ERROR='無法新增為新系統選擇的語言的套件。請檢查下
 CORE_FONTS='Microsoft 核心字型：請在此終端機中閱讀授權合約並回答問題。'
 CORE_FONTS_ERROR='尚未安裝 Microsoft 字型。若要閱讀並接受授權合約，請執行：
 dpkg-reconfigure ttf-mscorefonts-installer
-dpkg --configure ttf-mscorefonts-installer'
+sudo dpkg --configure ttf-mscorefonts-installer'
 CORE_FONTS_PAUSE='按 Enter 鍵返回安裝程式。'
 CORE_FONTS_TITLE='Microsoft 核心字型'
 CORE_FONTS_ACCEPT='接受'
 CORE_FONTS_DECLINE='拒絕'
 CORE_FONTS_CONTINUE='繼續'
 CORE_FONTS_REFUSED='已拒絕 Microsoft 授權合約或關閉了視窗。未安裝 Microsoft 字型。若要稍後閱讀並接受授權合約，請執行：
-dpkg-reconfigure ttf-mscorefonts-installer'
+sudo dpkg-reconfigure ttf-mscorefonts-installer'
 CORE_FONTS_DOWNLOAD_ERROR='無法下載或設定 Microsoft 字型。請檢查網路連線和安裝程式日誌，然後重試此步驟。如果套件仍未設定，請執行：
-dpkg --configure ttf-mscorefonts-installer'
-CORE_FONTS_SKIPPED='已在安裝套件前略過 Microsoft 字型。若要稍後安裝並閱讀授權合約，請執行：
-apt install ttf-mscorefonts-installer'
+sudo dpkg --configure ttf-mscorefonts-installer'
+CORE_FONTS_SKIPPED='微軟核心字型目前無法使用。稍後可在終端機中執行下列指令以安裝字型並閱讀授權條款。
+sudo apt install ttf-mscorefonts-installer'
+CORE_FONTS_REPOSITORY_ERROR='安裝程式無法更新套件清單。請在重試前檢查連線。'
+CORE_FONTS_DECLARATION_ERROR='安裝程式無法驗證微軟核心字型的下載大小和來源。請在重試前檢查此版本的套件來源。'
+CORE_FONTS_TRANSFER_ERROR='微軟核心字型未能完成下載或設定。請在重試前檢查連線。'
