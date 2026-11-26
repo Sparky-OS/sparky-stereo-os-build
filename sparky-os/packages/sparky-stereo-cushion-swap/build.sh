@@ -6,7 +6,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.3.6
+VERSION=0.3.7
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
@@ -40,10 +40,11 @@ install -Dm644 -t "$D/etc/logrotate.d" "$HERE/etc/logrotate.d/sparky-stereo-cush
 # what is wrong, why and what to do, in the nine languages (0.3.1); the edition's one engine keeps each problem and
 # its session notifier shows it (ORDER 350), from these messages built word for word into journal catalogs
 install -Dm644 -t "$D/usr/share/sparky/$PACKAGE" "$HERE"/lang/*
+python3 "$HERE/sbin/repair-swap" --feedback > "$D/usr/share/sparky/$PACKAGE/repair-feedback.json"
 sparky-stereo-problems catalog $PACKAGE "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 install -m644 "$HERE/copyright" "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/"
 GLIBC=$(objdump -T "$D/usr/libexec/cushion-swap/psi-wake" "$D/usr/libexec/cushion-swap/alloc-rate" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n 1)
-DEPENDS="bash, libc6 (>= $GLIBC), e2fsprogs, initramfs-tools, logrotate, mount, python3, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
+DEPENDS="bash, libc6 (>= $GLIBC), btrfs-progs (>= 6.1), e2fsprogs, initramfs-tools, logrotate, mount, python3, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -176,6 +177,13 @@ Description: Cushion Swap File: swap only under memory pressure
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Repair swap on Btrfs with a separate subvolume and a measured resume offset.
+  * Report each repair outcome in the edition's ten languages.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 04:55:17 +0000
+
+$PACKAGE (0.3.6) unstable; urgency=medium
 
   * Release a dedicated resume area safely after restoring the image.
   * Watch for settings changes when a swap area is missing.

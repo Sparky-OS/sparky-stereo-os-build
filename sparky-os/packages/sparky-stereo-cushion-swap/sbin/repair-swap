@@ -2,7 +2,9 @@
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Apply the swap layout when the person invokes a Problems repair."""
+from contextlib import contextmanager
 import fcntl
+import json
 import os
 from pathlib import Path
 import re
@@ -18,10 +20,28 @@ SWAP = Path("/swapfile")
 STATE = Path("/run/cushion-swap")
 ADOPTED = Path("/var/lib/cushion-swap/adopted")
 MIB = 1024 ** 2
+PACKAGE = "sparky-stereo-cushion-swap"
+# stable exit statuses for the Problems page; pkexec reserves 126 and 127
+RESULTS = {0: "LOCAL27", **{code: f"LOCAL{code - 12}" for code in range(40, 56)}}
+
+
+class Refusal(Exception):
+    def __init__(self, code, detail):
+        super().__init__(detail)
+        self.code = code
+
+
+def result(code, detail=None):
+    if detail:
+        logged = subprocess.run(["logger", "-t", "cushion-swap-repair", "--", detail], check=False)
+        if logged.returncode:
+            print(detail, file=sys.stderr)
+    subprocess.run([CUSHION, "--say", RESULTS[code]], check=True)
+    return code
 
 
 def output(*command):
-    return subprocess.check_output(command, text=True).strip()
+    return subprocess.check_output(command, text=True, stderr=subprocess.STDOUT).strip()
 
 
 def write_config(path, data):
@@ -42,7 +62,7 @@ def write_config(path, data):
 def resume_target():
     result = subprocess.run([CUSHION, "--resume-target"], text=True, capture_output=True, check=False)
     if result.returncode not in (0, 1):
-        raise ValueError(result.stderr or "Cushion Swap could not read the resume target")
+        raise Refusal(55, result.stderr or "Cushion Swap could not read the resume target")
     return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
 
 
@@ -56,20 +76,20 @@ def active_areas():
             (row.split() for row in Path("/proc/swaps").read_text().splitlines()[1:])}
 
 
-def current_configuration(mode, total):
+def current_configuration(mode, total, swapfile):
     fstab = FSTAB.read_bytes()
     lines = [line.split() for line in fstab.decode().splitlines() if not line.lstrip().startswith("#")]
     swaps = [line for line in lines if len(line) >= 4 and line[2] == "swap"]
     explicit = Path("/etc/default/cushion-swap").read_text()
     area = re.search(r"(?m)^[ \t]*AREA=([^#\n]*)", explicit)
     if area and area[1].strip().strip("\"'"):
-        raise ValueError("Cushion Swap already has an area set in /etc/default/cushion-swap")
+        raise Refusal(40, "Cushion Swap already has an area set in /etc/default/cushion-swap")
     if re.search(r"(?m)^\s*CUSHION_SWAP=[\"']?off(?:[\s\"']|$)", explicit):
-        raise ValueError("Cushion Swap is switched off in /etc/default/cushion-swap")
+        raise Refusal(41, "Cushion Swap is switched off in /etc/default/cushion-swap")
     cmdline = Path("/proc/cmdline").read_text().split()
     if mode == "hibernate" and ("noresume" in cmdline or
             re.search(r"(?m)^\s*HIBERNATE=[\"']?off(?:[\s\"']|$)", explicit)):
-        raise ValueError("Hibernation is explicitly disabled in this system's settings")
+        raise Refusal(42, "Hibernation is explicitly disabled in this system's settings")
     resume = resume_target()
     partition = None
     if resume.get("STATE") == "found" and resume.get("KIND") == "device":
@@ -79,90 +99,131 @@ def current_configuration(mode, total):
     enough = int(resume.get("SIZE_KIB") or 0) >= total
     if mode == "hibernate" and partition and not enough:
         if any(arg.startswith("resume=") for arg in cmdline):
-            raise ValueError("The boot configuration still names a smaller resume area")
+            raise Refusal(43, "The boot configuration still names a smaller resume area")
     if mode == "cushion" and swaps:
-        raise ValueError("There is already a swap entry in /etc/fstab. Review which area to give to Cushion Swap.")
+        raise Refusal(44, "There is already a swap entry in /etc/fstab. Review which area to give to Cushion Swap.")
     if swaps:
         old = ADOPTED.read_text() if ADOPTED.exists() else ""
-        managed = any(line.split()[1:] == ["installer", str(SWAP)] or
-                      line.split()[1:] == ["repair", str(SWAP)] for line in old.splitlines())
-        if (len(swaps) != 1 or swaps[0] not in ([str(SWAP), "swap", "swap", "noauto", "0", "0"],
-                                                [str(SWAP), "none", "swap", "noauto", "0", "0"]) or not managed):
-            raise ValueError("The swap entries in /etc/fstab were not made by the installer or this repair")
-    if SWAP.is_symlink() or (SWAP.exists() and
-                            (not swaps or not SWAP.is_file() or SWAP.stat().st_nlink != 1)):
-        raise ValueError("An existing /swapfile is outside this repair's managed area")
+        managed = any(line.split()[1:] == ["installer", str(swapfile)] or
+                      line.split()[1:] == ["repair", str(swapfile)] for line in old.splitlines())
+        if (len(swaps) != 1 or swaps[0] not in ([str(swapfile), "swap", "swap", "noauto", "0", "0"],
+                                                [str(swapfile), "none", "swap", "noauto", "0", "0"]) or not managed):
+            raise Refusal(44, "The swap entries in /etc/fstab were not made by the installer or this repair")
+    if swapfile.is_symlink() or (swapfile.exists() and
+                            (not swaps or not swapfile.is_file() or swapfile.stat().st_nlink != 1)):
+        raise Refusal(45, f"{swapfile} is outside this repair's managed area")
     if not partition and mode == "hibernate" and any(arg.startswith("resume=") for arg in cmdline):
-        raise ValueError("The boot configuration has an explicit resume device. Review it before changing the resume area.")
+        raise Refusal(43, "The boot configuration has an explicit resume device. Review it before changing the resume area.")
     return fstab, swaps, partition, enough
 
 
-def allocate_swap(path, size):
-    if output("findmnt", "-n", "-o", "FSTYPE", "-T", str(path.parent)) not in {"ext4", "xfs"}:
-        raise ValueError("This repair can prepare a swap file on ext4 or XFS")
+def allocate_swap(path, size, btrfs):
+    if btrfs:
+        output("btrfs", "filesystem", "mkswapfile", "--size", str(size), str(path))
+        path.chmod(0o600)
+        return
     with open(path, "xb", opener=lambda name, flags: os.open(name, flags, 0o600)) as swap:
         os.posix_fallocate(swap.fileno(), 0, size)
         os.fsync(swap.fileno())
-    subprocess.run(["mkswap", path], check=True)
+    output("mkswap", str(path))
 
 
-def file_resume(path):
+def file_resume(path, btrfs):
     uuid = output("findmnt", "-n", "-o", "UUID", "-T", str(path))
-    pagesize = os.sysconf("SC_PAGE_SIZE")
-    result = subprocess.check_output(["filefrag", "-v", f"-b{pagesize}", path],
-                                     text=True, env=dict(os.environ, LC_ALL="C"))
-    first = re.search(r"^\s*0:\s+0\.\.\s*\d+:\s+(\d+)\.\.", result, re.MULTILINE)
-    if not uuid or not first or int(first[1]) == 0:
-        raise ValueError("Could not read the filesystem UUID and first page of the prepared swap file")
-    return f"RESUME=UUID={uuid}\nRESUME_OFFSET={first[1]}\n".encode("ascii")
+    if btrfs:
+        offset = output("btrfs", "inspect-internal", "map-swapfile", "-r", str(path))
+    else:
+        pagesize = os.sysconf("SC_PAGE_SIZE")
+        result = subprocess.check_output(["filefrag", "-v", f"-b{pagesize}", path],
+                                         text=True, stderr=subprocess.STDOUT,
+                                         env=dict(os.environ, LC_ALL="C"))
+        first = re.search(r"^\s*0:\s+0\.\.\s*\d+:\s+(\d+)\.\.", result, re.MULTILINE)
+        offset = first[1] if first else ""
+    if not uuid or not offset.isdecimal() or int(offset) == 0:
+        raise Refusal(52, f"Invalid filesystem UUID or resume page offset for {path}")
+    return f"RESUME=UUID={uuid}\nRESUME_OFFSET={offset}\n".encode("ascii")
+
+
+@contextmanager
+def swap_directory(path, btrfs):
+    created = btrfs and not path.exists()
+    if btrfs:
+        if path.is_symlink():
+            raise Refusal(46, f"{path} is a symbolic link")
+        if created:
+            output("btrfs", "subvolume", "create", str(path))
+    try:
+        if btrfs:
+            if created:
+                path.chmod(0o700)
+            try:
+                output("btrfs", "subvolume", "show", str(path))
+            except subprocess.CalledProcessError as error:
+                raise Refusal(46, f"{path}: {error.output}") from error
+            info = path.stat()
+            if info.st_dev == path.parent.stat().st_dev or info.st_uid != 0 or info.st_mode & 0o022:
+                raise Refusal(46, f"{path}: expected a root-owned Btrfs subvolume without group or other write "
+                                  f"access (UID={info.st_uid}, mode={stat.S_IMODE(info.st_mode):o}, "
+                                  f"device={info.st_dev}, parent device={path.parent.stat().st_dev})")
+        yield
+    finally:
+        if created and not any(path.iterdir()):
+            output("btrfs", "subvolume", "delete", str(path))
 
 
 def repair(mode):
     numbers = memory()
     total = numbers["MemTotal"]
-    fstab, swaps, partition, enough = current_configuration(mode, total)
+    filesystem = output("findmnt", "-n", "-o", "FSTYPE", "-T", "/")
+    if filesystem not in {"ext4", "xfs", "btrfs"}:
+        raise Refusal(47, f"Root filesystem is {filesystem}")
+    btrfs = filesystem == "btrfs"
+    swapfile = Path("/swap/swapfile") if btrfs else SWAP
+    fstab, swaps, partition, enough = current_configuration(mode, total, swapfile)
     if (STATE / "hibernate-deployed").exists():
-        raise ValueError("Wait for the hibernation operation to finish")
+        raise Refusal(48, "Wait for the hibernation operation to finish")
     before = active_areas()
-    if str(SWAP) in before:
-        raise ValueError("The swap file is active. Retry once Cushion Swap has released it.")
+    if str(swapfile) in before:
+        raise Refusal(49, "The swap file is active. Retry once Cushion Swap has released it.")
     used = before.get(str(partition))
     if used and numbers["MemAvailable"] <= used + 512 * 1024:
-        raise ValueError("The hibernation partition still holds more pages than can safely fit back in memory")
+        raise Refusal(50, "The hibernation partition still holds more pages than can safely fit back in memory")
     size = (total // 1024 + 1) * MIB
-    space = os.statvfs(SWAP.parent)
+    space = os.statvfs(swapfile.parent if swapfile.parent.exists() else "/")
     free = space.f_bavail * space.f_frsize
     if free < size + 20 * 1024 ** 3:
         if mode == "hibernate" or free < 512 * MIB:
-            raise ValueError("The machine needs enough space for a swap file the size of memory and 20 GiB left free")
+            raise Refusal(51, "The machine needs enough space for a swap file the size of memory and 20 GiB left free")
         size = 512 * MIB
     old_resume = RESUME.read_bytes() if RESUME.exists() else None
     if mode == "cushion" and not partition and old_resume not in (None, b"RESUME=none\n"):
-        raise ValueError("Review the existing resume setting before creating a different swap area")
-    with tempfile.TemporaryDirectory(prefix=".sparky-swap-repair-", dir=SWAP.parent) as scratch:
+        raise Refusal(43, "Review the existing resume setting before creating a different swap area")
+    with (swap_directory(swapfile.parent, btrfs),
+          tempfile.TemporaryDirectory(prefix=".sparky-swap-repair-", dir=swapfile.parent) as scratch):
         new = Path(scratch) / "swapfile"
         old = Path(scratch) / "previous"
-        allocate_swap(new, size)
+        allocate_swap(new, size, btrfs)
         use_file_for_resume = mode == "hibernate" and not (partition and enough)
-        new_resume = file_resume(new) if use_file_for_resume else old_resume
+        file_config = file_resume(new, btrfs) if btrfs or use_file_for_resume else None
+        new_resume = file_config if use_file_for_resume else old_resume
         if partition and used is not None:
             subprocess.run(["swapoff", partition], check=True)
         try:
-            if SWAP.exists():
-                old.hardlink_to(SWAP)
-            new.replace(SWAP)
+            if swapfile.exists():
+                old.hardlink_to(swapfile)
+            new.replace(swapfile)
             if not swaps:
                 separator = b"" if fstab.endswith(b"\n") else b"\n"
-                write_config(FSTAB, fstab + separator + b"/swapfile none swap noauto 0 0\n")
+                write_config(FSTAB, fstab + separator + f"{swapfile} none swap noauto 0 0\n".encode("ascii"))
             if new_resume != old_resume:
                 write_config(RESUME, new_resume)
                 subprocess.run(["update-initramfs", "-u", "-k", "all"], check=True)
         except (OSError, subprocess.CalledProcessError):
             if not new.exists():
                 if old.exists():
-                    old.replace(SWAP)
+                    old.replace(swapfile)
                 else:
-                    SWAP.unlink(missing_ok=True)
+                    swapfile.unlink(missing_ok=True)
             write_config(FSTAB, fstab)
             if new_resume != old_resume:
                 if old_resume is None:
@@ -175,13 +236,16 @@ def repair(mode):
             raise
     ADOPTED.parent.mkdir(parents=True, exist_ok=True)
     with ADOPTED.open("a") as log:
-        log.write(output("date", "-u", "+%Y-%m-%dT%H:%M:%SZ") + " repair /swapfile\n")
-    print("The swap file is ready for Cushion Swap. Restart to apply the boot settings.")
+        log.write(output("date", "-u", "+%Y-%m-%dT%H:%M:%SZ") + f" repair {swapfile}\n")
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--feedback"]:
+        print(json.dumps({"package": PACKAGE, "messages": RESULTS}, separators=(",", ":")))
+        sys.exit(0)
     if os.geteuid() != 0 or sys.argv[1:] not in (["hibernate"], ["cushion"]):
-        sys.exit("This repair needs authorization and a hibernate or cushion request")
+        sys.exit(result(53, "This repair needs authorization and a hibernate or cushion request"))
+    os.umask(0o077)
     try:
         STATE.mkdir(parents=True, exist_ok=True)
         with (STATE / "swap-actions.lock").open("a") as lock:
@@ -189,5 +253,10 @@ if __name__ == "__main__":
             repair(sys.argv[1])
         subprocess.run(["systemctl", "daemon-reload"], check=True)
         subprocess.run(["systemctl", "try-restart", "cushion-swap.service"], check=True)
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
-        sys.exit(str(error))
+    except Refusal as error:
+        sys.exit(result(error.code, str(error)))
+    except subprocess.CalledProcessError as error:
+        sys.exit(result(54, f"{error}\n{error.output or ''}".strip()))
+    except (OSError, ValueError) as error:
+        sys.exit(result(55, str(error)))
+    sys.exit(result(0))

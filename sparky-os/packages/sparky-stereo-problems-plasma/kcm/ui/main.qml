@@ -76,9 +76,10 @@ KCM.SimpleKCM {
                         text: [item.modelData.severityText, item.modelData.since, item.modelData.over ? i18nc("@info", "Not happening now") : ""].filter(s => s && s.length > 0).join(" · ")
                     }
                     QQC2.Label {
-                        visible: (item.modelData.lastRepair || "").length > 0
+                        visible: text.length > 0 && text !== kcm.errorText
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
                         text: item.modelData.lastRepair || ""
                     }
                     Flow {
