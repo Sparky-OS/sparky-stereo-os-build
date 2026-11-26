@@ -1,0 +1,54 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 Daniel Campos Ramos
+# run.sh IMAGE RESULTS [ROLE] -- queue row 121's proof of paper depth: Okular's page view and Qt's print preview on Stereo
+# KWin's virtual output 1920x1080, one fresh container and KWin session per case.
+#   IMAGE    an image with the packages under test installed by apt: Stereo KWin (kwin-wayland), libkscreen-bin, okular,
+#            qt6-base-dev, g++, python3-gi, python3-numpy, python3-pil, dbus
+#   RESULTS  an empty folder: bin/ (the print preview test program, compiled in IMAGE), one folder per case, verdicts.txt
+#   ROLE     staged (the default: the desk one step down, the paper at the window's plane) or published (no step anywhere)
+# BASELINE=FOLDER: a published run's RESULTS; the 2D cases must then match it pixel for pixel.
+# KWin and the programs draw with Mesa's software renderer: no render node and no GPU is given to the containers.
+# --cpus 4, --network none, --ulimit core=1, uid 1000. PREFIX names the containers (default paper-depth); CIDS=FILE
+# appends each container's ID to FILE.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+IMAGE=$1 RESULTS=$(mkdir -p "$2" && cd "$2" && pwd -P) ROLE=${3:-staged}
+[ -z "$(ls -A "$RESULTS")" ] || { echo "$RESULTS is not empty" >&2; exit 2; }
+PREFIX=${PREFIX:-paper-depth}
+CASES=${CASES:-okular-3d okular-scale12 okular-limit0 okular-scrolled okular-presentation okular-background okular-2d
+	preview-3d preview-scale12 preview-limit0 preview-scrolled preview-background preview-2d}
+echo "load at start $(date -u +%FT%TZ): $(cut -d' ' -f1-3 /proc/loadavg)" | tee "$RESULTS/load.txt"
+docker image inspect "$IMAGE" --format '{{.Id}}' > "$RESULTS/image.txt"
+run() { # NAME [ENV...] -- COMMAND...
+	local name=$PREFIX-$1; shift
+	local env=()
+	while [ "$1" != -- ]; do env+=(-e "$1"); shift; done; shift
+	local cid=$RESULTS/.cid-$name
+	docker run --rm --init --cidfile "$cid" --name "$name" --pull=never --ulimit core=1 --cpus 4 --network none \
+		--user 1000:1000 --shm-size 512m "${env[@]}" \
+		--mount "type=bind,src=$HERE,dst=/tests,readonly" --mount "type=bind,src=$RESULTS,dst=/out" \
+		"$IMAGE" "$@" || echo "container $name rc=$?" >> "$RESULTS/containers.txt"
+	if [ -n "${CIDS:-}" ] && [ -s "$cid" ]; then { cat "$cid"; echo; } >> "$CIDS"; fi
+	rm -f "$cid"
+}
+run build -- bash -c 'mkdir -p /out/bin && g++ -O1 -fPIC -std=c++17 -o /out/bin/preview /tests/preview.cpp \
+	$(pkg-config --cflags --libs Qt6Widgets Qt6PrintSupport) > /out/bin/build.log 2>&1; echo "build rc=$?" >> /out/bin/build.log;
+	dpkg-query -W kwin-wayland okular libqt6widgets6 libqt6printsupport6 libqt6waylandclient6 > /out/bin/versions.txt'
+grep -q 'build rc=0' "$RESULTS/bin/build.log" || { cat "$RESULTS/bin/build.log"; exit 1; }
+for case in $CASES; do
+	element=1
+	case $case in *-scale12) element=12 ;; *-limit0) element=0 ;; esac
+	run "$case" "ELEMENT=$element" -- timeout 180 bash /tests/case.sh "$case"
+	run "measure-$case" -- bash -c "python3 -I /tests/measure.py /out/$case ${case%%-*} > /out/$case/measure.json 2> /out/$case/measure.err"
+	if [ -n "${BASELINE:-}" ] && [ "${case##*-}" = 2d ]; then
+		# a 2D screen: the same pixels as the baseline's run of the same case
+		base=$(cd "$BASELINE" && pwd -P)
+		docker run --rm --name "$PREFIX-compare-$case" --pull=never --ulimit core=1 --cpus 1 --network none --user 1000:1000 \
+			--mount "type=bind,src=$HERE,dst=/tests,readonly" --mount "type=bind,src=$RESULTS,dst=/out" \
+			--mount "type=bind,src=$base,dst=/baseline,readonly" "$IMAGE" \
+			python3 -I /tests/compare.py "/baseline/$case/shot.png" "/out/$case/shot.png" > "$RESULTS/$case/baseline.json"
+	fi
+done
+echo "load at end $(date -u +%FT%TZ): $(cut -d' ' -f1-3 /proc/loadavg)" | tee -a "$RESULTS/load.txt"
+python3 -I "$HERE/verdicts.py" "$RESULTS" "$ROLE" ${BASELINE:+--baseline "$BASELINE"} | tee "$RESULTS/verdicts.txt"
