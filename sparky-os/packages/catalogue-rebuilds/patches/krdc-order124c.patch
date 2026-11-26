@@ -1,0 +1,408 @@
+Description: Use the current KDE Connect pair for Catch and negotiate the five Throw links
+Origin: other, edition KRDC fork order124c d72e763bf811e17a5a51b010b4f4d24ab17cc12b
+Forwarded: not-needed
+Last-Update: 2026-11-26
+
+diff --git a/rdp/catch/CMakeLists.txt b/rdp/catch/CMakeLists.txt
+index 0be46382..8b946eff 100644
+--- a/rdp/catch/CMakeLists.txt
++++ b/rdp/catch/CMakeLists.txt
+@@ -1,10 +1,10 @@
+ # SPDX-FileCopyrightText: 2026 Daniel Ramos
+ # SPDX-License-Identifier: BSD-2-Clause
+-find_package(Qt6 REQUIRED COMPONENTS Quick Qml Network)
++find_package(Qt6 REQUIRED COMPONENTS Quick Qml Network DBus)
+ find_package(KF6Kirigami REQUIRED)
+ find_package(KF6Screen REQUIRED)
+ add_executable(krdc-catch main.cpp catchcontroller.cpp catchcontroller.h catchview.cpp catchview.h)
+-target_link_libraries(krdc-catch PRIVATE krdc_rdpsession Qt::Quick Qt::Qml Qt::Network KF6::I18n KF6::I18nQml)
++target_link_libraries(krdc-catch PRIVATE krdc_rdpsession Qt::Quick Qt::Qml Qt::Network Qt::DBus KF6::I18n KF6::I18nQml)
+ if(KF6Screen_FOUND)
+     target_link_libraries(krdc-catch PRIVATE KF6::Screen)
+     target_compile_definitions(krdc-catch PRIVATE HAVE_KSCREEN)
+diff --git a/rdp/catch/Main.qml b/rdp/catch/Main.qml
+index 7b2467d9..afa4af7b 100644
+--- a/rdp/catch/Main.qml
++++ b/rdp/catch/Main.qml
+@@ -23,7 +23,20 @@ Kirigami.ApplicationWindow {
+             visible: !catcher.receiving
+             Kirigami.Heading { text: i18n("Catch a desktop") }
+             Controls.Label { text: catcher.status }
+-            Controls.Button { text: i18n("Catch"); onClicked: catcher.listen() }
++            Controls.ComboBox {
++                id: link
++                enabled: !catcher.listening
++                textRole: "label"
++                valueRole: "format"
++                model: [
++                    { format: "native", label: i18n("Native panel resolution (current default)") },
++                    { format: "sbs-720", label: i18n("720p reading preset: full side by side") },
++                    { format: "tb-half-720", label: i18n("Half top-and-bottom: keeps horizontal detail") },
++                    { format: "sbs-half-720", label: i18n("Half side by side: keeps vertical detail") },
++                    { format: "tb-720", label: i18n("Full TB 720p · full detail, tall frame (1280×1440)") }
++                ]
++            }
++            Controls.Button { text: i18n("Catch"); onClicked: catcher.listen(link.currentValue) }
+             Controls.Button { text: i18n("Stop"); onClicked: catcher.stop() }
+         }
+         Keys.onEscapePressed: catcher.stop()
+diff --git a/rdp/catch/README.md b/rdp/catch/README.md
+index 45a3cfca..ee316fab 100644
+--- a/rdp/catch/README.md
++++ b/rdp/catch/README.md
+@@ -7,17 +7,21 @@ The RDP destination is always the control peer's address.
+ Sound, clipboard and input stay on the sending computer.
+ 
+ Build KRDC with `-DWITH_CATCH=ON`, then install and open Catch.
+-Press Catch to make the receiver discoverable, then approve it on the sending desktop.
++Pair the two computers in KDE Connect, then press Catch to make the receiver discoverable.
++Catch uses the handset identity from the same KDE Connect session.
++The control connection requires both peers' current pairing certificates.
++Removing the pairing closes the control connection and releases its desktop lease.
+ Escape or Stop disarms the receiver and closes its connections.
+-This first checkpoint supports the native panel link and an uncorrected per-eye view.
+-The receiver reads native pixels, refresh and scale from KScreen rather than treating Qt's logical window dimensions as panel pixels.
++The receiver offers the native panel link and the four 720p packing choices.
++It reads native pixels, refresh, scale and physical size from KScreen and its connected screen.
++The resulting transport raster determines the RDP stream size.
+ It uses ordinary Qt Quick on a mono output and does not require Stereo KWin on the receiving device.
+ The sender requires the native-panel KRdp and Stereo KWin extensions.
+ 
+ The current-frame handoff makes an owned copy on the FreeRDP worker before it can overwrite its GDI buffer.
+ There is one pending frame and one queued notification; a newer frame replaces an unconsumed one.
+ Qt Quick fits each eye using the current image dimensions at every paint.
+-ARM hardware decoding, the paired KDE Connect handoff, optical profiles, movies, sensors and the native compositor output choice are subsequent checkpoints.
++ARM hardware decoding, optical profiles, movies, sensors and the native compositor output choice are subsequent checkpoints.
+ An amd64 proof does not qualify a physical phone's decoder or optics.
+ 
+ `-DCATCH_PROOF=ON` enables private-session capture and deliberate eye-swap, frozen-frame and certificate-pin controls.
+diff --git a/rdp/catch/catchcontroller.cpp b/rdp/catch/catchcontroller.cpp
+index 8256deef..39e0f0a4 100644
+--- a/rdp/catch/catchcontroller.cpp
++++ b/rdp/catch/catchcontroller.cpp
+@@ -6,14 +6,18 @@
+ #include "catchview.h"
+ #include <KLocalizedString>
+ #include <QCryptographicHash>
++#include <QDBusConnection>
++#include <QDBusConnectionInterface>
+ #include <QDir>
+ #include <QFile>
+ #include <QGuiApplication>
+ #include <QJsonDocument>
+ #include <QNetworkDatagram>
+ #include <QNetworkInterface>
+-#include <QProcess>
+ #include <QRegularExpression>
++#include <QScreen>
++#include <QSettings>
++#include <QSslConfiguration>
+ #include <QSslKey>
+ #include <QStandardPaths>
+ #include <QUuid>
+@@ -24,29 +28,101 @@
+ #include <KScreen/Output>
+ #endif
+ 
++namespace
++{
++QDir pairingDirectory()
++{
++    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/kdeconnect"));
++}
++
++QList<QSslCertificate> pairedCertificates()
++{
++    const auto *bus = QDBusConnection::sessionBus().interface();
++    if (!bus || bus->serviceOwner(QStringLiteral("org.kde.kdeconnect")).value().isEmpty())
++        return {};
++    QSettings store(pairingDirectory().filePath(QStringLiteral("trusted_devices")), QSettings::IniFormat);
++    store.sync();
++    QList<QSslCertificate> certificates;
++    for (const auto &device : store.childGroups()) {
++        const QSslCertificate certificate(store.value(device + QStringLiteral("/certificate")).toByteArray());
++        if (!certificate.isNull())
++            certificates.append(certificate);
++    }
++    return certificates;
++}
++
++bool isPaired(const QSslCertificate &certificate)
++{
++    return !certificate.isNull() && pairedCertificates().contains(certificate);
++}
++
++QString pairingRequired()
++{
++    return i18n("Pair this headset with this computer in KDE Connect before connecting.");
++}
++
++QSize wirePixels(const QString &layout, const QSize &native)
++{
++    if (layout == QLatin1StringView("native"))
++        return native;
++    if (layout == QLatin1StringView("sbs-720"))
++        return {2560, 720};
++    if (layout == QLatin1StringView("tb-720"))
++        return {1280, 1440};
++    if (layout == QLatin1StringView("sbs-half-720") || layout == QLatin1StringView("tb-half-720"))
++        return {1280, 720};
++    return {};
++}
++}
++
+ CatchController::CatchController(QObject *parent)
+     : QObject(parent)
+     , m_config(QString(), KConfig::SimpleConfig)
+     , m_preferences(m_config.group(QStringLiteral("Catch")))
+ {
+     setStatus(i18n("Ready to catch a desktop"));
++    m_pairingCheck.setInterval(1000);
++    connect(&m_pairingCheck, &QTimer::timeout, this, [this] {
++        const auto trusted = pairedCertificates();
++        const auto connections = m_connections;
++        for (auto *socket : connections) {
++            if (socket->isEncrypted() && !trusted.contains(socket->peerCertificate())) {
++                socket->abort();
++                setStatus(pairingRequired());
++            }
++        }
++        if (trusted.isEmpty()) {
++            stop();
++            setStatus(pairingRequired());
++        }
++    });
+     m_control.accept = [this](qintptr fd) {
+         auto socket = new QSslSocket(this);
+-        socket->setSocketDescriptor(fd);
+-        if (m_connections.size() >= 4) {
++        if (!socket->setSocketDescriptor(fd) || m_connections.size() >= 4) {
+             socket->abort();
+             socket->deleteLater();
+             return;
+         }
+         m_connections.insert(socket);
+         socket->setReadBufferSize(16385);
+-        socket->setLocalCertificate(m_certificate);
+-        socket->setPrivateKey(m_key);
+-        socket->setPeerVerifyMode(QSslSocket::VerifyNone);
++        auto tls = socket->sslConfiguration();
++        tls.setLocalCertificate(m_certificate);
++        tls.setPrivateKey(m_key);
++        tls.setCaCertificates(pairedCertificates());
++        tls.setPeerVerifyMode(QSslSocket::VerifyPeer);
++        socket->setSslConfiguration(tls);
+         socket->setProtocol(QSsl::TlsV1_2OrLater);
+         connect(socket, &QSslSocket::encrypted, this, [this, socket] {
++            if (!isPaired(socket->peerCertificate())) {
++                socket->abort();
++                setStatus(pairingRequired());
++                return;
++            }
+             socket->write(QJsonDocument(QJsonObject{{QStringLiteral("panel"), m_panel}}).toJson(QJsonDocument::Compact) + '\n');
+         });
++        connect(socket, &QSslSocket::sslErrors, this, [this] {
++            setStatus(pairingRequired());
++        });
+         connect(socket, &QSslSocket::readyRead, this, [this, socket] {
+             receive(socket);
+         });
+@@ -121,45 +197,28 @@ void CatchController::setStatus(const QString &status)
+ #endif
+ }
+ 
+-void CatchController::listen()
++void CatchController::listen(const QString &layout)
+ {
+     if (m_control.isListening())
+         return;
+-    const auto directory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+-    QDir().mkpath(directory);
+-    QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+-    const auto certPath = directory + QStringLiteral("/panel.crt"), keyPath = directory + QStringLiteral("/panel.key");
+-    if (!QFile::exists(certPath) || !QFile::exists(keyPath)) {
+-        if (QProcess::execute(QStringLiteral("openssl"),
+-                              {QStringLiteral("req"),
+-                               QStringLiteral("-x509"),
+-                               QStringLiteral("-newkey"),
+-                               QStringLiteral("rsa:2048"),
+-                               QStringLiteral("-nodes"),
+-                               QStringLiteral("-days"),
+-                               QStringLiteral("3650"),
+-                               QStringLiteral("-subj"),
+-                               QStringLiteral("/CN=Catch"),
+-                               QStringLiteral("-out"),
+-                               certPath,
+-                               QStringLiteral("-keyout"),
+-                               keyPath})
+-            != 0) {
+-            setStatus(i18n("Could not start Catch"));
+-            return;
+-        }
+-    }
+-    QFile::setPermissions(keyPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+-    QFile cert(certPath), key(keyPath);
+-    if (!cert.open(QIODevice::ReadOnly) || !key.open(QIODevice::ReadOnly))
++    const auto directory = pairingDirectory();
++    QFile cert(directory.filePath(QStringLiteral("certificate.pem")));
++    QFile key(directory.filePath(QStringLiteral("privateKey.pem")));
++    if (pairedCertificates().isEmpty() || !cert.open(QIODevice::ReadOnly) || !key.open(QIODevice::ReadOnly)) {
++        setStatus(pairingRequired());
+         return;
++    }
+     m_certificate = QSslCertificate(cert.readAll());
+-    m_key = QSslKey(key.readAll(), QSsl::Rsa);
++    const auto keyBytes = key.readAll();
++    m_key = QSslKey(keyBytes, QSsl::Rsa);
++    if (m_key.isNull())
++        m_key = QSslKey(keyBytes, QSsl::Ec);
+     if (m_certificate.isNull() || m_key.isNull()) {
+-        setStatus(i18n("Could not start Catch"));
++        setStatus(pairingRequired());
+         return;
+     }
+     QSize pixels;
++    QSize millimeters;
+     int refresh = 0;
+     qreal scale = 1;
+ #ifdef HAVE_KSCREEN
+@@ -167,30 +226,38 @@ void CatchController::listen()
+     if (operation.exec() && operation.config()) {
+         const auto screen = QGuiApplication::primaryScreen();
+         for (const auto &output : operation.config()->outputs()) {
+-            if (output->isConnected() && output->isEnabled() && output->name() == screen->name() && output->currentMode()) {
++            if (screen && output->isConnected() && output->isEnabled() && output->name() == screen->name() && output->currentMode()) {
+                 pixels = output->currentMode()->size();
+                 refresh = qRound(output->currentMode()->refreshRate() * 1000);
+                 scale = output->scale();
++                millimeters = output->sizeMm();
++                if (millimeters.isEmpty())
++                    millimeters = screen->physicalSize().toSize();
++                if (millimeters.isEmpty())
++                    millimeters = {0, 0};
+                 break;
+             }
+         }
+     }
+ #endif
+-    if (!pixels.isValid() || pixels.width() % 2 || refresh <= 0) {
++    if (pixels.isEmpty() || pixels.width() % 2 || refresh <= 0 || wirePixels(layout, pixels).isEmpty()) {
+         setStatus(i18n("Could not read the panel mode"));
+         return;
+     }
+-    m_panel = {{QStringLiteral("version"), 1},
++    m_layout = layout;
++    m_panel = {{QStringLiteral("version"), layout == QLatin1StringView("native") ? 1 : 2},
+                {QStringLiteral("identity"), QString::fromLatin1(m_certificate.digest(QCryptographicHash::Sha256).toHex())},
+                {QStringLiteral("name"), QStringLiteral("Catch")},
+                {QStringLiteral("width"), pixels.width()},
+                {QStringLiteral("height"), pixels.height()},
+                {QStringLiteral("refreshMilliHz"), refresh},
+                {QStringLiteral("scale"), scale},
+-               {QStringLiteral("widthMm"), 0},
+-               {QStringLiteral("heightMm"), 0},
++               {QStringLiteral("widthMm"), millimeters.width()},
++               {QStringLiteral("heightMm"), millimeters.height()},
+                {QStringLiteral("splitEye"), true},
+                {QStringLiteral("lensProfile"), QString()}};
++    if (layout != QLatin1StringView("native"))
++        m_panel.insert(QStringLiteral("linkFormat"), layout);
+     if (!m_control.listen(QHostAddress::AnyIPv4, 0) || !m_http.listen(QHostAddress::AnyIPv4, 0)) {
+         stop();
+         setStatus(i18n("Could not start Catch"));
+@@ -212,6 +279,7 @@ void CatchController::listen()
+                            .toJson());
+     }
+ #endif
++    m_pairingCheck.start();
+     setStatus(i18n("Waiting for a desktop"));
+ }
+ 
+@@ -234,7 +302,7 @@ void CatchController::announce(const QHostAddress &destination, quint16 port)
+ 
+ void CatchController::receive(QSslSocket *socket)
+ {
+-    if (!socket->isEncrypted()) {
++    if (!socket->isEncrypted() || !isPaired(socket->peerCertificate())) {
+         socket->abort();
+         return;
+     }
+@@ -285,7 +353,8 @@ void CatchController::connectRdp(const QJsonObject &message, const QHostAddress
+     m_preferences.setSecurityEXT(false);
+     m_preferences.setDesktopScaleFactor(RdpHostPreferences::DesktopScaleFactor::DoNotScale);
+     m_session->setHostPreferences(&m_preferences);
+-    m_session->setSize({m_panel[QStringLiteral("width")].toInt(), m_panel[QStringLiteral("height")].toInt()});
++    const QSize panelPixels(m_panel[QStringLiteral("width")].toInt(), m_panel[QStringLiteral("height")].toInt());
++    m_session->setSize(wirePixels(m_layout, panelPixels));
+     m_session->setHost(peer.toString());
+     m_session->setPort(message[QStringLiteral("port")].toInt());
+     m_session->setUser(message[QStringLiteral("username")].toString());
+@@ -325,6 +394,7 @@ void CatchController::connectRdp(const QJsonObject &message, const QHostAddress
+ }
+ void CatchController::stop()
+ {
++    m_pairingCheck.stop();
+     m_control.close();
+     m_http.close();
+     m_ssdp.close();
+@@ -336,5 +406,7 @@ void CatchController::stop()
+         m_session.reset();
+     }
+     m_receiving = false;
++    m_certificate.clear();
++    m_key.clear();
+     setStatus(i18n("Ready to catch a desktop"));
+ }
+diff --git a/rdp/catch/catchcontroller.h b/rdp/catch/catchcontroller.h
+index 2fec5650..ae3cf808 100644
+--- a/rdp/catch/catchcontroller.h
++++ b/rdp/catch/catchcontroller.h
+@@ -30,6 +30,7 @@ class CatchController : public QObject
+     Q_OBJECT
+     Q_PROPERTY(QString status READ status NOTIFY changed)
+     Q_PROPERTY(bool receiving READ receiving NOTIFY changed)
++    Q_PROPERTY(bool listening READ listening NOTIFY changed)
+ public:
+     explicit CatchController(QObject *parent = nullptr);
+     ~CatchController() override;
+@@ -41,11 +42,15 @@ public:
+     {
+         return m_receiving;
+     }
++    bool listening() const
++    {
++        return m_control.isListening();
++    }
+     void setView(CatchView *view)
+     {
+         m_view = view;
+     }
+-    Q_INVOKABLE void listen();
++    Q_INVOKABLE void listen(const QString &layout);
+     Q_INVOKABLE void stop();
+     Q_SIGNAL void changed();
+ 
+@@ -60,6 +65,7 @@ private:
+     QUdpSocket m_ssdp;
+     QSslCertificate m_certificate;
+     QSslKey m_key;
++    QTimer m_pairingCheck;
+     QJsonObject m_panel;
+     QString m_status;
+     QString m_layout = QStringLiteral("native");
+diff --git a/rdp/catch/main.cpp b/rdp/catch/main.cpp
+index 34e59394..d5c6a11b 100644
+--- a/rdp/catch/main.cpp
++++ b/rdp/catch/main.cpp
+@@ -31,7 +31,10 @@ int main(int argc, char **argv)
+     controller.setView(view);
+ #ifdef CATCH_PROOF
+     if (qEnvironmentVariableIsSet("CATCH_AUTOSTART"))
+-        QTimer::singleShot(1000, &controller, &CatchController::listen);
++        QTimer::singleShot(1000, &controller, [&controller] {
++            const auto layout = qEnvironmentVariable("CATCH_LAYOUT", QStringLiteral("native"));
++            controller.listen(layout);
++        });
+     const auto capturePath = qEnvironmentVariable("CATCH_CAPTURES");
+     QTimer capture;
+     if (!capturePath.isEmpty()) {
