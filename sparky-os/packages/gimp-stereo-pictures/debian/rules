@@ -1,0 +1,26 @@
+#!/usr/bin/make -f
+include /usr/share/dpkg/architecture.mk
+
+PLUGIN := usr/lib/$(DEB_HOST_MULTIARCH)/gimp/3.0/plug-ins/stereo-pictures
+
+%:
+	dh $@
+
+# the catalogues are compiled from their .po files, checked by msgfmt
+override_dh_auto_build:
+	for po in plug-in/locale/*.po; do \
+		lang=$$(basename $$po .po); \
+		mkdir -p build/locale/$$lang/LC_MESSAGES; \
+		msgfmt -c -o build/locale/$$lang/LC_MESSAGES/stereo-pictures.mo $$po || exit 1; \
+	done
+
+override_dh_auto_install:
+	install -D -m 755 plug-in/stereo-pictures.py debian/gimp-stereo-pictures/$(PLUGIN)/stereo-pictures.py
+	install -m 644 plug-in/stereo_files.py debian/gimp-stereo-pictures/$(PLUGIN)/stereo_files.py
+	cd build && find locale -name '*.mo' -exec install -D -m 644 {} ../debian/gimp-stereo-pictures/$(PLUGIN)/{} \;
+
+# the tests need GIMP and the stereo layer's fixtures: the proof runs them on the installed package
+override_dh_auto_test:
+
+override_dh_auto_clean:
+	rm -rf build
