@@ -6,7 +6,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.3.5
+VERSION=0.3.6
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
@@ -27,7 +27,7 @@ gcc ${CFLAGS:--O2 -Wall -Wextra -Werror} -pthread -o "$D/usr/libexec/cushion-swa
 strip --strip-unneeded "$D/usr/libexec/cushion-swap/alloc-rate"
 install -Dm644 "$HERE/etc/default/cushion-swap" "$D/etc/default/cushion-swap"
 install -Dm755 "$HERE/sbin/cushion-swap" "$D/usr/sbin/cushion-swap"
-install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE/lib/systemd/system/cushion-swap.service"
+install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE"/lib/systemd/system/cushion-swap*.{service,path}
 for operation in hibernate hybrid-sleep suspend-then-hibernate; do
 	install -Dm644 "$HERE/lib/systemd/system/systemd-$operation.service.d/50-cushion-swap.conf" \
 		"$D/usr/lib/systemd/system/systemd-$operation.service.d/50-cushion-swap.conf"
@@ -175,6 +175,13 @@ Description: Cushion Swap File: swap only under memory pressure
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Release a dedicated resume area safely after restoring the image.
+  * Watch for settings changes when a swap area is missing.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 02:40:00 +0000
+
+$PACKAGE (0.3.5) unstable; urgency=medium
 
   * Hold the resume area for the whole native hibernate, hybrid-sleep or
     suspend-then-hibernate service, including intermediate RTC wakeups.

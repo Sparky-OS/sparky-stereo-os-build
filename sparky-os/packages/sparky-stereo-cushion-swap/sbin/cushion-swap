@@ -18,7 +18,7 @@
 #   cushion-swap --problems          what is wrong, why and what to do, in the system's language
 #   cushion-swap --resume-target     where the hibernation image goes, and which setting says so
 #   cushion-swap --hibernate-deploy  switch that area on before hibernation
-#   cushion-swap --hibernate-resume  switch it off again after resume if unused
+#   cushion-swap --hibernate-resume  release a resume area activated for the image
 #   cushion-swap --stopped           the unit's ExecStopPost: says why the daemon is no longer running
 #   cushion-swap --wait-ready EPOCH  the package's check that a daemon started after EPOCH runs and protects
 #   cushion-swap --notify            starts the session's notifier, which shows every kept problem
@@ -1344,10 +1344,10 @@ hibernate_deploy() {
 	exit 0
 }
 
-# After resume: an area switched on only for the image goes off again when
-# nothing stayed in it. Pages left in it are retracted by Daniel's rules.
+# After resume: the daemon can retract its own area later. A dedicated resume
+# area must be released here, with enough headroom to read its pages back in.
 hibernate_resume() {
-	local since="" target="" switched=""
+	local since="" target="" switched="" used why output rc
 	[[ -e $HIBERNATE_MARK ]] || exit 0
 	read -r since target switched <"$HIBERNATE_MARK" 2>/dev/null
 	# Reset the quiet window even if the daemon slept for the entire operation.
@@ -1362,19 +1362,39 @@ hibernate_resume() {
 	swap_state "$target"
 	case $? in
 	0)
-		if ((SWAP_USED_KIB == 0)); then
-			local output rc
-			output=$("$SWAPOFF_BIN" -- "$target" 2>&1)
-			rc=$?
-			[[ -n $output ]] && printf '%s\n' "$output" >&2
-			if ((rc != 0)); then
-				log_err "after resume: swapoff $target failed (exit status $rc)"
-				problem_set resume-swapoff notice LOCAL15 "$target" "exit status $rc${output:+: ${output##*$'\n'}}"
+		used=$SWAP_USED_KIB
+		resolve_area
+		if ((used > 0)); then
+			if [[ $target == "$AREA" ]]; then
+				log "after resume: $target holds $(gib_str "$used"); the daemon retracts it when it is safe"
+				problem_clear resume-swapoff
+				exit 0
+			fi
+			why=""
+			if read_meminfo; then
+				compute_thresholds
+				if ((MEM_AVAILABLE_KIB <= used + RETRACT_MARGIN_KIB)); then
+					why="available memory is $(gib_str "$MEM_AVAILABLE_KIB"); reading back $(gib_str "$used") needs an additional $(gib_str "$RETRACT_MARGIN_KIB") of headroom"
+				fi
+			else
+				why="cannot safely read pages back: $MEMINFO_PATH $MEMINFO_WHY"
+			fi
+			if [[ -n $why ]]; then
+				problem_set resume-swapoff notice LOCAL15 "$target" "$why"
 				exit 1
 			fi
+		fi
+		output=$("$SWAPOFF_BIN" -- "$target" 2>&1)
+		rc=$?
+		[[ -n $output ]] && printf '%s\n' "$output" >&2
+		if ((rc != 0)); then
+			problem_set resume-swapoff notice LOCAL15 "$target" "exit status $rc${output:+: ${output##*$'\n'}}"
+			exit 1
+		fi
+		if ((used == 0)); then
 			log "after resume: $target was empty, switched off again"
 		else
-			log "after resume: $target holds $(gib_str "$SWAP_USED_KIB"); the daemon retracts it when it is safe"
+			log "after resume: $target switched off after reading back $(gib_str "$used")"
 		fi
 		;;
 	1) log "after resume: $target is already off" ;;
@@ -1659,6 +1679,15 @@ if ((RUN_ONCE)); then
 	STATUS_PID=""
 	run_cycle
 	exit 0
+fi
+
+if ((!DRY_RUN)) && [[ -z $AREA ]]; then
+	area_problem
+	MODE=waiting
+	MODE_REASON="waiting for a swap area in $CONFIG or $FSTAB_PATH"
+	CALIBRATION=idle
+	write_status no-area
+	exec sleep infinity
 fi
 
 mkdir -p "$STATE_DIR"
