@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Sparky Stereo OS (ORDER 579): the sentence "This film has no sound." is the stereo layer's (po/LANG/stereo-layer_qt.po, context
-# Stereo::NoSound|). sView (string 2115 of StMoviePlayer/lang/*/StMoviePlayer.lng) and VLC (the msgid in po/LANG.po) keep a copy. This
+# Stereo::NoSound|). sView (string 2115 of StMoviePlayer/lang/*/StMoviePlayer.lng), VLC (the msgid in po/LANG.po) and Celluloid (the
+# msgid in po/LANG.po of its patch, row 137: a GTK program takes no Qt catalogue) keep a copy. This
 # check fails when a copy differs from the layer's in a language it ships, or when a required language is missing.
 #   python3 tests/no-sound-wording/check.py            runs from a clone with no arguments: the layer's sentences are kept in
 #                                                      layer-sentences.json beside this file, the copies are read from the recipe's own
@@ -18,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 TREE = HERE.parent.parent
 PATCHES = TREE / 'sparky-os' / 'upstream' / 'no-sound' / 'patches'
 VLC_PATCH = TREE / 'sparky-os' / 'upstream' / 'vlc'
+CELLULOID_PATCH = TREE / 'sparky-os' / 'packages' / 'celluloid' / 'patches' / 'stereo3d-3d-films.patch'
 REFERENCE = HERE / 'layer-sentences.json'
 LANGS = ['de', 'es', 'fr', 'ja', 'ko', 'pl', 'pt_BR', 'zh_CN', 'zh_TW']
 SVIEW = {'de': 'german', 'es': 'spanish', 'fr': 'french', 'ja': 'japanese', 'ko': 'korean', 'pl': 'polish', 'pt_BR': 'portuguesebr',
@@ -87,9 +89,11 @@ def vlc_from_po(folder):
     return out
 
 
-def run(ref, sview, vlc):
+def run(ref, sview, vlc, celluloid=None):
     bad = []
     for l in LANGS:
+        if celluloid is not None and celluloid.get(l) != ref.get(l):
+            bad.append(f'celluloid {l}: {celluloid.get(l)!r} != layer {ref.get(l)!r}')
         if not ref.get(l):
             bad.append(f'reference {l}: sentence missing')
         sv = sview.get(SVIEW[l])
@@ -139,7 +143,9 @@ def main():
             bad.append(f'vlc: the patch asks for the sentence {n} times in code, four are expected (slider, two control tooltips, picture message)')
         for l in off:
             bad.append(f'vlc: a call names the sentence differently from the msgid: {l.strip()!r}')
-    bad += run(ref, sview, vlc)
+    # Celluloid's copy, where the recipe is in the tree (a sparse checkout may leave it out)
+    celluloid = vlc_from_patch(CELLULOID_PATCH) if CELLULOID_PATCH.is_file() else None
+    bad += run(ref, sview, vlc, celluloid)
     if a.self_test:
         drifted = dict(sview); drifted['german'] = (drifted.get('german') or '') + '!'
         if not run(ref, drifted, vlc):
@@ -147,10 +153,15 @@ def main():
         drifted = dict(vlc); drifted['ja'] = (drifted.get('ja') or '') + '!'
         if not run(ref, sview, drifted):
             print('self-test FAILED: a drifted VLC wording passed'); return 1
+        if celluloid is not None:
+            drifted = dict(celluloid); drifted['ko'] = (drifted.get('ko') or '') + '!'
+            if not run(ref, sview, vlc, drifted):
+                print('self-test FAILED: a drifted Celluloid wording passed'); return 1
         print('self-test ok: a drifted wording fails')
     for b in bad:
         print('DRIFT', b)
-    print('wording check:', 'FAILED' if bad else 'ok (%d languages, layer = sView = VLC; %s)' % (len(LANGS), note))
+    who = 'layer = sView = VLC = Celluloid' if celluloid is not None else 'layer = sView = VLC'
+    print('wording check:', 'FAILED' if bad else 'ok (%d languages, %s; %s)' % (len(LANGS), who, note))
     return 1 if bad else 0
 
 

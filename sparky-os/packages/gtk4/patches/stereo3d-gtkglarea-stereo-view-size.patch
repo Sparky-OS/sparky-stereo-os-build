@@ -1,0 +1,534 @@
+Description: GtkGLArea: a size of their own for the views of a stereo area
+ The views of a stereo area were rendered at the size of the area in device
+ pixels, so a picture with a size of its own (a film) was resized twice: once
+ by the program into the area's views, once by the compositor to the output.
+ gtk_gl_area_set_stereo_view_size() sets the size one view is rendered at
+ (properties stereo-view-width and stereo-view-height, -1 for the area's own
+ size, the default). The picture handed to the compositor is then twice that
+ width, and the compositor does the one resize to where the area is shown
+ (wp_viewport on Wayland, _KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE on X11).
+ The viewport is set to the view's size before each emission of the render
+ signal for an area that asks for stereo, so a handler reads the size from the
+ viewport whether the area is shown per eye or its left view alone at the
+ area's size. An area that does not set a size, and every area without stereo,
+ is as before.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, milestone 3)
+Forwarded: no
+Last-Update: 2026-11-25
+---
+diff --git a/gdk/x11/gdkx11stereochild-private.h b/gdk/x11/gdkx11stereochild-private.h
+index 17c579968aab09e28fa15b255f0994820b00f128..daecc73d736d52dc96bba9c05770ae11511a8e0d 100644
+--- a/gdk/x11/gdkx11stereochild-private.h
++++ b/gdk/x11/gdkx11stereochild-private.h
+@@ -19,6 +19,8 @@ void                gdk_x11_stereo_child_free      (GdkX11StereoChild  *child);
+ gboolean            gdk_x11_stereo_child_present   (GdkX11StereoChild  *child,
+                                                     int                 x,
+                                                     int                 y,
++                                                    int                 place_width,
++                                                    int                 place_height,
+                                                     int                 view_width,
+                                                     int                 view_height,
+                                                     const guint8       *rgba,
+diff --git a/gdk/x11/gdkx11stereochild.c b/gdk/x11/gdkx11stereochild.c
+index d872066266e011cabb0b406bab9575e1f93bffaa..20e00b91f9032dd2883a648ba471791bbb81fe33 100644
+--- a/gdk/x11/gdkx11stereochild.c
++++ b/gdk/x11/gdkx11stereochild.c
+@@ -8,10 +8,12 @@
+  * the library that writes the properties, libstereo-declare, loaded when the
+  * first stereo area asks, so that GTK does not depend on it.
+  *
+- * The area's place is a frame window of the size of one view. Inside it lies
+- * a window twice as wide, which holds the two views side by side at the
+- * resolution they were drawn at; it is the window that is declared, with the
+- * size one view is shown at (the frame's size). X clips it to the frame.
++ * The area's place is a frame window of the size the area has in the toplevel.
++ * Inside it lies a window that holds the two views side by side at the
++ * resolution they were drawn at, which need not be the place's; it is the
++ * window that is declared, with the size one view is shown at (the frame's
++ * size), and the window manager resizes each view once. X clips it to the
++ * frame.
+  *
+  * SPDX-License-Identifier: LGPL-2.1-or-later
+  */
+@@ -96,7 +98,7 @@ struct _GdkX11StereoChild
+   GC gc;
+   StereoDeclare *lib;
+ 
+-  int x, y, view_width, view_height;
++  int x, y, place_width, place_height, view_width, view_height;
+   gboolean mapped;
+   gboolean declared;
+ };
+@@ -198,11 +200,14 @@ gdk_x11_stereo_child_free (GdkX11StereoChild *child)
+ }
+ 
+ /* @rgba holds the two views side by side, 2 * view_width samples wide and
+- * view_height high, four bytes a sample with red first, the top row first. */
++ * view_height high, four bytes a sample with red first, the top row first.
++ * One view is shown at place_width x place_height, at x, y in the toplevel. */
+ gboolean
+ gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
+                               int                 x,
+                               int                 y,
++                              int                 place_width,
++                              int                 place_height,
+                               int                 view_width,
+                               int                 view_height,
+                               const guint8       *rgba,
+@@ -212,7 +217,7 @@ gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
+   XImage *image;
+   guint8 *data;
+   gsize n = (gsize) 2 * view_width * view_height;
+-  gboolean resized;
++  gboolean resized, placed;
+   int result;
+ 
+   gdk_x11_display_error_trap_push (child->display);
+@@ -221,18 +226,20 @@ gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
+     child_create_windows (child);
+ 
+   resized = view_width != child->view_width || view_height != child->view_height;
++  placed = place_width != child->place_width || place_height != child->place_height;
+ 
+   if (resized)
+-    {
+-      XResizeWindow (child->xdisplay, child->own, 2 * view_width, view_height);
+-      XResizeWindow (child->xdisplay, child->frame, view_width, view_height);
+-    }
++    XResizeWindow (child->xdisplay, child->own, 2 * view_width, view_height);
++  if (placed)
++    XResizeWindow (child->xdisplay, child->frame, place_width, place_height);
+ 
+   if (x != child->x || y != child->y)
+     XMoveWindow (child->xdisplay, child->frame, x, y);
+ 
+   child->x = x;
+   child->y = y;
++  child->place_width = place_width;
++  child->place_height = place_height;
+   child->view_width = view_width;
+   child->view_height = view_height;
+ 
+@@ -240,7 +247,7 @@ gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
+     {
+       result = child->lib->declare (child->xdisplay, child->toplevel, child->own,
+                                     STEREO_SBS_FULL, STEREO_CLASS_NONE, 0,
+-                                    view_width, view_height);
++                                    place_width, place_height);
+       if (result < 0)
+         {
+           XSync (child->xdisplay, False);
+@@ -251,8 +258,8 @@ gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
+         }
+       child->declared = TRUE;
+     }
+-  else if (resized)
+-    child->lib->one_view (child->xdisplay, child->own, view_width, view_height);
++  else if (placed)
++    child->lib->one_view (child->xdisplay, child->own, place_width, place_height);
+ 
+   if (!child->mapped)
+     {
+diff --git a/gtk/gtkglarea.c b/gtk/gtkglarea.c
+index 5209711d302dbd898784014df2b7845e1c6580ae..913bd5043e4db9730af925a353a1a89937a998cf 100644
+--- a/gtk/gtkglarea.c
++++ b/gtk/gtkglarea.c
+@@ -212,7 +212,10 @@ typedef struct {
+   GdkGLAPI allowed_apis;
+ 
+   gboolean stereo;
++  int stereo_view_width;
++  int stereo_view_height;
+   gboolean stereo_rendering;
++  gboolean stereo_rendered;
+   gboolean stereo_shown;
+   gboolean stereo_pushed;
+   GError *stereo_error;
+@@ -249,6 +252,8 @@ enum {
+   PROP_STEREO,
+   PROP_STEREO_SHOWN,
+   PROP_STEREO_ERROR,
++  PROP_STEREO_VIEW_WIDTH,
++  PROP_STEREO_VIEW_HEIGHT,
+ 
+   LAST_PROP
+ };
+@@ -278,6 +283,7 @@ gtk_gl_area_set_property (GObject      *gobject,
+                           GParamSpec   *pspec)
+ {
+   GtkGLArea *self = GTK_GL_AREA (gobject);
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (self);
+ 
+   switch (prop_id)
+     {
+@@ -307,6 +313,14 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+       gtk_gl_area_set_stereo (self, g_value_get_boolean (value));
+       break;
+ 
++    case PROP_STEREO_VIEW_WIDTH:
++      gtk_gl_area_set_stereo_view_size (self, g_value_get_int (value), priv->stereo_view_height);
++      break;
++
++    case PROP_STEREO_VIEW_HEIGHT:
++      gtk_gl_area_set_stereo_view_size (self, priv->stereo_view_width, g_value_get_int (value));
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
+     }
+@@ -364,6 +378,14 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+       g_value_set_boxed (value, priv->stereo_error);
+       break;
+ 
++    case PROP_STEREO_VIEW_WIDTH:
++      g_value_set_int (value, priv->stereo_view_width);
++      break;
++
++    case PROP_STEREO_VIEW_HEIGHT:
++      g_value_set_int (value, priv->stereo_view_height);
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
+     }
+@@ -561,6 +583,32 @@ gtk_gl_area_ensure_texture (GtkGLArea *area)
+   gtk_gl_area_allocate_texture (area);
+ }
+ 
++/*
++ * The size of what one emission of the render signal draws: the area in
++ * device pixels, or, for the views of a stereo area, the size the program
++ * set for one view.
++ */
++static void
++gtk_gl_area_get_render_size (GtkGLArea *area,
++                             int       *width,
++                             int       *height)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  GtkWidget *widget = GTK_WIDGET (area);
++  int scale = gtk_widget_get_scale_factor (widget);
++
++  if (priv->stereo_rendering && priv->stereo_view_width > 0 && priv->stereo_view_height > 0)
++    {
++      *width = priv->stereo_view_width;
++      *height = priv->stereo_view_height;
++    }
++  else
++    {
++      *width = gtk_widget_get_width (widget) * scale;
++      *height = gtk_widget_get_height (widget) * scale;
++    }
++}
++
+ /*
+  * Allocates space of the right type and size for all the buffers
+  */
+@@ -568,15 +616,12 @@ static void
+ gtk_gl_area_allocate_buffers (GtkGLArea *area)
+ {
+   GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
+-  GtkWidget *widget = GTK_WIDGET (area);
+-  int scale, width, height;
++  int width, height;
+ 
+   if (priv->context == NULL)
+     return;
+ 
+-  scale = gtk_widget_get_scale_factor (widget);
+-  width = gtk_widget_get_width (widget) * scale;
+-  height = gtk_widget_get_height (widget) * scale;
++  gtk_gl_area_get_render_size (area, &width, &height);
+ 
+   if (priv->has_depth_buffer || priv->has_stencil_buffer)
+     {
+@@ -594,8 +639,7 @@ static void
+ gtk_gl_area_allocate_texture (GtkGLArea *area)
+ {
+   GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
+-  GtkWidget *widget = GTK_WIDGET (area);
+-  int scale, width, height;
++  int width, height;
+ 
+   if (priv->context == NULL)
+     return;
+@@ -605,9 +649,7 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+ 
+   g_assert (priv->texture->gl_texture == NULL);
+ 
+-  scale = gtk_widget_get_scale_factor (widget);
+-  width = gtk_widget_get_width (widget) * scale;
+-  height = gtk_widget_get_height (widget) * scale;
++  gtk_gl_area_get_render_size (area, &width, &height);
+ 
+   if (priv->stereo_rendering)
+     width *= 2;
+@@ -623,7 +665,7 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+ 
+       if (priv->stereo_rendering)
+         {
+-          /* Both views side by side, each at the size of the area: the
++          /* Both views side by side, each at the size it is rendered at: the
+            * picture is opaque, so a subsurface can lie above or below. */
+           if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
+             glTexImage2D (GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+@@ -722,11 +764,10 @@ gtk_gl_area_attach_buffers (GtkGLArea *area)
+ 
+   if (priv->stereo_rendering)
+     {
+-      int scale = gtk_widget_get_scale_factor (GTK_WIDGET (area));
++      int width, height;
+ 
+-      gtk_gl_area_allocate_eye (area,
+-                                gtk_widget_get_width (GTK_WIDGET (area)) * scale,
+-                                gtk_widget_get_height (GTK_WIDGET (area)) * scale);
++      gtk_gl_area_get_render_size (area, &width, &height);
++      gtk_gl_area_allocate_eye (area, width, height);
+     }
+ 
+   if (!priv->have_buffers)
+@@ -901,6 +942,8 @@ gtk_gl_area_prepare_stereo (GtkGLArea *area)
+   GtkWidget *widget = GTK_WIDGET (area);
+   GError *error = NULL;
+ 
++  /* The decision of the last frame, for gtk_gl_area_snapshot() to tell a change */
++  priv->stereo_rendered = priv->stereo_rendering;
+   priv->stereo_rendering = FALSE;
+ 
+   if (!priv->stereo || priv->stereo_error != NULL)
+@@ -998,6 +1041,9 @@ gtk_gl_area_render_views (GtkGLArea *area,
+         {
+           priv->current_eye = eye;
+           glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
++          /* Each view starts from the viewport of its size, whatever the
++           * handler of the view before it left */
++          glViewport (0, 0, width, height);
+           g_signal_emit (area, area_signals[RENDER], 0, priv->context, &unused);
+           gtk_gl_area_blit_eye (area, eye, width, height);
+         }
+@@ -1005,6 +1051,10 @@ gtk_gl_area_render_views (GtkGLArea *area,
+   else
+     {
+       priv->current_eye = priv->stereo ? GTK_GL_AREA_EYE_LEFT : GTK_GL_AREA_EYE_NONE;
++      /* The left view alone, of an area that asks for stereo: its size is the
++       * area's, and the handler finds it in the viewport as it does per view */
++      if (priv->stereo)
++        glViewport (0, 0, width, height);
+       g_signal_emit (area, area_signals[RENDER], 0, priv->context, &unused);
+     }
+ 
+@@ -1140,6 +1190,8 @@ gtk_gl_area_x11_repeat (gpointer data)
+  * copy through the CPU; the views stay at the resolution they were drawn at. */
+ static gboolean
+ gtk_gl_area_x11_present (GtkGLArea *area,
++                         int        place_width,
++                         int        place_height,
+                          int        width,
+                          int        height)
+ {
+@@ -1181,6 +1233,7 @@ gtk_gl_area_x11_present (GtkGLArea *area,
+   if (!gdk_x11_stereo_child_present (priv->x11_child,
+                                      (int) ((bounds.origin.x + nx) * scale),
+                                      (int) ((bounds.origin.y + ny) * scale),
++                                     place_width, place_height,
+                                      width, height, priv->x11_rows, &error))
+     {
+       gtk_gl_area_stereo_fail (area, error);
+@@ -1220,6 +1273,7 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+   GtkGLArea *area = GTK_GL_AREA (widget);
+   GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
+   int w, h, scale;
++  int place_w, place_h;
+   GLenum status;
+   gboolean x11_shown = FALSE;
+ 
+@@ -1246,6 +1300,15 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+ 
+   gtk_gl_area_prepare_stereo (area);
+ 
++  /* The views of a stereo area may have a size of their own, and the buffers
++   * follow it when the area starts or stops rendering per eye */
++  if (priv->stereo_rendering != priv->stereo_rendered &&
++      priv->stereo_view_width > 0 && priv->stereo_view_height > 0)
++    priv->needs_resize = TRUE;
++  place_w = w;
++  place_h = h;
++  gtk_gl_area_get_render_size (area, &w, &h);
++
+   gtk_gl_area_attach_buffers (area);
+ 
+  if (priv->has_depth_buffer)
+@@ -1314,7 +1377,7 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+ 
+ #ifdef GDK_WINDOWING_X11
+       if (priv->x11_child != NULL)
+-        x11_shown = gtk_gl_area_x11_present (area, w, h);
++        x11_shown = gtk_gl_area_x11_present (area, place_w, place_h, w, h);
+       else
+ #endif
+       if (priv->stereo_rendering && holder == texture->gl_texture)
+@@ -1600,6 +1663,38 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+                         G_PARAM_READABLE | G_PARAM_STATIC_NAME |
+                         G_PARAM_EXPLICIT_NOTIFY);
+ 
++  /**
++   * GtkGLArea:stereo-view-width:
++   *
++   * The width, in pixels, at which each view of a stereo area is rendered,
++   * or -1 for the width of the area in device pixels.
++   *
++   * See [method@Gtk.GLArea.set_stereo_view_size].
++   *
++   * Since: 4.24
++   */
++  obj_props[PROP_STEREO_VIEW_WIDTH] =
++    g_param_spec_int ("stereo-view-width", NULL, NULL,
++                      -1, G_MAXINT, -1,
++                      G_PARAM_READWRITE | G_PARAM_STATIC_NAME |
++                      G_PARAM_EXPLICIT_NOTIFY);
++
++  /**
++   * GtkGLArea:stereo-view-height:
++   *
++   * The height, in pixels, at which each view of a stereo area is rendered,
++   * or -1 for the height of the area in device pixels.
++   *
++   * See [method@Gtk.GLArea.set_stereo_view_size].
++   *
++   * Since: 4.24
++   */
++  obj_props[PROP_STEREO_VIEW_HEIGHT] =
++    g_param_spec_int ("stereo-view-height", NULL, NULL,
++                      -1, G_MAXINT, -1,
++                      G_PARAM_READWRITE | G_PARAM_STATIC_NAME |
++                      G_PARAM_EXPLICIT_NOTIFY);
++
+   gobject_class->finalize = gtk_gl_area_finalize;
+   gobject_class->set_property = gtk_gl_area_set_property;
+   gobject_class->get_property = gtk_gl_area_get_property;
+@@ -1707,6 +1802,8 @@ gtk_gl_area_init (GtkGLArea *area)
+   priv->needs_render = TRUE;
+   priv->required_gl_version = 0;
+   priv->allowed_apis = GDK_GL_API_GL | GDK_GL_API_GLES;
++  priv->stereo_view_width = -1;
++  priv->stereo_view_height = -1;
+ }
+ 
+ /**
+@@ -2246,6 +2343,96 @@ gtk_gl_area_get_stereo (GtkGLArea *area)
+   return priv->stereo;
+ }
+ 
++/**
++ * gtk_gl_area_set_stereo_view_size:
++ * @area: a `GtkGLArea`
++ * @width: the width of one view in pixels, or -1
++ * @height: the height of one view in pixels, or -1
++ *
++ * Sets the size at which each view of a stereo area is rendered.
++ *
++ * By default, and when @width or @height is -1, each view has the size of
++ * the area in device pixels. A program whose picture has a resolution of its
++ * own (a video's views, a scene at a chosen render resolution) sets it here:
++ * [signal@Gtk.GLArea::render] then draws each view into a framebuffer of
++ * that size, [signal@Gtk.GLArea::resize] gives that size, and the compositor
++ * resizes the views once, to the place of the area. The area keeps its size
++ * and its place in the window.
++ *
++ * The size is used only while the area is shown per eye. An area that
++ * cannot be (see [property@Gtk.GLArea:stereo-error]) renders its left view
++ * alone at the size of the area, as an area without stereo does. In both
++ * cases the viewport is set to the size of the framebuffer before each
++ * emission of [signal@Gtk.GLArea::render] of an area that asks for stereo.
++ *
++ * Since: 4.24
++ */
++void
++gtk_gl_area_set_stereo_view_size (GtkGLArea *area,
++                                  int        width,
++                                  int        height)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++  g_return_if_fail (width >= -1 && height >= -1);
++
++  if (width == 0)
++    width = -1;
++  if (height == 0)
++    height = -1;
++
++  if (priv->stereo_view_width == width && priv->stereo_view_height == height)
++    return;
++
++  g_object_freeze_notify (G_OBJECT (area));
++
++  if (priv->stereo_view_width != width)
++    {
++      priv->stereo_view_width = width;
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_VIEW_WIDTH]);
++    }
++  if (priv->stereo_view_height != height)
++    {
++      priv->stereo_view_height = height;
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_VIEW_HEIGHT]);
++    }
++
++  g_object_thaw_notify (G_OBJECT (area));
++
++  if (priv->stereo && gtk_widget_get_realized (GTK_WIDGET (area)))
++    {
++      priv->needs_resize = TRUE;
++      priv->needs_render = TRUE;
++      gtk_widget_queue_draw (GTK_WIDGET (area));
++    }
++}
++
++/**
++ * gtk_gl_area_get_stereo_view_size:
++ * @area: a `GtkGLArea`
++ * @width: (out) (optional): return location for the width of one view, or -1
++ * @height: (out) (optional): return location for the height of one view, or -1
++ *
++ * Gets the size set with [method@Gtk.GLArea.set_stereo_view_size].
++ *
++ * Since: 4.24
++ */
++void
++gtk_gl_area_get_stereo_view_size (GtkGLArea *area,
++                                  int       *width,
++                                  int       *height)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++
++  if (width)
++    *width = priv->stereo_view_width;
++  if (height)
++    *height = priv->stereo_view_height;
++}
++
+ /**
+  * gtk_gl_area_get_stereo_shown:
+  * @area: a `GtkGLArea`
+diff --git a/gtk/gtkglarea.h b/gtk/gtkglarea.h
+index 05fd0809d329eb667354ad1f4576b1c778443a24..15a1b175c826e968f1a4e353a8e63b072647603d 100644
+--- a/gtk/gtkglarea.h
++++ b/gtk/gtkglarea.h
+@@ -154,6 +154,14 @@ GDK_AVAILABLE_IN_ALL
+ const GError *  gtk_gl_area_get_stereo_error            (GtkGLArea    *area);
+ GDK_AVAILABLE_IN_ALL
+ GtkGLAreaEye    gtk_gl_area_get_current_eye             (GtkGLArea    *area);
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_set_stereo_view_size        (GtkGLArea    *area,
++                                                         int           width,
++                                                         int           height);
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_get_stereo_view_size        (GtkGLArea    *area,
++                                                         int          *width,
++                                                         int          *height);
+ 
+ GDK_AVAILABLE_IN_ALL
+ void            gtk_gl_area_set_error                   (GtkGLArea    *area,

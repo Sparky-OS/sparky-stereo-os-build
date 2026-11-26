@@ -1,0 +1,31 @@
+celluloid (0.29-3+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: 3D films in 3D (queue row 137, stereo3d-3d-films).
+    The video area is a stereo GtkGLArea for a film whose frames hold two
+    views: each view is rendered once from libmpv (MPV_RENDER_PARAM_STEREO_VIEW,
+    mpv-dmo +stereo3d12) at the size libmpv gives for it, and the area
+    declares the pair as full side by side stereo content, on Wayland and on
+    X11 (gtk4 +stereo3d3). Nothing is resized before the compositor. A 2D
+    film is rendered as before, one picture, equal in both eyes.
+  * The menu's 3D options are the edition's and no others: Enable 3D, 3D
+    Input Format (the stereo layer's list, in its words), Swap left and right
+    eyes, Save the correction into the file, Display Settings. The input
+    format is offered for every film with a picture, shown in 3D or flat, so
+    that a film that declares nothing can be given its packing; the swap and
+    the save are offered only while the film is shown in 3D.
+  * A correction is kept beside the film's resume position (mpv's watch-later
+    entry) and the film's file is written only when the person chooses the
+    save (libstereo-av: Matroska StereoMode with mkvpropedit, MP4 st3d, read
+    back); after a save the entry's correction is cleared and the option is
+    unmarked. A refused save says why and keeps the correction.
+  * A film that cannot be shown per eye is shown flat, its left view alone,
+    and the person is told once what failed and why: a window drawn by the
+    processor on Wayland is said as such, every other cause points to the
+    log, which keeps GTK's exact reason. A film without an audio track says
+    "This film has no sound.". The window fits one view of a pair.
+  * The new sentences are in the nine catalogues of the edition's languages
+    (de, es, fr, ja, ko, pl, pt_BR, zh_CN, zh_TW); English is the source.
+  * Depends on libmpv2 (>= 1:0.41.0-dmo9+stereo3d12~), which brings the
+    render parameter, mkvtoolnix (the save into Matroska), kde-cli-tools and
+    kscreen (Display Settings); builds with libstereo-policy-dev and
+    libstereo-av-dev.

@@ -1,0 +1,3086 @@
+Description: Show 3D films in 3D: one view per eye in a stereo GtkGLArea, the input corrections, the save into the file
+ Celluloid's video area becomes a stereo GtkGLArea for a film whose frames
+ hold two views (libmpv's MPV_RENDER_PARAM_STEREO_VIEW says so): each view is
+ rendered once, at the size libmpv gives so that nothing is resized before the
+ compositor, and the area declares the pair as full side by side stereo
+ content. A 2D film is rendered as before.
+ The menu gains "3D" with the edition's options and no others: Enable 3D,
+ 3D Input Format (the stereo layer's list, offered for every film with a
+ picture, shown in 3D or flat, so that a film that declares nothing can be
+ given its packing), Swap left and right eyes and Save the correction into the
+ file (both only for a film shown in 3D), Display Settings.
+ A correction is kept where Celluloid keeps the film's resume position
+ (mpv's watch-later entry, video-stereo-input and video-stereo-swap), and the
+ film's file is written only when the person chooses the save (libstereo-av:
+ Matroska StereoMode, MP4 st3d, read back); the entry's correction is then
+ cleared. A film that cannot be shown per eye is shown flat, left view alone,
+ and the person is told once what failed and why (a window drawn by the
+ processor on Wayland, or else the log, which keeps GTK's exact reason); a
+ film without an audio track says "This film has no sound.". The window fits
+ one view of a pair. The new sentences are in
+ the nine catalogues of the edition's languages, the menu's words taken from
+ the stereo layer's catalogues.
+ Upstream does not take changes written with AI assistance (its README), so
+ this is the edition's patch and is not offered.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, milestone 3 and its review round)
+Forwarded: not-needed
+Last-Update: 2026-11-26
+---
+diff --git a/data/io.github.celluloid_player.Celluloid.gschema.xml b/data/io.github.celluloid_player.Celluloid.gschema.xml
+index bdac916817a5546e75b992eecd0ba7ff18a9fd2d..6691032ba8f6009509a12443393d1cc2d8750ed1 100644
+--- a/data/io.github.celluloid_player.Celluloid.gschema.xml
++++ b/data/io.github.celluloid_player.Celluloid.gschema.xml
+@@ -178,6 +178,13 @@
+ 			<description>
+ 			</description>
+ 		</key>
++		<key name="stereo-enable" type="b">
++			<default>true</default>
++			<summary>Enable 3D</summary>
++			<description>
++				Show 3D films in 3D. When it is off, a 3D film is shown flat.
++			</description>
++		</key>
+ 	</schema>
+ 
+ 	<schema	path="/io/github/celluloid-player/celluloid/window-state/"
+diff --git a/po/POTFILES.in b/po/POTFILES.in
+index 3ad3f2de521f51822f31bfb62af9e6df37f20084..ea7e09628a840f2fbebe3f802d6ab4cd6b8ece19 100644
+--- a/po/POTFILES.in
++++ b/po/POTFILES.in
+@@ -31,3 +31,4 @@ src/celluloid-shortcuts-window.c
+ src/celluloid-time-label.c
+ src/celluloid-video-area.c
+ src/celluloid-view.c
++src/celluloid-stereo.c
+diff --git a/po/de.po b/po/de.po
+index 4659a98787aeaf813ba7cab6868f731cc49169a9..67b86f860f834b441f8798039e6fdd70af08b646 100644
+--- a/po/de.po
++++ b/po/de.po
+@@ -1674,3 +1674,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "_Wiedergabeliste ein/aus"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "Automatisch"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "Nicht 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "Nebeneinander, linkes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "Nebeneinander, rechtes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "Übereinander, linkes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "Übereinander, rechtes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "Zeilen, linkes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "Zeilen, rechtes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "Spalten, linkes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "Spalten, rechtes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "Schachbrett, linkes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "Schachbrett, rechtes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "Nebeneinander im Quincunx-Raster, linkes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "Nebeneinander im Quincunx-Raster, rechtes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "Bilder im Wechsel, linkes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "Bilder im Wechsel, rechtes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "Beide Ansichten in einem Block, linkes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "Beide Ansichten in einem Block, rechtes Auge zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "Rot/Cyan"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "Grün/Magenta"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "Nebeneinander, Bild zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "Nebeneinander, Tiefe zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "Übereinander, Bild zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "Übereinander, Tiefe zuerst"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "Vier Zeilen: Bild, Tiefe, Grafik, Grafiktiefe"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "Vier Viertel: Bild, Tiefe, Hintergrund, Hintergrundtiefe"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "Verschachtelt"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "Eine Ansicht nach der anderen"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "Anaglyphe"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "Bild und Tiefe"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "3D aktivieren"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "3D-Eingabeformat"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "Linkes und rechtes Auge vertauschen"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "Korrektur in die Datei speichern"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "Dieser Film hat keinen Ton."
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "%1$s wurde nicht verändert und die Korrektur bleibt erhalten: %2$s"
++
++msgid "Display Settings…"
++msgstr "Anzeigeeinstellungen …"
++
++msgid "Display Settings could not be opened."
++msgstr "Die Anzeigeeinstellungen konnten nicht geöffnet werden."
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Dieser 3D-Film wird flach gezeigt: Das Fenster von Celluloid wird vom Prozessor gezeichnet, nicht von einer Grafikkarte, und ein Bild für jedes Auge braucht eine Grafikkarte."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Dieser 3D-Film wird flach gezeigt: Celluloid konnte dem Desktop kein Bild für jedes Auge geben. Der Grund steht im Systemprotokoll."
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "Die Korrektur wurde in %s gespeichert."
++
++msgid "it is not a file on this computer"
++msgstr "sie ist keine Datei auf diesem Rechner"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "ihr Videodatenstrom gibt selbst ein 3D-Format an, das Vorrang hat"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "diese Art von Datei kann dieses 3D-Format nicht aufnehmen"
++
++msgid "mkvpropedit is not installed"
++msgstr "mkvpropedit ist nicht installiert"
++
++msgid "the file could not be written"
++msgstr "die Datei konnte nicht geschrieben werden"
+diff --git a/po/es.po b/po/es.po
+index 0c3fbbe99147398d96daf833f3f56c2c56403d3a..5885a0e0492905b46ba3fa0f7723225c2b6b5773 100644
+--- a/po/es.po
++++ b/po/es.po
+@@ -1715,3 +1715,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "Mostrar/ocultar la _lista de reproducción"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "Automático"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "No es 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "Lado a lado, ojo izquierdo primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "Lado a lado, ojo derecho primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "Arriba y abajo, ojo izquierdo primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "Arriba y abajo, ojo derecho primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "Filas, ojo izquierdo primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "Filas, ojo derecho primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "Columnas, ojo izquierdo primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "Columnas, ojo derecho primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "Tablero de ajedrez, ojo izquierdo primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "Tablero de ajedrez, ojo derecho primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "Lado a lado en quincunce, ojo izquierdo primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "Lado a lado en quincunce, ojo derecho primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "Fotogramas alternos, ojo izquierdo primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "Fotogramas alternos, ojo derecho primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "Ambas vistas en un bloque, ojo izquierdo primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "Ambas vistas en un bloque, ojo derecho primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "Rojo/cian"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "Verde/magenta"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "Lado a lado, imagen primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "Lado a lado, profundidad primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "Arriba y abajo, imagen primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "Arriba y abajo, profundidad primero"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "Cuatro filas: imagen, profundidad, gráficos, profundidad de los gráficos"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "Cuatro cuartos: imagen, profundidad, fondo, profundidad del fondo"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "Entrelazado"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "Una vista tras otra"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "Anaglifo"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "Imagen y profundidad"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "Activar 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "Formato de entrada 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "Intercambiar los ojos izquierdo y derecho"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "Guardar la corrección en el archivo"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "Esta película no tiene sonido."
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "%1$s no se ha modificado y su corrección se conserva: %2$s"
++
++msgid "Display Settings…"
++msgstr "Configuración de pantalla…"
++
++msgid "Display Settings could not be opened."
++msgstr "No se pudieron abrir los Ajustes de pantalla."
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Esta película 3D se muestra en plano: la ventana de Celluloid la dibuja el procesador, no una tarjeta gráfica, y una imagen para cada ojo necesita una tarjeta gráfica."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Esta película 3D se muestra en plano: Celluloid no pudo entregar al escritorio una imagen para cada ojo. El motivo está escrito en el registro del sistema."
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "La corrección se guardó en %s."
++
++msgid "it is not a file on this computer"
++msgstr "no es un archivo de este equipo"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "su flujo de vídeo declara su propio formato 3D, que tiene prioridad"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "este tipo de archivo no puede contener este formato 3D"
++
++msgid "mkvpropedit is not installed"
++msgstr "mkvpropedit no está instalado"
++
++msgid "the file could not be written"
++msgstr "no se pudo escribir el archivo"
+diff --git a/po/fr.po b/po/fr.po
+index 426ac8d254544ee3d499f5518df1f9d4bbd0efed..277088637ebde2eb29c29621cc1c4d253afcf00d 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -1716,3 +1716,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "Afficher la _liste de lecture"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "Automatique"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "Pas en 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "Côte à côte, œil gauche en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "Côte à côte, œil droit en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "Dessus-dessous, œil gauche en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "Dessus-dessous, œil droit en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "Lignes, œil gauche en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "Lignes, œil droit en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "Colonnes, œil gauche en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "Colonnes, œil droit en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "Damier, œil gauche en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "Damier, œil droit en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "Côte à côte en quinconce, œil gauche en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "Côte à côte en quinconce, œil droit en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "Images alternées, œil gauche en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "Images alternées, œil droit en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "Les deux vues dans un bloc, œil gauche en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "Les deux vues dans un bloc, œil droit en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "Rouge/cyan"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "Vert/magenta"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "Côte à côte, image en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "Côte à côte, profondeur en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "Dessus-dessous, image en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "Dessus-dessous, profondeur en premier"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "Quatre rangées : image, profondeur, graphismes, profondeur des graphismes"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "Quatre quarts : image, profondeur, arrière-plan, profondeur de l'arrière-plan"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "Entrelacé"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "Une vue après l'autre"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "Anaglyphe"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "Image et profondeur"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "Activer la 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "Format d'entrée 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "Inverser les yeux gauche et droit"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "Enregistrer la correction dans le fichier"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "Ce film n’a pas de son."
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "%1$s n'a pas été modifié et sa correction est conservée : %2$s"
++
++msgid "Display Settings…"
++msgstr "Paramètres d’affichage…"
++
++msgid "Display Settings could not be opened."
++msgstr "Impossible d'ouvrir les Réglages de l'écran."
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Ce film 3D est affiché à plat : la fenêtre de Celluloid est dessinée par le processeur, pas par une carte graphique, et une image pour chaque œil demande une carte graphique."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Ce film 3D est affiché à plat : Celluloid n’a pas pu donner au bureau une image pour chaque œil. La raison est écrite dans le journal du système."
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "La correction a été enregistrée dans %s."
++
++msgid "it is not a file on this computer"
++msgstr "ce n’est pas un fichier de cet ordinateur"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "son flux vidéo déclare son propre format 3D, qui est prioritaire"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "ce type de fichier ne peut pas contenir ce format 3D"
++
++msgid "mkvpropedit is not installed"
++msgstr "mkvpropedit n’est pas installé"
++
++msgid "the file could not be written"
++msgstr "le fichier n’a pas pu être écrit"
+diff --git a/po/ja.po b/po/ja.po
+index 32ed2d418bb183ea59f5f8f9ddb65c58cc721bba..3788197cdd41a6f1ed53c6d2d71cedd0942d585b 100644
+--- a/po/ja.po
++++ b/po/ja.po
+@@ -1640,3 +1640,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "プレイリストの表示・非表示(_T)"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "自動"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "3D ではない"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "サイドバイサイド、左目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "サイドバイサイド、右目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "トップアンドボトム、左目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "トップアンドボトム、右目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "行、左目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "行、右目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "列、左目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "列、右目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "チェッカーボード、左目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "チェッカーボード、右目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "サイドバイサイド(五の目)、左目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "サイドバイサイド(五の目)、右目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "フレーム交互、左目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "フレーム交互、右目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "1 つのブロックに両方のビュー、左目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "1 つのブロックに両方のビュー、右目が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "赤/シアン"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "緑/マゼンタ"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "サイドバイサイド、画像が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "サイドバイサイド、深度が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "トップアンドボトム、画像が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "トップアンドボトム、深度が先"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "4 段: 画像、深度、グラフィックス、グラフィックスの深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "4 分割: 画像、深度、背景、背景の深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "インターリーブ"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "ビューを 1 つずつ順に"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "アナグリフ"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "画像と深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "3D を有効にする"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "3D 入力形式"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "左右の目を入れ替える"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "補正をファイルに保存する"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "この映像には音声がありません。"
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "%1$s は変更されず、補正は保持されています: %2$s"
++
++msgid "Display Settings…"
++msgstr "ディスプレイの設定…"
++
++msgid "Display Settings could not be opened."
++msgstr "ディスプレイ設定を開けませんでした。"
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "この 3D 映画は平面で表示しています。Celluloid のウィンドウはグラフィックカードではなくプロセッサーで描画されており、目ごとの画像にはグラフィックカードが必要です。"
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "この 3D 映画は平面で表示しています。Celluloid は目ごとの画像をデスクトップに渡せませんでした。理由はシステムログに書かれています。"
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "補正を %s に保存しました。"
++
++msgid "it is not a file on this computer"
++msgstr "このコンピューター上のファイルではありません"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "映像ストリーム自体が 3D 形式を宣言しており、そちらが優先されます"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "この種類のファイルにはこの 3D 形式を記録できません"
++
++msgid "mkvpropedit is not installed"
++msgstr "mkvpropedit がインストールされていません"
++
++msgid "the file could not be written"
++msgstr "ファイルに書き込めませんでした"
+diff --git a/po/ko.po b/po/ko.po
+index bd0225f1b8a057964aebefca82ea24caebb3c4c5..07c1afed514c13718f4e8b36ccfc58f5d3495f7b 100644
+--- a/po/ko.po
++++ b/po/ko.po
+@@ -1628,3 +1628,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "재생 목록 전환(_T)"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "자동"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "3D 아님"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "좌우 나란히, 왼쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "좌우 나란히, 오른쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "상하, 왼쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "상하, 오른쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "행, 왼쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "행, 오른쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "열, 왼쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "열, 오른쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "체커보드, 왼쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "체커보드, 오른쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "좌우 나란히 퀸컹스, 왼쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "좌우 나란히 퀸컹스, 오른쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "프레임 교대, 왼쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "프레임 교대, 오른쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "한 블록에 두 뷰, 왼쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "한 블록에 두 뷰, 오른쪽 눈 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "빨강/청록"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "초록/자홍"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "좌우 나란히, 영상 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "좌우 나란히, 깊이 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "상하, 영상 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "상하, 깊이 먼저"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "네 줄: 영상, 깊이, 그래픽, 그래픽 깊이"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "네 구역: 영상, 깊이, 배경, 배경 깊이"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "인터리브"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "뷰를 하나씩 차례로"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "애너글리프"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "영상과 깊이"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "3D 사용"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "3D 입력 형식"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "왼쪽과 오른쪽 눈 바꾸기"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "보정을 파일에 저장"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "이 영상에는 소리가 없습니다."
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "%1$s 파일은 변경되지 않았고 보정은 유지됩니다: %2$s"
++
++msgid "Display Settings…"
++msgstr "디스플레이 설정…"
++
++msgid "Display Settings could not be opened."
++msgstr "디스플레이 설정을 열 수 없습니다."
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "이 3D 영화는 평면으로 표시됩니다. Celluloid 창은 그래픽 카드가 아니라 프로세서가 그리며, 눈마다 따로 보이는 그림에는 그래픽 카드가 필요합니다."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "이 3D 영화는 평면으로 표시됩니다. Celluloid가 눈마다 따로 보이는 그림을 데스크톱에 넘기지 못했습니다. 이유는 시스템 로그에 기록되어 있습니다."
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "보정을 %s에 저장했습니다."
++
++msgid "it is not a file on this computer"
++msgstr "이 컴퓨터에 있는 파일이 아닙니다"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "비디오 스트림이 자체 3D 형식을 선언하며 그것이 우선합니다"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "이 종류의 파일에는 이 3D 형식을 담을 수 없습니다"
++
++msgid "mkvpropedit is not installed"
++msgstr "mkvpropedit가 설치되어 있지 않습니다"
++
++msgid "the file could not be written"
++msgstr "파일에 쓸 수 없었습니다"
+diff --git a/po/pl.po b/po/pl.po
+index b325527782bc6fbdb5125f66e6170e2c22bc827e..99fad0ca16d4676ab1f0e7ed1a415c4e683edc31 100644
+--- a/po/pl.po
++++ b/po/pl.po
+@@ -1679,3 +1679,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "_Lista odtwarzania"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "Automatycznie"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "Nie 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "Obok siebie, lewe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "Obok siebie, prawe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "Góra i dół, lewe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "Góra i dół, prawe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "Wiersze, lewe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "Wiersze, prawe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "Kolumny, lewe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "Kolumny, prawe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "Szachownica, lewe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "Szachownica, prawe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "Obok siebie w kwinkunksie, lewe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "Obok siebie w kwinkunksie, prawe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "Klatki na przemian, lewe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "Klatki na przemian, prawe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "Oba widoki w jednym bloku, lewe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "Oba widoki w jednym bloku, prawe oko pierwsze"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "Czerwony/cyjan"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "Zielony/magenta"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "Obok siebie, obraz pierwszy"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "Obok siebie, głębia pierwsza"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "Góra i dół, obraz pierwszy"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "Góra i dół, głębia pierwsza"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "Cztery wiersze: obraz, głębia, grafika, głębia grafiki"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "Cztery ćwiartki: obraz, głębia, tło, głębia tła"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "Z przeplotem"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "Jeden widok po drugim"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "Anaglif"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "Obraz i głębia"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "Włącz 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "Format wejściowy 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "Zamień lewe i prawe oko"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "Zapisz korektę w pliku"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "Ten film nie ma dźwięku."
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "Plik %1$s nie został zmieniony, a jego korekta jest zachowana: %2$s"
++
++msgid "Display Settings…"
++msgstr "Ustawienia ekranu…"
++
++msgid "Display Settings could not be opened."
++msgstr "Nie udało się otworzyć ustawień wyświetlacza."
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Ten film 3D jest pokazywany płasko: okno Celluloid rysuje procesor, a nie karta graficzna, a obraz dla każdego oka wymaga karty graficznej."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Ten film 3D jest pokazywany płasko: Celluloid nie mógł przekazać pulpitowi obrazu dla każdego oka. Przyczyna jest zapisana w dzienniku systemowym."
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "Poprawkę zapisano w pliku %s."
++
++msgid "it is not a file on this computer"
++msgstr "to nie jest plik na tym komputerze"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "jego strumień wideo sam deklaruje format 3D, który ma pierwszeństwo"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "ten rodzaj pliku nie może zawierać tego formatu 3D"
++
++msgid "mkvpropedit is not installed"
++msgstr "mkvpropedit nie jest zainstalowany"
++
++msgid "the file could not be written"
++msgstr "nie udało się zapisać pliku"
+diff --git a/po/pt_BR.po b/po/pt_BR.po
+index 8c5b8345f130fe12f058f32ab5f6f4da3227fda2..0e9afee079f06cd269c4709fad4ce15628b13c19 100644
+--- a/po/pt_BR.po
++++ b/po/pt_BR.po
+@@ -1736,3 +1736,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "_Mostrar Lista de Reprodução"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "Automático"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "Não é 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "Lado a lado, olho esquerdo primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "Lado a lado, olho direito primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "Em cima e embaixo, olho esquerdo primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "Em cima e embaixo, olho direito primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "Linhas, olho esquerdo primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "Linhas, olho direito primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "Colunas, olho esquerdo primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "Colunas, olho direito primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "Xadrez, olho esquerdo primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "Xadrez, olho direito primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "Lado a lado em quincôncio, olho esquerdo primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "Lado a lado em quincôncio, olho direito primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "Quadros alternados, olho esquerdo primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "Quadros alternados, olho direito primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "As duas vistas em um bloco, olho esquerdo primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "As duas vistas em um bloco, olho direito primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "Vermelho/ciano"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "Verde/magenta"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "Lado a lado, imagem primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "Lado a lado, profundidade primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "Em cima e embaixo, imagem primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "Em cima e embaixo, profundidade primeiro"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "Quatro faixas: imagem, profundidade, gráficos, profundidade dos gráficos"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "Quatro quartos: imagem, profundidade, fundo, profundidade do fundo"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "Entrelaçado"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "Uma vista após a outra"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "Anaglifo"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "Imagem e profundidade"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "Ativar 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "Formato de entrada 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "Trocar o olho esquerdo e o direito"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "Salvar a correção no arquivo"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "Este filme não tem som."
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "%1$s não foi alterado e sua correção continua guardada: %2$s"
++
++msgid "Display Settings…"
++msgstr "Configurações de tela…"
++
++msgid "Display Settings could not be opened."
++msgstr "Não foi possível abrir as Configurações de tela."
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Este filme 3D é exibido plano: a janela do Celluloid é desenhada pelo processador, não por uma placa de vídeo, e uma imagem para cada olho precisa de uma placa de vídeo."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Este filme 3D é exibido plano: o Celluloid não conseguiu entregar à área de trabalho uma imagem para cada olho. O motivo está escrito no registro do sistema."
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "A correção foi salva em %s."
++
++msgid "it is not a file on this computer"
++msgstr "não é um arquivo deste computador"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "o fluxo de vídeo declara seu próprio formato 3D, que tem prioridade"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "este tipo de arquivo não pode conter este formato 3D"
++
++msgid "mkvpropedit is not installed"
++msgstr "o mkvpropedit não está instalado"
++
++msgid "the file could not be written"
++msgstr "não foi possível gravar o arquivo"
+diff --git a/po/zh_CN.po b/po/zh_CN.po
+index 8e5914efbd88f40bd78ae786b11ddb83249367a2..592ff7f0d644911d4d3575c943f19cb68b4a008c 100644
+--- a/po/zh_CN.po
++++ b/po/zh_CN.po
+@@ -1623,3 +1623,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "切换播放列表(_T)"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "自动"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "非 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "左右并排,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "左右并排,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "上下排列,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "上下排列,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "行交错,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "行交错,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "列交错,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "列交错,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "棋盘格,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "棋盘格,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "左右并排梅花采样,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "左右并排梅花采样,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "帧交替,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "帧交替,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "两个视图在同一块中,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "两个视图在同一块中,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "红/青"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "绿/品红"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "左右并排,图像在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "左右并排,深度在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "上下排列,图像在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "上下排列,深度在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "四行:图像、深度、图形、图形深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "四等分:图像、深度、背景、背景深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "交错"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "视图依次出现"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "红蓝立体"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "图像和深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "启用 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "3D 输入格式"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "交换左右眼"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "将校正保存到文件"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "此影片没有声音。"
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "%1$s 未被更改,其校正仍然保留:%2$s"
++
++msgid "Display Settings…"
++msgstr "显示设置…"
++
++msgid "Display Settings could not be opened."
++msgstr "无法打开显示设置。"
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "此 3D 影片以平面方式显示：Celluloid 的窗口由处理器绘制，而不是由显卡绘制，而为每只眼睛分别提供画面需要显卡。"
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "此 3D 影片以平面方式显示：Celluloid 无法向桌面提供每只眼睛各自的画面。原因已写入系统日志。"
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "已将校正保存到 %s。"
++
++msgid "it is not a file on this computer"
++msgstr "它不是此计算机上的文件"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "其视频流自身声明了 3D 格式，并且优先"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "此类文件无法保存这种 3D 格式"
++
++msgid "mkvpropedit is not installed"
++msgstr "未安装 mkvpropedit"
++
++msgid "the file could not be written"
++msgstr "无法写入文件"
+diff --git a/po/zh_TW.po b/po/zh_TW.po
+index a0857e4aa23d92946a5478496d31166a6299f41b..0527e4616caa395218a2b3e8ab316ec574ae9eed 100644
+--- a/po/zh_TW.po
++++ b/po/zh_TW.po
+@@ -1603,3 +1603,179 @@
+ 
+ #~ msgid "_Toggle Playlist"
+ #~ msgstr "切換播放清單 (_T)"
++
++# Sparky Stereo OS: the 3D menu (the words of the stereo layer, and Celluloid's own sentences)
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Automatic"
++msgstr "自動"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Not 3D"
++msgstr "非 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, left eye first"
++msgstr "左右並排,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, right eye first"
++msgstr "左右並排,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, left eye first"
++msgstr "上下排列,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, right eye first"
++msgstr "上下排列,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, left eye first"
++msgstr "列交錯,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Rows, right eye first"
++msgstr "列交錯,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, left eye first"
++msgstr "行交錯,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Columns, right eye first"
++msgstr "行交錯,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, left eye first"
++msgstr "棋盤格,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Checkerboard, right eye first"
++msgstr "棋盤格,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, left eye first"
++msgstr "左右並排梅花取樣,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side quincunx, right eye first"
++msgstr "左右並排梅花取樣,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, left eye first"
++msgstr "影格交替,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Frames in turn, right eye first"
++msgstr "影格交替,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, left eye first"
++msgstr "兩個視圖在同一區塊中,左眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Both views in one block, right eye first"
++msgstr "兩個視圖在同一區塊中,右眼在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Red/cyan"
++msgstr "紅/青"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Green/magenta"
++msgstr "綠/洋紅"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, picture first"
++msgstr "左右並排,影像在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Side by side, depth first"
++msgstr "左右並排,深度在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, picture first"
++msgstr "上下排列,影像在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Top and bottom, depth first"
++msgstr "上下排列,深度在前"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four rows: picture, depth, graphics, graphics depth"
++msgstr "四列:影像、深度、圖形、圖形深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Four quarters: picture, depth, background, background depth"
++msgstr "四等分:影像、深度、背景、背景深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Interleaved"
++msgstr "交錯"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "One view after the other"
++msgstr "視圖依序出現"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Anaglyph"
++msgstr "紅藍立體"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Picture and depth"
++msgstr "影像與深度"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Enable 3D"
++msgstr "啟用 3D"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "3D Input Format"
++msgstr "3D 輸入格式"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Swap left and right eyes"
++msgstr "交換左右眼"
++
++msgctxt "Stereo::FileChoiceMenu"
++msgid "Save the correction into the file"
++msgstr "將校正儲存到檔案"
++
++msgctxt "Stereo::NoSound"
++msgid "This film has no sound."
++msgstr "此影片沒有聲音。"
++
++#, c-format
++msgid "%1$s was not changed and its correction is kept: %2$s"
++msgstr "%1$s 未被變更,其校正仍然保留:%2$s"
++
++msgid "Display Settings…"
++msgstr "顯示設定…"
++
++msgid "Display Settings could not be opened."
++msgstr "無法開啟顯示設定。"
++
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "此 3D 影片以平面方式顯示：Celluloid 的視窗由處理器繪製，而不是由顯示卡繪製，而為每隻眼睛分別提供畫面需要顯示卡。"
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "此 3D 影片以平面方式顯示：Celluloid 無法向桌面提供每隻眼睛各自的畫面。原因已寫入系統記錄檔。"
++
++#, c-format
++msgid "The correction was saved into %s."
++msgstr "已將校正儲存到 %s。"
++
++msgid "it is not a file on this computer"
++msgstr "它不是這部電腦上的檔案"
++
++msgid "its video stream declares its own 3D format, which comes first"
++msgstr "其視訊串流本身宣告了 3D 格式，並且優先"
++
++msgid "this kind of file cannot hold this 3D format"
++msgstr "此類檔案無法儲存這種 3D 格式"
++
++msgid "mkvpropedit is not installed"
++msgstr "未安裝 mkvpropedit"
++
++msgid "the file could not be written"
++msgstr "無法寫入檔案"
+diff --git a/src/celluloid-controller-actions.c b/src/celluloid-controller-actions.c
+index df841ec9df255b865c41cf50a2985db1cdb9be37..06422a22bcd6bea4379ccb21efef018bedea4aff 100644
+--- a/src/celluloid-controller-actions.c
++++ b/src/celluloid-controller-actions.c
+@@ -19,6 +19,7 @@
+ 
+ #include <glib/gi18n.h>
+ 
++#include "celluloid-stereo.h"
+ #include "celluloid-controller-actions.h"
+ #include "celluloid-controller-private.h"
+ #include "celluloid-common.h"
+@@ -671,4 +672,5 @@ celluloid_controller_action_register_actions(CelluloidController *controller)
+ 						controller );
+ 
+ 	bind_properties(controller);
++	celluloid_stereo_attach(controller);
+ }
+diff --git a/src/celluloid-controller.c b/src/celluloid-controller.c
+index c469638bf307f9fff3baf649a92c364234088d54..f907545e44c459276beffa591075dfbdcfa2432a 100644
+--- a/src/celluloid-controller.c
++++ b/src/celluloid-controller.c
+@@ -26,6 +26,7 @@
+ #endif
+ #include <locale.h>
+ #include <adwaita.h>
++#include "celluloid-stereo.h"
+ #include "celluloid-controller-private.h"
+ #include "celluloid-controller.h"
+ #include "celluloid-controller-actions.h"
+@@ -493,8 +494,7 @@ render_handler(CelluloidView *view, gpointer data)
+ 
+ 	celluloid_view_get_video_area_geometry
+ 		(controller->view, &width, &height);
+-	celluloid_model_render_frame
+-		(controller->model, scale*width, scale*height);
++	celluloid_stereo_render(controller, scale*width, scale*height);
+ }
+ 
+ static void
+diff --git a/src/celluloid-menu.c b/src/celluloid-menu.c
+index b0a42344901f4be9a8e5898f113b1d4bfee212c7..794911979a619167d5ce9a867658aafd87d7bf53 100644
+--- a/src/celluloid-menu.c
++++ b/src/celluloid-menu.c
+@@ -22,6 +22,7 @@
+ #include <glib-object.h>
+ #include <glib/gi18n.h>
+ 
++#include "celluloid-stereo.h"
+ #include "celluloid-menu.h"
+ #include "celluloid-common.h"
+ 
+@@ -222,6 +223,7 @@ celluloid_menu_build_full(	GMenu *menu,
+ 	GMenu *audio_menu = NULL;
+ 	GMenu *subtitle_menu = NULL;
+ 	GMenu *disc_menu = NULL;
++	GMenu *stereo_menu = celluloid_stereo_build_menu();
+ 
+ 	split_track_list
+ 		(track_list, &audio_tracks, &video_tracks, &subtitle_tracks);
+@@ -245,6 +247,7 @@ celluloid_menu_build_full(	GMenu *menu,
+ 			CELLULOID_MENU_SUBMENU(_("_Video Track"), video_menu),
+ 			CELLULOID_MENU_SUBMENU(_("_Audio Track"), audio_menu),
+ 			CELLULOID_MENU_SUBMENU(_("S_ubtitle Track"), subtitle_menu),
++			CELLULOID_MENU_SUBMENU(_("_3D"), stereo_menu),
+ 			CELLULOID_MENU_SUBMENU(_("_View"), NULL),
+ 			CELLULOID_MENU_ITEM(_("_Toggle Controls"), "win.toggle-controls"),
+ 			CELLULOID_MENU_ITEM(_("_Fullscreen"), "win.toggle-fullscreen"),
+@@ -262,6 +265,7 @@ celluloid_menu_build_full(	GMenu *menu,
+ 	g_object_unref(audio_menu);
+ 	g_object_unref(subtitle_menu);
+ 	g_object_unref(disc_menu);
++	g_object_unref(stereo_menu);
+ }
+ 
+ void
+@@ -273,6 +277,7 @@ celluloid_menu_build_menu_btn(GMenu *menu, const GPtrArray *track_list)
+ 	GMenu *video_menu = NULL;
+ 	GMenu *audio_menu = NULL;
+ 	GMenu *subtitle_menu = NULL;
++	GMenu *stereo_menu = celluloid_stereo_build_menu();
+ 
+ 	split_track_list
+ 		(track_list, &audio_tracks, &video_tracks, &subtitle_tracks);
+@@ -290,6 +295,7 @@ celluloid_menu_build_menu_btn(GMenu *menu, const GPtrArray *track_list)
+ 			CELLULOID_MENU_SUBMENU(_("_Video Track"), video_menu),
+ 			CELLULOID_MENU_SUBMENU(_("_Audio Track"), audio_menu),
+ 			CELLULOID_MENU_SUBMENU(_("S_ubtitle Track"), subtitle_menu),
++			CELLULOID_MENU_SUBMENU(_("_3D"), stereo_menu),
+ 			CELLULOID_MENU_SEPARATOR,
+ 			CELLULOID_MENU_ITEM(_("_Preferences"), "win.show-preferences-dialog"),
+ 			CELLULOID_MENU_ITEM(_("_Keyboard Shortcuts"), "win.show-shortcuts-dialog"),
+@@ -304,6 +310,7 @@ celluloid_menu_build_menu_btn(GMenu *menu, const GPtrArray *track_list)
+ 	g_object_unref(video_menu);
+ 	g_object_unref(audio_menu);
+ 	g_object_unref(subtitle_menu);
++	g_object_unref(stereo_menu);
+ }
+ 
+ void
+diff --git a/src/celluloid-model.c b/src/celluloid-model.c
+index a7611a00b00d6811ffc326b9cb2c8165c0264ea7..013c563773b8bc92b72009236d269404f9d95de3 100644
+--- a/src/celluloid-model.c
++++ b/src/celluloid-model.c
+@@ -1278,6 +1278,18 @@ celluloid_model_get_video_geometry(	CelluloidModel *model,
+ 
+ 	celluloid_mpv_get_property(mpv, "dwidth", MPV_FORMAT_INT64, width);
+ 	celluloid_mpv_get_property(mpv, "dheight", MPV_FORMAT_INT64, height);
++
++	/* mpv hands a 3D film over as its two views side by side, and the
++	 * frame then has the shape of both: the window shows one view. */
++	gchar *stereo_in =	celluloid_mpv_get_property_string
++				(mpv, "video-out-params/stereo-in");
++
++	if(g_strcmp0(stereo_in, "sbsl") == 0 && *width >= 2)
++	{
++		*width /= 2;
++	}
++
++	mpv_free(stereo_in);
+ }
+ 
+ gchar *
+diff --git a/src/celluloid-mpv.c b/src/celluloid-mpv.c
+index fc4d04aa4b70ce7c69dff172866adc908d4e87b9..8bd5f813199d60ea9fbd3d5166c381a0d336570d 100644
+--- a/src/celluloid-mpv.c
++++ b/src/celluloid-mpv.c
+@@ -693,7 +693,13 @@ celluloid_mpv_get_render_context(CelluloidMpv *mpv)
+ 	return get_private(mpv)->render_ctx;
+ }
+ 
+-inline gboolean
++inline mpv_handle *
++celluloid_mpv_get_mpv_handle(CelluloidMpv *mpv)
++{
++	return get_private(mpv)->mpv_ctx;
++}
++
++gboolean
+ celluloid_mpv_get_use_opengl_cb(CelluloidMpv *mpv)
+ {
+ 	return get_private(mpv)->use_opengl;
+diff --git a/src/celluloid-mpv.h b/src/celluloid-mpv.h
+index 01048168b1f25fa01b5523601ac2de9c8caa3ef8..a8ebc5fb68e80442a465f636ab8069a5fc8aa722 100644
+--- a/src/celluloid-mpv.h
++++ b/src/celluloid-mpv.h
+@@ -57,6 +57,9 @@ celluloid_mpv_new(gint64 wid);
+ mpv_render_context *
+ celluloid_mpv_get_render_context(CelluloidMpv *mpv);
+ 
++mpv_handle *
++celluloid_mpv_get_mpv_handle(CelluloidMpv *mpv);
++
+ gboolean
+ celluloid_mpv_get_use_opengl_cb(CelluloidMpv *mpv);
+ 
+diff --git a/src/celluloid-player-options.c b/src/celluloid-player-options.c
+index 414ebe5bd2886ebc6265d5807e9e79ea4c896970..95429bafe46ba13da1a24cf45f663ebf6edd967a 100644
+--- a/src/celluloid-player-options.c
++++ b/src/celluloid-player-options.c
+@@ -255,6 +255,18 @@ get_video_dimensions(CelluloidMpv *mpv, gint64 dim[2])
+ 	rc |=	celluloid_mpv_get_property
+ 		(mpv, "dheight", MPV_FORMAT_INT64, &dim[1]);
+ 
++	/* mpv hands a 3D film over as its two views side by side, and the
++	 * frame then has the shape of both: the window shows one view. */
++	gchar *stereo_in =	celluloid_mpv_get_property_string
++				(mpv, "video-out-params/stereo-in");
++
++	if(g_strcmp0(stereo_in, "sbsl") == 0 && dim[0] >= 2)
++	{
++		dim[0] /= 2;
++	}
++
++	mpv_free(stereo_in);
++
+ 	return (rc >= 0);
+ }
+ 
+diff --git a/src/celluloid-player.c b/src/celluloid-player.c
+index 04b16d298fa04cae653b3f74ce63475cf8c9044c..a677c49e0691727b1e27f93d70fb9050984551d2 100644
+--- a/src/celluloid-player.c
++++ b/src/celluloid-player.c
+@@ -578,6 +578,7 @@ apply_default_options(CelluloidPlayer *player)
+ 			{"screenshot-directory", screenshot_dir},
+ 			{"screenshot-template", "%f-%P"},
+ 			{"slang", "auto"},
++			{"reset-on-next-file", "video-stereo-input,video-stereo-swap"},
+ 			{NULL, NULL} };
+ 
+ 	for(gint i = 0; options[i].name; i++)
+diff --git a/src/celluloid-stereo.c b/src/celluloid-stereo.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..f0cc3b102fdf1688cd5b1d31b976f1a170f1408c
+--- /dev/null
++++ b/src/celluloid-stereo.c
+@@ -0,0 +1,1075 @@
++/*
++ * Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * This file is part of Celluloid.
++ *
++ * Celluloid is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * Celluloid is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with Celluloid.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <glib.h>
++#include <glib/gi18n.h>
++#include <gtk/gtk.h>
++#include <epoxy/gl.h>
++#include <mpv/client.h>
++#include <mpv/render.h>
++#include <mpv/render_gl.h>
++#include <stereo-policy.h>
++#include <stereo-mark.h>
++
++#ifdef GDK_WINDOWING_WAYLAND
++#include <gdk/wayland/gdkwayland.h>
++#endif
++
++#include "celluloid-stereo.h"
++#include "celluloid-controller-private.h"
++#include "celluloid-main-window.h"
++#include "celluloid-model.h"
++#include "celluloid-mpv.h"
++#include "celluloid-video-area.h"
++#include "celluloid-view.h"
++#include "celluloid-def.h"
++
++#define STEREO_KEY "celluloid-stereo"
++
++/* The packings a film can come in, with the words the edition's stereo layer
++ * shows for them (Stereo::FileChoiceMenu), the value of mpv's
++ * video-stereo-input for views squeezed into the frame and for views at
++ * their own size, and the stereo policy's layout for the save into the file.
++ *
++ * The list follows H.264 Table D-9 and H.265 Table D.8 (frame packing
++ * arrangement types 0 to 5 with quincunx sampling), RFC 9559 section
++ * 5.1.4.1.28.3 (StereoMode 1 to 14) and the layer's depth layouts. mpv takes
++ * every packing apart; nothing here decodes.
++ */
++enum
++{
++	GROUP_TOP,
++	GROUP_WHOLE,
++	GROUP_INTERLEAVED,
++	GROUP_SEQUENCE,
++	GROUP_ANAGLYPH,
++	GROUP_DEPTH,
++	GROUP_N
++};
++
++typedef struct
++{
++	const gchar *word;
++	const gchar *label;
++	const gchar *half;
++	const gchar *full;
++	gint group;
++	gint layout;
++	gint order;
++	gint anaglyph;
++}
++StereoInput;
++
++static const StereoInput inputs[] =
++{
++	{"automatic", NC_("Stereo::FileChoiceMenu", "Automatic"), "no", "no", GROUP_TOP, STEREO_POLICY_LAYOUT_NONE, 0, 0},
++	{"mono", NC_("Stereo::FileChoiceMenu", "Not 3D"), "mono", "mono", GROUP_TOP, STEREO_POLICY_LAYOUT_NONE, 0, 0},
++	{"sideBySideLeftFirst", NC_("Stereo::FileChoiceMenu", "Side by side, left eye first"), "sbs2l", "sbsl", GROUP_WHOLE, STEREO_POLICY_LAYOUT_SIDE_BY_SIDE, STEREO_POLICY_LEFT_FIRST, 0},
++	{"sideBySideRightFirst", NC_("Stereo::FileChoiceMenu", "Side by side, right eye first"), "sbs2r", "sbsr", GROUP_WHOLE, STEREO_POLICY_LAYOUT_SIDE_BY_SIDE, STEREO_POLICY_RIGHT_FIRST, 0},
++	{"topBottomLeftFirst", NC_("Stereo::FileChoiceMenu", "Top and bottom, left eye first"), "ab2l", "abl", GROUP_WHOLE, STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM, STEREO_POLICY_LEFT_FIRST, 0},
++	{"topBottomRightFirst", NC_("Stereo::FileChoiceMenu", "Top and bottom, right eye first"), "ab2r", "abr", GROUP_WHOLE, STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM, STEREO_POLICY_RIGHT_FIRST, 0},
++	{"rowInterleavedLeftFirst", NC_("Stereo::FileChoiceMenu", "Rows, left eye first"), "irl", "irl", GROUP_INTERLEAVED, STEREO_POLICY_LAYOUT_ROWS, STEREO_POLICY_LEFT_FIRST, 0},
++	{"rowInterleavedRightFirst", NC_("Stereo::FileChoiceMenu", "Rows, right eye first"), "irr", "irr", GROUP_INTERLEAVED, STEREO_POLICY_LAYOUT_ROWS, STEREO_POLICY_RIGHT_FIRST, 0},
++	{"columnInterleavedLeftFirst", NC_("Stereo::FileChoiceMenu", "Columns, left eye first"), "icl", "icl", GROUP_INTERLEAVED, STEREO_POLICY_LAYOUT_COLUMNS, STEREO_POLICY_LEFT_FIRST, 0},
++	{"columnInterleavedRightFirst", NC_("Stereo::FileChoiceMenu", "Columns, right eye first"), "icr", "icr", GROUP_INTERLEAVED, STEREO_POLICY_LAYOUT_COLUMNS, STEREO_POLICY_RIGHT_FIRST, 0},
++	{"checkerboardLeftFirst", NC_("Stereo::FileChoiceMenu", "Checkerboard, left eye first"), "checkl", "checkl", GROUP_INTERLEAVED, STEREO_POLICY_LAYOUT_CHECKERBOARD, STEREO_POLICY_LEFT_FIRST, 0},
++	{"checkerboardRightFirst", NC_("Stereo::FileChoiceMenu", "Checkerboard, right eye first"), "checkr", "checkr", GROUP_INTERLEAVED, STEREO_POLICY_LAYOUT_CHECKERBOARD, STEREO_POLICY_RIGHT_FIRST, 0},
++	{"sideBySideQuincunxLeftFirst", NC_("Stereo::FileChoiceMenu", "Side by side quincunx, left eye first"), "sbs2l", "sbsl", GROUP_INTERLEAVED, STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX, STEREO_POLICY_LEFT_FIRST, 0},
++	{"sideBySideQuincunxRightFirst", NC_("Stereo::FileChoiceMenu", "Side by side quincunx, right eye first"), "sbs2r", "sbsr", GROUP_INTERLEAVED, STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX, STEREO_POLICY_RIGHT_FIRST, 0},
++	{"frameSequentialLeftFirst", NC_("Stereo::FileChoiceMenu", "Frames in turn, left eye first"), "al", "al", GROUP_SEQUENCE, STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL, STEREO_POLICY_LEFT_FIRST, 0},
++	{"frameSequentialRightFirst", NC_("Stereo::FileChoiceMenu", "Frames in turn, right eye first"), "ar", "ar", GROUP_SEQUENCE, STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL, STEREO_POLICY_RIGHT_FIRST, 0},
++	{"blockLacedLeftFirst", NC_("Stereo::FileChoiceMenu", "Both views in one block, left eye first"), "al", "al", GROUP_SEQUENCE, STEREO_POLICY_LAYOUT_BLOCK_LACED, STEREO_POLICY_LEFT_FIRST, 0},
++	{"blockLacedRightFirst", NC_("Stereo::FileChoiceMenu", "Both views in one block, right eye first"), "ar", "ar", GROUP_SEQUENCE, STEREO_POLICY_LAYOUT_BLOCK_LACED, STEREO_POLICY_RIGHT_FIRST, 0},
++	{"anaglyphCyanRed", NC_("Stereo::FileChoiceMenu", "Red/cyan"), "arcc", "arcc", GROUP_ANAGLYPH, STEREO_POLICY_LAYOUT_NONE, 0, STEREO_POLICY_ANAGLYPH_RED_CYAN},
++	{"anaglyphGreenMagenta", NC_("Stereo::FileChoiceMenu", "Green/magenta"), "agmc", "agmc", GROUP_ANAGLYPH, STEREO_POLICY_LAYOUT_NONE, 0, STEREO_POLICY_ANAGLYPH_GREEN_MAGENTA},
++	{"depthSideBySidePictureFirst", NC_("Stereo::FileChoiceMenu", "Side by side, picture first"), "depth-sbs", "depth-sbs", GROUP_DEPTH, STEREO_POLICY_LAYOUT_DEPTH_SIDE_BY_SIDE, STEREO_POLICY_PICTURE_FIRST, 0},
++	{"depthSideBySideDepthFirst", NC_("Stereo::FileChoiceMenu", "Side by side, depth first"), "depth-sbs-depth-first", "depth-sbs-depth-first", GROUP_DEPTH, STEREO_POLICY_LAYOUT_DEPTH_SIDE_BY_SIDE, STEREO_POLICY_DEPTH_FIRST, 0},
++	{"depthTopBottomPictureFirst", NC_("Stereo::FileChoiceMenu", "Top and bottom, picture first"), "depth-ab", "depth-ab", GROUP_DEPTH, STEREO_POLICY_LAYOUT_DEPTH_TOP_AND_BOTTOM, STEREO_POLICY_PICTURE_FIRST, 0},
++	{"depthTopBottomDepthFirst", NC_("Stereo::FileChoiceMenu", "Top and bottom, depth first"), "depth-ab-depth-first", "depth-ab-depth-first", GROUP_DEPTH, STEREO_POLICY_LAYOUT_DEPTH_TOP_AND_BOTTOM, STEREO_POLICY_DEPTH_FIRST, 0},
++	{"depthGraphicsTopBottom", NC_("Stereo::FileChoiceMenu", "Four rows: picture, depth, graphics, graphics depth"), "depth-graphics", "depth-graphics", GROUP_DEPTH, STEREO_POLICY_LAYOUT_DEPTH_GRAPHICS, 0, 0},
++	{"depthBackgroundQuarters", NC_("Stereo::FileChoiceMenu", "Four quarters: picture, depth, background, background depth"), "depth-background", "depth-background", GROUP_DEPTH, STEREO_POLICY_LAYOUT_DEPTH_BACKGROUND, 0, 0},
++};
++
++static const gchar *const group_titles[GROUP_N] =
++{
++	NULL,
++	NULL,
++	NC_("Stereo::FileChoiceMenu", "Interleaved"),
++	NC_("Stereo::FileChoiceMenu", "One view after the other"),
++	NC_("Stereo::FileChoiceMenu", "Anaglyph"),
++	NC_("Stereo::FileChoiceMenu", "Picture and depth"),
++};
++
++#define LAYER(text) g_dpgettext2(NULL, "Stereo::FileChoiceMenu", (text))
++
++typedef struct
++{
++	CelluloidController *controller;
++	GSettings *settings;
++	GtkGLArea *area;
++
++	/* What mpv said at the last frame: whether its render API draws one
++	 * view per call, and how many views the film's frames hold. */
++	gboolean supported;
++	gint views;
++
++	/* What the video area is asked for, applied outside its render */
++	gboolean want_stereo;
++	gint want_width;
++	gint want_height;
++	guint apply_id;
++	guint state_id;
++
++	/* The person's corrections of the playing film */
++	const StereoInput *input;
++	gboolean swap;
++
++	/* Whether the loaded film has a picture: a video track that is not a
++	 * cover picture */
++	gboolean picture;
++
++	/* Whether the video area's OpenGL renderer is a software one (Mesa's
++	 * llvmpipe or softpipe, by GTK's own rule for its X11 way): read once
++	 * for each context */
++	gboolean renderer_known;
++	gboolean software;
++
++	/* The sizes last written to the debug log */
++	gint traced_width;
++	gint traced_height;
++	gint traced_shown_width;
++	gint traced_shown_height;
++
++	gboolean failure_told;
++	gboolean fitted;
++}
++CelluloidStereo;
++
++static CelluloidStereo *
++get_stereo(CelluloidController *controller)
++{
++	return g_object_get_data(G_OBJECT(controller), STEREO_KEY);
++}
++
++static CelluloidMpv *
++get_mpv(CelluloidStereo *stereo)
++{
++	return CELLULOID_MPV(stereo->controller->model);
++}
++
++static GActionMap *
++get_action_map(CelluloidStereo *stereo)
++{
++	return	G_ACTION_MAP
++		(celluloid_view_get_main_window(stereo->controller->view));
++}
++
++static const StereoInput *
++input_from_word(const gchar *word)
++{
++	for(guint i = 0; i < G_N_ELEMENTS(inputs); i++)
++	{
++		if(g_strcmp0(inputs[i].word, word) == 0)
++		{
++			return &inputs[i];
++		}
++	}
++
++	return NULL;
++}
++
++static const StereoInput *
++input_from_mpv(const gchar *value)
++{
++	for(guint i = 0; value && i < G_N_ELEMENTS(inputs); i++)
++	{
++		if(	g_strcmp0(inputs[i].half, value) == 0 ||
++			g_strcmp0(inputs[i].full, value) == 0 )
++		{
++			return &inputs[i];
++		}
++	}
++
++	return &inputs[0];
++}
++
++/* Whether the film is shown with one view to each eye: its frames hold two
++ * views, 3D is enabled, and the video area has not said that it cannot.
++ */
++static gboolean
++shown_in_3d(CelluloidStereo *stereo)
++{
++	return	stereo->supported &&
++		stereo->views == 2 &&
++		g_settings_get_boolean(stereo->settings, "stereo-enable") &&
++		gtk_gl_area_get_stereo_error(stereo->area) == NULL;
++}
++
++static gboolean
++has_correction(CelluloidStereo *stereo)
++{
++	return stereo->input != &inputs[0] || stereo->swap;
++}
++
++static void
++set_action_enabled(CelluloidStereo *stereo, const gchar *name, gboolean enabled)
++{
++	GAction *action = g_action_map_lookup_action(get_action_map(stereo), name);
++
++	if(action)
++	{
++		g_simple_action_set_enabled(G_SIMPLE_ACTION(action), enabled);
++	}
++}
++
++static void
++set_action_state(CelluloidStereo *stereo, const gchar *name, GVariant *state)
++{
++	GAction *action = g_action_map_lookup_action(get_action_map(stereo), name);
++
++	if(action)
++	{
++		g_simple_action_set_state(G_SIMPLE_ACTION(action), state);
++	}
++	else
++	{
++		g_variant_unref(g_variant_ref_sink(state));
++	}
++}
++
++/* The input format is offered for every film with a picture, shown in 3D or
++ * flat: it is how the person says what a film that declares nothing holds
++ * (the edition's players keep it usable on 2D content so that unmarked stereo
++ * can be identified). The swap and the save are corrections of what is shown
++ * in 3D, and are not offered on a flat picture. A film without a picture has
++ * none of them.
++ */
++static void
++update_actions(CelluloidStereo *stereo)
++{
++	const gboolean shown = shown_in_3d(stereo);
++	const gboolean offered = stereo->supported && stereo->picture;
++
++	set_action_enabled(stereo, "stereo-input", offered);
++	set_action_enabled(stereo, "stereo-input-offered", offered);
++	set_action_enabled(stereo, "stereo-swap", shown);
++	set_action_enabled(stereo, "stereo-save", shown && has_correction(stereo));
++	set_action_state
++		(stereo, "stereo-input", g_variant_new_string(stereo->input->word));
++	set_action_state
++		(stereo, "stereo-swap", g_variant_new_boolean(stereo->swap));
++	set_action_state
++		(	stereo,
++			"stereo-enable",
++			g_variant_new_boolean
++			(g_settings_get_boolean(stereo->settings, "stereo-enable")) );
++}
++
++static gboolean
++update_state_idle(gpointer data)
++{
++	CelluloidStereo *stereo = data;
++
++	stereo->state_id = 0;
++
++	/* The window was fitted to the film before its frames were known to
++	 * hold two views: it is fitted again, to one view. */
++	if(stereo->views == 2 && !stereo->fitted)
++	{
++		stereo->fitted = TRUE;
++		g_signal_emit_by_name(stereo->controller->model, "autofit");
++	}
++	else if(stereo->views != 2)
++	{
++		stereo->fitted = FALSE;
++	}
++
++	update_actions(stereo);
++
++	return G_SOURCE_REMOVE;
++}
++
++static gboolean
++apply_idle(gpointer data)
++{
++	CelluloidStereo *stereo = data;
++	GtkGLArea *area = stereo->area;
++
++	stereo->apply_id = 0;
++
++	if(stereo->want_stereo)
++	{
++		gtk_gl_area_set_stereo_view_size
++			(area, stereo->want_width, stereo->want_height);
++	}
++
++	if(gtk_gl_area_get_stereo(area) != stereo->want_stereo)
++	{
++		stereo->failure_told = FALSE;
++		gtk_gl_area_set_stereo(area, stereo->want_stereo);
++	}
++
++	gtk_gl_area_queue_render(area);
++
++	return G_SOURCE_REMOVE;
++}
++
++/* The video area cannot show the two views, one to each eye: the person is
++ * told once for the film what cannot be done and why, in words they can act
++ * on, and the area shows the left view; the log keeps GTK's exact reason. On
++ * Wayland the views reach the compositor as a buffer the graphics card shares
++ * (a dma-buf), which a software renderer cannot make: that one cause is said
++ * as it is. GTK gives every other cause the same error code, so the person is
++ * pointed to the log for those.
++ */
++static void
++stereo_error_handler(GObject *object, GParamSpec *pspec, gpointer data)
++{
++	CelluloidStereo *stereo = data;
++	const GError *error = gtk_gl_area_get_stereo_error(GTK_GL_AREA(object));
++
++	update_actions(stereo);
++
++	if(error && !stereo->failure_told)
++	{
++		gboolean processor = FALSE;
++		const gchar *sentence = NULL;
++
++#ifdef GDK_WINDOWING_WAYLAND
++		processor =	stereo->software &&
++				GDK_IS_WAYLAND_DISPLAY
++				(gtk_widget_get_display(GTK_WIDGET(object)));
++#endif
++
++		sentence =	processor ?
++				_("This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card.") :
++				_("This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log.");
++		stereo->failure_told = TRUE;
++		g_warning("The film cannot be shown in 3D: %s", error->message);
++		g_debug("Told the person: %s", sentence);
++		celluloid_view_show_message_toast(stereo->controller->view, sentence);
++	}
++}
++
++/* The video area's OpenGL context goes with it: the next one's renderer is
++ * read again at its first render.
++ */
++static void
++unrealize_handler(GtkWidget *widget, gpointer data)
++{
++	CelluloidStereo *stereo = data;
++
++	stereo->renderer_known = FALSE;
++}
++
++static gboolean
++get_int_property(CelluloidStereo *stereo, const gchar *name, gint64 *value)
++{
++	return	celluloid_mpv_get_property
++		(get_mpv(stereo), name, MPV_FORMAT_INT64, value) >= 0;
++}
++
++/* The shape of one view decides between squeezed and whole views of a side by
++ * side or top and bottom frame chosen by hand, as the stereo policy decides it
++ * for a marked one: the person never chooses half or full.
++ */
++static gboolean
++full_views(CelluloidStereo *stereo, const StereoInput *input)
++{
++	gint64 dw = 0;
++	gint64 dh = 0;
++
++	if(	input->half == input->full ||
++		!get_int_property(stereo, "video-params/dw", &dw) ||
++		!get_int_property(stereo, "video-params/dh", &dh) )
++	{
++		return FALSE;
++	}
++
++	return	stereo_policy_video_views_by_shape
++		((int)dw, (int)dh, input->layout == STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX ? STEREO_POLICY_LAYOUT_SIDE_BY_SIDE : input->layout) == 1;
++}
++
++/* The corrections are kept where mpv keeps what it remembers of a file, its
++ * watch-later entry, beside the position to resume from, and never in the
++ * film: the entry is written when a correction is in effect and removed when
++ * none is. mpv removes an entry when it resumes from it, so the entry is
++ * written again once the film is loaded. Only the corrections are written
++ * here; the position is mpv's to save, when the person asked for that.
++ */
++static void
++keep_corrections(CelluloidStereo *stereo)
++{
++	CelluloidMpv *mpv = get_mpv(stereo);
++
++	if(has_correction(stereo))
++	{
++		gchar *options =	celluloid_mpv_get_property_string
++					(mpv, "watch-later-options");
++
++		celluloid_mpv_set_property_string
++			(	mpv,
++				"watch-later-options",
++				"video-stereo-input,video-stereo-swap" );
++		celluloid_mpv_command_string(mpv, "write-watch-later-config");
++
++		if(options)
++		{
++			celluloid_mpv_set_property_string
++				(mpv, "watch-later-options", options);
++			mpv_free(options);
++		}
++	}
++	else
++	{
++		celluloid_mpv_command_string(mpv, "delete-watch-later-config");
++	}
++}
++
++static void
++apply_corrections(CelluloidStereo *stereo)
++{
++	CelluloidMpv *mpv = get_mpv(stereo);
++	const StereoInput *input = stereo->input;
++
++	celluloid_mpv_set_property_string
++		(	mpv,
++			"video-stereo-input",
++			full_views(stereo, input) ? input->full : input->half );
++	celluloid_mpv_set_property_flag(mpv, "video-stereo-swap", stereo->swap);
++	keep_corrections(stereo);
++	update_actions(stereo);
++}
++
++/* What the film's tracks hold: whether it has a picture (a video track that is
++ * not a cover picture), which is what the 3D menu's input format is offered
++ * for; and a film with a picture and no audio track says so, beside a volume
++ * control that stays usable: the sentence and the rule of the edition's stereo
++ * layer (Stereo::NoSound).
++ */
++static void
++read_tracks(CelluloidStereo *stereo)
++{
++	CelluloidMpv *mpv = get_mpv(stereo);
++	gint64 count = 0;
++	gboolean picture = FALSE;
++	gboolean sound = FALSE;
++
++	get_int_property(stereo, "track-list/count", &count);
++
++	for(gint64 i = 0; i < count; i++)
++	{
++		gchar *name = g_strdup_printf("track-list/%" G_GINT64_FORMAT "/type", i);
++		gchar *type = celluloid_mpv_get_property_string(mpv, name);
++
++		if(g_strcmp0(type, "audio") == 0)
++		{
++			sound = TRUE;
++		}
++		else if(g_strcmp0(type, "video") == 0)
++		{
++			gchar *art = g_strdup_printf("track-list/%" G_GINT64_FORMAT "/albumart", i);
++
++			picture |= !celluloid_mpv_get_property_flag(mpv, art);
++			g_free(art);
++		}
++
++		mpv_free(type);
++		g_free(name);
++	}
++
++	stereo->picture = picture;
++
++	if(picture && !sound)
++	{
++		const gchar *sentence =
++			g_dpgettext2(NULL, "Stereo::NoSound", NC_("Stereo::NoSound", "This film has no sound."));
++
++		g_debug("Told the person: %s", sentence);
++		celluloid_view_show_message_toast(stereo->controller->view, sentence);
++	}
++}
++
++static void
++file_loaded(CelluloidStereo *stereo)
++{
++	CelluloidMpv *mpv = get_mpv(stereo);
++	gchar *value = celluloid_mpv_get_property_string(mpv, "video-stereo-input");
++
++	/* What mpv took from the film's watch-later entry is the person's
++	 * correction of this film */
++	stereo->input = input_from_mpv(value);
++	stereo->swap = celluloid_mpv_get_property_flag(mpv, "video-stereo-swap");
++	stereo->failure_told = FALSE;
++	stereo->fitted = FALSE;
++	mpv_free(value);
++
++	if(has_correction(stereo))
++	{
++		keep_corrections(stereo);
++	}
++
++	read_tracks(stereo);
++	update_actions(stereo);
++}
++
++static void
++mpv_event_handler(CelluloidMpv *mpv, gint event_id, gpointer event_data, gpointer data)
++{
++	CelluloidStereo *stereo = data;
++
++	if(event_id == MPV_EVENT_FILE_LOADED)
++	{
++		file_loaded(stereo);
++	}
++	else if(event_id == MPV_EVENT_END_FILE)
++	{
++		/* no film is loaded until the next one is: nothing to correct */
++		stereo->picture = FALSE;
++		update_actions(stereo);
++	}
++}
++
++static void
++enable_handler(GSimpleAction *action, GVariant *value, gpointer data)
++{
++	CelluloidStereo *stereo = get_stereo(data);
++
++	g_settings_set_boolean
++		(stereo->settings, "stereo-enable", g_variant_get_boolean(value));
++	g_simple_action_set_state(action, value);
++	update_actions(stereo);
++	gtk_gl_area_queue_render(stereo->area);
++}
++
++static void
++input_handler(GSimpleAction *action, GVariant *value, gpointer data)
++{
++	CelluloidStereo *stereo = get_stereo(data);
++	const StereoInput *input = input_from_word(g_variant_get_string(value, NULL));
++
++	if(input)
++	{
++		stereo->input = input;
++		apply_corrections(stereo);
++	}
++}
++
++static void
++swap_handler(GSimpleAction *action, GVariant *value, gpointer data)
++{
++	CelluloidStereo *stereo = get_stereo(data);
++
++	stereo->swap = g_variant_get_boolean(value);
++	apply_corrections(stereo);
++}
++
++static void
++display_settings_handler(GSimpleAction *action, GVariant *param, gpointer data)
++{
++	CelluloidStereo *stereo = get_stereo(data);
++	GError *error = NULL;
++
++	if(!g_spawn_command_line_async("kcmshell6 kcm_kscreen", &error))
++	{
++		g_warning("Display Settings could not be opened: %s", error->message);
++		celluloid_view_show_message_toast
++			(	stereo->controller->view,
++				_("Display Settings could not be opened.") );
++		g_clear_error(&error);
++	}
++}
++
++static gchar *
++playing_file(CelluloidStereo *stereo)
++{
++	CelluloidMpv *mpv = get_mpv(stereo);
++	gchar *path = celluloid_mpv_get_property_string(mpv, "path");
++	gchar *result = NULL;
++
++	if(path && g_str_has_prefix(path, "file://"))
++	{
++		result = g_filename_from_uri(path, NULL, NULL);
++	}
++	else if(path && !strstr(path, "://"))
++	{
++		gchar *directory =	celluloid_mpv_get_property_string
++					(mpv, "working-directory");
++
++		result = g_canonicalize_filename(path, directory);
++		mpv_free(directory);
++	}
++
++	mpv_free(path);
++
++	return result;
++}
++
++/* What the film is with the corrections applied: the packing chosen by hand,
++ * or else the one mpv read from the film, with the eye order the swap gives.
++ */
++static gboolean
++corrected_layout(	CelluloidStereo *stereo,
++			gint *layout,
++			gint *order,
++			gint *anaglyph,
++			gint *views )
++{
++	const StereoInput *input = stereo->input;
++
++	*views = STEREO_MARK_VIEWS_UNSPECIFIED;
++
++	if(input == &inputs[0])
++	{
++		gchar *value =	celluloid_mpv_get_property_string
++				(get_mpv(stereo), "video-params/stereo-in");
++
++		input = input_from_mpv(value);
++		mpv_free(value);
++
++		if(input == &inputs[0])
++		{
++			return FALSE;
++		}
++	}
++	else if(input->half != input->full)
++	{
++		*views =	full_views(stereo, input) ?
++				STEREO_MARK_VIEWS_FULL :
++				STEREO_MARK_VIEWS_HALF;
++	}
++
++	*layout = input->layout;
++	*order = input->order;
++	*anaglyph = input->anaglyph;
++
++	if(	stereo->swap &&
++		input->anaglyph == STEREO_POLICY_ANAGLYPH_NONE &&
++		!stereo_policy_is_depth_layout(input->layout) &&
++		input->layout != STEREO_POLICY_LAYOUT_NONE )
++	{
++		*order =	*order == STEREO_POLICY_LEFT_FIRST ?
++				STEREO_POLICY_RIGHT_FIRST :
++				STEREO_POLICY_LEFT_FIRST;
++	}
++	else if(stereo->swap)
++	{
++		/* a layout that has no eye order to write */
++		return FALSE;
++	}
++
++	return TRUE;
++}
++
++static const gchar *
++refusal_reason(gint status)
++{
++	switch(status)
++	{
++		case STEREO_MARK_NOT_LOCAL:
++		return _("it is not a file on this computer");
++
++		case STEREO_MARK_STREAM_DECLARES:
++		return _("its video stream declares its own 3D format, which comes first");
++
++		case STEREO_MARK_CONTAINER:
++		case STEREO_MARK_LAYOUT:
++		case STEREO_MARK_WEBM_LAYOUT:
++		case STEREO_MARK_MP4_DEPTH:
++		case STEREO_MARK_MP4_NO_ROOM:
++		case STEREO_MARK_MP4_ENTRIES:
++		case STEREO_MARK_NOT_LACED:
++		return _("this kind of file cannot hold this 3D format");
++
++		case STEREO_MARK_TOOL_MISSING:
++		return _("mkvpropedit is not installed");
++
++		default:
++		return _("the file could not be written");
++	}
++}
++
++/* The person chose to save: the film's own mark is written by the stereo
++ * layer's writer, which reads every write back and puts a failed one back.
++ * The film then carries the correction: the corrections are unmarked, their
++ * entry is removed, and the film is loaded again from where it was, so that
++ * what is shown comes from the film's own mark.
++ */
++static void
++save_handler(GSimpleAction *action, GVariant *param, gpointer data)
++{
++	CelluloidStereo *stereo = get_stereo(data);
++	CelluloidMpv *mpv = get_mpv(stereo);
++	gchar *path = playing_file(stereo);
++	gchar *name = path ? g_path_get_basename(path) : g_strdup("");
++	gint layout = STEREO_POLICY_LAYOUT_NONE;
++	gint order = STEREO_POLICY_LEFT_FIRST;
++	gint anaglyph = STEREO_POLICY_ANAGLYPH_NONE;
++	gint views = STEREO_MARK_VIEWS_UNSPECIFIED;
++	gint status = STEREO_MARK_LAYOUT;
++	stereo_mark_views_result result = {0};
++
++	if(!path)
++	{
++		status = STEREO_MARK_NOT_LOCAL;
++	}
++	else if(corrected_layout(stereo, &layout, &order, &anaglyph, &views))
++	{
++		status =	stereo_mark_save_views
++				(path, 1, layout, order, anaglyph, views, &result);
++
++		if(status == STEREO_MARK_MP4_VIEWS || status == STEREO_MARK_VIEWS_LAYOUT)
++		{
++			/* a mark that says the packing and the eye order only */
++			status =	stereo_mark_save
++					(path, 1, layout, order, anaglyph, &result.base);
++		}
++	}
++
++	if(status == STEREO_MARK_WRITTEN || status == STEREO_MARK_UNCHANGED)
++	{
++		gchar *options =	celluloid_mpv_get_property_string
++					(mpv, "watch-later-options");
++		gchar *message =	g_strdup_printf
++					(_("The correction was saved into %s."), name);
++
++		stereo->input = &inputs[0];
++		stereo->swap = FALSE;
++		celluloid_mpv_set_property_string(mpv, "video-stereo-input", "no");
++		celluloid_mpv_set_property_flag(mpv, "video-stereo-swap", FALSE);
++
++		/* load the film again from this position: the position alone
++		 * goes through the entry, which mpv removes as it resumes */
++		celluloid_mpv_set_property_string(mpv, "watch-later-options", "start");
++		celluloid_mpv_command_string(mpv, "write-watch-later-config");
++
++		if(options)
++		{
++			celluloid_mpv_set_property_string
++				(mpv, "watch-later-options", options);
++			mpv_free(options);
++		}
++
++		celluloid_mpv_command_string(mpv, "playlist-play-index current");
++		celluloid_view_show_message_toast(stereo->controller->view, message);
++		update_actions(stereo);
++		g_free(message);
++	}
++	else
++	{
++		gchar *message =	g_strdup_printf
++					(	_("%1$s was not changed and its correction is kept: %2$s"),
++						name,
++						refusal_reason(status) );
++
++		g_warning(	"The correction was not saved into %s: %s %s",
++				path ?: "(no file)",
++				stereo_mark_status_name(status),
++				result.base.details );
++		celluloid_view_show_message_toast(stereo->controller->view, message);
++		g_free(message);
++	}
++
++	g_free(name);
++	g_free(path);
++}
++
++static void
++stereo_free(gpointer data)
++{
++	CelluloidStereo *stereo = data;
++
++	g_clear_handle_id(&stereo->apply_id, g_source_remove);
++	g_clear_handle_id(&stereo->state_id, g_source_remove);
++	g_clear_object(&stereo->settings);
++	g_free(stereo);
++}
++
++void
++celluloid_stereo_attach(CelluloidController *controller)
++{
++	const GActionEntry entries[] =
++		{	{.name = "stereo-enable",
++			.state = "true",
++			.change_state = enable_handler},
++			{.name = "stereo-input",
++			.state = "'automatic'",
++			.parameter_type = "s",
++			.change_state = input_handler},
++			{.name = "stereo-input-offered"},
++			{.name = "stereo-swap",
++			.state = "false",
++			.change_state = swap_handler},
++			{.name = "stereo-save",
++			.activate = save_handler},
++			{.name = "stereo-display-settings",
++			.activate = display_settings_handler} };
++	CelluloidStereo *stereo = g_new0(CelluloidStereo, 1);
++	CelluloidMainWindow *window = celluloid_view_get_main_window(controller->view);
++
++	stereo->controller = controller;
++	stereo->settings = g_settings_new(CONFIG_ROOT);
++	stereo->area =	celluloid_video_area_get_gl_area
++			(celluloid_main_window_get_video_area(window));
++	stereo->input = &inputs[0];
++
++	g_object_set_data_full(G_OBJECT(controller), STEREO_KEY, stereo, stereo_free);
++	g_action_map_add_action_entries
++		(G_ACTION_MAP(window), entries, G_N_ELEMENTS(entries), controller);
++	g_signal_connect(	controller->model,
++				"mpv-event-notify",
++				G_CALLBACK(mpv_event_handler),
++				stereo );
++	g_signal_connect(	stereo->area,
++				"notify::stereo-error",
++				G_CALLBACK(stereo_error_handler),
++				stereo );
++	g_signal_connect(	stereo->area,
++				"unrealize",
++				G_CALLBACK(unrealize_handler),
++				stereo );
++
++	update_actions(stereo);
++}
++
++void
++celluloid_stereo_render(CelluloidController *controller, gint width, gint height)
++{
++	CelluloidStereo *stereo = get_stereo(controller);
++	mpv_render_context *render_ctx =
++		celluloid_mpv_get_render_context(CELLULOID_MPV(controller->model));
++	GtkGLAreaEye eye = GTK_GL_AREA_EYE_NONE;
++	gint fbo = -1;
++
++	if(!stereo || !render_ctx)
++	{
++		celluloid_model_render_frame(controller->model, width, height);
++		return;
++	}
++
++	eye = gtk_gl_area_get_current_eye(stereo->area);
++
++	if(!stereo->renderer_known)
++	{
++		const gchar *renderer = (const gchar *)glGetString(GL_RENDERER);
++
++		stereo->renderer_known = TRUE;
++		stereo->software =	renderer &&
++					(	strstr(renderer, "llvmpipe") ||
++						strstr(renderer, "softpipe") );
++	}
++
++	/* Once for a frame, before its first view: what the film's frames hold
++	 * now, and the size of a view that holds the video area measured in the
++	 * film's own samples, so that mpv copies each view and the compositor
++	 * does the one resize */
++	if(eye != GTK_GL_AREA_EYE_RIGHT)
++	{
++		mpv_render_stereo_view info = {.shown_w = width, .shown_h = height};
++		const gboolean supported =
++			mpv_render_context_get_info
++			(	render_ctx,
++				(mpv_render_param)
++				{MPV_RENDER_PARAM_STEREO_VIEW, &info} ) >= 0;
++		const gint views = supported ? info.views : 1;
++		const gboolean want =	supported &&
++					views == 2 &&
++					info.target_w > 0 &&
++					info.target_h > 0 &&
++					g_settings_get_boolean
++					(stereo->settings, "stereo-enable");
++
++		if(supported != stereo->supported || views != stereo->views)
++		{
++			stereo->supported = supported;
++			stereo->views = views;
++
++			if(stereo->state_id == 0)
++			{
++				stereo->state_id = g_idle_add(update_state_idle, stereo);
++			}
++		}
++
++		if(	want != gtk_gl_area_get_stereo(stereo->area) ||
++			(	want &&
++				(	info.target_w != stereo->want_width ||
++					info.target_h != stereo->want_height ) ) )
++		{
++			stereo->want_stereo = want;
++			stereo->want_width = info.target_w;
++			stereo->want_height = info.target_h;
++
++			if(stereo->apply_id == 0)
++			{
++				stereo->apply_id = g_idle_add(apply_idle, stereo);
++			}
++		}
++	}
++
++	if(stereo->supported && stereo->views == 2)
++	{
++		mpv_render_stereo_view view =
++			{	.view = eye == GTK_GL_AREA_EYE_RIGHT ? 2 : 1,
++				.shown_w = width,
++				.shown_h = height };
++		gint target_width = width;
++		gint target_height = height;
++
++		/* an area that asks for stereo has the viewport of the
++		 * framebuffer it gives each view */
++		if(gtk_gl_area_get_stereo(stereo->area))
++		{
++			gint viewport[4] = {0, 0, width, height};
++
++			glGetIntegerv(GL_VIEWPORT, viewport);
++			target_width = viewport[2];
++			target_height = viewport[3];
++		}
++
++		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
++
++		if(	target_width != stereo->traced_width ||
++			target_height != stereo->traced_height ||
++			width != stereo->traced_shown_width ||
++			height != stereo->traced_shown_height )
++		{
++			stereo->traced_width = target_width;
++			stereo->traced_height = target_height;
++			stereo->traced_shown_width = width;
++			stereo->traced_shown_height = height;
++			g_debug(	"A view of %dx%d for an area of %dx%d (%s)",
++					target_width,
++					target_height,
++					width,
++					height,
++					gtk_gl_area_get_stereo_shown(stereo->area) ?
++					"one view to each eye" :
++					"the left view alone" );
++		}
++
++		mpv_opengl_fbo opengl_fbo =
++			{fbo, target_width, target_height, 0};
++		mpv_render_param params[] =
++			{	{MPV_RENDER_PARAM_OPENGL_FBO, &opengl_fbo},
++				{MPV_RENDER_PARAM_FLIP_Y, &(int){1}},
++				{MPV_RENDER_PARAM_STEREO_VIEW, &view},
++				{0, NULL} };
++
++		mpv_render_context_render(render_ctx, params);
++
++	}
++	else
++	{
++		celluloid_model_render_frame(controller->model, width, height);
++	}
++}
++
++static void
++append_input(GMenu *menu, const StereoInput *input)
++{
++	gchar *action = g_strdup_printf("win.stereo-input('%s')", input->word);
++
++	g_menu_append(menu, LAYER(input->label), action);
++	g_free(action);
++}
++
++static void
++append_hidden_when_disabled(GMenu *menu, const gchar *label, const gchar *action, GMenuModel *submenu)
++{
++	GMenuItem *item =	submenu ?
++				g_menu_item_new_submenu(label, submenu) :
++				g_menu_item_new(label, action);
++
++	if(submenu)
++	{
++		g_menu_item_set_attribute(item, "action", "s", action);
++	}
++
++	g_menu_item_set_attribute(item, "hidden-when", "s", "action-disabled");
++	g_menu_append_item(menu, item);
++	g_object_unref(item);
++}
++
++GMenu *
++celluloid_stereo_build_menu(void)
++{
++	GMenu *menu = g_menu_new();
++	GMenu *program = g_menu_new();
++	GMenu *film = g_menu_new();
++	GMenu *format = g_menu_new();
++	GMenu *sections[GROUP_N] = {NULL};
++
++	g_menu_append(program, LAYER(NC_("Stereo::FileChoiceMenu", "Enable 3D")), "win.stereo-enable");
++	g_menu_append(program, _("Display Settings…"), "win.stereo-display-settings");
++
++	for(guint i = 0; i < G_N_ELEMENTS(inputs); i++)
++	{
++		const gint group = inputs[i].group;
++
++		if(!sections[group])
++		{
++			sections[group] = g_menu_new();
++
++			if(group_titles[group])
++			{
++				g_menu_append_submenu
++					(	format,
++						LAYER(group_titles[group]),
++						G_MENU_MODEL(sections[group]) );
++			}
++			else
++			{
++				g_menu_append_section
++					(format, NULL, G_MENU_MODEL(sections[group]));
++			}
++		}
++
++		append_input(sections[group], &inputs[i]);
++	}
++
++	append_hidden_when_disabled
++		(	film,
++			LAYER(NC_("Stereo::FileChoiceMenu", "3D Input Format")),
++			"win.stereo-input-offered",
++			G_MENU_MODEL(format) );
++	append_hidden_when_disabled
++		(	film,
++			LAYER(NC_("Stereo::FileChoiceMenu", "Swap left and right eyes")),
++			"win.stereo-swap",
++			NULL );
++	append_hidden_when_disabled
++		(	film,
++			LAYER(NC_("Stereo::FileChoiceMenu", "Save the correction into the file")),
++			"win.stereo-save",
++			NULL );
++
++	g_menu_append_section(menu, NULL, G_MENU_MODEL(program));
++	g_menu_append_section(menu, NULL, G_MENU_MODEL(film));
++
++	for(gint i = 0; i < GROUP_N; i++)
++	{
++		g_clear_object(&sections[i]);
++	}
++
++	g_object_unref(format);
++	g_object_unref(film);
++	g_object_unref(program);
++
++	return menu;
++}
+diff --git a/src/celluloid-stereo.h b/src/celluloid-stereo.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..3f56ad3d6268fdde9448e3251a7fd86fdff363e6
+--- /dev/null
++++ b/src/celluloid-stereo.h
+@@ -0,0 +1,52 @@
++/*
++ * Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * This file is part of Celluloid.
++ *
++ * Celluloid is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * Celluloid is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with Celluloid.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef STEREO_H
++#define STEREO_H
++
++#include <gio/gio.h>
++
++#include "celluloid-controller.h"
++
++G_BEGIN_DECLS
++
++/* A 3D film in the video area: one view per eye from mpv, the person's
++ * corrections of the film's input (its packing, the swap of its eyes) kept
++ * with mpv's watch-later entry, and the save of a correction into the file.
++ */
++void
++celluloid_stereo_attach(CelluloidController *controller);
++
++/* Draws the frame, or one view of it for the eye the video area renders, into
++ * the bound framebuffer. width and height are the video area's, in pixels.
++ */
++void
++celluloid_stereo_render(	CelluloidController *controller,
++				gint width,
++				gint height );
++
++/* The 3D menu: Enable 3D, Display Settings, the input format of the film, the
++ * swap of its eyes and the save into the file.
++ */
++GMenu *
++celluloid_stereo_build_menu(void);
++
++G_END_DECLS
++
++#endif
+diff --git a/src/celluloid-video-area.c b/src/celluloid-video-area.c
+index 7a85a181136e981b7de8d6f9da6f2f035fa14670..37f1df230bc742346ff73245f6e61782123324e5 100644
+--- a/src/celluloid-video-area.c
++++ b/src/celluloid-video-area.c
+@@ -402,7 +402,15 @@ render_handler(GtkGLArea *gl_area, GdkGLContext *context, gpointer data)
+ static void
+ resize_handler(GtkWidget *widget, gint width, gint height, gpointer data)
+ {
+-	g_signal_emit_by_name(data, "resize", width, height);
++	/* The area's own size, in pixels. The signal gives the size of what is
++	 * rendered, which for a 3D film is the size of one view of the film.
++	 */
++	const gint scale = gtk_widget_get_scale_factor(widget);
++
++	g_signal_emit_by_name(	data,
++				"resize",
++				scale*gtk_widget_get_width(widget),
++				scale*gtk_widget_get_height(widget) );
+ }
+ 
+ static void
+diff --git a/src/meson.build b/src/meson.build
+index 5de4dd5f22795bfb85e718d041652e7dacf3fd2c..7cf4e16173ee17d5aa65cf727afb0233e46fcdb0 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -27,6 +27,7 @@ sources = [
+   'celluloid-plugins-manager-item.c',
+   'celluloid-preferences-dialog.c',
+   'celluloid-seek-bar.c',
++  'celluloid-stereo.c',
+   'celluloid-shortcuts-window.c',
+   'celluloid-time-label.c',
+   'celluloid-video-area.c',
+@@ -132,7 +133,9 @@ executable('celluloid', sources,
+     meson.get_compiler('c').find_library('m', required: false),
+     dependency('mpv', version: '>= 1.107'),
+     dependency('libadwaita-1', version: '>= 1.6.0'),
+-    dependency('epoxy')
++    dependency('epoxy'),
++    dependency('stereo-policy'),
++    dependency('stereo-av')
+   ],
+   link_with: extra_libs,
+   include_directories: includes,

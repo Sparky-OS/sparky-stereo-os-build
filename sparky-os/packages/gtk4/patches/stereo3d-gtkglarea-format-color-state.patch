@@ -1,0 +1,966 @@
+Description: GtkGLArea: the format and the color state of the picture
+ A GtkGLArea rendered into 8 bits a channel, and its picture was taken as
+ sRGB. gtk_gl_area_set_format() takes a GdkMemoryFormat: 8 bits (the default),
+ 10 bits (ABGR2101010), 16 bits (R16G16B16A16, which also carries pictures of
+ 12 bits: there is no format of 12), half float and single float.
+ gtk_gl_area_set_color_state() takes the GdkColorState the values are in
+ (sRGB by default; Rec. 2100 PQ, Rec. 2100 linear, sRGB linear, or any state
+ built from CICP numbers such as hybrid log-gamma). The framebuffer of the
+ render signal, the texture GTK draws and the dma-buf handed on have that
+ format and that color state, per view in a stereo area.
+ The picture of a stereo area is opaque: in 8 and 10 bits its dma-buf format
+ says so (XB24, XB30); GDK knows no opaque form of the 16 bit and half float
+ formats, so a deeper picture keeps its format (AB48, AB4H) and its alpha is
+ made one. Half float is the deepest float format a dma-buf has, so the views
+ of a single float area are rendered in single floats and their picture is
+ kept in half floats. Where the driver exports no dma-buf of the format, or
+ GDK cannot build the texture, the area says why in stereo-error and draws
+ its left view alone; a failure found while the area is being drawn draws it
+ again at once. On X11 a stereo area with a color state other than sRGB says
+ that it cannot be shown per eye: an X window has no color description.
+ Also here, as later corrections of the area: on X11 the way to the child
+ window follows the renderer (OpenGL on a graphics card, the readback on a
+ software renderer, by the processor each costs; GDK_X11_STEREO_READBACK=1 or
+ =0 chooses), and testsuite/gtk/glarea gains the tests of the new properties
+ and skips its stereo-unavailable case on a desktop whose compositor takes
+ stereo content.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, milestone 3)
+Forwarded: no
+Last-Update: 2026-11-25
+---
+diff --git a/gtk/gtkglarea.c b/gtk/gtkglarea.c
+index 9bbe6e93640996c55a7cd21df2dcbe23264ab5f1..c217dd2b73683300d0fa8c44df26f9bc564fcc68 100644
+--- a/gtk/gtkglarea.c
++++ b/gtk/gtkglarea.c
+@@ -34,6 +34,8 @@
+ #include "gtkrenderlayoutprivate.h"
+ #include "gtkcssnodeprivate.h"
+ #include "gdk/gdkgltextureprivate.h"
++#include "gdk/gdkmemoryformatprivate.h"
++#include "gdk/gdkdmabuffourccprivate.h"
+ #include "gdk/gdkglcontextprivate.h"
+ #include "gdk/gdkdmabuftexturebuilderprivate.h"
+ #include "gdk/gdkdmabuftextureprivate.h"
+@@ -187,6 +189,10 @@ typedef struct {
+   GdkGLTextureBuilder *builder;
+   GdkTexture *gl_texture;
+   GdkTexture *dmabuf_texture;
++  /* What the texture was last allocated as: the format asked for and
++   * whether it holds both views of a stereo area */
++  GdkMemoryFormat allocated_format;
++  gboolean allocated_stereo;
+ } Texture;
+ 
+ typedef struct {
+@@ -211,6 +217,9 @@ typedef struct {
+   gboolean use_es;
+   GdkGLAPI allowed_apis;
+ 
++  GdkMemoryFormat format;
++  GdkColorState *color_state;
++
+   gboolean stereo;
+   int stereo_view_width;
+   int stereo_view_height;
+@@ -229,13 +238,16 @@ typedef struct {
+   guint x11_repeat_id;
+   int x11_repeats;
+   gboolean x11_readback;
++  gboolean x11_way_decided;
+ #endif
+   GdkFrameClock *frame_clock;
+   gulong after_paint_id;
++  guint stereo_redraw_id;
+   guint eye_texture;
+   guint blit_frame_buffer;
+   int eye_width;
+   int eye_height;
++  GdkMemoryFormat eye_format;
+ } GtkGLAreaPrivate;
+ 
+ enum {
+@@ -255,6 +267,8 @@ enum {
+   PROP_STEREO_ERROR,
+   PROP_STEREO_VIEW_WIDTH,
+   PROP_STEREO_VIEW_HEIGHT,
++  PROP_FORMAT,
++  PROP_COLOR_STATE,
+ 
+   LAST_PROP
+ };
+@@ -322,6 +336,14 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+       gtk_gl_area_set_stereo_view_size (self, priv->stereo_view_width, g_value_get_int (value));
+       break;
+ 
++    case PROP_FORMAT:
++      gtk_gl_area_set_format (self, g_value_get_enum (value));
++      break;
++
++    case PROP_COLOR_STATE:
++      gtk_gl_area_set_color_state (self, g_value_get_boxed (value));
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
+     }
+@@ -387,6 +409,14 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+       g_value_set_int (value, priv->stereo_view_height);
+       break;
+ 
++    case PROP_FORMAT:
++      g_value_set_enum (value, priv->format);
++      break;
++
++    case PROP_COLOR_STATE:
++      g_value_set_boxed (value, gtk_gl_area_get_color_state (GTK_GL_AREA (gobject)));
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
+     }
+@@ -569,6 +599,8 @@ gtk_gl_area_ensure_texture (GtkGLArea *area)
+       priv->texture = g_new (Texture, 1);
+       priv->texture->gl_texture = NULL;
+       priv->texture->dmabuf_texture = NULL;
++      priv->texture->allocated_format = priv->format;
++      priv->texture->allocated_stereo = priv->stereo_rendering;
+ 
+       priv->texture->builder = gdk_gl_texture_builder_new ();
+       gdk_gl_texture_builder_set_context (priv->texture->builder, priv->context);
+@@ -584,6 +616,115 @@ gtk_gl_area_ensure_texture (GtkGLArea *area)
+   gtk_gl_area_allocate_texture (area);
+ }
+ 
++/*
++ * Whether @format is one an area renders into: the 8 bit default, and the
++ * deeper formats that OpenGL can render into and a dma-buf can carry (10 bits
++ * a channel packed, 16 bits a channel, half and single float). All are
++ * premultiplied, as the default is.
++ */
++static gboolean
++gtk_gl_area_format_is_valid (GdkMemoryFormat format)
++{
++  switch ((int) format)
++    {
++    case GDK_MEMORY_R8G8B8A8_PREMULTIPLIED:
++    case GDK_MEMORY_ABGR2101010_PREMULTIPLIED:
++    case GDK_MEMORY_R16G16B16A16_PREMULTIPLIED:
++    case GDK_MEMORY_R16G16B16A16_FLOAT_PREMULTIPLIED:
++    case GDK_MEMORY_R32G32B32A32_FLOAT_PREMULTIPLIED:
++      return TRUE;
++    default:
++      return FALSE;
++    }
++}
++
++/* The opaque form of an area's format, for the picture of a stereo area */
++static GdkMemoryFormat
++gtk_gl_area_opaque_format (GdkMemoryFormat format)
++{
++  switch ((int) format)
++    {
++    case GDK_MEMORY_ABGR2101010_PREMULTIPLIED:
++      return GDK_MEMORY_XBGR2101010;
++    case GDK_MEMORY_R16G16B16A16_PREMULTIPLIED:
++      return GDK_MEMORY_R16G16B16;
++    case GDK_MEMORY_R16G16B16A16_FLOAT_PREMULTIPLIED:
++      return GDK_MEMORY_R16G16B16_FLOAT;
++    case GDK_MEMORY_R32G32B32A32_FLOAT_PREMULTIPLIED:
++      return GDK_MEMORY_R32G32B32_FLOAT;
++    default:
++      return GDK_MEMORY_R8G8B8X8;
++    }
++}
++
++/* The dma-buf format that ignores the alpha of @fourcc: a stereo picture is
++ * opaque, whatever the program left in its alpha */
++static guint32
++gtk_gl_area_opaque_fourcc (guint32 fourcc)
++{
++  switch (fourcc)
++    {
++    case DRM_FORMAT_ABGR8888: return DRM_FORMAT_XBGR8888;
++    case DRM_FORMAT_ARGB8888: return DRM_FORMAT_XRGB8888;
++    case DRM_FORMAT_ABGR2101010: return DRM_FORMAT_XBGR2101010;
++    case DRM_FORMAT_ARGB2101010: return DRM_FORMAT_XRGB2101010;
++    case DRM_FORMAT_ABGR16161616: return DRM_FORMAT_XBGR16161616;
++    case DRM_FORMAT_ARGB16161616: return DRM_FORMAT_XRGB16161616;
++    case DRM_FORMAT_ABGR16161616F: return DRM_FORMAT_XBGR16161616F;
++    case DRM_FORMAT_ARGB16161616F: return DRM_FORMAT_XRGB16161616F;
++    default: return fourcc;
++    }
++}
++
++/* The format of the picture GTK shows. It is the area's format, with one
++ * exception: the picture of a stereo area goes to the compositor as a dma-buf,
++ * and half float is the deepest float format a dma-buf has. The views of a
++ * 32 bit float area are rendered in 32 bit floats and their picture is kept in
++ * half floats. */
++static GdkMemoryFormat
++gtk_gl_area_get_picture_format (GtkGLArea *area,
++                                gboolean   stereo)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  if (stereo && priv->format == GDK_MEMORY_R32G32B32A32_FLOAT_PREMULTIPLIED)
++    return GDK_MEMORY_R16G16B16A16_FLOAT_PREMULTIPLIED;
++
++  return priv->format;
++}
++
++/* Allocates the storage of a texture of the format @memory_format. The 8 bit
++ * default is allocated as it always was. */
++static void
++gtk_gl_area_tex_image (GtkGLArea       *area,
++                       GdkMemoryFormat  memory_format,
++                       gboolean         opaque,
++                       int              width,
++                       int              height)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  gboolean gles = gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES;
++  GLint internal_format, internal_srgb_format;
++  GLenum format, type;
++  GdkSwizzle swizzle;
++
++  if (memory_format != GDK_MEMORY_R8G8B8A8_PREMULTIPLIED &&
++      gdk_memory_format_gl_format (memory_format, 0, gles,
++                                   &internal_format, &internal_srgb_format,
++                                   &format, &type, &swizzle))
++    {
++      /* A deeper picture keeps its alpha channel also when it is opaque:
++       * the formats with three channels need not be renderable */
++      glTexImage2D (GL_TEXTURE_2D, 0, internal_format, width, height, 0, format, type, NULL);
++      return;
++    }
++
++  if (opaque)
++    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, gles ? GL_RGB : GL_BGRA, GL_UNSIGNED_BYTE, NULL);
++  else
++    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, gles ? GL_RGBA : GL_BGRA, GL_UNSIGNED_BYTE, NULL);
++}
++
+ /*
+  * The size of what one emission of the render signal draws: the area in
+  * device pixels, or, for the views of a stereo area, the size the program
+@@ -656,7 +797,9 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+     width *= 2;
+ 
+   if (gdk_gl_texture_builder_get_width (priv->texture->builder) != width ||
+-      gdk_gl_texture_builder_get_height (priv->texture->builder) != height)
++      gdk_gl_texture_builder_get_height (priv->texture->builder) != height ||
++      priv->texture->allocated_format != priv->format ||
++      priv->texture->allocated_stereo != priv->stereo_rendering)
+     {
+       glBindTexture (GL_TEXTURE_2D, gdk_gl_texture_builder_get_id (priv->texture->builder));
+       glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+@@ -664,25 +807,23 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+       glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+       glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+ 
+-      if (priv->stereo_rendering)
+-        {
+-          /* Both views side by side, each at the size it is rendered at: the
+-           * picture is opaque, so a subsurface can lie above or below. */
+-          if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
+-            glTexImage2D (GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+-          else
+-            glTexImage2D (GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+-        }
+-      else if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
+-        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+-      else
+-        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
++      /* A stereo area's texture holds both views side by side, each at the
++       * size it is rendered at: the picture is opaque, so a subsurface can
++       * lie above or below. */
++      gtk_gl_area_tex_image (area, gtk_gl_area_get_picture_format (area, priv->stereo_rendering),
++                             priv->stereo_rendering, width, height);
+ 
+       gdk_gl_texture_builder_set_width (priv->texture->builder, width);
+       gdk_gl_texture_builder_set_height (priv->texture->builder, height);
++      priv->texture->allocated_format = priv->format;
++      priv->texture->allocated_stereo = priv->stereo_rendering;
+     }
+ 
+-  if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
++  if (priv->format != GDK_MEMORY_R8G8B8A8_PREMULTIPLIED)
++    gdk_gl_texture_builder_set_format (priv->texture->builder,
++                                       priv->stereo_rendering ? gtk_gl_area_opaque_format (gtk_gl_area_get_picture_format (area, TRUE))
++                                                              : priv->format);
++  else if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
+     gdk_gl_texture_builder_set_format (priv->texture->builder,
+                                        priv->stereo_rendering ? GDK_MEMORY_R8G8B8X8
+                                                               : GDK_MEMORY_R8G8B8A8_PREMULTIPLIED);
+@@ -690,6 +831,12 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+     gdk_gl_texture_builder_set_format (priv->texture->builder,
+                                        priv->stereo_rendering ? GDK_MEMORY_B8G8R8X8
+                                                               : GDK_MEMORY_B8G8R8A8_PREMULTIPLIED);
++
++  /* The color state travels with the picture: GTK converts it when it
++   * draws the texture itself, and tells the compositor on a subsurface */
++  gdk_gl_texture_builder_set_color_state (priv->texture->builder,
++                                          priv->color_state ? priv->color_state
++                                                            : gdk_color_state_get_srgb ());
+ }
+ 
+ /*
+@@ -714,7 +861,7 @@ gtk_gl_area_allocate_eye (GtkGLArea *area,
+   if (priv->blit_frame_buffer == 0)
+     glGenFramebuffers (1, &priv->blit_frame_buffer);
+ 
+-  if (priv->eye_width != width || priv->eye_height != height)
++  if (priv->eye_width != width || priv->eye_height != height || priv->eye_format != priv->format)
+     {
+       glBindTexture (GL_TEXTURE_2D, priv->eye_texture);
+       glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+@@ -722,13 +869,11 @@ gtk_gl_area_allocate_eye (GtkGLArea *area,
+       glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+       glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+ 
+-      if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
+-        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+-      else
+-        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
++      gtk_gl_area_tex_image (area, priv->format, FALSE, width, height);
+ 
+       priv->eye_width = width;
+       priv->eye_height = height;
++      priv->eye_format = priv->format;
+     }
+ }
+ 
+@@ -899,12 +1044,36 @@ gtk_gl_area_stereo_release (GtkGLArea *area)
+   g_clear_pointer (&priv->x11_pixels, g_free);
+   g_clear_pointer (&priv->x11_rows, g_free);
+   priv->x11_size = 0;
++  /* The next child window may meet another renderer */
++  priv->x11_way_decided = FALSE;
++  priv->x11_readback = FALSE;
+   g_clear_handle_id (&priv->x11_repeat_id, g_source_remove);
+ #endif
+   priv->stereo_rendering = FALSE;
+   priv->stereo_pushed = FALSE;
+ }
+ 
++static void
++gtk_gl_area_stereo_forget_redraw (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_clear_handle_id (&priv->stereo_redraw_id, g_source_remove);
++}
++
++static gboolean
++gtk_gl_area_stereo_redraw (gpointer data)
++{
++  GtkGLArea *area = data;
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  priv->stereo_redraw_id = 0;
++  priv->needs_render = TRUE;
++  gtk_widget_queue_draw (GTK_WIDGET (area));
++
++  return G_SOURCE_REMOVE;
++}
++
+ static void
+ gtk_gl_area_stereo_fail (GtkGLArea *area,
+                          GError    *error)
+@@ -930,7 +1099,15 @@ gtk_gl_area_stereo_fail (GtkGLArea *area,
+     }
+   g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_ERROR]);
+ 
++  /* The left view alone has to be rendered, at the size of the area. The
++   * failure may be found while the area is being drawn (a picture that cannot
++   * be exported), where a request to draw again is lost: it is made again
++   * from an idle callback. */
++  priv->needs_resize = TRUE;
++  priv->needs_render = TRUE;
+   gtk_widget_queue_draw (GTK_WIDGET (area));
++  if (priv->stereo_redraw_id == 0)
++    priv->stereo_redraw_id = g_idle_add (gtk_gl_area_stereo_redraw, area);
+ }
+ 
+ #ifdef GDK_WINDOWING_X11
+@@ -999,6 +1176,21 @@ gtk_gl_area_prepare_stereo (GtkGLArea *area)
+       return;
+     }
+ 
++  if (priv->subsurface == NULL &&
++      GDK_IS_X11_SURFACE (gtk_widget_get_surface (widget)) &&
++      priv->color_state != NULL &&
++      !gdk_color_state_equal (priv->color_state, gdk_color_state_get_srgb ()))
++    {
++      /* The child window has the toplevel's visual and no color description
++       * of its own: only GTK's own drawing converts the area's colors */
++      gtk_gl_area_stereo_fail (area,
++                               g_error_new_literal (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                                                    "On X11 the area's window carries no color description, "
++                                                    "so a stereo picture in another color state than sRGB "
++                                                    "cannot be shown per eye with its colors"));
++      return;
++    }
++
+   if (priv->x11_child == NULL && priv->subsurface == NULL &&
+       GDK_IS_X11_SURFACE (gtk_widget_get_surface (widget)))
+     {
+@@ -1070,6 +1262,38 @@ gtk_gl_area_blit_eye (GtkGLArea    *area,
+   glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
+ }
+ 
++/* The picture of a stereo area is opaque. The 8 and the 10 bit pictures say
++ * so in their format; a deeper picture keeps its alpha channel (the dma-buf
++ * formats of 16 bits and of half floats that GDK knows have one), and its
++ * alpha is made one here, whatever the program left in it. */
++static void
++gtk_gl_area_stereo_fill_alpha (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  GLboolean scissor, mask[4];
++  GLfloat color[4];
++
++  if (priv->format == GDK_MEMORY_R8G8B8A8_PREMULTIPLIED ||
++      priv->format == GDK_MEMORY_ABGR2101010_PREMULTIPLIED)
++    return;
++
++  scissor = glIsEnabled (GL_SCISSOR_TEST);
++  glGetBooleanv (GL_COLOR_WRITEMASK, mask);
++  glGetFloatv (GL_COLOR_CLEAR_VALUE, color);
++
++  glBindFramebuffer (GL_DRAW_FRAMEBUFFER, priv->blit_frame_buffer);
++  glDisable (GL_SCISSOR_TEST);
++  glColorMask (GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
++  glClearColor (0, 0, 0, 1);
++  glClear (GL_COLOR_BUFFER_BIT);
++
++  glClearColor (color[0], color[1], color[2], color[3]);
++  glColorMask (mask[0], mask[1], mask[2], mask[3]);
++  if (scissor)
++    glEnable (GL_SCISSOR_TEST);
++  glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
++}
++
+ static void
+ gtk_gl_area_render_views (GtkGLArea *area,
+                           int        width,
+@@ -1092,6 +1316,8 @@ gtk_gl_area_render_views (GtkGLArea *area,
+           g_signal_emit (area, area_signals[RENDER], 0, priv->context, &unused);
+           gtk_gl_area_blit_eye (area, eye, width, height);
+         }
++
++      gtk_gl_area_stereo_fill_alpha (area);
+     }
+   else
+     {
+@@ -1127,6 +1353,7 @@ gtk_gl_area_unrealize (GtkWidget *widget)
+   g_clear_error (&priv->error);
+ 
+   gtk_gl_area_stereo_release (area);
++  gtk_gl_area_stereo_forget_redraw (area);
+   if (priv->stereo_shown || priv->stereo_error != NULL)
+     {
+       priv->stereo_shown = FALSE;
+@@ -1234,8 +1461,13 @@ gtk_gl_area_x11_repeat (gpointer data)
+ 
+ /* Hands the two views to the stereo child window of the area, at the area's
+  * place in the toplevel's X window, each view at the resolution it was drawn
+- * at. They go there through OpenGL; where the window cannot have an OpenGL
+- * surface they are read back and go through memory, the same picture. */
++ * at. On a graphics card they go there through OpenGL, which keeps them on
++ * the card. A software renderer copies them through memory either way, and
++ * there the readback is the cheaper copy, so it is the way taken. Where the
++ * window cannot have an OpenGL surface they are read back too. The picture is
++ * the same. GDK_X11_STEREO_READBACK=1 takes the readback and =0 OpenGL,
++ * whatever the renderer, to compare the two or to tell them apart when a
++ * driver draws wrongly. */
+ static gboolean
+ gtk_gl_area_x11_present (GtkGLArea *area,
+                          int        place_width,
+@@ -1258,6 +1490,23 @@ gtk_gl_area_x11_present (GtkGLArea *area,
+   x = (int) ((bounds.origin.x + nx) * scale);
+   y = (int) ((bounds.origin.y + ny) * scale);
+ 
++  if (!priv->x11_way_decided)
++    {
++      const char *way = g_getenv ("GDK_X11_STEREO_READBACK");
++      const char *renderer = (const char *) glGetString (GL_RENDERER);
++
++      priv->x11_way_decided = TRUE;
++      if (way != NULL)
++        priv->x11_readback = strcmp (way, "0") != 0;
++      else if (renderer != NULL &&
++               (strstr (renderer, "llvmpipe") != NULL || strstr (renderer, "softpipe") != NULL))
++        priv->x11_readback = TRUE;
++
++      g_debug ("GtkGLArea %p: the stereo picture goes to its window %s (%s%s)",
++               area, priv->x11_readback ? "through memory" : "through OpenGL",
++               way != NULL ? "GDK_X11_STEREO_READBACK, " : "", renderer != NULL ? renderer : "no renderer name");
++    }
++
+   if (!priv->x11_readback)
+     {
+       if (!gdk_x11_stereo_child_present_gl (priv->x11_child, priv->blit_frame_buffer,
+@@ -1392,6 +1641,7 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+       gpointer sync = NULL;
+       GdkDmabuf dmabuf;
+       GdkTexture *holder;
++      GError *export_error = NULL;
+ 
+       if (priv->needs_render || priv->auto_render)
+         {
+@@ -1431,13 +1681,27 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+         {
+           GdkDmabufTextureBuilder *builder = gdk_dmabuf_texture_builder_new ();
+ 
++          if (priv->stereo_rendering)
++            {
++              guint32 opaque = gtk_gl_area_opaque_fourcc (dmabuf.fourcc);
++              GdkMemoryFormat known;
++              gboolean is_yuv;
++
++              /* Where GDK knows no opaque form of the format, the picture
++               * keeps its format: its alpha is one */
++              if (gdk_memory_format_find_by_dmabuf_fourcc (opaque, TRUE, &known, &is_yuv))
++                dmabuf.fourcc = opaque;
++            }
++          if (priv->color_state != NULL)
++            gdk_dmabuf_texture_builder_set_color_state (builder, priv->color_state);
++
+           gdk_dmabuf_texture_builder_set_display (builder, gdk_gl_context_get_display (priv->context));
+           gdk_dmabuf_texture_builder_set_width (builder, gdk_texture_get_width (texture->gl_texture));
+           gdk_dmabuf_texture_builder_set_height (builder, gdk_texture_get_height (texture->gl_texture));
+           gdk_dmabuf_texture_builder_set_premultiplied (builder, TRUE);
+           gdk_dmabuf_texture_builder_set_dmabuf (builder, &dmabuf);
+ 
+-          texture->dmabuf_texture = gdk_dmabuf_texture_builder_build (builder, release_dmabuf_texture, texture, NULL);
++          texture->dmabuf_texture = gdk_dmabuf_texture_builder_build (builder, release_dmabuf_texture, texture, &export_error);
+ 
+           g_object_unref (builder);
+ 
+@@ -1453,10 +1717,20 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+       else
+ #endif
+       if (priv->stereo_rendering && holder == texture->gl_texture)
+-        gtk_gl_area_stereo_fail (area,
+-                                 g_error_new_literal (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
+-                                                      "The OpenGL context cannot export its picture as a dma-buf, "
+-                                                      "which a subsurface needs"));
++        {
++          /* Why the picture is no dma-buf is said, when GDK said it */
++          if (export_error != NULL)
++            gtk_gl_area_stereo_fail (area,
++                                     g_error_new (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                                                  "The picture of the area cannot be a dma-buf, "
++                                                  "which a subsurface needs: %s", export_error->message));
++          else
++            gtk_gl_area_stereo_fail (area,
++                                     g_error_new_literal (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                                                          "The OpenGL context cannot export its picture as a dma-buf, "
++                                                          "which a subsurface needs"));
++        }
++      g_clear_error (&export_error);
+ 
+       if (x11_shown)
+         {
+@@ -1508,6 +1782,18 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+ 
+       g_object_unref (holder);
+     }
++  else if (priv->format != GDK_MEMORY_R8G8B8A8_PREMULTIPLIED)
++    {
++      GEnumClass *formats = g_type_class_ref (GDK_TYPE_MEMORY_FORMAT);
++      GEnumValue *value = g_enum_get_value (formats, priv->format);
++      GError *error = g_error_new (GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                                   "The OpenGL context cannot render into the format %s (framebuffer status 0x%x)",
++                                   value ? value->value_nick : "?", status);
++
++      gtk_gl_area_set_error (area, error);
++      g_error_free (error);
++      g_type_class_unref (formats);
++    }
+   else
+     {
+       g_warning ("fb setup not supported (%x)", status);
+@@ -1533,6 +1819,8 @@ gtk_gl_area_finalize (GObject *object)
+ 
+   g_clear_error (&priv->stereo_error);
+ 
++  g_clear_pointer (&priv->color_state, gdk_color_state_unref);
++
+   G_OBJECT_CLASS (gtk_gl_area_parent_class)->finalize (object);
+ }
+ 
+@@ -1767,6 +2055,37 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+                       G_PARAM_READWRITE | G_PARAM_STATIC_NAME |
+                       G_PARAM_EXPLICIT_NOTIFY);
+ 
++  /**
++   * GtkGLArea:format:
++   *
++   * The format of the picture the area renders into.
++   *
++   * See [method@Gtk.GLArea.set_format].
++   *
++   * Since: 4.24
++   */
++  obj_props[PROP_FORMAT] =
++    g_param_spec_enum ("format", NULL, NULL,
++                       GDK_TYPE_MEMORY_FORMAT,
++                       GDK_MEMORY_R8G8B8A8_PREMULTIPLIED,
++                       G_PARAM_READWRITE | G_PARAM_STATIC_NAME |
++                       G_PARAM_EXPLICIT_NOTIFY);
++
++  /**
++   * GtkGLArea:color-state:
++   *
++   * The color state of the picture the area renders.
++   *
++   * See [method@Gtk.GLArea.set_color_state].
++   *
++   * Since: 4.24
++   */
++  obj_props[PROP_COLOR_STATE] =
++    g_param_spec_boxed ("color-state", NULL, NULL,
++                        GDK_TYPE_COLOR_STATE,
++                        G_PARAM_READWRITE | G_PARAM_STATIC_NAME |
++                        G_PARAM_EXPLICIT_NOTIFY);
++
+   gobject_class->finalize = gtk_gl_area_finalize;
+   gobject_class->set_property = gtk_gl_area_set_property;
+   gobject_class->get_property = gtk_gl_area_get_property;
+@@ -1876,12 +2195,8 @@ gtk_gl_area_init (GtkGLArea *area)
+   priv->allowed_apis = GDK_GL_API_GL | GDK_GL_API_GLES;
+   priv->stereo_view_width = -1;
+   priv->stereo_view_height = -1;
+-#ifdef GDK_WINDOWING_X11
+-  /* GDK_X11_STEREO_READBACK keeps the stereo picture of an X11 area on its
+-   * older way to the window, read back and put through memory, to compare the
+-   * two ways or to tell them apart when a driver draws wrongly */
+-  priv->x11_readback = g_getenv ("GDK_X11_STEREO_READBACK") != NULL;
+-#endif
++  priv->format = GDK_MEMORY_R8G8B8A8_PREMULTIPLIED;
++  priv->eye_format = GDK_MEMORY_R8G8B8A8_PREMULTIPLIED;
+ }
+ 
+ /**
+@@ -2511,6 +2826,150 @@ gtk_gl_area_get_stereo_view_size (GtkGLArea *area,
+     *height = priv->stereo_view_height;
+ }
+ 
++/**
++ * gtk_gl_area_set_format:
++ * @area: a `GtkGLArea`
++ * @format: the format of the picture
++ *
++ * Sets the format of the picture the area renders into.
++ *
++ * The default, %GDK_MEMORY_R8G8B8A8_PREMULTIPLIED, is 8 bits a channel.
++ * A program whose picture is deeper asks for it here:
++ * %GDK_MEMORY_ABGR2101010_PREMULTIPLIED for 10 bits a channel,
++ * %GDK_MEMORY_R16G16B16A16_PREMULTIPLIED for 16 bits a channel (and for
++ * pictures of 12 bits, which have no format of their own),
++ * %GDK_MEMORY_R16G16B16A16_FLOAT_PREMULTIPLIED and
++ * %GDK_MEMORY_R32G32B32A32_FLOAT_PREMULTIPLIED for half and single float.
++ * Other formats are not accepted.
++ *
++ * The framebuffer of [signal@Gtk.GLArea::render], the texture GTK draws and
++ * the buffer a compositor gets all have that format; a stereo area's picture
++ * is opaque. If the OpenGL context cannot render into the format, the area
++ * shows that as its error (see [method@Gtk.GLArea.get_error]).
++ *
++ * The picture of a stereo area reaches the compositor as a dma-buf. Half
++ * float is the deepest float format a dma-buf has, so the views of a single
++ * float area are rendered in single floats and their picture is kept in half
++ * floats. Where the OpenGL driver exports no dma-buf of the area's format
++ * (16 bits a channel on some drivers), the area cannot be shown per eye and
++ * says so in [property@Gtk.GLArea:stereo-error].
++ *
++ * What the values mean is said with [method@Gtk.GLArea.set_color_state].
++ * On X11 a stereo area's window has the depth of the toplevel's visual.
++ *
++ * Since: 4.24
++ */
++void
++gtk_gl_area_set_format (GtkGLArea       *area,
++                        GdkMemoryFormat  format)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++  g_return_if_fail (gtk_gl_area_format_is_valid (format));
++
++  if (priv->format == format)
++    return;
++
++  priv->format = format;
++  priv->needs_render = TRUE;
++
++  g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_FORMAT]);
++  gtk_widget_queue_draw (GTK_WIDGET (area));
++}
++
++/**
++ * gtk_gl_area_get_format:
++ * @area: a `GtkGLArea`
++ *
++ * Gets the format of the picture the area renders into.
++ *
++ * See [method@Gtk.GLArea.set_format].
++ *
++ * Returns: the format
++ *
++ * Since: 4.24
++ */
++GdkMemoryFormat
++gtk_gl_area_get_format (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), GDK_MEMORY_R8G8B8A8_PREMULTIPLIED);
++
++  return priv->format;
++}
++
++/**
++ * gtk_gl_area_set_color_state:
++ * @area: a `GtkGLArea`
++ * @color_state: (nullable): the color state of the picture, or %NULL for sRGB
++ *
++ * Sets the color state of the picture the area renders.
++ *
++ * The values the program renders are taken as values of that color state:
++ * sRGB by default, or for example [func@Gdk.ColorState.get_rec2100_pq] for
++ * a Rec. 2100 picture with the perceptual quantizer, a color state built
++ * from [struct@Gdk.CicpParams] for hybrid log-gamma, or
++ * [func@Gdk.ColorState.get_rec2100_linear]. GTK converts the picture when
++ * it draws it into the window. Where the picture goes to the compositor on
++ * a surface of its own (a stereo area, an area in a
++ * [class@Gtk.GraphicsOffload]), the color state goes with it as the
++ * surface's color description, so the picture keeps its depth and its
++ * colors to the output; a stereo area's two views share it.
++ *
++ * On X11 a stereo area's window carries no color description, so a stereo
++ * area in another color state than sRGB is not shown per eye there (see
++ * [property@Gtk.GLArea:stereo-error]): GTK draws its left view, converted.
++ *
++ * Since: 4.24
++ */
++void
++gtk_gl_area_set_color_state (GtkGLArea     *area,
++                             GdkColorState *color_state)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++
++  if (color_state == NULL)
++    color_state = gdk_color_state_get_srgb ();
++
++  if (priv->color_state != NULL && gdk_color_state_equal (priv->color_state, color_state))
++    return;
++  if (priv->color_state == NULL && gdk_color_state_equal (color_state, gdk_color_state_get_srgb ()))
++    return;
++
++  g_clear_pointer (&priv->color_state, gdk_color_state_unref);
++  priv->color_state = gdk_color_state_ref (color_state);
++  priv->needs_render = TRUE;
++
++  g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_COLOR_STATE]);
++  gtk_widget_queue_draw (GTK_WIDGET (area));
++}
++
++/**
++ * gtk_gl_area_get_color_state:
++ * @area: a `GtkGLArea`
++ *
++ * Gets the color state of the picture the area renders.
++ *
++ * See [method@Gtk.GLArea.set_color_state].
++ *
++ * Returns: (transfer none): the color state
++ *
++ * Since: 4.24
++ */
++GdkColorState *
++gtk_gl_area_get_color_state (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), NULL);
++
++  return priv->color_state ? priv->color_state : gdk_color_state_get_srgb ();
++}
++
+ /**
+  * gtk_gl_area_get_stereo_shown:
+  * @area: a `GtkGLArea`
+diff --git a/gtk/gtkglarea.h b/gtk/gtkglarea.h
+index 15a1b175c826e968f1a4e353a8e63b072647603d..26e7a64f78f93ab7377bd34b1ba56d1ec4877b71 100644
+--- a/gtk/gtkglarea.h
++++ b/gtk/gtkglarea.h
+@@ -162,6 +162,16 @@ GDK_AVAILABLE_IN_ALL
+ void            gtk_gl_area_get_stereo_view_size        (GtkGLArea    *area,
+                                                          int          *width,
+                                                          int          *height);
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_set_format                  (GtkGLArea       *area,
++                                                         GdkMemoryFormat  format);
++GDK_AVAILABLE_IN_ALL
++GdkMemoryFormat gtk_gl_area_get_format                  (GtkGLArea       *area);
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_set_color_state             (GtkGLArea       *area,
++                                                         GdkColorState   *color_state);
++GDK_AVAILABLE_IN_ALL
++GdkColorState * gtk_gl_area_get_color_state             (GtkGLArea       *area);
+ 
+ GDK_AVAILABLE_IN_ALL
+ void            gtk_gl_area_set_error                   (GtkGLArea    *area,
+diff --git a/testsuite/gtk/glarea.c b/testsuite/gtk/glarea.c
+index c3185707a7afdad82386be8516baf666026e069a..472126df4d6f8b5703524bac99b7c9aa608d21eb 100644
+--- a/testsuite/gtk/glarea.c
++++ b/testsuite/gtk/glarea.c
+@@ -3,7 +3,9 @@
+  *
+  * The test displays have no compositor that takes stereo content, so a stereo
+  * area must say so: stereo-shown stays FALSE, stereo-error is set, and the area
+- * renders its left view alone, once for each frame.
++ * renders its left view alone, once for each frame. On a desktop whose
++ * compositor does take it that test is skipped (GDK_WAYLAND_DISABLE=
++ * kde_stereo_content_manager_v1 runs it there).
+  */
+ 
+ #include <gtk/gtk.h>
+@@ -115,11 +117,22 @@ test_stereo_unavailable (void)
+    * to offload them: whatever came, the area then renders the left view alone */
+   g_assert_cmpint (log.eyes[0], ==, GTK_GL_AREA_EYE_LEFT);
+ 
+-  /* a frame later the area knows it cannot show the views per eye */
++  /* a frame later the area knows it cannot show the views per eye; on a
++   * desktop whose compositor takes stereo content it is shown per eye
++   * instead, and there is nothing to test here */
+   timeout = g_timeout_add_seconds (10, timeout_cb, &log);
+-  while (gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)) == NULL && !log.timed_out)
++  while (gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)) == NULL &&
++         !gtk_gl_area_get_stereo_shown (GTK_GL_AREA (area)) && !log.timed_out)
+     g_main_context_iteration (NULL, TRUE);
+-  g_source_remove (timeout);
++  if (!log.timed_out)
++    g_source_remove (timeout);
++
++  if (gtk_gl_area_get_stereo_shown (GTK_GL_AREA (area)))
++    {
++      g_test_skip ("The compositor takes stereo content: the area is shown per eye");
++      gtk_window_destroy (GTK_WINDOW (window));
++      return;
++    }
+ 
+   g_assert_false (log.timed_out);
+   g_assert_false (gtk_gl_area_get_stereo_shown (GTK_GL_AREA (area)));
+@@ -152,6 +165,96 @@ test_stereo_unavailable (void)
+   gtk_window_destroy (GTK_WINDOW (window));
+ }
+ 
++/* The size of the views of a stereo area: unset until the program sets it,
++ * and it says so when it changes. */
++static void
++test_stereo_view_size (void)
++{
++  GtkWidget *area = gtk_gl_area_new ();
++  int width = 0, height = 0, notified = 0;
++
++  g_object_ref_sink (area);
++
++  gtk_gl_area_get_stereo_view_size (GTK_GL_AREA (area), &width, &height);
++  g_assert_cmpint (width, ==, -1);
++  g_assert_cmpint (height, ==, -1);
++
++  g_signal_connect (area, "notify::stereo-view-width", G_CALLBACK (count_notify), &notified);
++  g_signal_connect (area, "notify::stereo-view-height", G_CALLBACK (count_notify), &notified);
++  gtk_gl_area_set_stereo_view_size (GTK_GL_AREA (area), 1920, 540);
++  gtk_gl_area_get_stereo_view_size (GTK_GL_AREA (area), &width, &height);
++  g_assert_cmpint (width, ==, 1920);
++  g_assert_cmpint (height, ==, 540);
++  g_assert_cmpint (notified, ==, 2);
++
++  gtk_gl_area_set_stereo_view_size (GTK_GL_AREA (area), 1920, 540);
++  g_assert_cmpint (notified, ==, 2);
++
++  g_object_get (area, "stereo-view-width", &width, "stereo-view-height", &height, NULL);
++  g_assert_cmpint (width, ==, 1920);
++  g_assert_cmpint (height, ==, 540);
++
++  gtk_gl_area_set_stereo_view_size (GTK_GL_AREA (area), -1, -1);
++  gtk_gl_area_get_stereo_view_size (GTK_GL_AREA (area), &width, &height);
++  g_assert_cmpint (width, ==, -1);
++  g_assert_cmpint (height, ==, -1);
++
++  g_object_unref (area);
++}
++
++/* The format and the color state of the picture: 8 bits and sRGB until the
++ * program says otherwise, every depth the area takes, and the color states. */
++static void
++test_format_and_color_state (void)
++{
++  static const GdkMemoryFormat formats[] = {
++    GDK_MEMORY_ABGR2101010_PREMULTIPLIED,
++    GDK_MEMORY_R16G16B16A16_PREMULTIPLIED,
++    GDK_MEMORY_R16G16B16A16_FLOAT_PREMULTIPLIED,
++    GDK_MEMORY_R32G32B32A32_FLOAT_PREMULTIPLIED,
++    GDK_MEMORY_R8G8B8A8_PREMULTIPLIED,
++  };
++  GtkWidget *area = gtk_gl_area_new ();
++  GdkColorState *state = NULL;
++  GdkMemoryFormat format;
++  int notified = 0;
++
++  g_object_ref_sink (area);
++
++  g_assert_cmpint (gtk_gl_area_get_format (GTK_GL_AREA (area)), ==, GDK_MEMORY_R8G8B8A8_PREMULTIPLIED);
++  g_assert_true (gdk_color_state_equal (gtk_gl_area_get_color_state (GTK_GL_AREA (area)),
++                                        gdk_color_state_get_srgb ()));
++
++  g_signal_connect (area, "notify::format", G_CALLBACK (count_notify), &notified);
++  for (gsize i = 0; i < G_N_ELEMENTS (formats); i++)
++    {
++      gtk_gl_area_set_format (GTK_GL_AREA (area), formats[i]);
++      g_assert_cmpint (gtk_gl_area_get_format (GTK_GL_AREA (area)), ==, formats[i]);
++      g_object_get (area, "format", &format, NULL);
++      g_assert_cmpint (format, ==, formats[i]);
++    }
++  g_assert_cmpint (notified, ==, G_N_ELEMENTS (formats));
++
++  notified = 0;
++  g_signal_connect (area, "notify::color-state", G_CALLBACK (count_notify), &notified);
++  gtk_gl_area_set_color_state (GTK_GL_AREA (area), gdk_color_state_get_rec2100_pq ());
++  g_assert_true (gdk_color_state_equal (gtk_gl_area_get_color_state (GTK_GL_AREA (area)),
++                                        gdk_color_state_get_rec2100_pq ()));
++  g_assert_cmpint (notified, ==, 1);
++  gtk_gl_area_set_color_state (GTK_GL_AREA (area), gdk_color_state_get_rec2100_pq ());
++  g_assert_cmpint (notified, ==, 1);
++
++  g_object_get (area, "color-state", &state, NULL);
++  g_assert_true (gdk_color_state_equal (state, gdk_color_state_get_rec2100_pq ()));
++  gdk_color_state_unref (state);
++
++  gtk_gl_area_set_color_state (GTK_GL_AREA (area), gdk_color_state_get_rec2100_linear ());
++  g_assert_true (gdk_color_state_equal (gtk_gl_area_get_color_state (GTK_GL_AREA (area)),
++                                        gdk_color_state_get_rec2100_linear ()));
++
++  g_object_unref (area);
++}
++
+ int
+ main (int argc, char *argv[])
+ {
+@@ -159,6 +262,8 @@ main (int argc, char *argv[])
+ 
+   g_test_add_func ("/glarea/stereo-property", test_stereo_property);
+   g_test_add_func ("/glarea/stereo-unavailable", test_stereo_unavailable);
++  g_test_add_func ("/glarea/stereo-view-size", test_stereo_view_size);
++  g_test_add_func ("/glarea/format-and-color-state", test_format_and_color_state);
+ 
+   return g_test_run ();
+ }
