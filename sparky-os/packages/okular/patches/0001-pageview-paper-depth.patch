@@ -1,0 +1,103 @@
+From 3e8a6598608e22a70536fc8cb62e2cebe512250e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 13:12:40 -0300
+Subject: [PATCH] PageView: the desk one step behind the window, the paper at
+ the window's plane
+
+On a stereo output, where the compositor shows depth inside the window,
+the desk around the pages now lies one step of depth behind the window and
+the paper at the window's plane: the page's text, pictures, annotations,
+forms and selection ride with it, and its shadow lies on the desk. The page
+view declares the rectangles to the toolkit (the viewport's dynamic property
+_q_stereo_depth_rects: the whole view at -1, each visible page with its
+outline at 0), and the edition's Qt draws them per eye, in steps of the
+person's element limit; Okular gives no pixels of its own. The rectangles
+are said again before the pages are painted whenever they move: after a
+relayout (zoom, view mode, trim, continuous mode), a scroll and a resize.
+
+On a 2D screen, in a window lying behind the active one, with the element
+limit at 0 or with a Qt that does not know the property, the view is drawn
+as before. Presentation mode draws its page in a window of its own, which
+stays at its window's level.
+
+Assisted-by: Claude Opus 5.5
+---
+ part/pageview.cpp | 31 +++++++++++++++++++++++++++++++
+ part/pageview.h   |  2 ++
+ 2 files changed, 33 insertions(+)
+
+diff --git a/part/pageview.cpp b/part/pageview.cpp
+index 6b4f0e2..f066e1b 100644
+--- a/part/pageview.cpp
++++ b/part/pageview.cpp
+@@ -2098,6 +2098,8 @@ void PageView::resizeEvent(QResizeEvent *e)
+ 
+     d->verticalScrollBarVisible = verticalScrollBar()->isVisible();
+     d->horizontalScrollBarVisible = horizontalScrollBar()->isVisible();
++    // the desk is the whole view at its new size
++    updateStereoPaperDepth();
+ }
+ 
+ void PageView::keyPressEvent(QKeyEvent *e)
+@@ -3507,6 +3509,8 @@ bool PageView::viewportEvent(QEvent *e)
+ 
+ void PageView::scrollContentsBy(int dx, int dy)
+ {
++    // the pages moved: where they lie in depth moves with them, before they are painted
++    updateStereoPaperDepth();
+     const QRect r = viewport()->rect();
+     viewport()->scroll(dx, dy, r);
+     // HACK manually repaint the damaged regions, as it seems some updates are missed
+@@ -4907,12 +4911,39 @@ void PageView::slotRelayoutPages()
+         slotRequestVisiblePixmaps();
+     }
+ 
++    // the pages' new places in depth, before they are painted
++    updateStereoPaperDepth();
++
+     // 5) update the whole viewport if updated enabled
+     if (wasUpdatesEnabled && !d->pinchZoomActive) {
+         viewport()->update();
+     }
+ }
+ 
++void PageView::updateStereoPaperDepth()
++{
++    // On a stereo output, where the window shows depth inside it, the desk around the pages lies one step
++    // of depth behind the window and the paper at the window's plane: the page's text, pictures,
++    // annotations and selection ride with it, and its shadow lies on the desk. Qt draws it
++    // (_q_stereo_depth_rects): the step is the person's element limit, never a number of ours.
++    // Elsewhere, and with the element limit at 0, the view is drawn as before.
++    const QRect shown = viewport()->rect();
++    const QPoint areaPos = contentAreaPosition();
++    QVariantList rects;
++    rects.append(QVariantMap{{QStringLiteral("rect"), shown}, {QStringLiteral("depth"), -1.0}});
++    for (const PageViewItem *item : std::as_const(d->items)) {
++        if (!item->isVisible()) {
++            continue;
++        }
++        // the paper with its outline, which is drawn just outside the page
++        const QRect paper = item->croppedGeometry().adjusted(-1, -1, 1, 1).translated(-areaPos);
++        if (paper.intersects(shown)) {
++            rects.append(QVariantMap{{QStringLiteral("rect"), paper}, {QStringLiteral("depth"), 0.0}});
++        }
++    }
++    viewport()->setProperty("_q_stereo_depth_rects", rects);
++}
++
+ void PageView::delayedResizeEvent()
+ {
+     // If we already got here we don't need to execute the timer slot again
+diff --git a/part/pageview.h b/part/pageview.h
+index 92552c4..765c24b 100644
+--- a/part/pageview.h
++++ b/part/pageview.h
+@@ -232,6 +232,8 @@ private:
+     void textSelectionClear();
+     // updates cursor
+     void updateCursor(const QPoint p);
++    // On a stereo output, the desk around the pages one step of depth behind the window, the paper at the window's plane
++    void updateStereoPaperDepth();
+ 
+     void moveMagnifier(const QPoint p);
+     void updateMagnifier(const QPoint p);
