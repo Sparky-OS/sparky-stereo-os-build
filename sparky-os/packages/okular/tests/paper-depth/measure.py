@@ -68,7 +68,7 @@ pages = []
 if view:
     vx0, vy0, vx1, vy1 = view
     area = left[vy0:vy1 + 1, vx0:vx1 + 1]
-    white = (np.abs(area - desk_colour).max(axis=2) > 30) & (area.max(axis=2) > 100)
+    white = (np.abs(area - desk_colour).max(axis=2) > 30) & (area.max(axis=2) > 200)
     rows = white.sum(axis=1) > 40
     y = 0
     while y < len(rows):
