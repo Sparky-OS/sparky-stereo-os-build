@@ -1311,7 +1311,7 @@ dracut_mismatch_says_update_grub() {
 # The repair's dracut file: grub-mkconfig sources it (more than once), the line gets resume= once, a person's resume= or
 # noresume stays alone, the daemon reads the same file, and its own line is not counted as a person's resume=.
 repair_dracut_line() {
-	local out ok=0
+	local d=$1 out ok=0
 	python3 -I - "$PKG/sbin/repair-swap" "$W/dropin.cfg" <<'EOF' || return 1
 import importlib.machinery
 import importlib.util
@@ -1334,7 +1334,7 @@ EOF
 	[[ -z $out ]] || { echo "  a person's resume=: $out"; ok=1; }
 	out=$(GRUB_CMDLINE_LINUX=noresume sh -c '. "$1"; printf "%s" "$GRUB_CMDLINE_LINUX"' sh "$W/dropin.cfg")
 	[[ $out == noresume ]] || { echo "  noresume: $out"; ok=1; }
-	out=$(daemon INITRAMFS_GENERATOR=dracut DRACUT_RESUME_PATH="$W/dropin.cfg" "$PKG/sbin/cushion-swap" --resume-target)
+	out=$(daemon INITRAMFS_GENERATOR=dracut DRACUT_RESUME_PATH="$W/dropin.cfg" "$d" --resume-target)
 	[[ $out == *$'\nRESUME=UUID=4a1b\nRESUME_OFFSET=34816\n'* ]] || { echo "  daemon: ${out//$'\n'/ }"; ok=1; }
 	return $ok
 }
@@ -1365,7 +1365,7 @@ suite() {
 	check generator-detected generator_detected "$1"
 	check dracut-resume-source dracut_resume_source "$1"
 	check dracut-mismatch-names-update-grub dracut_mismatch_says_update_grub "$1"
-	check repair-dracut-line repair_dracut_line
+	check repair-dracut-line repair_dracut_line "$1"
 	check repair-feedback-complete repair_feedback_complete
 	local d=$1
 	check thresholds-4-8-16-32-64-96GB threshold_cases "$d"
