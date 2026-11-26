@@ -9,7 +9,7 @@
 #   ROLE     staged (the default: the desk one step down, the paper at the window's plane) or published (no step anywhere)
 # BASELINE=FOLDER: a published run's RESULTS; the 2D cases must then match it pixel for pixel.
 # KWin and the programs draw with Mesa's software renderer: no render node and no GPU is given to the containers.
-# --cpus 4, --network none, --ulimit core=1, uid 1000. PREFIX names the containers (default paper-depth); CIDS=FILE
+# --cpus 4, --network none, --ulimit core=1, uid 1000; SYS_NICE, which kwin_wayland's file capability needs to start. PREFIX names the containers (default paper-depth); CIDS=FILE
 # appends each container's ID to FILE.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -26,7 +26,7 @@ run() { # NAME [ENV...] -- COMMAND...
 	while [ "$1" != -- ]; do env+=(-e "$1"); shift; done; shift
 	local cid=$RESULTS/.cid-$name
 	docker run --rm --init --cidfile "$cid" --name "$name" --pull=never --ulimit core=1 --cpus 4 --network none \
-		--user 1000:1000 --shm-size 512m "${env[@]}" \
+		--user 1000:1000 --cap-add SYS_NICE --shm-size 512m "${env[@]}" \
 		--mount "type=bind,src=$HERE,dst=/tests,readonly" --mount "type=bind,src=$RESULTS,dst=/out" \
 		"$IMAGE" "$@" || echo "container $name rc=$?" >> "$RESULTS/containers.txt"
 	if [ -n "${CIDS:-}" ] && [ -s "$cid" ]; then { cat "$cid"; echo; } >> "$CIDS"; fi
