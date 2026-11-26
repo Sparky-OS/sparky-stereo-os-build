@@ -1,0 +1,81 @@
+Description: [PATCH 05/22] avformat/mov: add support audio fallback track ref
+Author: John Stebbins
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A05-avformat-mov-add-support-audio-fallback-track-ref.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/d9869798a86094e5eaa8b6454bae1093f67e1058
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: FFmpeg 9.1 added mov_read_mhac() where this patch adds mov_read_fall(); the new reader follows it, unchanged.
+
+diff --git a/libavformat/isom.h b/libavformat/isom.h
+index ace16c3699b82b1c2da33d9a49bb70c4a24e5576..415dd65d34420e445c0b0810df6502104b43d04e 100644
+--- a/libavformat/isom.h
++++ b/libavformat/isom.h
+@@ -288,6 +288,9 @@ typedef struct MOVStreamContext {
+         MOVEncryptionIndex *encryption_index;
+     } cenc;
+ 
++    int has_fallback;   // Audio fallback track
++    int fallback;
++
+     struct IAMFDemuxContext *iamf;
+     int iamf_stream_offset;
+ } MOVStreamContext;
+diff --git a/libavformat/mov.c b/libavformat/mov.c
+index e8846832ab3f35a1b14710278ed023fae5a5e973..464b1f1aed32bb14919a6b6ca8e77456813aedce 100644
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -10631,6 +10631,22 @@ static int mov_read_mhac(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+     return ret;
+ }
+ 
++static int mov_read_fall(MOVContext *c, AVIOContext *pb, MOVAtom atom)
++{
++    AVStream *st;
++    MOVStreamContext *sc;
++
++    if (c->fc->nb_streams < 1)
++        return 0;
++    st = c->fc->streams[c->fc->nb_streams-1];
++    sc = st->priv_data;
++
++    sc->fallback = avio_rb32(pb);
++    sc->has_fallback = 1;
++
++    return 0;
++}
++
+ static const MOVParseTableEntry mov_default_parse_table[] = {
+ { MKTAG('A','C','L','R'), mov_read_aclr },
+ { MKTAG('A','P','R','G'), mov_read_avid },
+@@ -10736,6 +10752,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
+ { MKTAG('v','p','c','C'), mov_read_vpcc },
+ { MKTAG('m','d','c','v'), mov_read_mdcv },
+ { MKTAG('c','l','l','i'), mov_read_clli },
++{ MKTAG('f','a','l','l'), mov_read_fall },
+ { MKTAG('d','v','c','C'), mov_read_dvcc_dvvc },
+ { MKTAG('d','v','v','C'), mov_read_dvcc_dvvc },
+ { MKTAG('d','v','w','C'), mov_read_dvcc_dvvc },
+@@ -12887,6 +12904,23 @@ static int mov_read_header(AVFormatContext *s)
+             err = ff_replaygain_export(st, s->metadata);
+             if (err < 0)
+                 return err;
++            if (sc->has_fallback) {
++                for (j = 0; j < s->nb_streams; j++) {
++                    if (s->streams[j]->id == sc->fallback) {
++                        AVPacketSideData *sd;
++                        int *fallback;
++                        sd = av_packet_side_data_new(&st->codecpar->coded_side_data,
++                                    &st->codecpar->nb_coded_side_data,
++                                    AV_PKT_DATA_FALLBACK_TRACK,
++                                    sizeof(int), 0);
++                        if (!sd)
++                            return AVERROR(ENOMEM);
++                        fallback = (int*)sd->data;
++                        *fallback = j;
++                        break;
++                    }
++                }
++            }
+             break;
+         case AVMEDIA_TYPE_VIDEO:
+             if (sc->display_matrix) {

@@ -1,0 +1,197 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/ccdd1e0cd746c08b040d4bb301868cee2427f450
+From ccdd1e0cd746c08b040d4bb301868cee2427f450 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:58:06 -0300
+Subject: [PATCH 45/48] avformat/mpeg: read ISO/IEC 23002-3 auxiliary video
+ streams
+
+In a program stream, an auxiliary video stream is carried in PES packets
+of stream_id 0xFD with a stream_id_extension of 0x10 to 0x1F (ISO/IEC
+13818-1 Table 2-27 and 2.16), and the program stream map describes it as
+stream type 0x1E with an auxiliary video stream descriptor (2.6.74),
+after the pseudo descriptor that gives its stream_id_extension
+(2.5.4.1), or without it when single_extension_stream_flag is set.
+
+Read the descriptor from the map, set the stream's codec from
+aux_video_codedstreamtype, probing it when the map has none, and export
+its supplemental information as the transport stream demuxer does.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the context moved in FFmpeg 9.1; the lines this patch adds and removes are unchanged
+
+diff --git a/libavformat/Makefile b/libavformat/Makefile
+index 032c0aa90b8717d1c182d0a6c9be6fe7d9c9f904..eaa8e0c2a2866e3d3b00ad2bff1cff95bfc20976 100644
+--- a/libavformat/Makefile
++++ b/libavformat/Makefile
+@@ -412,7 +412,7 @@ OBJS-$(CONFIG_MPEG2DVD_MUXER)            += mpegenc.o
+ OBJS-$(CONFIG_MPEG2SVCD_MUXER)           += mpegenc.o
+ OBJS-$(CONFIG_MPEG2VIDEO_MUXER)          += rawenc.o
+ OBJS-$(CONFIG_MPEG2VOB_MUXER)            += mpegenc.o
+-OBJS-$(CONFIG_MPEGPS_DEMUXER)            += mpeg.o
++OBJS-$(CONFIG_MPEGPS_DEMUXER)            += mpeg.o mpegauxvideo.o
+ OBJS-$(CONFIG_MPEGTS_DEMUXER)            += mpegts.o mpegauxvideo.o
+ OBJS-$(CONFIG_MPEGTS_MUXER)              += mpegtsenc.o mpegauxvideo.o
+ OBJS-$(CONFIG_MPEGVIDEO_DEMUXER)         += mpegvideodec.o rawdec.o
+diff --git a/libavformat/mpeg.c b/libavformat/mpeg.c
+index 43bbf0ef9f0fada7619ddc921f0f57567fe744f2..9b598195181822549a4ee20f23496ed2ddc281a5 100644
+--- a/libavformat/mpeg.c
++++ b/libavformat/mpeg.c
+@@ -28,6 +28,7 @@
+ #include "demux.h"
+ #include "internal.h"
+ #include "mpeg.h"
++#include "mpegauxvideo.h"
+ 
+ /*********************************************/
+ /* demux code */
+@@ -122,9 +123,21 @@ static int mpegps_probe(const AVProbeData *p)
+     return score;
+ }
+ 
++/* the auxiliary video stream descriptor of an ISO/IEC 23002-3 auxiliary
++ * video stream (ISO/IEC 13818-1 2.6.74) */
++typedef struct MpegAuxVideo {
++    int coded_stream_type;
++    int si_size;
++    uint8_t si[255];
++} MpegAuxVideo;
++
+ typedef struct MpegDemuxContext {
+     int32_t header_state;
+     unsigned char psm_es_type[256];
++    /* the auxiliary video streams the program stream map describes, by
++     * stream_id_extension 0x10 to 0x1f (ISO/IEC 13818-1 Table 2-27), and the
++     * one a map with single_extension_stream_flag set describes */
++    MpegAuxVideo psm_aux_video[17];
+     int sofdec;
+     int dvd;
+     int imkh_cctv;
+@@ -199,12 +212,48 @@ found:
+  *
+  * @return number of bytes occupied by PSM in the bitstream
+  */
++/**
++ * Remember the auxiliary video stream descriptor of an auxiliary video
++ * stream, with the stream_id_extension its pseudo descriptor gives
++ * (ISO/IEC 13818-1 2.5.4.1).
++ */
++static void mpegps_psm_aux_video(MpegDemuxContext *m, int single_extension_stream,
++                                 const uint8_t *info, int size)
++{
++    const uint8_t *p = info, *end = info + size;
++    MpegAuxVideo *aux = &m->psm_aux_video[16];
++
++    if (!single_extension_stream) {
++        if (size < 3 || p[0] != 0x01 || p[1] != 1)
++            return;
++        if ((p[2] & 0x7f) < 0x10 || (p[2] & 0x7f) > 0x1f)
++            return;
++        aux = &m->psm_aux_video[(p[2] & 0x7f) - 0x10];
++        p  += 3;
++    }
++
++    while (end - p >= 2) {
++        int tag = p[0], len = p[1];
++
++        if (len > end - p - 2)
++            break;
++        if (tag == 0x2f && len >= 1) {
++            aux->coded_stream_type = p[2];
++            aux->si_size           = len - 1;
++            memcpy(aux->si, p + 3, len - 1);
++            return;
++        }
++        p += 2 + len;
++    }
++}
++
+ static long mpegps_psm_parse(MpegDemuxContext *m, AVIOContext *pb)
+ {
+-    int psm_length, ps_info_length, es_map_length;
++    int psm_length, ps_info_length, es_map_length, single_extension_stream;
++    uint8_t info[1024];
+ 
+     psm_length = avio_rb16(pb);
+-    avio_r8(pb);
++    single_extension_stream = avio_r8(pb) >> 6 & 1;
+     avio_r8(pb);
+     ps_info_length = avio_rb16(pb);
+ 
+@@ -222,8 +271,16 @@ static long mpegps_psm_parse(MpegDemuxContext *m, AVIOContext *pb)
+ 
+         /* remember mapping from stream id to stream type */
+         m->psm_es_type[es_id] = type;
+-        /* skip program_stream_info */
+-        avio_skip(pb, es_info_length);
++        if (type == STREAM_TYPE_AUXILIARY_VIDEO && es_id == 0xfd &&
++            es_info_length <= sizeof(info)) {
++            int size = avio_read(pb, info, es_info_length);
++
++            if (size == es_info_length)
++                mpegps_psm_aux_video(m, single_extension_stream, info, size);
++        } else {
++            /* skip program_stream_info */
++            avio_skip(pb, es_info_length);
++        }
+         es_map_length -= 4 + es_info_length;
+     }
+     avio_rb32(pb); /* crc32 */
+@@ -490,6 +547,7 @@ static int mpegps_read_packet(AVFormatContext *s,
+     int pcm_dvd = 0;
+     int pcm_dvda = 0;
+     int request_probe= 0;
++    const MpegAuxVideo *aux = NULL;
+     enum AVCodecID codec_id = AV_CODEC_ID_NONE;
+     enum AVMediaType type;
+     int64_t pts, dts, dummy_pos; // dummy_pos is needed for the index building to work
+@@ -543,7 +601,23 @@ redo:
+     }
+ 
+     es_type = m->psm_es_type[startcode & 0xff];
+-    if (es_type == STREAM_TYPE_VIDEO_MPEG1) {
++    if (startcode >= 0xfd10 && startcode <= 0xfd1f) {
++        /* an ISO/IEC 23002-3 auxiliary video stream (ISO/IEC 13818-1
++         * Table 2-27), coded as its descriptor says */
++        aux = &m->psm_aux_video[startcode - 0xfd10];
++        if (!aux->si_size)
++            aux = &m->psm_aux_video[16];
++        type = AVMEDIA_TYPE_VIDEO;
++        switch (aux->coded_stream_type) {
++        case STREAM_TYPE_VIDEO_MPEG1:
++        case STREAM_TYPE_VIDEO_MPEG2: codec_id = AV_CODEC_ID_MPEG2VIDEO; break;
++        case STREAM_TYPE_VIDEO_MPEG4: codec_id = AV_CODEC_ID_MPEG4;      break;
++        case STREAM_TYPE_VIDEO_H264:  codec_id = AV_CODEC_ID_H264;       break;
++        case STREAM_TYPE_VIDEO_HEVC:  codec_id = AV_CODEC_ID_HEVC;       break;
++        case STREAM_TYPE_VIDEO_VVC:   codec_id = AV_CODEC_ID_VVC;        break;
++        default:                      request_probe = 1;                 break;
++        }
++    } else if (es_type == STREAM_TYPE_VIDEO_MPEG1) {
+         codec_id = AV_CODEC_ID_MPEG2VIDEO;
+         type     = AVMEDIA_TYPE_VIDEO;
+     } else if (es_type == STREAM_TYPE_VIDEO_MPEG2) {
+@@ -661,6 +735,11 @@ skip:
+     }
+     sti->request_probe = request_probe;
+     sti->need_parsing  = AVSTREAM_PARSE_FULL;
++    if (aux && aux->si_size) {
++        ret = ff_aux_video_si_parse(s, st->codecpar, aux->si, aux->si_size);
++        if (ret < 0)
++            return ret;
++    }
+ 
+ found:
+     if (st->discard >= AVDISCARD_ALL)
+diff --git a/libavformat/mpeg.h b/libavformat/mpeg.h
+index 20592eb184b73aeced884a41cf47cc7f197c0d02..924f87fe3fa3c371f9624c46b99193beeb3ceb82 100644
+--- a/libavformat/mpeg.h
++++ b/libavformat/mpeg.h
+@@ -55,6 +55,7 @@
+ #define STREAM_TYPE_AUDIO_AAC       0x0f
+ #define STREAM_TYPE_VIDEO_MPEG4     0x10
+ #define STREAM_TYPE_VIDEO_H264      0x1b
++#define STREAM_TYPE_AUXILIARY_VIDEO 0x1e
+ #define STREAM_TYPE_VIDEO_HEVC      0x24
+ #define STREAM_TYPE_VIDEO_VVC       0x33
+ #define STREAM_TYPE_VIDEO_CAVS      0x42

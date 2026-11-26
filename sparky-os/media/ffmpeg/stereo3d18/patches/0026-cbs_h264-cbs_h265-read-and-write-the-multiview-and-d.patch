@@ -1,0 +1,995 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/4faafb7e8c2585d3e342343be0823e6e14e2bf6c
+From 4faafb7e8c2585d3e342343be0823e6e14e2bf6c Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:59:05 -0300
+Subject: [PATCH 26/48] cbs_h264, cbs_h265: read and write the multiview and
+ depth information SEI messages
+
+Every multiview and depth information SEI message of H.264 (multiview
+scene information, multiview acquisition information, multiview view
+position, depth representation information, 3D reference displays
+information, depth timing, depth sampling information, constrained depth
+parameter set identifier, alternative depth information; Annexes G, H
+and I) and H.265 (depth representation information, multiview scene
+information, multiview acquisition information, multiview view position,
+alternative depth information; Annexes G and I), with the elements they
+share in cbs_multiview_template.c: the camera and display parameters,
+whose mantissas are up to 64 bits long, the depth representation
+elements, the cameras and the global view and depth information.
+
+The data after a reserved depth_representation_type is kept as payload
+extension data. A depth timing message with per_view_depth_timing_flag
+holds one offset for each of the NumDepthViews depth views of the MVCD
+sequence parameter set, which CBS does not read, so the offsets the
+payload holds are read. H.265 multiview acquisition information is read
+outside of a scalable nesting message, for one camera (G.14.3.6).
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/cbs_h264.c                 |  54 ++++++
+ libavcodec/cbs_h264.h                 | 109 +++++++++++
+ libavcodec/cbs_h264_syntax_template.c | 261 ++++++++++++++++++++++++++
+ libavcodec/cbs_h265.c                 |  30 +++
+ libavcodec/cbs_h265.h                 |  59 ++++++
+ libavcodec/cbs_h265_syntax_template.c | 133 +++++++++++++
+ libavcodec/cbs_multiview_template.c   | 154 +++++++++++++++
+ libavcodec/cbs_sei.h                  |  56 ++++++
+ 8 files changed, 856 insertions(+)
+ create mode 100644 libavcodec/cbs_multiview_template.c
+
+diff --git a/libavcodec/cbs_h264.c b/libavcodec/cbs_h264.c
+index 8b5a7c71..63ac598d 100644
+--- a/libavcodec/cbs_h264.c
++++ b/libavcodec/cbs_h264.c
+@@ -784,5 +784,59 @@ const SEIMessageTypeDescriptor ff_cbs_sei_h264_types[] = {
+         sizeof(H264RawSEIDisplayOrientation),
+         SEI_MESSAGE_RW(h264, sei_display_orientation),
+     },
++    {
++        SEI_TYPE_MULTIVIEW_SCENE_INFO_4,
++        1, 0,
++        sizeof(H264RawSEIMultiviewSceneInfo),
++        SEI_MESSAGE_RW(h264, sei_multiview_scene_info),
++    },
++    {
++        SEI_TYPE_MULTIVIEW_ACQUISITION_INFO_4,
++        1, 0,
++        sizeof(H264RawSEIMultiviewAcquisitionInfo),
++        SEI_MESSAGE_RW(h264, sei_multiview_acquisition_info),
++    },
++    {
++        SEI_TYPE_MULTIVIEW_VIEW_POSITION_4,
++        1, 0,
++        sizeof(H264RawSEIMultiviewViewPosition),
++        SEI_MESSAGE_RW(h264, sei_multiview_view_position),
++    },
++    {
++        SEI_TYPE_DEPTH_REPRESENTATION_INFO_4,
++        1, 0,
++        sizeof(H264RawSEIDepthRepresentationInfo),
++        SEI_MESSAGE_RW(h264, sei_depth_representation_info),
++    },
++    {
++        SEI_TYPE_THREE_DIMENSIONAL_REFERENCE_DISPLAYS_INFO_4,
++        1, 0,
++        sizeof(H264RawSEI3DReferenceDisplaysInfo),
++        SEI_MESSAGE_RW(h264, sei_3d_reference_displays_info),
++    },
++    {
++        SEI_TYPE_DEPTH_TIMING,
++        1, 0,
++        sizeof(H264RawSEIDepthTiming),
++        SEI_MESSAGE_RW(h264, sei_depth_timing),
++    },
++    {
++        SEI_TYPE_DEPTH_SAMPLING_INFO,
++        1, 0,
++        sizeof(H264RawSEIDepthSamplingInfo),
++        SEI_MESSAGE_RW(h264, sei_depth_sampling_info),
++    },
++    {
++        SEI_TYPE_CONSTRAINED_DEPTH_PARAMETER_SET_IDENTIFIER,
++        1, 0,
++        sizeof(H264RawSEIConstrainedDepthParameterSetIdentifier),
++        SEI_MESSAGE_RW(h264, sei_constrained_depth_parameter_set_identifier),
++    },
++    {
++        SEI_TYPE_ALTERNATIVE_DEPTH_INFO,
++        1, 0,
++        sizeof(H264RawSEIAlternativeDepthInfo),
++        SEI_MESSAGE_RW(h264, sei_alternative_depth_info),
++    },
+     SEI_MESSAGE_TYPE_END
+ };
+diff --git a/libavcodec/cbs_h264.h b/libavcodec/cbs_h264.h
+index 3763f249..4f716879 100644
+--- a/libavcodec/cbs_h264.h
++++ b/libavcodec/cbs_h264.h
+@@ -322,6 +322,115 @@ typedef struct H264RawSEIDisplayOrientation {
+     uint8_t display_orientation_extension_flag;
+ } H264RawSEIDisplayOrientation;
+ 
++typedef struct H264RawSEIMultiviewSceneInfo {
++    uint16_t max_disparity;
++} H264RawSEIMultiviewSceneInfo;
++
++typedef struct H264RawSEIMultiviewAcquisitionInfo {
++    uint16_t num_views_minus1;
++    uint8_t  intrinsic_param_flag;
++    uint8_t  extrinsic_param_flag;
++    uint8_t  intrinsic_params_equal_flag;
++    uint8_t  prec_focal_length;
++    uint8_t  prec_principal_point;
++    uint8_t  prec_skew_factor;
++    uint8_t  prec_rotation_param;
++    uint8_t  prec_translation_param;
++    SEIRawMultiviewCamera camera[1024];
++} H264RawSEIMultiviewAcquisitionInfo;
++
++typedef struct H264RawSEIMultiviewViewPosition {
++    uint16_t num_views_minus1;
++    uint16_t view_position[1024];
++    uint8_t  multiview_view_position_extension_flag;
++} H264RawSEIMultiviewViewPosition;
++
++typedef struct H264RawSEIDepthRepresentationView {
++    uint16_t depth_info_view_id;
++    uint16_t z_axis_reference_view;
++    uint16_t disparity_reference_view;
++    SEIRawDepthRepElement z_near;
++    SEIRawDepthRepElement z_far;
++    SEIRawDepthRepElement d_min;
++    SEIRawDepthRepElement d_max;
++} H264RawSEIDepthRepresentationView;
++
++typedef struct H264RawSEIDepthRepresentationInfo {
++    uint8_t  all_views_equal_flag;
++    uint16_t num_views_minus1;
++    uint8_t  z_near_flag;
++    uint8_t  z_far_flag;
++    uint8_t  z_axis_equal_flag;
++    uint16_t common_z_axis_reference_view;
++    uint8_t  d_min_flag;
++    uint8_t  d_max_flag;
++    uint8_t  depth_representation_type;
++    H264RawSEIDepthRepresentationView view[1024];
++    uint8_t  depth_nonlinear_representation_num_minus1;
++    uint16_t depth_nonlinear_representation_model[64];
++} H264RawSEIDepthRepresentationInfo;
++
++typedef struct H264RawSEI3DReferenceDisplaysInfo {
++    uint8_t prec_ref_baseline;
++    uint8_t prec_ref_display_width;
++    uint8_t ref_viewing_distance_flag;
++    uint8_t prec_ref_viewing_dist;
++    uint8_t num_ref_displays_minus1;
++    SEIRawMultiviewReal ref_baseline[32];
++    SEIRawMultiviewReal ref_display_width[32];
++    SEIRawMultiviewReal ref_viewing_distance[32];
++    uint8_t  additional_shift_present_flag[32];
++    uint16_t num_sample_shift_plus512[32];
++    uint8_t three_dimensional_reference_displays_extension_flag;
++} H264RawSEI3DReferenceDisplaysInfo;
++
++typedef struct H264RawSEIDepthTimingOffset {
++    uint8_t  offset_len_minus1;
++    uint32_t depth_disp_delay_offset_fp;
++    uint8_t  depth_disp_delay_offset_dp;
++} H264RawSEIDepthTimingOffset;
++
++typedef struct H264RawSEIDepthTiming {
++    uint8_t per_view_depth_timing_flag;
++    /**
++     * The number of offsets: NumDepthViews of the MVCD sequence parameter set
++     * with per_view_depth_timing_flag, which is not read, so the offsets
++     * the payload holds; otherwise 1.
++     */
++    uint16_t nb_offsets;
++    H264RawSEIDepthTimingOffset offset[1024];
++} H264RawSEIDepthTiming;
++
++typedef struct H264RawSEIDepthGridPosition {
++    uint32_t depth_grid_pos_x_fp;
++    uint8_t  depth_grid_pos_x_dp;
++    uint8_t  depth_grid_pos_x_sign_flag;
++    uint32_t depth_grid_pos_y_fp;
++    uint8_t  depth_grid_pos_y_dp;
++    uint8_t  depth_grid_pos_y_sign_flag;
++} H264RawSEIDepthGridPosition;
++
++typedef struct H264RawSEIDepthSamplingInfo {
++    uint16_t dttsr_x_mul;
++    uint8_t  dttsr_x_dp;
++    uint16_t dttsr_y_mul;
++    uint8_t  dttsr_y_dp;
++    uint8_t  per_view_depth_grid_pos_flag;
++    uint16_t num_video_plus_depth_views_minus1;
++    uint16_t depth_grid_view_id[1024];
++    H264RawSEIDepthGridPosition position[1024];
++} H264RawSEIDepthSamplingInfo;
++
++typedef struct H264RawSEIConstrainedDepthParameterSetIdentifier {
++    uint32_t max_dps_id;
++    uint32_t max_dps_id_diff;
++} H264RawSEIConstrainedDepthParameterSetIdentifier;
++
++typedef struct H264RawSEIAlternativeDepthInfo {
++    uint32_t depth_type;
++    SEIRawAlternativeDepthGVD gvd;
++} H264RawSEIAlternativeDepthInfo;
++
+ typedef struct H264RawSEI {
+     H264RawNALUnitHeader nal_unit_header;
+     SEIRawMessageList    message_list;
+diff --git a/libavcodec/cbs_h264_syntax_template.c b/libavcodec/cbs_h264_syntax_template.c
+index 9d0386c2..384ea0c9 100644
+--- a/libavcodec/cbs_h264_syntax_template.c
++++ b/libavcodec/cbs_h264_syntax_template.c
+@@ -27,6 +27,8 @@ static int FUNC(rbsp_trailing_bits)(CodedBitstreamContext *ctx, RWContext *rw)
+     return 0;
+ }
+ 
++#include "cbs_multiview_template.c"
++
+ static int FUNC(nal_unit_header)(CodedBitstreamContext *ctx, RWContext *rw,
+                                  H264RawNALUnitHeader *current,
+                                  uint32_t valid_type_mask)
+@@ -855,6 +857,265 @@ SEI_FUNC(sei_display_orientation, (CodedBitstreamContext *ctx, RWContext *rw,
+     return 0;
+ }
+ 
++SEI_FUNC(sei_multiview_scene_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                    H264RawSEIMultiviewSceneInfo *current,
++                                    SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Multiview Scene Information");
++
++    ue(max_disparity, 0, 1023);
++
++    return 0;
++}
++
++SEI_FUNC(sei_multiview_acquisition_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                          H264RawSEIMultiviewAcquisitionInfo *current,
++                                          SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Multiview Acquisition Information");
++
++    ue(num_views_minus1, 0, 1023);
++    flag(intrinsic_param_flag);
++    flag(extrinsic_param_flag);
++    if (current->intrinsic_param_flag) {
++        flag(intrinsic_params_equal_flag);
++        ue(prec_focal_length, 0, 31);
++        ue(prec_principal_point, 0, 31);
++        ue(prec_skew_factor, 0, 31);
++        for (int i = 0; i <= (current->intrinsic_params_equal_flag ? 0 : current->num_views_minus1); i++)
++            CHECK(FUNC(multiview_intrinsic)(ctx, rw, &current->camera[i],
++                                            current->prec_focal_length,
++                                            current->prec_principal_point,
++                                            current->prec_skew_factor));
++    }
++    if (current->extrinsic_param_flag) {
++        ue(prec_rotation_param, 0, 31);
++        ue(prec_translation_param, 0, 31);
++        for (int i = 0; i <= current->num_views_minus1; i++)
++            CHECK(FUNC(multiview_extrinsic)(ctx, rw, &current->camera[i],
++                                            current->prec_rotation_param,
++                                            current->prec_translation_param));
++    }
++
++    return 0;
++}
++
++SEI_FUNC(sei_multiview_view_position, (CodedBitstreamContext *ctx, RWContext *rw,
++                                       H264RawSEIMultiviewViewPosition *current,
++                                       SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Multiview View Position");
++
++    ue(num_views_minus1, 0, 1023);
++    for (int i = 0; i <= current->num_views_minus1; i++)
++        ues(view_position[i], 0, 1023, 1, i);
++    flag(multiview_view_position_extension_flag);
++
++    return 0;
++}
++
++SEI_FUNC(sei_depth_representation_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                         H264RawSEIDepthRepresentationInfo *current,
++                                         SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Depth Representation Information");
++
++    flag(all_views_equal_flag);
++    if (!current->all_views_equal_flag)
++        ue(num_views_minus1, 0, 1023);
++    else
++        infer(num_views_minus1, 0);
++    flag(z_near_flag);
++    flag(z_far_flag);
++    if (current->z_near_flag || current->z_far_flag) {
++        flag(z_axis_equal_flag);
++        if (current->z_axis_equal_flag)
++            ue(common_z_axis_reference_view, 0, 1023);
++    }
++    flag(d_min_flag);
++    flag(d_max_flag);
++    ue(depth_representation_type, 0, 15);
++    /* the data after a reserved type is kept as payload extension data */
++    if (current->depth_representation_type > 3)
++        return 0;
++    for (int i = 0; i <= current->num_views_minus1; i++) {
++        H264RawSEIDepthRepresentationView *v = &current->view[i];
++
++        xue(depth_info_view_id[i], v->depth_info_view_id, 0, 1023, 1, i);
++        if ((current->z_near_flag || current->z_far_flag) && !current->z_axis_equal_flag)
++            xue(z_axis_reference_view[i], v->z_axis_reference_view, 0, 1023, 1, i);
++        if (current->d_min_flag || current->d_max_flag)
++            xue(disparity_reference_view[i], v->disparity_reference_view, 0, 1023, 1, i);
++        if (current->z_near_flag)
++            CHECK(FUNC(depth_rep_element)(ctx, rw, &v->z_near));
++        if (current->z_far_flag)
++            CHECK(FUNC(depth_rep_element)(ctx, rw, &v->z_far));
++        if (current->d_min_flag)
++            CHECK(FUNC(depth_rep_element)(ctx, rw, &v->d_min));
++        if (current->d_max_flag)
++            CHECK(FUNC(depth_rep_element)(ctx, rw, &v->d_max));
++    }
++    if (current->depth_representation_type == 3) {
++        ue(depth_nonlinear_representation_num_minus1, 0, 62);
++        for (int i = 1; i <= current->depth_nonlinear_representation_num_minus1 + 1; i++)
++            ues(depth_nonlinear_representation_model[i], 0, 65535, 1, i);
++    }
++
++    return 0;
++}
++
++SEI_FUNC(sei_3d_reference_displays_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                          H264RawSEI3DReferenceDisplaysInfo *current,
++                                          SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Three Dimensional Reference Displays Information");
++
++    ue(prec_ref_baseline, 0, 31);
++    ue(prec_ref_display_width, 0, 31);
++    flag(ref_viewing_distance_flag);
++    if (current->ref_viewing_distance_flag)
++        ue(prec_ref_viewing_dist, 0, 31);
++    ue(num_ref_displays_minus1, 0, 31);
++    for (int i = 0; i <= current->num_ref_displays_minus1; i++) {
++        CHECK(FUNC(multiview_real)(ctx, rw, &current->ref_baseline[i],
++                                   current->prec_ref_baseline));
++        CHECK(FUNC(multiview_real)(ctx, rw, &current->ref_display_width[i],
++                                   current->prec_ref_display_width));
++        if (current->ref_viewing_distance_flag)
++            CHECK(FUNC(multiview_real)(ctx, rw, &current->ref_viewing_distance[i],
++                                       current->prec_ref_viewing_dist));
++        flags(additional_shift_present_flag[i], 1, i);
++        if (current->additional_shift_present_flag[i])
++            us(10, num_sample_shift_plus512[i], 0, 1023, 1, i);
++    }
++    flag(three_dimensional_reference_displays_extension_flag);
++
++    return 0;
++}
++
++SEI_FUNC(sei_depth_timing, (CodedBitstreamContext *ctx, RWContext *rw,
++                            H264RawSEIDepthTiming *current,
++                            SEIMessageState *sei))
++{
++    const int start = bit_position(rw);
++    int err;
++
++    HEADER("Depth Timing");
++
++    flag(per_view_depth_timing_flag);
++#ifdef READ
++    /* one offset per depth view, NumDepthViews of the MVCD sequence
++     * parameter set: the offsets the payload holds, 12 bits at least each */
++    current->nb_offsets = 0;
++    do {
++        H264RawSEIDepthTimingOffset *o = &current->offset[current->nb_offsets];
++
++        const int i = current->nb_offsets;
++
++        xu(5, offset_len_minus1[i], o->offset_len_minus1, 0, 31, 1, i);
++        xu(o->offset_len_minus1 + 1, depth_disp_delay_offset_fp[i], o->depth_disp_delay_offset_fp,
++           0, MAX_UINT_BITS(o->offset_len_minus1 + 1), 1, i);
++        xu(6, depth_disp_delay_offset_dp[i], o->depth_disp_delay_offset_dp, 0, 63, 1, i);
++        current->nb_offsets++;
++    } while (current->per_view_depth_timing_flag &&
++             current->nb_offsets < FF_ARRAY_ELEMS(current->offset) &&
++             8 * (int)sei->payload_size - (bit_position(rw) - start) >= 12);
++#else
++    for (int i = 0; i < (current->per_view_depth_timing_flag ? current->nb_offsets : 1); i++) {
++        H264RawSEIDepthTimingOffset *o = &current->offset[i];
++
++        xu(5, offset_len_minus1[i], o->offset_len_minus1, 0, 31, 1, i);
++        xu(o->offset_len_minus1 + 1, depth_disp_delay_offset_fp[i], o->depth_disp_delay_offset_fp,
++           0, MAX_UINT_BITS(o->offset_len_minus1 + 1), 1, i);
++        xu(6, depth_disp_delay_offset_dp[i], o->depth_disp_delay_offset_dp, 0, 63, 1, i);
++    }
++    (void)start;
++#endif
++
++    return 0;
++}
++
++static int FUNC(depth_grid_position)(CodedBitstreamContext *ctx, RWContext *rw,
++                                     H264RawSEIDepthGridPosition *current)
++{
++    int err;
++
++    u(20, depth_grid_pos_x_fp, 0, MAX_UINT_BITS(20));
++    u(4, depth_grid_pos_x_dp, 0, 15);
++    flag(depth_grid_pos_x_sign_flag);
++    u(20, depth_grid_pos_y_fp, 0, MAX_UINT_BITS(20));
++    u(4, depth_grid_pos_y_dp, 0, 15);
++    flag(depth_grid_pos_y_sign_flag);
++
++    return 0;
++}
++
++SEI_FUNC(sei_depth_sampling_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                   H264RawSEIDepthSamplingInfo *current,
++                                   SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Depth Sampling Information");
++
++    ub(16, dttsr_x_mul);
++    ub(4, dttsr_x_dp);
++    ub(16, dttsr_y_mul);
++    ub(4, dttsr_y_dp);
++    flag(per_view_depth_grid_pos_flag);
++    if (current->per_view_depth_grid_pos_flag) {
++        ue(num_video_plus_depth_views_minus1, 0, 1023);
++        for (int i = 0; i <= current->num_video_plus_depth_views_minus1; i++) {
++            ues(depth_grid_view_id[i], 0, 1023, 1, i);
++            CHECK(FUNC(depth_grid_position)(ctx, rw, &current->position[i]));
++        }
++    } else {
++        CHECK(FUNC(depth_grid_position)(ctx, rw, &current->position[0]));
++    }
++
++    return 0;
++}
++
++SEI_FUNC(sei_constrained_depth_parameter_set_identifier,
++         (CodedBitstreamContext *ctx, RWContext *rw,
++          H264RawSEIConstrainedDepthParameterSetIdentifier *current,
++          SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Constrained Depth Parameter Set Identifier");
++
++    ue(max_dps_id, 0, UINT32_MAX - 1);
++    ue(max_dps_id_diff, 0, UINT32_MAX - 1);
++
++    return 0;
++}
++
++SEI_FUNC(sei_alternative_depth_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                      H264RawSEIAlternativeDepthInfo *current,
++                                      SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Alternative Depth Information");
++
++    ue(depth_type, 0, UINT32_MAX - 1);
++    if (current->depth_type == 0)
++        CHECK(FUNC(alternative_depth_gvd)(ctx, rw, &current->gvd));
++
++    return 0;
++}
++
+ static int FUNC(sei)(CodedBitstreamContext *ctx, RWContext *rw,
+                      H264RawSEI *current)
+ {
+diff --git a/libavcodec/cbs_h265.c b/libavcodec/cbs_h265.c
+index 9aedc779..09ebe24e 100644
+--- a/libavcodec/cbs_h265.c
++++ b/libavcodec/cbs_h265.c
+@@ -818,6 +818,36 @@ const SEIMessageTypeDescriptor ff_cbs_sei_h265_types[] = {
+         sizeof(H265RawSEI3DReferenceDisplaysInfo),
+         SEI_MESSAGE_RW(h265, sei_3d_reference_displays_info),
+     },
++    {
++        SEI_TYPE_DEPTH_REPRESENTATION_INFO_5,
++        1, 0,
++        sizeof(H265RawSEIDepthRepresentationInfo),
++        SEI_MESSAGE_RW(h265, sei_depth_representation_info),
++    },
++    {
++        SEI_TYPE_MULTIVIEW_SCENE_INFO_5,
++        1, 0,
++        sizeof(H265RawSEIMultiviewSceneInfo),
++        SEI_MESSAGE_RW(h265, sei_multiview_scene_info),
++    },
++    {
++        SEI_TYPE_MULTIVIEW_ACQUISITION_INFO_5,
++        1, 0,
++        sizeof(H265RawSEIMultiviewAcquisitionInfo),
++        SEI_MESSAGE_RW(h265, sei_multiview_acquisition_info),
++    },
++    {
++        SEI_TYPE_MULTIVIEW_VIEW_POSITION_5,
++        1, 0,
++        sizeof(H265RawSEIMultiviewViewPosition),
++        SEI_MESSAGE_RW(h265, sei_multiview_view_position),
++    },
++    {
++        SEI_TYPE_ALTERNATIVE_DEPTH_INFO,
++        1, 0,
++        sizeof(H265RawSEIAlternativeDepthInfo),
++        SEI_MESSAGE_RW(h265, sei_alternative_depth_info),
++    },
+     SEI_MESSAGE_TYPE_END
+ };
+ 
+diff --git a/libavcodec/cbs_h265.h b/libavcodec/cbs_h265.h
+index c5b437b2..dd246561 100644
+--- a/libavcodec/cbs_h265.h
++++ b/libavcodec/cbs_h265.h
+@@ -737,6 +737,65 @@ typedef struct H265RawSEI3DReferenceDisplaysInfo {
+     uint8_t three_dimensional_reference_displays_extension_flag;
+ } H265RawSEI3DReferenceDisplaysInfo;
+ 
++typedef struct H265RawSEIDepthRepresentationInfo {
++    uint8_t  z_near_flag;
++    uint8_t  z_far_flag;
++    uint8_t  d_min_flag;
++    uint8_t  d_max_flag;
++    uint8_t  depth_representation_type;
++    uint16_t disparity_ref_view_id;
++    SEIRawDepthRepElement z_near;
++    SEIRawDepthRepElement z_far;
++    SEIRawDepthRepElement d_min;
++    SEIRawDepthRepElement d_max;
++    uint8_t  depth_nonlinear_representation_num_minus1;
++    uint16_t depth_nonlinear_representation_model[64];
++} H265RawSEIDepthRepresentationInfo;
++
++typedef struct H265RawSEIMultiviewSceneInfo {
++    int16_t  min_disparity;
++    uint16_t max_disparity_range;
++} H265RawSEIMultiviewSceneInfo;
++
++/**
++ * Multiview acquisition information outside of a scalable nesting SEI
++ * message, for one camera (numViewsMinus1 = 0, G.14.3.6).
++ */
++typedef struct H265RawSEIMultiviewAcquisitionInfo {
++    uint8_t intrinsic_param_flag;
++    uint8_t extrinsic_param_flag;
++    uint8_t intrinsic_params_equal_flag;
++    uint8_t prec_focal_length;
++    uint8_t prec_principal_point;
++    uint8_t prec_skew_factor;
++    uint8_t prec_rotation_param;
++    uint8_t prec_translation_param;
++    SEIRawMultiviewCamera camera;
++} H265RawSEIMultiviewAcquisitionInfo;
++
++typedef struct H265RawSEIMultiviewViewPosition {
++    uint8_t num_views_minus1;
++    uint8_t view_position[63];
++} H265RawSEIMultiviewViewPosition;
++
++typedef struct H265RawSEIAlternativeDepthInfo {
++    uint8_t  alternative_depth_info_cancel_flag;
++    uint8_t  depth_type;
++    SEIRawAlternativeDepthGVD gvd;
++    int32_t  min_offset_x_int;
++    uint8_t  min_offset_x_frac;
++    int32_t  max_offset_x_int;
++    uint8_t  max_offset_x_frac;
++    uint8_t  offset_y_present_flag;
++    int32_t  min_offset_y_int;
++    uint8_t  min_offset_y_frac;
++    int32_t  max_offset_y_int;
++    uint8_t  max_offset_y_frac;
++    uint8_t  warp_map_size_present_flag;
++    uint32_t warp_map_width_minus2;
++    uint32_t warp_map_height_minus2;
++} H265RawSEIAlternativeDepthInfo;
++
+ typedef struct H265RawSEI {
+     H265RawNALUnitHeader nal_unit_header;
+     SEIRawMessageList    message_list;
+diff --git a/libavcodec/cbs_h265_syntax_template.c b/libavcodec/cbs_h265_syntax_template.c
+index 2ce6759b..8e31286b 100644
+--- a/libavcodec/cbs_h265_syntax_template.c
++++ b/libavcodec/cbs_h265_syntax_template.c
+@@ -27,6 +27,8 @@ static int FUNC(rbsp_trailing_bits)(CodedBitstreamContext *ctx, RWContext *rw)
+     return 0;
+ }
+ 
++#include "cbs_multiview_template.c"
++
+ static int FUNC(nal_unit_header)(CodedBitstreamContext *ctx, RWContext *rw,
+                                  H265RawNALUnitHeader *current,
+                                  int expected_nal_unit_type)
+@@ -2354,6 +2356,137 @@ SEI_FUNC(sei_3d_reference_displays_info, (CodedBitstreamContext *ctx, RWContext
+     return 0;
+ }
+ 
++SEI_FUNC(sei_depth_representation_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                         H265RawSEIDepthRepresentationInfo *current,
++                                         SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Depth Representation Information");
++
++    flag(z_near_flag);
++    flag(z_far_flag);
++    flag(d_min_flag);
++    flag(d_max_flag);
++    ue(depth_representation_type, 0, 15);
++    /* the data after a reserved type is kept as payload extension data */
++    if (current->depth_representation_type > 3)
++        return 0;
++    if (current->d_min_flag || current->d_max_flag)
++        ue(disparity_ref_view_id, 0, 1023);
++    if (current->z_near_flag)
++        CHECK(FUNC(depth_rep_element)(ctx, rw, &current->z_near));
++    if (current->z_far_flag)
++        CHECK(FUNC(depth_rep_element)(ctx, rw, &current->z_far));
++    if (current->d_min_flag)
++        CHECK(FUNC(depth_rep_element)(ctx, rw, &current->d_min));
++    if (current->d_max_flag)
++        CHECK(FUNC(depth_rep_element)(ctx, rw, &current->d_max));
++    if (current->depth_representation_type == 3) {
++        ue(depth_nonlinear_representation_num_minus1, 0, 62);
++        for (int i = 1; i <= current->depth_nonlinear_representation_num_minus1 + 1; i++)
++            ues(depth_nonlinear_representation_model[i], 0, 65535, 1, i);
++    }
++
++    return 0;
++}
++
++SEI_FUNC(sei_multiview_scene_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                    H265RawSEIMultiviewSceneInfo *current,
++                                    SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Multiview Scene Information");
++
++    se(min_disparity, -1024, 1023);
++    ue(max_disparity_range, 0, 2047);
++
++    return 0;
++}
++
++SEI_FUNC(sei_multiview_acquisition_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                          H265RawSEIMultiviewAcquisitionInfo *current,
++                                          SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Multiview Acquisition Information");
++
++    flag(intrinsic_param_flag);
++    flag(extrinsic_param_flag);
++    if (current->intrinsic_param_flag) {
++        flag(intrinsic_params_equal_flag);
++        ue(prec_focal_length, 0, 31);
++        ue(prec_principal_point, 0, 31);
++        ue(prec_skew_factor, 0, 31);
++        CHECK(FUNC(multiview_intrinsic)(ctx, rw, &current->camera,
++                                        current->prec_focal_length,
++                                        current->prec_principal_point,
++                                        current->prec_skew_factor));
++    }
++    if (current->extrinsic_param_flag) {
++        ue(prec_rotation_param, 0, 31);
++        ue(prec_translation_param, 0, 31);
++        CHECK(FUNC(multiview_extrinsic)(ctx, rw, &current->camera,
++                                        current->prec_rotation_param,
++                                        current->prec_translation_param));
++    }
++
++    return 0;
++}
++
++SEI_FUNC(sei_multiview_view_position, (CodedBitstreamContext *ctx, RWContext *rw,
++                                       H265RawSEIMultiviewViewPosition *current,
++                                       SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Multiview View Position");
++
++    ue(num_views_minus1, 0, 62);
++    for (int i = 0; i <= current->num_views_minus1; i++)
++        ues(view_position[i], 0, 62, 1, i);
++
++    return 0;
++}
++
++SEI_FUNC(sei_alternative_depth_info, (CodedBitstreamContext *ctx, RWContext *rw,
++                                      H265RawSEIAlternativeDepthInfo *current,
++                                      SEIMessageState *sei))
++{
++    int err;
++
++    HEADER("Alternative Depth Information");
++
++    flag(alternative_depth_info_cancel_flag);
++    if (current->alternative_depth_info_cancel_flag)
++        return 0;
++    u(2, depth_type, 0, 3);
++    if (current->depth_type == 0)
++        CHECK(FUNC(alternative_depth_gvd)(ctx, rw, &current->gvd));
++    if (current->depth_type == 1) {
++        se(min_offset_x_int, INT32_MIN + 1, INT32_MAX);
++        u(8, min_offset_x_frac, 0, 255);
++        se(max_offset_x_int, INT32_MIN + 1, INT32_MAX);
++        u(8, max_offset_x_frac, 0, 255);
++        flag(offset_y_present_flag);
++        if (current->offset_y_present_flag) {
++            se(min_offset_y_int, INT32_MIN + 1, INT32_MAX);
++            u(8, min_offset_y_frac, 0, 255);
++            se(max_offset_y_int, INT32_MIN + 1, INT32_MAX);
++            u(8, max_offset_y_frac, 0, 255);
++        }
++        flag(warp_map_size_present_flag);
++        if (current->warp_map_size_present_flag) {
++            ue(warp_map_width_minus2, 0, UINT32_MAX - 1);
++            ue(warp_map_height_minus2, 0, UINT32_MAX - 1);
++        }
++    }
++
++    return 0;
++}
++
+ static int FUNC(sei)(CodedBitstreamContext *ctx, RWContext *rw,
+                      H265RawSEI *current, int prefix)
+ {
+diff --git a/libavcodec/cbs_multiview_template.c b/libavcodec/cbs_multiview_template.c
+new file mode 100644
+index 00000000..4178a7d4
+--- /dev/null
++++ b/libavcodec/cbs_multiview_template.c
+@@ -0,0 +1,154 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/*
++ * The elements the multiview and depth information SEI messages of H.264
++ * and H.265 share, included by their syntax templates.
++ */
++
++/* A mantissa of up to 64 bits, in two parts when it is longer than 32. */
++static int FUNC(multiview_mantissa)(CodedBitstreamContext *ctx, RWContext *rw,
++                                    uint64_t *mantissa, int length)
++{
++    uint32_t high = *mantissa >> 32, low = *mantissa;
++    int err;
++
++    if (length > 32) {
++        xu(length - 32, mantissa_high, high, 0, MAX_UINT_BITS(length - 32), 0);
++        xu(32, mantissa_low, low, 0, UINT32_MAX, 0);
++        *mantissa = (uint64_t)high << 32 | low;
++    } else if (length > 0) {
++        xu(length, mantissa, low, 0, MAX_UINT_BITS(length), 0);
++        *mantissa = low;
++    } else {
++        *mantissa = 0;
++    }
++
++    return 0;
++}
++
++/* A camera or display parameter: a sign, a 6-bit exponent and a mantissa
++ * whose length follows from the exponent and the precision (H.265 G.14.3.6,
++ * H.264 G.13.2.5). */
++static int FUNC(multiview_real)(CodedBitstreamContext *ctx, RWContext *rw,
++                                SEIRawMultiviewReal *current, int prec)
++{
++    int length, err;
++
++    flag(sign);
++    u(6, exponent, 0, 63);
++    length = current->exponent ? current->exponent + prec - 31 : prec - 30;
++
++    return FUNC(multiview_mantissa)(ctx, rw, &current->mantissa, FFMAX(length, 0));
++}
++
++/* depth_rep_info_element() (H.265 G.14.2.4.2) and
++ * depth_representation_sei_element() (H.264 H.13.1.3.1) */
++static int FUNC(depth_rep_element)(CodedBitstreamContext *ctx, RWContext *rw,
++                                   SEIRawDepthRepElement *current)
++{
++    int err;
++
++    flag(da_sign_flag);
++    u(7, da_exponent, 0, 127);
++    u(5, da_mantissa_len_minus1, 0, 31);
++    u(current->da_mantissa_len_minus1 + 1, da_mantissa,
++      0, MAX_UINT_BITS(current->da_mantissa_len_minus1 + 1));
++
++    return 0;
++}
++
++/* The intrinsic parameters of a camera. */
++static int FUNC(multiview_intrinsic)(CodedBitstreamContext *ctx, RWContext *rw,
++                                     SEIRawMultiviewCamera *current,
++                                     int prec_focal_length, int prec_principal_point,
++                                     int prec_skew_factor)
++{
++    int err;
++
++    CHECK(FUNC(multiview_real)(ctx, rw, &current->focal_length_x, prec_focal_length));
++    CHECK(FUNC(multiview_real)(ctx, rw, &current->focal_length_y, prec_focal_length));
++    CHECK(FUNC(multiview_real)(ctx, rw, &current->principal_point_x, prec_principal_point));
++    CHECK(FUNC(multiview_real)(ctx, rw, &current->principal_point_y, prec_principal_point));
++    if (prec_skew_factor >= 0)
++        CHECK(FUNC(multiview_real)(ctx, rw, &current->skew_factor, prec_skew_factor));
++
++    return 0;
++}
++
++/* The rotation and translation of a camera, row by row (equations G-13 and
++ * G-14 of H.265). */
++static int FUNC(multiview_extrinsic)(CodedBitstreamContext *ctx, RWContext *rw,
++                                     SEIRawMultiviewCamera *current,
++                                     int prec_rotation_param, int prec_translation_param)
++{
++    int err;
++
++    for (int j = 0; j < 3; j++) {
++        for (int k = 0; k < 3; k++)
++            CHECK(FUNC(multiview_real)(ctx, rw, &current->r[j][k], prec_rotation_param));
++        CHECK(FUNC(multiview_real)(ctx, rw, &current->t[j], prec_translation_param));
++    }
++
++    return 0;
++}
++
++/* The global view and depth information of an alternative depth
++ * information SEI message (H.264 H.13.1.6, H.265 I.14.2.3). */
++static int FUNC(alternative_depth_gvd)(CodedBitstreamContext *ctx, RWContext *rw,
++                                       SEIRawAlternativeDepthGVD *current)
++{
++    int err;
++
++    ue(num_constituent_views_gvd_minus1, 0, 3);
++    flag(depth_present_gvd_flag);
++    flag(z_gvd_flag);
++    flag(intrinsic_param_gvd_flag);
++    flag(rotation_gvd_flag);
++    flag(translation_gvd_flag);
++    if (current->z_gvd_flag) {
++        for (int i = 0; i <= current->num_constituent_views_gvd_minus1 + 1; i++) {
++            CHECK(FUNC(depth_rep_element)(ctx, rw, &current->z_near[i]));
++            CHECK(FUNC(depth_rep_element)(ctx, rw, &current->z_far[i]));
++        }
++    }
++    if (current->intrinsic_param_gvd_flag) {
++        ue(prec_gvd_focal_length, 0, 31);
++        ue(prec_gvd_principal_point, 0, 31);
++    }
++    if (current->rotation_gvd_flag)
++        ue(prec_gvd_rotation_param, 0, 31);
++    if (current->translation_gvd_flag)
++        ue(prec_gvd_translation_param, 0, 31);
++    for (int i = 0; i <= current->num_constituent_views_gvd_minus1 + 1; i++) {
++        SEIRawMultiviewCamera *c = &current->camera[i];
++
++        if (current->intrinsic_param_gvd_flag)
++            CHECK(FUNC(multiview_intrinsic)(ctx, rw, c, current->prec_gvd_focal_length,
++                                            current->prec_gvd_principal_point, -1));
++        if (current->rotation_gvd_flag)
++            for (int j = 0; j < 3; j++)
++                for (int k = 0; k < 3; k++)
++                    CHECK(FUNC(multiview_real)(ctx, rw, &c->r[j][k],
++                                               current->prec_gvd_rotation_param));
++        if (current->translation_gvd_flag)
++            CHECK(FUNC(multiview_real)(ctx, rw, &c->t[0], current->prec_gvd_translation_param));
++    }
++
++    return 0;
++}
+diff --git a/libavcodec/cbs_sei.h b/libavcodec/cbs_sei.h
+index 3fada402..7a6242c7 100644
+--- a/libavcodec/cbs_sei.h
++++ b/libavcodec/cbs_sei.h
+@@ -28,6 +28,62 @@
+ #include "sei.h"
+ 
+ 
++/**
++ * A camera or display parameter of the multiview and depth information SEI
++ * messages: a sign, an exponent and a mantissa whose length follows from the
++ * exponent and a precision (H.265 G.14.3.6, H.264 G.13.2.5).
++ */
++typedef struct SEIRawMultiviewReal {
++    uint8_t  sign;
++    uint8_t  exponent;
++    uint64_t mantissa;
++} SEIRawMultiviewReal;
++
++/**
++ * depth_rep_info_element() (H.265 G.14.2.4.2) and
++ * depth_representation_sei_element() (H.264 H.13.1.3.1).
++ */
++typedef struct SEIRawDepthRepElement {
++    uint8_t  da_sign_flag;
++    uint8_t  da_exponent;
++    uint8_t  da_mantissa_len_minus1;
++    uint32_t da_mantissa;
++} SEIRawDepthRepElement;
++
++/**
++ * The parameters of one camera: intrinsic (G-12) and extrinsic (G-13,
++ * G-14) of H.265.
++ */
++typedef struct SEIRawMultiviewCamera {
++    SEIRawMultiviewReal focal_length_x;
++    SEIRawMultiviewReal focal_length_y;
++    SEIRawMultiviewReal principal_point_x;
++    SEIRawMultiviewReal principal_point_y;
++    SEIRawMultiviewReal skew_factor;
++    SEIRawMultiviewReal r[3][3];
++    SEIRawMultiviewReal t[3];
++} SEIRawMultiviewCamera;
++
++/**
++ * The global view and depth information of an alternative depth
++ * information SEI message (H.264 H.13.1.6, H.265 I.14.2.3).
++ */
++typedef struct SEIRawAlternativeDepthGVD {
++    uint8_t num_constituent_views_gvd_minus1;
++    uint8_t depth_present_gvd_flag;
++    uint8_t z_gvd_flag;
++    uint8_t intrinsic_param_gvd_flag;
++    uint8_t rotation_gvd_flag;
++    uint8_t translation_gvd_flag;
++    SEIRawDepthRepElement z_near[5];
++    SEIRawDepthRepElement z_far[5];
++    uint8_t prec_gvd_focal_length;
++    uint8_t prec_gvd_principal_point;
++    uint8_t prec_gvd_rotation_param;
++    uint8_t prec_gvd_translation_param;
++    SEIRawMultiviewCamera camera[5];  ///< t[0] is the x component of the translation
++} SEIRawAlternativeDepthGVD;
++
+ typedef struct SEIRawFillerPayload {
+     uint32_t payload_size;
+ } SEIRawFillerPayload;
+-- 
+2.53.0
+

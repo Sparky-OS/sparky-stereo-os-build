@@ -1,0 +1,97 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] avformat/mov: retain st3d packing when merging vexu metadata
+
+st3d describes the packing, while vexu/eyes describes the views and
+camera metadata. Rejecting st3d when eyes already allocated stereo
+side data makes the result depend on the box order. A later eyes box
+also loses st3d's explicit monoscopic type and right-first flag.
+
+Track accepted st3d boxes separately from the shared side data. Merge
+complementary fields without overwriting the packing or inversion, and
+keep rejecting duplicate st3d declarations. Read the custom and
+right-first modes defined by Spherical Video V2 as well.
+
+The generated MOV metadata regression fails on the parent and passes
+with this change, including both box orders and reserved/duplicate
+controls.
+
+https://github.com/google/spatial-media/blob/master/docs/spherical-video-v2-rfc.md#stereoscopic-3d-video-box-st3d
+https://developer.apple.com/av-foundation/Stereo-Video-ISOBMFF-Extensions.pdf
+Assisted-by: gpt-6 (Codex)
+
+Backport of ca5dbc9 from upstream base d31915e9dce4.
+The published 9.0.2 source predates the partial eyes packing check.
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: FFmpeg 9.1 carries the partial eyes packing check this change was written against, so the patch is now the edition's commit ca5dbc9 in its original form (it replaces that check) rather than the 9.0.2 backport.
+
+diff --git a/libavformat/isom.h b/libavformat/isom.h
+index 2b6bc7a92bdbce2e7cc4a1dc61cf14a594e9db19..ace16c3699b82b1c2da33d9a49bb70c4a24e5576 100644
+--- a/libavformat/isom.h
++++ b/libavformat/isom.h
+@@ -267,6 +267,7 @@ typedef struct MOVStreamContext {
+     int32_t *display_matrix;
+     AVStereo3D *stereo3d;
+     size_t stereo3d_size;
++    int st3d_present;
+     AVSphericalMapping *spherical;
+     size_t spherical_size;
+     AVMasteringDisplayMetadata *mastering;
+diff --git a/libavformat/mov.c b/libavformat/mov.c
+index 87aa16e6f2f90ee4443949c25c0c40a95eaac693..3ae521e1cbbf8c607b49c9e33dc59e15cc09c6fe 100644
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -7126,7 +7126,7 @@ static int mov_read_st3d(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+         return AVERROR_INVALIDDATA;
+     }
+ 
+-    if (sc->stereo3d)
++    if (sc->st3d_present)
+         return AVERROR_INVALIDDATA;
+ 
+     avio_skip(pb, 4); /* version + flags */
+@@ -7142,16 +7142,27 @@ static int mov_read_st3d(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+     case 2:
+         type = AV_STEREO3D_SIDEBYSIDE;
+         break;
++    case 3:
++        type = AV_STEREO3D_UNSPEC;
++        break;
++    case 4:
++        type = AV_STEREO3D_SIDEBYSIDE;
++        break;
+     default:
+         av_log(c->fc, AV_LOG_WARNING, "Unknown st3d mode value %d\n", mode);
+         return 0;
+     }
+ 
+-    sc->stereo3d = av_stereo3d_alloc_size(&sc->stereo3d_size);
+-    if (!sc->stereo3d)
+-        return AVERROR(ENOMEM);
++    if (!sc->stereo3d) {
++        sc->stereo3d = av_stereo3d_alloc_size(&sc->stereo3d_size);
++        if (!sc->stereo3d)
++            return AVERROR(ENOMEM);
++    }
+ 
+     sc->stereo3d->type = type;
++    if (mode == 4)
++        sc->stereo3d->flags |= AV_STEREO3D_FLAG_INVERT;
++    sc->st3d_present = 1;
+     return 0;
+ }
+ 
+@@ -7615,12 +7626,9 @@ static int mov_read_eyes(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+             return AVERROR(ENOMEM);
+     }
+ 
+-    sc->stereo3d->flags                           = flags;
+-    /* eyes/stri only records packed vs single-eye, not SBS/TB. Keep a more
+-     * specific type already set by st3d. */
+-    if (type != AV_STEREO3D_UNSPEC)
+-        sc->stereo3d->type = type;
+-    else if (sc->stereo3d->type == AV_STEREO3D_2D)
++    sc->stereo3d->flags                          |= flags;
++    /* stri declares the views, not their packing. Keep a preceding st3d/pack. */
++    if (!sc->st3d_present && sc->stereo3d->type == AV_STEREO3D_2D)
+         sc->stereo3d->type = type;
+     sc->stereo3d->view                            = view;
+     sc->stereo3d->primary_eye                     = primary_eye;

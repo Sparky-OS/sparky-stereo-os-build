@@ -1,0 +1,88 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/06c54b1f585168d509bd88c695d83e6857c40dc2
+From 06c54b1f585168d509bd88c695d83e6857c40dc2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 10:48:06 -0300
+Subject: [PATCH 51/51] avcodec/hevc: export whether the stream has a depth
+ auxiliary layer
+
+The depth layer (AuxId 2) is decoded in software only: a caller that
+chose a hardware decoder can read depth_available from get_format(),
+as view_ids_available, and decode the stream in software when it wants
+the depth pictures. Document depth_output beside it.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ doc/decoders.texi         | 14 ++++++++++++++
+ libavcodec/hevc/hevcdec.c |  6 ++++++
+ libavcodec/hevc/hevcdec.h |  5 +++++
+ 3 files changed, 25 insertions(+)
+
+diff --git a/doc/decoders.texi b/doc/decoders.texi
+index 56522522..4f7ac4ec 100644
+--- a/doc/decoders.texi
++++ b/doc/decoders.texi
+@@ -81,6 +81,20 @@ the corresponding elements of @option{view_ids_available}, i.e.
+ Same validity restrictions as for @option{view_ids_available} apply to
+ this option.
+ 
++@item depth_output
++For a stream with a depth auxiliary layer (AuxId 2, H.265 Table F.2), which
++pictures are output: @samp{texture}, those of the base layer (the default);
++@samp{depth}, the depth pictures, as gray frames of the luma plane; or
++@samp{both}, each depth picture after its picture, marked with
++@code{AV_FRAME_DATA_AUXILIARY_ID} side data. Hardware decoders output only the
++base layer.
++
++@item depth_available
++This option may be read by the caller to learn whether the active VPS has a
++depth auxiliary layer, for example to decode it in software when a hardware
++decoder was chosen. Same validity restrictions as for
++@option{view_ids_available} apply to this option.
++
+ @end table
+ 
+ @section rawvideo
+diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
+index 4c7082ad..31d9e723 100644
+--- a/libavcodec/hevc/hevcdec.c
++++ b/libavcodec/hevc/hevcdec.c
+@@ -407,6 +407,10 @@ static int export_multilayer(HEVCContext *s, const HEVCVPS *vps)
+     av_freep(&s->view_pos_available);
+     s->nb_view_pos_available = 0;
+ 
++    s->depth_available = vps->nb_layers == 2 && vps->layer_id_in_nuh[1] &&
++                         (vps->scalability_mask_flag & HEVC_SCALABILITY_AUXILIARY) &&
++                         vps->aux_id[1] == HEVC_AUX_DEPTH;
++
+     // don't export anything in the trivial case (1 layer, view id=0)
+     if (vps->nb_layers < 2 && !vps->view_id[0])
+         return 0;
+@@ -4755,6 +4759,8 @@ static const AVOption options[] = {
+         { "texture", "the pictures of the base layer", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, .flags = PAR, .unit = "depth_output" },
+         { "depth",   "the depth pictures, as gray frames", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, .flags = PAR, .unit = "depth_output" },
+         { "both",    "both, the depth pictures marked with their AuxId", 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, .flags = PAR, .unit = "depth_output" },
++    { "depth_available", "Whether the stream has a depth auxiliary layer (AuxId 2) is exported here",
++        OFFSET(depth_available), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, PAR | AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY },
+ 
+     { NULL },
+ };
+diff --git a/libavcodec/hevc/hevcdec.h b/libavcodec/hevc/hevcdec.h
+index a30a5f38..5de1621a 100644
+--- a/libavcodec/hevc/hevcdec.h
++++ b/libavcodec/hevc/hevcdec.h
+@@ -614,6 +614,11 @@ typedef struct HEVCContext {
+      * those of the base layer (0), those of the depth layer (1), or both (2).
+      */
+     int depth_output;
++    /**
++     * Whether the active VPS has a depth auxiliary layer, exported for the
++     * caller's get_format().
++     */
++    int depth_available;
+ 
+     unsigned    *view_ids_available;
+     unsigned  nb_view_ids_available;
+-- 
+2.53.0
+

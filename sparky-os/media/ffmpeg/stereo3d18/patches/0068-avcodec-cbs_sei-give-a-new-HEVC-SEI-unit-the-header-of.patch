@@ -1,0 +1,81 @@
+Description: avcodec/cbs_sei: give a new HEVC SEI unit the header of its picture
+ The SEI NAL unit that ff_cbs_sei_add_message() creates for H.265 always
+ had nuh_layer_id 0 and nuh_temporal_id_plus1 1. A prefix SEI message
+ whose payload type is in VclAssociatedSeiList, such as the frame
+ packing arrangement, belongs to the picture that follows it, and its NAL
+ unit has to carry that picture's TemporalId (H.265 D.3.1).
+ In an access unit on a higher temporal sublayer the new unit was wrong.
+ .
+ Take the header from the first VCL NAL unit of the access unit when it
+ has one, and reuse an existing prefix SEI unit only when its header is
+ the same, because the header of a unit with other messages must not
+ change. Without a VCL NAL unit, as in an encoder that builds the access
+ unit, the unit is created as before.
+ .
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/9c051e42abede6243ab068e68762a9b012813aeb
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25395
+Last-Update: 2026-11-06
+
+diff --git a/libavcodec/cbs_sei.c b/libavcodec/cbs_sei.c
+index 70c18b4..1c1747e 100644
+--- a/libavcodec/cbs_sei.c
++++ b/libavcodec/cbs_sei.c
+@@ -305,6 +305,7 @@ static int cbs_sei_get_unit(CodedBitstreamContext *ctx,
+ {
+     CodedBitstreamUnit *unit;
+     int sei_type, highest_vcl_type, err, i, position;
++    int layer_id = 0, temporal_id_plus1 = 1, match_header = 0;
+ 
+     switch (ctx->codec->codec_id) {
+     case AV_CODEC_ID_H264:
+@@ -335,10 +336,36 @@ static int cbs_sei_get_unit(CodedBitstreamContext *ctx,
+         return AVERROR(EINVAL);
+     }
+ 
+-    // Find an existing SEI NAL unit of the right type.
++    if (ctx->codec->codec_id == AV_CODEC_ID_H265 && prefix) {
++        // A prefix SEI message is associated with the picture that follows
++        // it, and its NAL unit has to carry that picture's TemporalId and
++        // layer (H.265 D.3.1).
++        for (i = 0; i < au->nb_units; i++) {
++            if (au->units[i].type < highest_vcl_type) {
++                const H265RawNALUnitHeader *header = au->units[i].content;
++
++                if (header) {
++                    layer_id          = header->nuh_layer_id;
++                    temporal_id_plus1 = header->nuh_temporal_id_plus1;
++                    match_header      = 1;
++                }
++                break;
++            }
++        }
++    }
++
++    // Find an existing SEI NAL unit of the right type, one that already
++    // has the header the new messages need.
+     unit = NULL;
+     for (i = 0; i < au->nb_units; i++) {
+         if (au->units[i].type == sei_type) {
++            if (match_header) {
++                const H265RawNALUnitHeader *header = au->units[i].content;
++
++                if (!header || header->nuh_layer_id != layer_id ||
++                    header->nuh_temporal_id_plus1 != temporal_id_plus1)
++                    continue;
++            }
+             unit = &au->units[i];
+             break;
+         }
+@@ -399,8 +426,8 @@ static int cbs_sei_get_unit(CodedBitstreamContext *ctx,
+             H265RawSEI sei = {
+                 .nal_unit_header = {
+                     .nal_unit_type         = sei_type,
+-                    .nuh_layer_id          = 0,
+-                    .nuh_temporal_id_plus1 = 1,
++                    .nuh_layer_id          = layer_id,
++                    .nuh_temporal_id_plus1 = temporal_id_plus1,
+                 },
+             };
+             memcpy(unit->content, &sei, sizeof(sei));

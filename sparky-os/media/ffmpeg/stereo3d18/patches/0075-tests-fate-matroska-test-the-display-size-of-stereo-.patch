@@ -1,0 +1,118 @@
+Description: tests/fate/matroska: test the display size of stereo tracks
+ Remux one frame of vsynth1 into four stereo tracks whose display size
+ is the whole frame: side by side views of 16:9 and stacked views of
+ 2.44:1, which are whole pictures, and the squeezed halves of 11:9
+ pictures, side by side and stacked. ffprobe shows the sample aspect
+ ratio the demuxer derives for each.
+ .
+ Assisted-by: Claude Opus 5.5 via Claude Code
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-15
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: FFmpeg 9.1 added $(FATE_MATROSKA_STEREO3D-yes) to the fate-matroska line; the edition's variable is added after it.
+
+diff --git a/tests/fate/matroska.mak b/tests/fate/matroska.mak
+index f165ce19476e6dbdb95be40444bf6a02c7cd4ee3..b0928cebf66757296661b49405307a789d99ca57 100644
+--- a/tests/fate/matroska.mak
++++ b/tests/fate/matroska.mak
+@@ -275,6 +275,24 @@ fate-matroska-stereo_mode: CMD = transcode ogg $(TARGET_SAMPLES)/vp3/offset_test
+ FATE_MATROSKA-$(call FRAMECRC, MATROSKA) += fate-matroska-track-timescale
+ fate-matroska-track-timescale: CMD = framecrc -i $(TARGET_SAMPLES)/mkv/tts10.mkv -c:s copy
+ 
++# This test checks the sample aspect ratio of stereo tracks whose display
++# size is the whole frame. The muxer writes DisplayWidth as width * sar / 2
++# for side by side and DisplayHeight as height / 2 for top and bottom, so
++# -sar sets the display size: 1024x288 (two views of 16:9), 352x288 (two
++# halves of 11:9 squeezed side by side), 176x144 (two views of 2.44:1)
++# and 352x144 (two halves of 2.44:1 squeezed top and bottom).
++FATE_MATROSKA_FFMPEG_FFPROBE_NOSAMPLES-$(call REMUX, MATROSKA, RAWVIDEO_DEMUXER) += fate-matroska-stereo-display-size
++fate-matroska-stereo-display-size: tests/data/vsynth1.yuv
++fate-matroska-stereo-display-size: CMD = transcode rawvideo $(TARGET_PATH)/tests/data/vsynth1.yuv matroska \
++    "-c copy -frames:v 1 -write_crc32 0 \
++     -map 0 -metadata:s:0 stereo_mode=left_right -sar:0 64:11 \
++     -map 0 -metadata:s:1 stereo_mode=left_right -sar:1 2:1 \
++     -map 0 -metadata:s:2 stereo_mode=top_bottom -sar:2 1:2 \
++     -map 0 -metadata:s:3 stereo_mode=top_bottom -sar:3 1:1" \
++    "-map 0 -c copy" \
++    "-show_entries stream=index,width,height,sample_aspect_ratio,display_aspect_ratio" \
++    "" "" "-s 352x288 -pix_fmt yuv420p"
++
+ 
+ # The following test tests the various flavours of WebVTT in WebM.
+ # It also tests that dispositions not supported by WebM are not written
+@@ -404,5 +422,6 @@ FATE_SAMPLES_AVCONV += $(FATE_MATROSKA-yes)
+ FATE_SAMPLES_FFPROBE += $(FATE_MATROSKA_FFPROBE-yes)
+ FATE_SAMPLES_FFMPEG_FFPROBE += $(FATE_MATROSKA_FFMPEG_FFPROBE-yes)
+ FATE_FFMPEG_FFPROBE += $(FATE_MATROSKA_STEREO3D-yes)
++FATE_FFMPEG_FFPROBE += $(FATE_MATROSKA_FFMPEG_FFPROBE_NOSAMPLES-yes)
+ 
+-fate-matroska: $(FATE_MATROSKA-yes) $(FATE_MATROSKA_FFPROBE-yes) $(FATE_MATROSKA_FFMPEG_FFPROBE-yes) $(FATE_MATROSKA_STEREO3D-yes)
++fate-matroska: $(FATE_MATROSKA-yes) $(FATE_MATROSKA_FFPROBE-yes) $(FATE_MATROSKA_FFMPEG_FFPROBE-yes) $(FATE_MATROSKA_STEREO3D-yes) $(FATE_MATROSKA_FFMPEG_FFPROBE_NOSAMPLES-yes)
+diff --git a/tests/ref/fate/matroska-stereo-display-size b/tests/ref/fate/matroska-stereo-display-size
+new file mode 100644
+index 0000000000000000000000000000000000000000..063f0a38063ad27e7c3363b3c490832615741356
+--- /dev/null
++++ b/tests/ref/fate/matroska-stereo-display-size
+@@ -0,0 +1,62 @@
++c89823e4585d1139c67ac4851e857c05 *tests/data/fate/matroska-stereo-display-size.matroska
++609297 tests/data/fate/matroska-stereo-display-size.matroska
++#tb 0: 1/1000
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 352x288
++#sar 0: 32/11
++#tb 1: 1/1000
++#media_type 1: video
++#codec_id 1: rawvideo
++#dimensions 1: 352x288
++#sar 1: 2/1
++#tb 2: 1/1000
++#media_type 2: video
++#codec_id 2: rawvideo
++#dimensions 2: 352x288
++#sar 2: 1/1
++#tb 3: 1/1000
++#media_type 3: video
++#codec_id 3: rawvideo
++#dimensions 3: 352x288
++#sar 3: 1/1
++0,          0,          0,       40,   152064, 0x05b789ef
++1,          0,          0,       40,   152064, 0x05b789ef
++2,          0,          0,       40,   152064, 0x05b789ef
++3,          0,          0,       40,   152064, 0x05b789ef
++[STREAM]
++index=0
++width=352
++height=288
++sample_aspect_ratio=32:11
++display_aspect_ratio=32:9
++[SIDE_DATA]
++[/SIDE_DATA]
++[/STREAM]
++[STREAM]
++index=1
++width=352
++height=288
++sample_aspect_ratio=2:1
++display_aspect_ratio=22:9
++[SIDE_DATA]
++[/SIDE_DATA]
++[/STREAM]
++[STREAM]
++index=2
++width=352
++height=288
++sample_aspect_ratio=1:1
++display_aspect_ratio=11:9
++[SIDE_DATA]
++[/SIDE_DATA]
++[/STREAM]
++[STREAM]
++index=3
++width=352
++height=288
++sample_aspect_ratio=1:1
++display_aspect_ratio=11:9
++[SIDE_DATA]
++[/SIDE_DATA]
++[/STREAM]

@@ -1,0 +1,119 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/166e2722f4757c453349e3e40bd8bb8de5cab7f0
+From 166e2722f4757c453349e3e40bd8bb8de5cab7f0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:36:09 -0300
+Subject: [PATCH 20/48] avfilter/vf_showinfo, avformat/dump: print the depth
+ representation information
+
+Print the depth representation type and its range, the multiview scene
+information and the numbers of cameras and views.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the context moved in FFmpeg 9.1; the lines this patch adds and removes are unchanged
+
+diff --git a/libavfilter/vf_showinfo.c b/libavfilter/vf_showinfo.c
+index 66984be0afba9c5775e3cafc03f7df812101d0f4..69b410e6a852c8c1d3e4d0fd3d4f866b6ce37b30 100644
+--- a/libavfilter/vf_showinfo.c
++++ b/libavfilter/vf_showinfo.c
+@@ -39,6 +39,7 @@
+ #include "libavutil/pixdesc.h"
+ #include "libavutil/spherical.h"
+ #include "libavutil/stereo3d.h"
++#include "libavutil/multiview.h"
+ #include "libavutil/tdrdi.h"
+ #include "libavutil/timestamp.h"
+ #include "libavutil/timecode.h"
+@@ -161,6 +162,35 @@ static void dump_tdrdi(AVFilterContext *ctx, const AVFrameSideData *sd)
+     av_log(ctx, AV_LOG_INFO, "number of reference displays: %u", tdrdi->num_ref_displays);
+ }
+ 
++static void dump_depth_representation_info(AVFilterContext *ctx, const AVFrameSideData *sd)
++{
++    const AVDepthRepresentationInfo *info = (const AVDepthRepresentationInfo *)sd->data;
++
++    av_log(ctx, AV_LOG_INFO, "type: %d, views: %u", info->type, info->nb_views);
++    if (info->type <= AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY && info->nb_views) {
++        const AVDepthRepresentationView *v = av_depth_representation_info_get_view(info, 0);
++        if (info->z_near_present)
++            av_log(ctx, AV_LOG_INFO, ", z near: %g", av_multiview_real_to_double(&v->z_near));
++        if (info->z_far_present)
++            av_log(ctx, AV_LOG_INFO, ", z far: %g", av_multiview_real_to_double(&v->z_far));
++        if (info->d_min_present)
++            av_log(ctx, AV_LOG_INFO, ", d min: %g", av_multiview_real_to_double(&v->d_min));
++        if (info->d_max_present)
++            av_log(ctx, AV_LOG_INFO, ", d max: %g", av_multiview_real_to_double(&v->d_max));
++    }
++}
++
++static void dump_multiview_scene_info(AVFilterContext *ctx, const AVFrameSideData *sd)
++{
++    const AVMultiviewSceneInfo *info = (const AVMultiviewSceneInfo *)sd->data;
++
++    if (info->min_disparity_present)
++        av_log(ctx, AV_LOG_INFO, "min disparity: %d, max disparity range: %d",
++               info->min_disparity, info->max_disparity_range);
++    else
++        av_log(ctx, AV_LOG_INFO, "max disparity: %d", info->max_disparity);
++}
++
+ static void dump_detection_bbox(AVFilterContext *ctx, const AVFrameSideData *sd)
+ {
+     int nb_bboxes;
+@@ -906,6 +936,20 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
+         case AV_FRAME_DATA_3D_REFERENCE_DISPLAYS:
+             dump_tdrdi(ctx, sd);
+             break;
++        case AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO:
++            dump_depth_representation_info(ctx, sd);
++            break;
++        case AV_FRAME_DATA_MULTIVIEW_SCENE_INFO:
++            dump_multiview_scene_info(ctx, sd);
++            break;
++        case AV_FRAME_DATA_MULTIVIEW_ACQUISITION_INFO:
++            av_log(ctx, AV_LOG_INFO, "cameras: %u",
++                   ((const AVMultiviewAcquisitionInfo *)sd->data)->nb_cameras);
++            break;
++        case AV_FRAME_DATA_MULTIVIEW_VIEW_POSITION:
++            av_log(ctx, AV_LOG_INFO, "views: %u",
++                   ((const AVMultiviewViewPosition *)sd->data)->nb_views);
++            break;
+         default:
+             if (name)
+                 av_log(ctx, AV_LOG_INFO, "(%zu bytes)", sd->size);
+diff --git a/libavformat/dump.c b/libavformat/dump.c
+index 6bd6b3462c34b16a11f2b6b35818fae8a00a51e0..019c1841a3582bf4a380c1ae59d1da20969ff0e5 100644
+--- a/libavformat/dump.c
++++ b/libavformat/dump.c
+@@ -38,6 +38,7 @@
+ #include "libavutil/replaygain.h"
+ #include "libavutil/spherical.h"
+ #include "libavutil/stereo3d.h"
++#include "libavutil/multiview.h"
+ #include "libavutil/tdrdi.h"
+ #include "libavutil/timecode.h"
+ 
+@@ -496,6 +497,12 @@ static void dump_gain_map_params(void *ctx, const AVPacketSideData *sd, int log_
+     av_log(ctx, log_level, "}");
+ }
+ 
++static void dump_depth_representation_info(void *ctx, const AVPacketSideData *sd, int log_level)
++{
++    const AVDepthRepresentationInfo *info = (const AVDepthRepresentationInfo *)sd->data;
++
++    av_log(ctx, log_level, "type: %d, views: %u", info->type, info->nb_views);
++}
+ static void dump_sidedata(void *ctx, const AVPacketSideData *side_data, int nb_side_data,
+                           int w, int h, AVRational avg_frame_rate,
+                           const char *indent, int log_level)
+@@ -563,6 +570,9 @@ static void dump_sidedata(void *ctx, const AVPacketSideData *side_data, int nb_s
+         case AV_PKT_DATA_GAIN_MAP_PARAMS:
+             dump_gain_map_params(ctx, sd, log_level);
+             break;
++        case AV_PKT_DATA_DEPTH_REPRESENTATION_INFO:
++            dump_depth_representation_info(ctx, sd, log_level);
++            break;
+         default:
+             if (name)
+                 av_log(ctx, log_level, "(%zu bytes)", sd->size);

@@ -1,0 +1,88 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/c1e63aef31e5e54e76d932a56227e7edd29bd15f
+From c1e63aef31e5e54e76d932a56227e7edd29bd15f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:32:16 -0300
+Subject: [PATCH 38/48] fate/mov: test depth images and tracks
+
+A HEIF image with a hidden depth item (auxC urn:mpeg:hevc:2015:auxid:2
+with a depth representation information message in its aux_subtype and
+an auxl reference to the texture item), and the same remuxed to MP4 as
+an auxiliary depth track.
+
+The sample, heif/depth.heic, needs to be uploaded to the FATE suite.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the context moved in FFmpeg 9.1; the lines this patch adds and removes are unchanged
+
+diff --git a/tests/fate/mov.mak b/tests/fate/mov.mak
+index e467acdafbde86b7e8a9162cd165d520da9bd08e..8eee65eecdfd7bf078a58497e835c2a5f460703f 100644
+--- a/tests/fate/mov.mak
++++ b/tests/fate/mov.mak
+@@ -313,6 +313,19 @@ FATE_MOV_FFMPEG_FFPROBE_SAMPLES-$(call FRAMECRC, MOV, HEVC, HEVC_PARSER) \
+ fate-mov-heic-demux-still-image-gainmap-tmap: CMD = stream_demux mov $(TARGET_SAMPLES)/heif/gain_map_tmap.heic "" "-c:v copy -map 0:g:0 -map 0:4" \
+   "-of compact -show_entries stream_group=index,id,nb_streams,type:stream_group_components:stream_group_disposition:stream_group_tags:stream_group_side_data:stream_group_stream=index,id:stream_group_stream_disposition:stream_group_stream_side_data_list"
+ 
++# heic demuxing - still image with a depth image: the depth item's auxiliary
++# type (auxC) and the depth representation information of its aux_subtype
++FATE_MOV_FFMPEG_FFPROBE_SAMPLES-$(call FRAMECRC, MOV, HEVC, HEVC_PARSER) \
++                           += fate-mov-heic-demux-depth
++fate-mov-heic-demux-depth: CMD = stream_demux mov $(TARGET_SAMPLES)/heif/depth.heic "" "-c:v copy -map 0" \
++  "-of compact -show_entries stream=index,codec_name,pix_fmt,width,height:stream_disposition=default,dependent:stream_side_data_list"
++
++# the depth image remuxed as an auxiliary video track: auxv handler, auxi
++# with the depth type and an auxl reference to the texture track
++FATE_MOV_FFMPEG_FFPROBE_SAMPLES-$(call REMUX, MP4 MOV, HEVC_DECODER HEVC_PARSER) \
++                          += fate-mov-mp4-auxiliary-depth
++fate-mov-mp4-auxiliary-depth: CMD = transcode mov $(TARGET_SAMPLES)/heif/depth.heic mp4 "-map 0 -c copy" "-map 0 -c copy" "-of compact -show_entries stream=index,codec_tag_string:stream_side_data_list"
++
+ # Resulting remux should have:
+ # 1. first audio stream with AV_DISPOSITION_HEARING_IMPAIRED
+ # 2. second audio stream with AV_DISPOSITION_VISUAL_IMPAIRED | DESCRIPTIONS
+diff --git a/tests/ref/fate/mov-heic-demux-depth b/tests/ref/fate/mov-heic-demux-depth
+new file mode 100644
+index 0000000000000000000000000000000000000000..56e2da645cd01c69be674731ddb383e78ab327b3
+--- /dev/null
++++ b/tests/ref/fate/mov-heic-demux-depth
+@@ -0,0 +1,16 @@
++#extradata 0:      107, 0xc0811737
++#extradata 1:      104, 0x00241864
++#tb 0: 1/1
++#media_type 0: video
++#codec_id 0: hevc
++#dimensions 0: 64x64
++#sar 0: 0/1
++#tb 1: 1/1
++#media_type 1: video
++#codec_id 1: hevc
++#dimensions 1: 64x64
++#sar 1: 0/1
++0,          0,          0,        1,      762, 0x74e8702a
++1,          0,          0,        1,      110, 0xce4435a0
++stream|index=0|codec_name=hevc|width=64|height=64|pix_fmt=yuv420p|disposition:default=1|disposition:dependent=0
++stream|index=1|codec_name=hevc|width=64|height=64|pix_fmt=gray|disposition:default=0|disposition:dependent=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2|side_datum/depth_representation_information:side_data_type=Depth Representation Information|side_datum/depth_representation_information:depth_representation_type=2|side_datum/depth_representation_information:all_views_equal=1|side_datum/depth_representation_information:z_axis_equal=0|side_datum/depth_representation_information:nb_views=1|side_datum/depth_representation_information:view0_view_id=0|side_datum/depth_representation_information:view0_z_axis_reference_view=0|side_datum/depth_representation_information:view0_z_near=0.25|side_datum/depth_representation_information:view0_z_far=10
+diff --git a/tests/ref/fate/mov-mp4-auxiliary-depth b/tests/ref/fate/mov-mp4-auxiliary-depth
+new file mode 100644
+index 0000000000000000000000000000000000000000..10c78ab0ce4f8ae21d0ce00224d0f3d0ecb0e857
+--- /dev/null
++++ b/tests/ref/fate/mov-mp4-auxiliary-depth
+@@ -0,0 +1,18 @@
++b689448b91f6f6da9f93eb02ea2d8045 *tests/data/fate/mov-mp4-auxiliary-depth.mp4
++2440 tests/data/fate/mov-mp4-auxiliary-depth.mp4
++#extradata 0:      107, 0xc0811737
++#extradata 1:      104, 0x00241864
++#tb 0: 1/16384
++#media_type 0: video
++#codec_id 0: hevc
++#dimensions 0: 64x64
++#sar 0: 0/1
++#tb 1: 1/16384
++#media_type 1: video
++#codec_id 1: hevc
++#dimensions 1: 64x64
++#sar 1: 0/1
++0,          0,          0,    16384,      762, 0x74e8702a
++1,          0,          0,    16384,      110, 0xce4435a0
++stream|index=0|codec_tag_string=hvc1
++stream|index=1|codec_tag_string=hvc1|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2

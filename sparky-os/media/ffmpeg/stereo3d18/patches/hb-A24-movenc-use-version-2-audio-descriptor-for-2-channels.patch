@@ -1,0 +1,37 @@
+Description: [PATCH] movenc: use version 2 audio descriptor for > 2 channels and for pcm
+Author: Damiano Galassi
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A24-movenc-use-version-2-audio-descriptor-for-2-channels.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/1543d3e9cba1a30ce8bf8c3180c268520bed5841
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: FFmpeg 9.1 added the E-AC-3 condition before the line this patch extends; both are kept.
+
+diff --git a/libavformat/movenc.c b/libavformat/movenc.c
+index 1a732bfcb140175f4d23d40fdb627ad177524ce7..7374347b64a8d9a981cc41c07bf11f5d66c65964 100644
+--- a/libavformat/movenc.c
++++ b/libavformat/movenc.c
+@@ -1092,6 +1092,15 @@ static int mov_write_chan_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
+     if (track->multichannel_as_mono)
+         return 0;
+ 
++    // Custom channels layout is not handled properly for these formats
++    // unset it for now, it will fallback to the layout stored in the extradata
++    // TODO: find the reason
++    if (track->par->codec_id == AV_CODEC_ID_AAC ||
++        track->par->codec_id == AV_CODEC_ID_ALAC)
++    {
++        return 0;
++    }
++
+     ret = ff_mov_get_channel_layout_tag(track->par, &layout_tag,
+                                         &bitmap, &channel_desc);
+ 
+@@ -1474,7 +1483,7 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
+     if (track->mode == MODE_MOV) {
+         if (track->par->sample_rate > UINT16_MAX || !track->par->ch_layout.nb_channels ||
+             track->par->codec_id == AV_CODEC_ID_EAC3 ||
+-            track->par->ch_layout.nb_channels > 2) {
++            track->par->ch_layout.nb_channels > 2 || mov_get_lpcm_flags(track->par->codec_id)) {
+             if (mov_get_lpcm_flags(track->par->codec_id))
+                 tag = AV_RL32("lpcm");
+             version = 2;

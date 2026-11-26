@@ -1,0 +1,163 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/77b82c01d34d3332c0cc658f7422ddfb01704af9
+From 77b82c01d34d3332c0cc658f7422ddfb01704af9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:36:08 -0300
+Subject: [PATCH 18/48] avcodec/hevc: export the multiview and depth
+ information per layer
+
+Hand the multiview and depth information messages of an SEI NAL unit to
+the layers they apply to: depth representation and multiview acquisition
+information to the layer of the NAL unit (H.265 G.14.3.4, G.14.3.6),
+multiview scene information to it and the layers above (G.14.3.5), and
+multiview view position and alternative depth information to the coded
+video sequence (G.14.3.7, I.14.3.3). Each layer keeps the information in
+force in decoding order until the next message or the end of its coded
+layer-wise video sequence, and exports it on its frames.
+
+Alternative depth information persists in output order (I.14.3.3); it is
+kept in decoding order here, which differs only for pictures that are
+reordered across a new message.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/hevc/hevcdec.c | 69 +++++++++++++++++++++++++++++++++++++++
+ libavcodec/hevc/hevcdec.h |  7 ++++
+ 2 files changed, 76 insertions(+)
+
+diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
+index 61232c19..2b24b49f 100644
+--- a/libavcodec/hevc/hevcdec.c
++++ b/libavcodec/hevc/hevcdec.c
+@@ -3065,6 +3065,48 @@ static int decode_slice_data(HEVCContext *s, const HEVCLayerContext *l,
+     return hls_decode_entry(s, gb);
+ }
+ 
++static void multiview_unref(HEVCContext *s)
++{
++    for (int l = 0; l <= HEVC_MAX_NUH_LAYER_ID; l++) {
++        ff_h2645_sei_multiview_reset(&s->multiview_pending[l]);
++        for (int i = 0; i < H2645_SEI_MULTIVIEW_NB; i++)
++            av_buffer_unref(&s->multiview[l][i]);
++    }
++}
++
++/* Hand the multiview and depth information messages of an SEI NAL unit to
++ * the layers they apply to: depth representation and multiview acquisition
++ * information to the layer of the NAL unit (G.14.3.4, G.14.3.6), multiview
++ * scene information to it and the layers above (G.14.3.5), and multiview
++ * view position and alternative depth information to the whole coded video
++ * sequence (G.14.3.7, I.14.3.3). */
++static int multiview_distribute(HEVCContext *s)
++{
++    H2645SEIMultiview *m = &s->sei.common.multiview;
++
++    for (int i = 0; i < H2645_SEI_MULTIVIEW_NB; i++) {
++        int first = s->nuh_layer_id, last = s->nuh_layer_id;
++
++        if (!m->info[i])
++            continue;
++        if (i == H2645_SEI_MULTIVIEW_SCENE_INFO)
++            last = HEVC_MAX_NUH_LAYER_ID;
++        else if (i == H2645_SEI_MULTIVIEW_VIEW_POSITION ||
++                 i == H2645_SEI_ALTERNATIVE_DEPTH_INFO) {
++            first = 0;
++            last  = HEVC_MAX_NUH_LAYER_ID;
++        }
++        for (int l = first; l <= last; l++) {
++            int ret = av_buffer_replace(&s->multiview_pending[l].info[i], m->info[i]);
++            if (ret < 0)
++                return ret;
++        }
++        av_buffer_unref(&m->info[i]);
++    }
++
++    return 0;
++}
++
+ static int set_side_data(HEVCContext *s)
+ {
+     const HEVCSPS *sps = s->cur_frame->pps->sps;
+@@ -3089,6 +3131,18 @@ static int set_side_data(HEVCContext *s)
+     if (ret < 0)
+         return ret;
+ 
++    /* The multiview and depth information of a layer applies from its access
++     * unit on in decoding order, until the next message or the end of the
++     * coded layer-wise video sequence. */
++    ret = ff_h2645_sei_multiview_update(s->multiview[s->nuh_layer_id],
++                                        &s->multiview_pending[s->nuh_layer_id],
++                                        IS_IRAP(s) && s->no_rasl_output_flag);
++    if (ret < 0)
++        return ret;
++    ret = ff_h2645_sei_multiview_to_frame(s->avctx, out, s->multiview[s->nuh_layer_id]);
++    if (ret < 0)
++        return ret;
++
+     /* The arrangement is exported when the frame is output, as its lifetime
+      * follows the output order, see output_frame_packing(). */
+     s->cur_frame->sequence = s->sequence;
+@@ -3642,6 +3696,8 @@ static int decode_nal_unit(HEVCContext *s, unsigned nal_idx)
+     case HEVC_NAL_SEI_PREFIX:
+     case HEVC_NAL_SEI_SUFFIX:
+         ret = ff_hevc_decode_nal_sei(&gb, s->avctx, &s->sei, &s->ps, s->nal_unit_type);
++        if (multiview_distribute(s) < 0 && ret >= 0)
++            ret = AVERROR(ENOMEM);
+         if (ret < 0)
+             goto fail;
+         break;
+@@ -3977,6 +4033,7 @@ static av_cold int hevc_decode_free(AVCodecContext *avctx)
+     ff_h2645_packet_uninit(&s->pkt);
+ 
+     ff_hevc_reset_sei(&s->sei);
++    multiview_unref(s);
+ 
+     return 0;
+ }
+@@ -4070,6 +4127,17 @@ static int hevc_update_thread_context(AVCodecContext *dst,
+     s->output_frame_packing          = s0->output_frame_packing;
+     s->output_frame_packing_sequence = s0->output_frame_packing_sequence;
+     s->output_frame_packing_count    = s0->output_frame_packing_count;
++    for (int l = 0; l <= HEVC_MAX_NUH_LAYER_ID; l++) {
++        for (int i = 0; i < H2645_SEI_MULTIVIEW_NB; i++) {
++            ret = av_buffer_replace(&s->multiview_pending[l].info[i],
++                                    s0->multiview_pending[l].info[i]);
++            if (ret < 0)
++                return ret;
++            ret = av_buffer_replace(&s->multiview[l][i], s0->multiview[l][i]);
++            if (ret < 0)
++                return ret;
++        }
++    }
+     s->skipping_frame = s0->skipping_frame;
+ 
+     s->is_nalff        = s0->is_nalff;
+@@ -4216,6 +4284,7 @@ static av_cold void hevc_decode_flush(AVCodecContext *avctx)
+     s->output_frame_packing.present = 0;
+     s->output_frame_packing_sequence = -1;
+     s->output_frame_packing_count = 0;
++    multiview_unref(s);
+     ff_dovi_ctx_flush(&s->dovi_ctx);
+     av_buffer_unref(&s->rpu_buf);
+     s->eos = 1;
+diff --git a/libavcodec/hevc/hevcdec.h b/libavcodec/hevc/hevcdec.h
+index a5168849..8919111a 100644
+--- a/libavcodec/hevc/hevcdec.h
++++ b/libavcodec/hevc/hevcdec.h
+@@ -540,6 +540,13 @@ typedef struct HEVCContext {
+     H2645SEIFramePacking output_frame_packing; ///< arrangement in force in output order
+     int output_frame_packing_sequence;
+     int output_frame_packing_count;
++    /**
++     * Multiview and depth information messages not taken by a picture yet,
++     * and the information in force in decoding order, by the nuh_layer_id
++     * of the layer they apply to (H.265 G.14.3 and I.14.3).
++     */
++    H2645SEIMultiview multiview_pending[HEVC_MAX_NUH_LAYER_ID + 1];
++    AVBufferRef *multiview[HEVC_MAX_NUH_LAYER_ID + 1][H2645_SEI_MULTIVIEW_NB];
+     int recovery_poc;
+ 
+     // NoRaslOutputFlag associated with the last IRAP frame
+-- 
+2.53.0
+

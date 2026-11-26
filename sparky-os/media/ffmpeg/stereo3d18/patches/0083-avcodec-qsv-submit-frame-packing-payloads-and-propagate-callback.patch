@@ -1,0 +1,244 @@
+Description: avcodec/qsv: submit frame packing payloads and propagate callback errors
+ .
+ Append frame packing through mfxEncodeCtrl payloads and expose a default-on
+ frame_packing option. Propagate set_encode_ctrl_cb failures to the caller.
+ For HEVC, inspect the SDK's VPS and SPS and refuse marked frames if their
+ non-packed constraints cannot be established as clear; the SDK interface
+ has no general constraint switch here. Name the packing and opt-out in
+ every unsupported-layout diagnostic.
+ .
+ Compiled with oneVPL 2.17; the unsupported HEVC packing guard is exercised.
+ No Intel encoder hardware was available for an encoded-stream proof.
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/1d964255c4986bbd20f20dd8c415a25918f290c3
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/configure b/configure
+index cb196263428..b40c6deee43 100755
+--- a/configure
++++ b/configure
+@@ -3670,7 +3670,7 @@ hevc_oh_decoder_deps="ohcodec"
+ hevc_oh_decoder_select="hevc_mp4toannexb_bsf"
+ hevc_oh_encoder_deps="ohcodec"
+ hevc_qsv_decoder_select="hevc_mp4toannexb_bsf qsvdec"
+-hevc_qsv_encoder_select="hevcparse qsvenc"
++hevc_qsv_encoder_select="cbs_h265 hevcparse qsvenc"
+ hevc_rkmpp_decoder_deps="rkmpp"
+ hevc_rkmpp_decoder_select="hevc_mp4toannexb_bsf"
+ hevc_rkmpp_encoder_deps="rkmpp"
+diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
+index c79db089a0d..8c75b0430d0 100644
+--- a/libavcodec/qsvenc.c
++++ b/libavcodec/qsvenc.c
+@@ -1646,6 +1646,11 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
+     const AVDictionaryEntry *param = NULL;
+ #endif
+ 
++    ret = ff_frame_packing_init(avctx, &q->frame_packing_state, q->frame_packing,
++                                "-frame_packing 0", 0);
++    if (ret < 0)
++        return ret;
++
+     q->param.AsyncDepth = q->async_depth;
+ 
+     q->async_fifo = av_fifo_alloc2(q->async_depth, sizeof(QSVPacket), AV_FIFO_FLAG_AUTO_GROW);
+@@ -2518,7 +2523,48 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+     }
+ 
+     if (q->set_encode_ctrl_cb && enc_ctrl) {
+-        q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
++        ret = q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
++        if (ret < 0)
++            goto free;
++    }
++
++    if (enc_ctrl && q->frame_packing_state.enabled) {
++        FFFramePackingParams packing;
++        uint8_t data[16];
++        int64_t order = q->frame_packing_order++;
++        int idr = !order || (enc_ctrl->FrameType & MFX_FRAMETYPE_IDR) ||
++                  (q->param.mfx.GopPicSize &&
++                   order - q->frame_packing_last_idr >= q->param.mfx.GopPicSize);
++
++        if (idr)
++            q->frame_packing_last_idr = order;
++        ret = ff_frame_packing_prepare(avctx, &q->frame_packing_state, frame,
++                                       idr || (enc_ctrl->FrameType & MFX_FRAMETYPE_I),
++                                       order, &packing);
++        if (ret < 0)
++            goto free;
++        if (ret) {
++            mfxPayload *payload;
++            int size = ff_frame_packing_payload(avctx->codec_id, &packing, data);
++
++            if (enc_ctrl->NumPayload >= QSV_MAX_ENC_PAYLOAD) {
++                av_log(avctx, AV_LOG_ERROR, "No QSV payload slot for frame packing "
++                       "type %d; use -frame_packing 0 to disable the mark.\n", packing.type);
++                ret = AVERROR(ENOSPC);
++                goto free;
++            }
++            payload = av_mallocz(sizeof(*payload) + size + 2);
++            if (!payload)
++                goto nomem;
++            payload->Data = (mfxU8 *)(payload + 1);
++            payload->Data[0] = SEI_TYPE_FRAME_PACKING_ARRANGEMENT;
++            payload->Data[1] = size;
++            memcpy(payload->Data + 2, data, size);
++            payload->BufSize = size + 2;
++            payload->NumBit = payload->BufSize * 8;
++            payload->Type = SEI_TYPE_FRAME_PACKING_ARRANGEMENT;
++            enc_ctrl->Payload[enc_ctrl->NumPayload++] = payload;
++        }
+     }
+ 
+     if ((avctx->codec_id == AV_CODEC_ID_H264 ||
+diff --git a/libavcodec/qsvenc.h b/libavcodec/qsvenc.h
+index 4bc77f2f7c9..4454a3e92a9 100644
+--- a/libavcodec/qsvenc.h
++++ b/libavcodec/qsvenc.h
+@@ -33,6 +33,7 @@
+ #include "libavutil/fifo.h"
+ 
+ #include "avcodec.h"
++#include "frame_packing.h"
+ #include "hwconfig.h"
+ #include "qsv_internal.h"
+ 
+@@ -258,6 +259,10 @@ typedef struct QSVEncContext {
+     int transform_skip;
+ 
+     int a53_cc;
++    int frame_packing;
++    FFFramePacking frame_packing_state;
++    int64_t frame_packing_order;
++    int64_t frame_packing_last_idr;
+ 
+ #if QSV_HAVE_MF
+     int mfmode;
+diff --git a/libavcodec/qsvenc_h264.c b/libavcodec/qsvenc_h264.c
+index 7d39338d6ae..dc0bcfc766c 100644
+--- a/libavcodec/qsvenc_h264.c
++++ b/libavcodec/qsvenc_h264.c
+@@ -100,6 +100,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
+ #define OFFSET(x) offsetof(QSVH264EncContext, x)
+ #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
+ static const AVOption options[] = {
++    { "frame_packing", "Include stereo frame packing", OFFSET(qsv.frame_packing),
++      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
+     QSV_COMMON_OPTS
+     QSV_OPTION_RDO
+     QSV_OPTION_MAX_FRAME_SIZE
+diff --git a/libavcodec/qsvenc_hevc.c b/libavcodec/qsvenc_hevc.c
+index ae3981fb721..8c836ce6e28 100644
+--- a/libavcodec/qsvenc_hevc.c
++++ b/libavcodec/qsvenc_hevc.c
+@@ -28,10 +28,13 @@
+ #include "libavutil/mem.h"
+ #include "libavutil/opt.h"
+ #include "libavutil/mastering_display_metadata.h"
++#include "libavutil/stereo3d.h"
+ 
+ #include "avcodec.h"
+ #include "bytestream.h"
+ #include "codec_internal.h"
++#include "cbs.h"
++#include "cbs_h265.h"
+ #include "get_bits.h"
+ #include "h2645_parse.h"
+ #include "qsv.h"
+@@ -163,12 +166,83 @@ static int generate_fake_vps(QSVEncContext *q, AVCodecContext *avctx)
+     return 0;
+ }
+ 
++static int qsv_hevc_check_frame_packing(AVCodecContext *avctx, const AVStereo3D *stereo)
++{
++    CodedBitstreamContext *cbs = NULL;
++    CodedBitstreamFragment headers = { 0 };
++    int ret, seen = 0;
++
++    ret = ff_cbs_init(&cbs, AV_CODEC_ID_HEVC, avctx);
++    if (ret < 0)
++        goto end;
++    ret = ff_cbs_read(cbs, &headers, NULL, avctx->extradata, avctx->extradata_size);
++    if (ret < 0)
++        goto end;
++    for (int i = 0; i < headers.nb_units; i++) {
++        const CodedBitstreamUnit *unit = &headers.units[i];
++        const H265RawProfileTierLevel *ptl;
++        int sublayers;
++
++        if (unit->type == HEVC_NAL_VPS) {
++            const H265RawVPS *vps = unit->content;
++            ptl = &vps->profile_tier_level;
++            sublayers = vps->vps_max_sub_layers_minus1;
++        } else if (unit->type == HEVC_NAL_SPS) {
++            const H265RawSPS *sps = unit->content;
++            ptl = &sps->profile_tier_level;
++            sublayers = sps->sps_max_sub_layers_minus1;
++        } else {
++            continue;
++        }
++        seen |= unit->type == HEVC_NAL_VPS ? 1 : 2;
++        if (ptl->general_non_packed_constraint_flag) {
++            ret = AVERROR(ENOSYS);
++            goto end;
++        }
++        for (int j = 0; j < sublayers; j++) {
++            if (ptl->sub_layer_profile_present_flag[j] &&
++                ptl->sub_layer_non_packed_constraint_flag[j]) {
++                ret = AVERROR(ENOSYS);
++                goto end;
++            }
++        }
++    }
++    if (seen != 3)
++        ret = AVERROR_INVALIDDATA;
++end:
++    ff_cbs_fragment_free(&headers);
++    ff_cbs_close(&cbs);
++    if (ret < 0)
++        av_log(avctx, AV_LOG_ERROR, "Cannot signal %s frame packing: QSV HEVC "
++               "parameter sets do not establish clear non-packed constraints; "
++               "use another encoder or -frame_packing 0 to disable the mark.\n",
++               av_stereo3d_type_name(stereo->type));
++    return ret;
++}
++
+ static int qsv_hevc_set_encode_ctrl(AVCodecContext *avctx,
+                                     const AVFrame *frame, mfxEncodeCtrl *enc_ctrl)
+ {
+     QSVHEVCEncContext *q = avctx->priv_data;
+     AVFrameSideData *sd;
+ 
++    if (frame && q->qsv.frame_packing_state.enabled) {
++        const AVStereo3D *stereo;
++        const AVFrameSideData *packing_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_STEREO3D);
++        int ret;
++
++        if (!packing_sd)
++            packing_sd = av_frame_side_data_get(avctx->decoded_side_data,
++                                                avctx->nb_decoded_side_data,
++                                                AV_FRAME_DATA_STEREO3D);
++        stereo = packing_sd ? (const AVStereo3D *)packing_sd->data : NULL;
++        if (stereo && stereo->type != AV_STEREO3D_2D) {
++            ret = qsv_hevc_check_frame_packing(avctx, stereo);
++            if (ret < 0)
++                return ret;
++        }
++    }
++
+     if (!frame || !QSV_RUNTIME_VERSION_ATLEAST(q->qsv.ver, 1, 25))
+         return 0;
+ 
+@@ -304,6 +378,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
+ #define OFFSET(x) offsetof(QSVHEVCEncContext, x)
+ #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
+ static const AVOption options[] = {
++    { "frame_packing", "Include stereo frame packing", OFFSET(qsv.frame_packing),
++      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
+     QSV_COMMON_OPTS
+     QSV_OPTION_RDO
+     QSV_OPTION_MAX_FRAME_SIZE

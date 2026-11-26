@@ -1,0 +1,259 @@
+Description: avcodec/h2645_sei: export all defined frame packing layouts
+ .
+ Export H.264 tiled packing and preserve quincunx sampling of columns,
+ rows and top/bottom layouts in Stereo 3D frame side data. Accept the
+ required content interpretation 0 for H.264 two-dimensional packing.
+ .
+ Exercise 50 codec, layout, quincunx and eye-order combinations through
+ the decoder export path. The previous implementation fails the new
+ layout cases; the updated decoder passes all entries. Temporal frame
+ identity remains independent of eye order.
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/ec415d4abf62bf1e0bf3094b39cd9f60157d009a
+Forwarded: no
+Last-Update: 2026-11-09
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the context moved in FFmpeg 9.1; the lines this patch adds and removes are unchanged
+
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index a1f0c5375b8e7c407f0881cee7bd9fcec256f23c..9fa95648410513cec07991098b5a7709f7f1837a 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1405,6 +1405,7 @@ TESTPROGS-$(CONFIG_DXV_ENCODER)           += hashtable
+ TESTPROGS-$(CONFIG_MJPEG_ENCODER)         += mjpegenc_huffman
+ TESTPROGS-$(CONFIG_MPEGAUDIOHEADER)       += mpegaudiodecheader
+ TESTPROGS-$(CONFIG_MPEGVIDEO)             += mpeg12framerate
++TESTPROGS-$(CONFIG_H264_DECODER)          += h2645_stereo3d
+ TESTPROGS-$(CONFIG_H264_METADATA_BSF)     += h264_levels
+ TESTPROGS-$(CONFIG_HEVC_METADATA_BSF)     += h265_levels
+ TESTPROGS-$(CONFIG_RANGECODER)            += rangecoder
+diff --git a/libavcodec/h2645_sei.c b/libavcodec/h2645_sei.c
+index 7e79d05be01bf1188116cf24059b7f37ab248446..e4f7dc9e4d0a4b8d955f162c7f82093b7d417270 100644
+--- a/libavcodec/h2645_sei.c
++++ b/libavcodec/h2645_sei.c
+@@ -370,7 +370,7 @@ int ff_h2645_sei_ctx_replace(H2645SEI *dst, const H2645SEI *src)
+ static int is_frame_packing_type_valid(SEIFpaType type, enum AVCodecID codec_id)
+ {
+     if (IS_H264(codec_id))
+-        return type <= SEI_FPA_H264_TYPE_2D &&
++        return type <= SEI_FPA_H264_TYPE_TILE &&
+                type >= SEI_FPA_H264_TYPE_CHECKERBOARD;
+     else
+         return type <= SEI_FPA_TYPE_INTERLEAVE_TEMPORAL &&
+@@ -525,8 +525,10 @@ int ff_h2645_sei_frame_packing_to_frame(AVCodecContext *avctx, AVFrame *frame,
+ 
+     if (fp->present &&
+         is_frame_packing_type_valid(fp->arrangement_type, codec_id) &&
+-        fp->content_interpretation_type > 0 &&
+-        fp->content_interpretation_type < 3) {
++        (fp->arrangement_type == SEI_FPA_H264_TYPE_2D ?
++         fp->content_interpretation_type == 0 :
++         (fp->content_interpretation_type > 0 &&
++          fp->content_interpretation_type < 3))) {
+         AVStereo3D *stereo;
+ 
+         ret = ff_decode_stereo3d_new(avctx, frame, &stereo);
+@@ -540,10 +542,12 @@ int ff_h2645_sei_frame_packing_to_frame(AVCodecContext *avctx, AVFrame *frame,
+                 stereo->type = AV_STEREO3D_CHECKERBOARD;
+                 break;
+             case SEI_FPA_H264_TYPE_INTERLEAVE_COLUMN:
+-                stereo->type = AV_STEREO3D_COLUMNS;
++                stereo->type = fp->quincunx_sampling_flag ? AV_STEREO3D_COLUMNS_QUINCUNX :
++                                                          AV_STEREO3D_COLUMNS;
+                 break;
+             case SEI_FPA_H264_TYPE_INTERLEAVE_ROW:
+-                stereo->type = AV_STEREO3D_LINES;
++                stereo->type = fp->quincunx_sampling_flag ? AV_STEREO3D_LINES_QUINCUNX :
++                                                          AV_STEREO3D_LINES;
+                 break;
+ #endif
+             case SEI_FPA_TYPE_SIDE_BY_SIDE:
+@@ -553,7 +557,8 @@ int ff_h2645_sei_frame_packing_to_frame(AVCodecContext *avctx, AVFrame *frame,
+                     stereo->type = AV_STEREO3D_SIDEBYSIDE;
+                 break;
+             case SEI_FPA_TYPE_TOP_BOTTOM:
+-                stereo->type = AV_STEREO3D_TOPBOTTOM;
++                stereo->type = fp->quincunx_sampling_flag ? AV_STEREO3D_TOPBOTTOM_QUINCUNX :
++                                                          AV_STEREO3D_TOPBOTTOM;
+                 break;
+             case SEI_FPA_TYPE_INTERLEAVE_TEMPORAL:
+                 stereo->type = AV_STEREO3D_FRAMESEQUENCE;
+@@ -562,10 +567,13 @@ int ff_h2645_sei_frame_packing_to_frame(AVCodecContext *avctx, AVFrame *frame,
+             case SEI_FPA_H264_TYPE_2D:
+                 stereo->type = AV_STEREO3D_2D;
+                 break;
++            case SEI_FPA_H264_TYPE_TILE:
++                stereo->type = AV_STEREO3D_TILED;
++                break;
+ #endif
+             }
+ 
+-            if (fp->content_interpretation_type == 2)
++            if (stereo->type != AV_STEREO3D_2D && fp->content_interpretation_type == 2)
+                 stereo->flags = AV_STEREO3D_FLAG_INVERT;
+ 
+             if (fp->arrangement_type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL) {
+diff --git a/libavcodec/h264_sei.c b/libavcodec/h264_sei.c
+index aaaed8622171d14d8cd6c8e1a780ea06cf29502d..ddf269d4736f81d3c45935d0d09875925e06a17f 100644
+--- a/libavcodec/h264_sei.c
++++ b/libavcodec/h264_sei.c
+@@ -338,6 +338,8 @@ const char *ff_h264_sei_stereo_mode(const H2645SEIFramePacking *h)
+                     return "block_rl";
+                 else
+                     return "block_lr";
++            case SEI_FPA_H264_TYPE_TILE:
++                return h->content_interpretation_type == 2 ? "tiled_rl" : "tiled_lr";
+             case SEI_FPA_H264_TYPE_2D:
+             default:
+                 return "mono";
+diff --git a/libavcodec/tests/h2645_stereo3d.c b/libavcodec/tests/h2645_stereo3d.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..f7fbddea43a67b61441d7547f0381eff62e21128
+--- /dev/null
++++ b/libavcodec/tests/h2645_stereo3d.c
+@@ -0,0 +1,76 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <stdio.h>
++
++#include "libavutil/frame.h"
++#include "libavutil/stereo3d.h"
++#include "libavcodec/avcodec.h"
++#include "libavcodec/h2645_sei.h"
++
++int main(void)
++{
++    AVCodecContext *avctx = avcodec_alloc_context3(NULL);
++    AVFrame *frame = av_frame_alloc();
++    int ret = 0;
++
++    if (!avctx || !frame) {
++        ret = 1;
++        goto end;
++    }
++    for (int hevc = 0; hevc < 2; hevc++) {
++        for (int type = 0; type <= 7; type++) {
++            for (int quincunx = type == 0; quincunx <= (type < 5); quincunx++) {
++                for (int content = type == 6 ? 0 : 1; content <= (type == 6 ? 0 : 2); content++) {
++                    for (int frame0 = 0; frame0 <= (type == 5); frame0++) {
++                        H2645SEI sei = { 0 };
++                        AVFrameSideData *sd;
++                        const AVStereo3D *stereo;
++
++                        sei.frame_packing = (H2645SEIFramePacking) {
++                            .present = 1,
++                            .arrangement_type = type,
++                            .quincunx_sampling_flag = quincunx,
++                            .content_interpretation_type = content,
++                            .current_frame_is_frame0_flag = frame0,
++                        };
++                        av_frame_unref(frame);
++                        ret = ff_h2645_sei_frame_packing_to_frame(avctx, frame, &sei.frame_packing,
++                                                               hevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264);
++                        if (ret < 0)
++                            goto end;
++                        sd = av_frame_get_side_data(frame, AV_FRAME_DATA_STEREO3D);
++                        printf("%s type=%d q=%d content=%d frame0=%d:",
++                               hevc ? "HEVC" : "H264", type, quincunx, content, frame0);
++                        if (!sd) {
++                            printf(" none\n");
++                            continue;
++                        }
++                        stereo = (const AVStereo3D *)sd->data;
++                        printf(" %s flags=%d view=%s\n", av_stereo3d_type_name(stereo->type),
++                               stereo->flags, av_stereo3d_view_name(stereo->view));
++                    }
++                }
++            }
++        }
++    }
++end:
++    av_frame_free(&frame);
++    avcodec_free_context(&avctx);
++    return ret < 0 ? 1 : ret;
++}
+diff --git a/tests/fate/libavcodec.mak b/tests/fate/libavcodec.mak
+index b6e28a29391f4ee0f4100a4b59e8692eda3b0f5b..e93a7bcd0d42f54b64e9f241b59118d531c3cfb9 100644
+--- a/tests/fate/libavcodec.mak
++++ b/tests/fate/libavcodec.mak
+@@ -144,3 +144,7 @@ fate-h264-sei-header: CMD = run libavcodec/tests/h264_sei$(EXESUF)
+ 
+ FATE-$(CONFIG_AVCODEC) += $(FATE_LIBAVCODEC-yes)
+ fate-libavcodec: $(FATE_LIBAVCODEC-yes)
++
++FATE_LIBAVCODEC-$(call ALLYES, H264_DECODER HEVC_DECODER) += fate-h2645-stereo3d
++fate-h2645-stereo3d: libavcodec/tests/h2645_stereo3d$(EXESUF)
++fate-h2645-stereo3d: CMD = run libavcodec/tests/h2645_stereo3d$(EXESUF)
+diff --git a/tests/ref/fate/h2645-stereo3d b/tests/ref/fate/h2645-stereo3d
+new file mode 100644
+index 0000000000000000000000000000000000000000..291474a314ad81b3db3b5f702dcf0263f4282c70
+--- /dev/null
++++ b/tests/ref/fate/h2645-stereo3d
+@@ -0,0 +1,50 @@
++H264 type=0 q=1 content=1 frame0=0: checkerboard flags=0 view=packed
++H264 type=0 q=1 content=2 frame0=0: checkerboard flags=1 view=packed
++H264 type=1 q=0 content=1 frame0=0: interleaved columns flags=0 view=packed
++H264 type=1 q=0 content=2 frame0=0: interleaved columns flags=1 view=packed
++H264 type=1 q=1 content=1 frame0=0: interleaved columns (quincunx subsampling) flags=0 view=packed
++H264 type=1 q=1 content=2 frame0=0: interleaved columns (quincunx subsampling) flags=1 view=packed
++H264 type=2 q=0 content=1 frame0=0: interleaved lines flags=0 view=packed
++H264 type=2 q=0 content=2 frame0=0: interleaved lines flags=1 view=packed
++H264 type=2 q=1 content=1 frame0=0: interleaved lines (quincunx subsampling) flags=0 view=packed
++H264 type=2 q=1 content=2 frame0=0: interleaved lines (quincunx subsampling) flags=1 view=packed
++H264 type=3 q=0 content=1 frame0=0: side by side flags=0 view=packed
++H264 type=3 q=0 content=2 frame0=0: side by side flags=1 view=packed
++H264 type=3 q=1 content=1 frame0=0: side by side (quincunx subsampling) flags=0 view=packed
++H264 type=3 q=1 content=2 frame0=0: side by side (quincunx subsampling) flags=1 view=packed
++H264 type=4 q=0 content=1 frame0=0: top and bottom flags=0 view=packed
++H264 type=4 q=0 content=2 frame0=0: top and bottom flags=1 view=packed
++H264 type=4 q=1 content=1 frame0=0: top and bottom (quincunx subsampling) flags=0 view=packed
++H264 type=4 q=1 content=2 frame0=0: top and bottom (quincunx subsampling) flags=1 view=packed
++H264 type=5 q=0 content=1 frame0=0: frame alternate flags=0 view=right
++H264 type=5 q=0 content=1 frame0=1: frame alternate flags=0 view=left
++H264 type=5 q=0 content=2 frame0=0: frame alternate flags=1 view=right
++H264 type=5 q=0 content=2 frame0=1: frame alternate flags=1 view=left
++H264 type=6 q=0 content=0 frame0=0: 2D flags=0 view=packed
++H264 type=7 q=0 content=1 frame0=0: tiled flags=0 view=packed
++H264 type=7 q=0 content=2 frame0=0: tiled flags=1 view=packed
++HEVC type=0 q=1 content=1 frame0=0: none
++HEVC type=0 q=1 content=2 frame0=0: none
++HEVC type=1 q=0 content=1 frame0=0: none
++HEVC type=1 q=0 content=2 frame0=0: none
++HEVC type=1 q=1 content=1 frame0=0: none
++HEVC type=1 q=1 content=2 frame0=0: none
++HEVC type=2 q=0 content=1 frame0=0: none
++HEVC type=2 q=0 content=2 frame0=0: none
++HEVC type=2 q=1 content=1 frame0=0: none
++HEVC type=2 q=1 content=2 frame0=0: none
++HEVC type=3 q=0 content=1 frame0=0: side by side flags=0 view=packed
++HEVC type=3 q=0 content=2 frame0=0: side by side flags=1 view=packed
++HEVC type=3 q=1 content=1 frame0=0: side by side (quincunx subsampling) flags=0 view=packed
++HEVC type=3 q=1 content=2 frame0=0: side by side (quincunx subsampling) flags=1 view=packed
++HEVC type=4 q=0 content=1 frame0=0: top and bottom flags=0 view=packed
++HEVC type=4 q=0 content=2 frame0=0: top and bottom flags=1 view=packed
++HEVC type=4 q=1 content=1 frame0=0: top and bottom (quincunx subsampling) flags=0 view=packed
++HEVC type=4 q=1 content=2 frame0=0: top and bottom (quincunx subsampling) flags=1 view=packed
++HEVC type=5 q=0 content=1 frame0=0: frame alternate flags=0 view=right
++HEVC type=5 q=0 content=1 frame0=1: frame alternate flags=0 view=left
++HEVC type=5 q=0 content=2 frame0=0: frame alternate flags=1 view=right
++HEVC type=5 q=0 content=2 frame0=1: frame alternate flags=1 view=left
++HEVC type=6 q=0 content=0 frame0=0: none
++HEVC type=7 q=0 content=1 frame0=0: none
++HEVC type=7 q=0 content=2 frame0=0: none

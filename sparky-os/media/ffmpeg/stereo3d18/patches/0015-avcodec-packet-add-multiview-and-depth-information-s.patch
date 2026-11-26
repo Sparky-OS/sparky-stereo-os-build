@@ -1,0 +1,149 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/ab8bf682e73eba9baae1ef509d292ed77cd0be50
+From ab8bf682e73eba9baae1ef509d292ed77cd0be50 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:20:45 -0300
+Subject: [PATCH 15/48] avcodec/packet: add multiview and depth information
+ side data
+
+The packet side data twins of the frame side data types of multiview.h,
+mapped to them for stream side data.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the packet side data values stay as the edition published them in +15: FFmpeg 9.1's AV_PKT_DATA_GAIN_MAP_PARAMS now follows the edition's entries. FFmpeg 9.1 gives every packet side data type a handle (FF_PACKET_SIDE_DATA_HANDLES, read by the side_data bitstream filter and required by the packet_side_data_handle test); this patch adds the handles of its types and that test's reference in the edition's numbering.
+
+diff --git a/libavcodec/avcodec.c b/libavcodec/avcodec.c
+index 80f2598a921a1bf86e8deaf3c2cfdcc7c64d7710..207127036afd48d5476d32db502b2b6f9a805bdf 100644
+--- a/libavcodec/avcodec.c
++++ b/libavcodec/avcodec.c
+@@ -67,6 +67,14 @@ const SideDataMap ff_sd_global_map[] = {
+     { AV_PKT_DATA_3D_REFERENCE_DISPLAYS,      AV_FRAME_DATA_3D_REFERENCE_DISPLAYS },
+     { AV_PKT_DATA_EXIF,                       AV_FRAME_DATA_EXIF },
+     { AV_PKT_DATA_GAIN_MAP_PARAMS,            AV_FRAME_DATA_GAIN_MAP_PARAMS },
++    { AV_PKT_DATA_MULTIVIEW_SCENE_INFO,       AV_FRAME_DATA_MULTIVIEW_SCENE_INFO },
++    { AV_PKT_DATA_MULTIVIEW_ACQUISITION_INFO, AV_FRAME_DATA_MULTIVIEW_ACQUISITION_INFO },
++    { AV_PKT_DATA_MULTIVIEW_VIEW_POSITION,    AV_FRAME_DATA_MULTIVIEW_VIEW_POSITION },
++    { AV_PKT_DATA_DEPTH_REPRESENTATION_INFO,  AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO },
++    { AV_PKT_DATA_DEPTH_TIMING,               AV_FRAME_DATA_DEPTH_TIMING },
++    { AV_PKT_DATA_DEPTH_SAMPLING_INFO,        AV_FRAME_DATA_DEPTH_SAMPLING_INFO },
++    { AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID, AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID },
++    { AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO,     AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO },
+     { AV_PKT_DATA_NB },
+ };
+ 
+diff --git a/libavcodec/packet.c b/libavcodec/packet.c
+index dd11400d3592356e0a215f91826aeadd89e248f0..89f27190fb3fabfe191015abed8394128f5fc06d 100644
+--- a/libavcodec/packet.c
++++ b/libavcodec/packet.c
+@@ -313,6 +313,14 @@ const char *av_packet_side_data_name(enum AVPacketSideDataType type)
+     case AV_PKT_DATA_EXIF:                       return "EXIF metadata";
+     case AV_PKT_DATA_HEVC_CONF:                  return "HEVC enhancement-layer decoder configuration";
+     case AV_PKT_DATA_GAIN_MAP_PARAMS:            return "Gain Map Parameters";
++    case AV_PKT_DATA_MULTIVIEW_SCENE_INFO:       return "Multiview Scene Information";
++    case AV_PKT_DATA_MULTIVIEW_ACQUISITION_INFO: return "Multiview Acquisition Information";
++    case AV_PKT_DATA_MULTIVIEW_VIEW_POSITION:    return "Multiview View Position";
++    case AV_PKT_DATA_DEPTH_REPRESENTATION_INFO:  return "Depth Representation Information";
++    case AV_PKT_DATA_DEPTH_TIMING:               return "Depth Timing";
++    case AV_PKT_DATA_DEPTH_SAMPLING_INFO:        return "Depth Sampling Information";
++    case AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID: return "Constrained Depth Parameter Set Identifier";
++    case AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO:     return "Alternative Depth Information";
+     }
+     return NULL;
+ }
+diff --git a/libavcodec/packet.h b/libavcodec/packet.h
+index 64f687a729fbac06f331bb1a4a9a268228247fac..d0ce975c92d3ab345b6befc0f90be4aa02985821 100644
+--- a/libavcodec/packet.h
++++ b/libavcodec/packet.h
+@@ -383,6 +383,54 @@ enum AVPacketSideDataType {
+      */
+     AV_PKT_DATA_HEVC_CONF,
+ 
++    /**
++     * Multiview scene information. The data is the AVMultiviewSceneInfo
++     * struct defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_MULTIVIEW_SCENE_INFO,
++
++    /**
++     * Multiview acquisition information. The data is the
++     * AVMultiviewAcquisitionInfo struct defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_MULTIVIEW_ACQUISITION_INFO,
++
++    /**
++     * Multiview view position. The data is the AVMultiviewViewPosition struct
++     * defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_MULTIVIEW_VIEW_POSITION,
++
++    /**
++     * Depth representation information. The data is the
++     * AVDepthRepresentationInfo struct defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_DEPTH_REPRESENTATION_INFO,
++
++    /**
++     * Depth timing. The data is the AVDepthTiming struct defined in
++     * libavutil/multiview.h.
++     */
++    AV_PKT_DATA_DEPTH_TIMING,
++
++    /**
++     * Depth sampling information. The data is the AVDepthSamplingInfo struct
++     * defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_DEPTH_SAMPLING_INFO,
++
++    /**
++     * Constrained depth parameter set identifier. The data is the
++     * AVConstrainedDepthParameterSetId struct defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID,
++
++    /**
++     * Alternative depth information. The data is the AVAlternativeDepthInfo
++     * struct defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO,
++
+     /**
+      * Parameters describing how to combine this gain map with its base image
+      * to form an alternate rendition. The payload is the AVGainMapParams
+diff --git a/libavcodec/packet_internal.h b/libavcodec/packet_internal.h
+index ba4efbb14d0bccc57ac49d080473bf64af5235bc..f088e91c5c21406b38aa55a36c62bc5981f6f35a 100644
+--- a/libavcodec/packet_internal.h
++++ b/libavcodec/packet_internal.h
+@@ -80,6 +80,14 @@ int ff_side_data_set_prft(AVPacket *pkt, int64_t timestamp);
+     HANDLE(RTCP_SR,                     "rtcp_sr")                           \
+     HANDLE(EXIF,                        "exif")                              \
+     HANDLE(HEVC_CONF,                   "hevc_conf")                         \
++    HANDLE(MULTIVIEW_SCENE_INFO,        "multiview_scene_info")              \
++    HANDLE(MULTIVIEW_ACQUISITION_INFO,  "multiview_acquisition_info")        \
++    HANDLE(MULTIVIEW_VIEW_POSITION,     "multiview_view_position")           \
++    HANDLE(DEPTH_REPRESENTATION_INFO,   "depth_representation_info")         \
++    HANDLE(DEPTH_TIMING,                "depth_timing")                      \
++    HANDLE(DEPTH_SAMPLING_INFO,         "depth_sampling_info")               \
++    HANDLE(CONSTRAINED_DEPTH_PARAMETER_SET_ID, "constrained_depth_parameter_set_id") \
++    HANDLE(ALTERNATIVE_DEPTH_INFO,      "alternative_depth_info")            \
+     HANDLE(GAIN_MAP_PARAMS,             "gain_map_params")
+ 
+ #endif // AVCODEC_PACKET_INTERNAL_H
+diff --git a/tests/ref/fate/packet-side-data-handle b/tests/ref/fate/packet-side-data-handle
+index 126936a739f02ef06900a67b61004c199eca4c93..33cb2034d46b4c34234d9ad8fddb49428a8ff569 100644
+--- a/tests/ref/fate/packet-side-data-handle
++++ b/tests/ref/fate/packet-side-data-handle
+@@ -41,4 +41,12 @@
+ 40: exif
+ 41: hdr_smpte_2094_app5
+ 42: hevc_conf
+-43: gain_map_params
++43: multiview_scene_info
++44: multiview_acquisition_info
++45: multiview_view_position
++46: depth_representation_info
++47: depth_timing
++48: depth_sampling_info
++49: constrained_depth_parameter_set_id
++50: alternative_depth_info
++51: gain_map_params

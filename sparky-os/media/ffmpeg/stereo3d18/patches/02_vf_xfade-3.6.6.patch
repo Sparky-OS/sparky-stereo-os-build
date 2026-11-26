@@ -1,0 +1,96 @@
+
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: deb-multimedia dropped this patch in 9.1-dmo1 because it no longer applies; the edition keeps xfade easing (the easing and reverse options shipped since +15). The six wrap-around hunks of the slide transitions are left out: FFmpeg 9.1 has its own fix for them (16a4ce48c, Lynne, vf_xfade: fix the wrap-around of the slide transitions).
+
+diff --git a/libavfilter/vf_xfade.c b/libavfilter/vf_xfade.c
+index 8de1f2f0d9cef86671d0d168dabba62c41088f4e..42f5130b0882f090ef4d5322adbf3f1d9d8fcc31 100644
+--- a/libavfilter/vf_xfade.c
++++ b/libavfilter/vf_xfade.c
+@@ -126,6 +126,11 @@ typedef struct XFadeContext {
+     void (*transitionf)(AVFilterContext *ctx, const AVFrame *a, const AVFrame *b, AVFrame *out, float progress,
+                         int slice_start, int slice_end, int jobnr);
+ 
++    char *easing_str; // easing name with optional args
++    char *transition_str; // transition name with optional args
++    int reverse; // reverse option bit flags (enum ReverseFlags)
++    struct XFadeEasingContext *k; // xfade-easing data
++
+     AVExpr *e;
+ } XFadeContext;
+ 
+@@ -157,18 +162,22 @@ static const enum AVPixelFormat pix_fmts[] = {
+     AV_PIX_FMT_NONE
+ };
+ 
++static void xe_data_free(struct XFadeEasingContext *k);
+ static av_cold void uninit(AVFilterContext *ctx)
+ {
+     XFadeContext *s = ctx->priv;
+ 
+     av_expr_free(s->e);
++    xe_data_free(s->k);
+ }
+ 
+ #define OFFSET(x) offsetof(XFadeContext, x)
+ #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
+ 
+ static const AVOption xfade_options[] = {
+-    { "transition", "set cross fade transition", OFFSET(transition), AV_OPT_TYPE_INT, {.i64=FADE}, -1, NB_TRANSITIONS-1, FLAGS, .unit = "transition" },
++    { "easing", "set cross fade easing", OFFSET(easing_str), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS },
++    { "reverse", "reverse easing/transition", OFFSET(reverse), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 3, FLAGS },
++    { "transition", "set cross fade transition", OFFSET(transition_str), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS, .unit = "transition" },
+     {   "custom",    "custom transition",     0, AV_OPT_TYPE_CONST, {.i64=CUSTOM},    0, 0, FLAGS, .unit = "transition" },
+     {   "fade",      "fade transition",       0, AV_OPT_TYPE_CONST, {.i64=FADE},      0, 0, FLAGS, .unit = "transition" },
+     {   "wipeleft",  "wipe left transition",  0, AV_OPT_TYPE_CONST, {.i64=WIPELEFT},  0, 0, FLAGS, .unit = "transition" },
+@@ -1639,7 +1648,7 @@ static void squeezeh##name##_transition(AVFilterContext *ctx,
+             const float z = progress > 0.f ?                                         \
+                             .5f + ((slice_start + y) / h - .5f) / progress : -1.f;   \
+                                                                                      \
+-            if (z < 0.f || z > 1.f) {                                                \
++            if (z < 0.f || z > 1.f || progress <= 0.f) {                             \
+                 for (int x = 0; x < width; x++)                                      \
+                     dst[x] = xf1[x];                                                 \
+             } else {                                                                 \
+@@ -1680,7 +1689,7 @@ static void squeezev##name##_transition(AVFilterContext *ctx,
+                 const float z = progress > 0.f ?                                     \
+                                 .5f + (x / w - .5f) / progress : -1.f;               \
+                                                                                      \
+-                if (z < 0.f || z > 1.f) {                                            \
++                if (z < 0.f || z > 1.f || progress <= 0.f) {                         \
+                     dst[x] = xf1[x];                                                 \
+                 } else {                                                             \
+                     const int xx = lrintf(z * (w - 1.f));                            \
+@@ -2008,6 +2017,8 @@ REVEALV_TRANSITION(up,   16, uint16_t, 2, -)
+ REVEALV_TRANSITION(down,  8, uint8_t,  1, )
+ REVEALV_TRANSITION(down, 16, uint16_t, 2, )
+ 
++#include "xfade-easing.h" // easing & extended transitions
++
+ static inline double getpix(void *priv, double x, double y, int plane, int nb)
+ {
+     XFadeContext *s = priv;
+@@ -2110,6 +2121,9 @@ static int config_output(AVFilterLink *outlink)
+     if (!s->duration_pts)
+         s->duration_pts = 1;
+ 
++    int ret = config_xfade_easing(ctx);
++    if (ret <= 0) return ret; // error or extended transition
++
+     switch (s->transition) {
+     case CUSTOM:     s->transitionf = s->depth <= 8 ? custom8_transition     : custom16_transition;     break;
+     case FADE:       s->transitionf = s->depth <= 8 ? fade8_transition       : fade16_transition;       break;
+@@ -2222,7 +2236,14 @@ static int xfade_frame(AVFilterContext *ctx, AVFrame *a, AVFrame *b)
+         return AVERROR(ENOMEM);
+     av_frame_copy_props(out, a);
+ 
+-    td.xf[0] = a, td.xf[1] = b, td.out = out, td.progress = progress;
++    progress = (s->reverse & REVERSE_EASING) ? 1 - ease(s, 1 - progress) : ease(s, progress); // eased progress
++    int i = s->reverse & REVERSE_TRANSITION;
++    if (i) progress = 1 - progress;
++    if (s->reverse & REVERSE_OVERSHOOT) { // internal flag
++        if (progress < 0) progress += 1, i ^= 1; // undershoot
++        else if (progress > 1) progress -= 1, i ^= 1; // overshoot
++    }
++    td.xf[i] = a, td.xf[i ^ 1] = b, td.out = out, td.progress = av_clipf(progress, 0, 1);
+     ff_filter_execute(ctx, xfade_slice, &td, NULL,
+                       FFMIN(outlink->h, ff_filter_get_nb_threads(ctx)));
+ 

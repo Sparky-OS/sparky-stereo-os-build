@@ -1,0 +1,286 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/cb746137ed0dd2bc950cff109b3374c74bbc2514
+From cb746137ed0dd2bc950cff109b3374c74bbc2514 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:55:22 -0300
+Subject: [PATCH 42/48] avformat/mpegtsenc: write ISO/IEC 23002-3 auxiliary
+ video streams
+
+Write a video stream with AV_PKT_DATA_AUXILIARY_VIDEO_INFO, coded with a
+codec that ISO/IEC 13818-1 Table 2-34 gives a stream type, as an
+auxiliary video stream: stream type 0x1E, with an auxiliary video stream
+descriptor (2.6.74) that names the coding and carries the auxiliary video
+SI message in its si_rbsp(), followed by rbsp_trailing_bits().
+
+The mpegts_flags flag omit_si_trailing_bits writes si_rbsp() without
+them, as TSDuck reads and writes it: ISO/IEC 23002-3 is not freely
+available to settle which form it specifies.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: FFmpeg 9.1 dropped avlanguage.o from the muxer's object line; mpegauxvideo.o is added to 9.1's line.
+
+diff --git a/doc/muxers.texi b/doc/muxers.texi
+index a2489760fcd9d95cc8eda1371b1d29e4f3ddaf5e..bce5d80ab012c4d29015323da3844017d8d68a90 100644
+--- a/doc/muxers.texi
++++ b/doc/muxers.texi
+@@ -3298,8 +3298,18 @@ Mark the initial packet of each stream as discontinuity.
+ Emit NIT table.
+ @item omit_rai
+ Disable writing of random access indicator.
++@item omit_si_trailing_bits
++Write the supplemental information of ISO/IEC 23002-3 auxiliary video streams
++(@code{si_rbsp()} in their auxiliary video stream descriptor) without
++@code{rbsp_trailing_bits()}, as TSDuck reads and writes it.
+ @end table
+ 
++A video stream with @code{AV_PKT_DATA_AUXILIARY_VIDEO_INFO} side data, a depth
++or parallax map for another video stream, is written as an ISO/IEC 23002-3
++auxiliary video stream: stream type 0x1E, with an auxiliary video stream
++descriptor that names its coding and carries the side data (ISO/IEC 13818-1
++2.6.74).
++
+ @item mpegts_copyts @var{boolean}
+ Preserve original timestamps, if value is set to @code{1}. Default value
+ is @code{-1}, which results in shifting timestamps so that they start from 0.
+diff --git a/libavformat/Makefile b/libavformat/Makefile
+index 90e1f2d3a4389f7e1067b6361d94d50933824b03..032c0aa90b8717d1c182d0a6c9be6fe7d9c9f904 100644
+--- a/libavformat/Makefile
++++ b/libavformat/Makefile
+@@ -150,7 +150,7 @@ OBJS-$(CONFIG_ASTC_DEMUXER)              += astcdec.o
+ OBJS-$(CONFIG_AU_DEMUXER)                += au.o pcm.o
+ OBJS-$(CONFIG_AU_MUXER)                  += au.o rawenc.o
+ OBJS-$(CONFIG_AVI_DEMUXER)               += avidec.o
+-OBJS-$(CONFIG_AVI_MUXER)                 += avienc.o mpegtsenc.o rawutils.o
++OBJS-$(CONFIG_AVI_MUXER)                 += avienc.o mpegtsenc.o mpegauxvideo.o rawutils.o
+ OBJS-$(CONFIG_AVM2_MUXER)                += swfenc.o swf.o
+ OBJS-$(CONFIG_AVR_DEMUXER)               += avr.o pcm.o
+ OBJS-$(CONFIG_AVS_DEMUXER)               += avs.o voc_packet.o voc.o
+@@ -414,7 +414,7 @@ OBJS-$(CONFIG_MPEG2VIDEO_MUXER)          += rawenc.o
+ OBJS-$(CONFIG_MPEG2VOB_MUXER)            += mpegenc.o
+ OBJS-$(CONFIG_MPEGPS_DEMUXER)            += mpeg.o
+ OBJS-$(CONFIG_MPEGTS_DEMUXER)            += mpegts.o mpegauxvideo.o
+-OBJS-$(CONFIG_MPEGTS_MUXER)              += mpegtsenc.o
++OBJS-$(CONFIG_MPEGTS_MUXER)              += mpegtsenc.o mpegauxvideo.o
+ OBJS-$(CONFIG_MPEGVIDEO_DEMUXER)         += mpegvideodec.o rawdec.o
+ OBJS-$(CONFIG_MPJPEG_DEMUXER)            += mpjpegdec.o
+ OBJS-$(CONFIG_MPJPEG_MUXER)              += mpjpeg.o
+diff --git a/libavformat/mpegauxvideo.c b/libavformat/mpegauxvideo.c
+index 60514a43efab25ac8a4b3f02f2947b74589483d7..c73b30a808bfb9ffcef8167a962b2d3c2e7836de 100644
+--- a/libavformat/mpegauxvideo.c
++++ b/libavformat/mpegauxvideo.c
+@@ -29,7 +29,8 @@
+  * is the syntax as TSDuck reads it (AuxiliaryVideoStreamDescriptor), whose
+  * parallax_params() HDMI 1.4a (Table H-4) confirms. An RBSP ends with
+  * rbsp_trailing_bits() (ITU-T H.264 3.129), which TSDuck neither reads nor
+- * writes: the reader accepts the messages with or without it.
++ * writes: the reader accepts the messages with or without it, and the writer
++ * writes it on request.
+  */
+ 
+ #include "libavutil/intreadwrite.h"
+@@ -160,3 +161,36 @@ fail:
+     av_log(logctx, AV_LOG_ERROR, "Truncated auxiliary video supplemental information\n");
+     return ret;
+ }
++
++int ff_aux_video_si_write(uint8_t *buf, const AVAuxiliaryVideoInfo *info,
++                          int trailing_bits)
++{
++    uint8_t *p = buf;
++    int depth = info->type == AV_AUXILIARY_VIDEO_DEPTH;
++
++    *p++ = depth ? AV_AUXILIARY_VIDEO_DEPTH : AV_AUXILIARY_VIDEO_PARALLAX;
++    *p++ = depth ? 5 : 11;
++
++    /* generic_params(), the reserved bits set as TSDuck sets them */
++    *p++ = info->aux_is_one_field << 7 |
++           (info->aux_is_one_field ? info->aux_is_bottom_field
++                                   : info->aux_is_interlaced) << 6 | 0x3f;
++    *p++ = info->position_offset_h;
++    *p++ = info->position_offset_v;
++
++    if (depth) {
++        *p++ = info->nkfar;
++        *p++ = info->nknear;
++    } else {
++        AV_WB16(p,     info->parallax_zero);
++        AV_WB16(p + 2, info->parallax_scale);
++        AV_WB16(p + 4, info->dref);
++        AV_WB16(p + 6, info->wref);
++        p += 8;
++    }
++
++    if (trailing_bits)
++        *p++ = 0x80;
++
++    return p - buf;
++}
+diff --git a/libavformat/mpegauxvideo.h b/libavformat/mpegauxvideo.h
+index 466f78c1629a1d93822f297991a5a643bf498e0a..9797e7fb7017895306d199a359b11c2360aa69dd 100644
+--- a/libavformat/mpegauxvideo.h
++++ b/libavformat/mpegauxvideo.h
+@@ -26,6 +26,12 @@
+ #include "libavutil/multiview.h"
+ #include "libavcodec/codec_par.h"
+ 
++/**
++ * The longest si_rbsp() ff_aux_video_si_write() writes: a parallax map's
++ * auxiliary video SI message and rbsp_trailing_bits().
++ */
++#define FF_AUX_VIDEO_SI_WRITE_SIZE 14
++
+ /**
+  * Read the si_rbsp() of an auxiliary video stream descriptor (ISO/IEC 13818-1
+  * 2.6.74 and 2.6.75) and export its auxiliary video SI message as the
+@@ -38,4 +44,15 @@
+ int ff_aux_video_si_parse(void *logctx, AVCodecParameters *par,
+                           const uint8_t *buf, int size);
+ 
++/**
++ * Write the si_rbsp() of an auxiliary video stream descriptor for info: one
++ * auxiliary video SI message, followed by rbsp_trailing_bits() when
++ * trailing_bits is set.
++ *
++ * @return the number of bytes written to buf, which has room for
++ *         FF_AUX_VIDEO_SI_WRITE_SIZE
++ */
++int ff_aux_video_si_write(uint8_t *buf, const AVAuxiliaryVideoInfo *info,
++                          int trailing_bits);
++
+ #endif /* AVFORMAT_MPEGAUXVIDEO_H */
+diff --git a/libavformat/mpegtsenc.c b/libavformat/mpegtsenc.c
+index f5150ce7bb1fb965e3c9a50731831f7b8d18fe59..dfaf189f128172a7d69008c3300f369bf85b82cf 100644
+--- a/libavformat/mpegtsenc.c
++++ b/libavformat/mpegtsenc.c
+@@ -40,6 +40,7 @@
+ #include "avio_internal.h"
+ #include "internal.h"
+ #include "lcevc.h"
++#include "mpegauxvideo.h"
+ #include "mpegts.h"
+ #include "mux.h"
+ 
+@@ -120,6 +121,7 @@ typedef struct MpegTSWrite {
+ #define MPEGTS_FLAG_DISCONT         0x10
+ #define MPEGTS_FLAG_NIT             0x20
+ #define MPEGTS_FLAG_OMIT_RAI        0x40
++#define MPEGTS_FLAG_OMIT_SI_TRAILING_BITS 0x80
+     int flags;
+     int copyts;
+     int tables_version;
+@@ -467,6 +469,34 @@ static int get_dvb_stream_type(AVFormatContext *s, AVStream *st)
+     return stream_type;
+ }
+ 
++/* The supplemental information of a stream to mux as an ISO/IEC 23002-3
++ * auxiliary video stream, for the video codecs ISO/IEC 13818-1 Table 2-34
++ * assigns a stream type. */
++static const AVAuxiliaryVideoInfo *get_aux_video_info(AVStream *st)
++{
++    const AVPacketSideData *sd;
++
++    switch (st->codecpar->codec_id) {
++    case AV_CODEC_ID_MPEG1VIDEO:
++    case AV_CODEC_ID_MPEG2VIDEO:
++    case AV_CODEC_ID_MPEG4:
++    case AV_CODEC_ID_H264:
++    case AV_CODEC_ID_HEVC:
++    case AV_CODEC_ID_VVC:
++        break;
++    default:
++        return NULL;
++    }
++
++    sd = av_packet_side_data_get(st->codecpar->coded_side_data,
++                                 st->codecpar->nb_coded_side_data,
++                                 AV_PKT_DATA_AUXILIARY_VIDEO_INFO);
++    if (!sd || sd->size < sizeof(AVAuxiliaryVideoInfo))
++        return NULL;
++
++    return (const AVAuxiliaryVideoInfo *)sd->data;
++}
++
+ static int get_m2ts_stream_type(AVFormatContext *s, AVStream *st)
+ {
+     int stream_type;
+@@ -527,7 +557,7 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+ {
+     MpegTSWrite *ts = s->priv_data;
+     uint8_t data[SECTION_LENGTH], *q, *desc_length_ptr, *program_info_length_ptr;
+-    int val, stream_type, i, err = 0;
++    int val, stream_type, coded_stream_type, i, err = 0;
+ 
+     q = data;
+     put16(&q, 0xe000 | service->pcr_pid);
+@@ -556,6 +586,7 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+         const char default_language[] = "und";
+         const char *language = lang && strlen(lang->value) >= 3 ? lang->value : default_language;
+         enum AVCodecID codec_id = st->codecpar->codec_id;
++        const AVAuxiliaryVideoInfo *aux_info = NULL;
+ 
+         if (s->nb_programs) {
+             int k, found = 0;
+@@ -577,6 +608,12 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+         }
+ 
+         stream_type = ts->m2ts_mode ? get_m2ts_stream_type(s, st) : get_dvb_stream_type(s, st);
++        coded_stream_type = stream_type;
++
++        /* an auxiliary video stream, coded as aux_video_codedstreamtype of its
++         * descriptor says (ISO/IEC 13818-1 2.6.74 and 2.16) */
++        if (!ts->m2ts_mode && (aux_info = get_aux_video_info(st)))
++            stream_type = STREAM_TYPE_AUXILIARY_VIDEO;
+ 
+         *q++ = stream_type;
+         put16(&q, 0xe000 | ts_st->pid);
+@@ -816,14 +853,14 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+             }
+         break;
+         case AVMEDIA_TYPE_VIDEO:
+-            if (stream_type == STREAM_TYPE_VIDEO_DIRAC) {
++            if (coded_stream_type == STREAM_TYPE_VIDEO_DIRAC) {
+                 put_registration_descriptor(&q, MKTAG('d', 'r', 'a', 'c'));
+-            } else if (stream_type == STREAM_TYPE_VIDEO_VC1) {
++            } else if (coded_stream_type == STREAM_TYPE_VIDEO_VC1) {
+                 put_registration_descriptor(&q, MKTAG('V', 'C', '-', '1'));
+-            } else if (stream_type == STREAM_TYPE_VIDEO_HEVC && s->strict_std_compliance <= FF_COMPLIANCE_NORMAL) {
++            } else if (coded_stream_type == STREAM_TYPE_VIDEO_HEVC && s->strict_std_compliance <= FF_COMPLIANCE_NORMAL) {
+                 put_registration_descriptor(&q, MKTAG('H', 'E', 'V', 'C'));
+-            } else if (stream_type == STREAM_TYPE_VIDEO_CAVS || stream_type == STREAM_TYPE_VIDEO_AVS2 ||
+-                       stream_type == STREAM_TYPE_VIDEO_AVS3) {
++            } else if (coded_stream_type == STREAM_TYPE_VIDEO_CAVS || coded_stream_type == STREAM_TYPE_VIDEO_AVS2 ||
++                       coded_stream_type == STREAM_TYPE_VIDEO_AVS3) {
+                 put_registration_descriptor(&q, MKTAG('A', 'V', 'S', 'V'));
+             }
+             if (ts_st->nb_stream_groups) {
+@@ -852,6 +889,20 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
+                     }
+                 }
+             }
++            if (aux_info) {
++                uint8_t *len_ptr;
++
++                if (q - data > SECTION_LENGTH - 3 - FF_AUX_VIDEO_SI_WRITE_SIZE) {
++                    err = 1;
++                    break;
++                }
++                *q++ = AUXILIARY_VIDEO_STREAM_DESCRIPTOR;
++                len_ptr = q++;
++                *q++ = coded_stream_type;
++                q += ff_aux_video_si_write(q, aux_info,
++                                           !(ts->flags & MPEGTS_FLAG_OMIT_SI_TRAILING_BITS));
++                *len_ptr = q - len_ptr - 1;
++            }
+             break;
+         case AVMEDIA_TYPE_DATA:
+             if (codec_id == AV_CODEC_ID_SMPTE_KLV) {
+@@ -2506,6 +2557,8 @@ static const AVOption options[] = {
+       0, AV_OPT_TYPE_CONST, { .i64 = MPEGTS_FLAG_NIT}, 0, INT_MAX, ENC, .unit = "mpegts_flags" },
+     { "omit_rai", "Disable writing of random access indicator",
+       0, AV_OPT_TYPE_CONST, { .i64 = MPEGTS_FLAG_OMIT_RAI }, 0, INT_MAX, ENC, .unit = "mpegts_flags" },
++    { "omit_si_trailing_bits", "Write the supplemental information of auxiliary video streams without rbsp_trailing_bits()",
++      0, AV_OPT_TYPE_CONST, { .i64 = MPEGTS_FLAG_OMIT_SI_TRAILING_BITS }, 0, INT_MAX, ENC, .unit = "mpegts_flags" },
+     { "mpegts_copyts", "don't offset dts/pts", OFFSET(copyts), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, ENC },
+     { "tables_version", "set PAT, PMT, SDT and NIT version", OFFSET(tables_version), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 31, ENC },
+     { "omit_video_pes_length", "Omit the PES packet length for video packets",

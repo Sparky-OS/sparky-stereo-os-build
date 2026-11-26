@@ -1,0 +1,86 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/3bb885e86cbb0efa7d4468cb4dbc65d7a54738ed
+From 3bb885e86cbb0efa7d4468cb4dbc65d7a54738ed Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:19:06 -0300
+Subject: [PATCH 30/48] avcodec/hevc/ps: read the AuxId of an auxiliary layer
+
+The dimension IDs of the VPS extension come in the order of the
+scalability types' indices (F.7.4.3.1.1), so AuxId follows those of
+texture/depth, multiview and spatial/quality scalability; it was taken
+as the first or the second, which only gave the right value for alpha
+streams by chance when spatial scalability came first, as x265 writes
+it. With splitting_flag the dimension IDs are bit fields of nuh_layer_id
+and were not read. Keep AuxId per layer and accept depth (2) along with
+alpha (1).
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/hevc/ps.c | 27 ++++++++++++++++++++-------
+ libavcodec/hevc/ps.h |  3 +++
+ 2 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/libavcodec/hevc/ps.c b/libavcodec/hevc/ps.c
+index c303ae4c..688de0a6 100644
+--- a/libavcodec/hevc/ps.c
++++ b/libavcodec/hevc/ps.c
+@@ -592,22 +592,35 @@ static int decode_vps_ext(GetBitContext *gb, AVCodecContext *avctx, HEVCVPS *vps
+     }
+ 
+     if (!splitting_flag) {
+-        int index = 0;
+-
+         for (int i = 0; i < num_scalability_types; i++)
+             dimension_id[i] = get_bits(gb, dimension_id_len[i]);
++    } else {
++        /* the dimension IDs are bit fields of nuh_layer_id (F.7.4.3.1.1) */
++        int offset = 0;
++
++        for (int i = 0; i < num_scalability_types; i++) {
++            dimension_id[i] = (vps->layer_id_in_nuh[1] >> offset) &
++                              ((1 << dimension_id_len[i]) - 1);
++            offset += dimension_id_len[i];
++        }
++    }
+ 
+-        if (vps->scalability_mask_flag & HEVC_SCALABILITY_MULTIVIEW)
+-            index++;
++    if (vps->scalability_mask_flag & HEVC_SCALABILITY_AUXILIARY) {
++        /* the dimension of each scalability type in the order of its index,
++         * AuxId after those of texture/depth, multiview and spatial/quality */
++        int index = av_popcount(vps->scalability_mask_flag &
++                                (HEVC_SCALABILITY_DEPTH | HEVC_SCALABILITY_MULTIVIEW |
++                                 HEVC_SCALABILITY_SPATIAL));
+ 
+-        /* AuxId 1 is alpha, 2 is depth. Only support alpha */
+-        if (vps->scalability_mask_flag & HEVC_SCALABILITY_AUXILIARY &&
+-            dimension_id[index] != HEVC_AUX_ALPHA) {
++        /* AuxId 1 is alpha, 2 is depth (Table F.2) */
++        if (dimension_id[index] != HEVC_AUX_ALPHA &&
++            dimension_id[index] != HEVC_AUX_DEPTH) {
+             av_log(avctx, AV_LOG_WARNING,
+                    "Unsupported dimension_id %d for HEVC_SCALABILITY_AUXILIARY\n",
+                    dimension_id[index]);
+             return AVERROR_PATCHWELCOME;
+         }
++        vps->aux_id[1] = dimension_id[index];
+     }
+ 
+     view_id_len = get_bits(gb, 4);
+diff --git a/libavcodec/hevc/ps.h b/libavcodec/hevc/ps.h
+index f5c5f81a..b076e7cc 100644
+--- a/libavcodec/hevc/ps.h
++++ b/libavcodec/hevc/ps.h
+@@ -226,6 +226,9 @@ typedef struct HEVCVPS {
+     // ViewId[layer_idx]
+     uint16_t view_id[HEVC_VPS_MAX_LAYERS];
+ 
++    // AuxId[layer_idx] (F.7.4.3.1.1, Table F.2): 0, HEVC_AUX_ALPHA or HEVC_AUX_DEPTH
++    uint8_t aux_id[HEVC_VPS_MAX_LAYERS];
++
+     // NumOutputLayerSets
+     uint8_t num_output_layer_sets;
+     // Bitmasks specifying output layer sets. i-th bit set means layer with VPS
+-- 
+2.53.0
+

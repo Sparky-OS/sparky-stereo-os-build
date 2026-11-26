@@ -1,0 +1,18 @@
+Description: [PATCH 01/22] mov: read 'name' track tag written by movenc
+Author: John Stebbins
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A01-mov-read-name-track-tag-written-by-movenc.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/a6e134197eaf4c448f47327309c030d14df13172
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -396,7 +396,7 @@
+         return mov_metadata_loci(c, pb, atom.size);
+     case MKTAG( 'm','a','n','u'): key = "make"; break;
+     case MKTAG( 'm','o','d','l'): key = "model"; break;
+-    case MKTAG( 'n','a','m','e'): key = "name"; break;
++    case MKTAG( 'n','a','m','e'): key = "title"; raw = 1; break;
+     case MKTAG( 'p','c','s','t'): key = "podcast";
+         parse = mov_metadata_int8_no_padding; break;
+     case MKTAG( 'p','g','a','p'): key = "gapless_playback";

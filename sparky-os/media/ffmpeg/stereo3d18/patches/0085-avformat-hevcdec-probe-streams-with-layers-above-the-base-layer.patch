@@ -1,0 +1,51 @@
+Description: avformat/hevcdec: probe streams with layers above the base layer
+ .
+ hevc_probe() scored a stream 0 as soon as it met a NAL unit header
+ whose nuh_layer_id was not 0, as the value was reserved in the first
+ version of H.265. Since version 2 nuh_layer_id is 0 for the base layer
+ and up to 62 for the layers of multilayer streams, and 63 is reserved
+ (H.265 V11 7.4.2.2). A raw stream with a NAL unit of a layer above the
+ base layer in the probed bytes, such as the alpha layer of an x265
+ --alpha stream, could not be opened without -f hevc.
+ .
+ Reject only the forbidden zero bit and the value 63, and count only
+ the NAL units of the base layer, so that a stream is still recognised
+ by the VPS, SPS, PPS and IRAP picture of its base layer.
+ .
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/6031cdebbcd1c3f326610c42b6563657d5e83cb3
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/libavformat/hevcdec.c b/libavformat/hevcdec.c
+index ee5ba9a7531..a2d68c67596 100644
+--- a/libavformat/hevcdec.c
++++ b/libavformat/hevcdec.c
+@@ -35,17 +35,19 @@ static int hevc_probe(const AVProbeData *p)
+         if ((code & 0xffffff00) == 0x100) {
+             uint8_t nal2 = p->buf[i + 1];
+             int type = (code & 0x7E) >> 1;
++            int layer_id = (code & 0x01) << 5 | nal2 >> 3;
+ 
+             if (code & 0x80) // forbidden zero bit
+                 return 0;
+ 
+-            // nuh_layer_id, 0 for the base layer and up to 62 for the layers
+-            // of multilayer streams (F.7.4.2.2); 63 is reserved
+-            if ((code & 0x01) && (nal2 & 0xf8) == 0xf8)
++            // nuh_layer_id is 0 for the base layer and up to 62 for the
++            // layers of multilayer streams (7.4.2.2), 63 is reserved
++            if (layer_id == 63 || !(nal2 & 0x07))
+                 return 0;
+ 
+-            if (!(nal2 & 0x07)) // nuh_temporal_id_plus1
+-                return 0;
++            // a stream is recognised by its base layer
++            if (layer_id)
++                continue;
+ 
+             switch (type) {
+             case HEVC_NAL_VPS:        vps++;  break;
