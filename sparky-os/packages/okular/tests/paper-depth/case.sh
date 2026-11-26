@@ -31,6 +31,7 @@ if [ "${M2:-0}" = 1 ]; then
     python3 -I /tests/make-m2-fixture.py /tmp/display.edid /tmp/two-pages.odt
     case "$CASE" in *-display|probe-override) export KWIN_VIRTUAL_OUTPUT_EDIDS=/tmp/display.edid ;; esac
     printf '[Interface]\nZoom=100\nZoomMode=0\n' > "$XDG_CONFIG_HOME/calligrawordsrc"
+    cp "$XDG_CONFIG_HOME/calligrawordsrc" "$XDG_CONFIG_HOME/calligrarc"
 fi
 pdf=/tmp/two-pages.pdf
 python3 -I /tests/make-pdf.py "$pdf" 300 200
