@@ -1,0 +1,91 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Words: declare the desk and visible pages at their own depths
+
+Use the same view map as painting. The desk is one step behind the
+window, and the paper and its content stay at the window's plane.
+Keep the canvas drop shadow in the normal Qt graphics-effect path.
+
+Assisted-by: gpt-6.2-sol via Codex
+
+diff --git a/words/part/KWCanvas.cpp b/words/part/KWCanvas.cpp
+--- a/words/part/KWCanvas.cpp
++++ b/words/part/KWCanvas.cpp
+@@ -22,12 +22,14 @@
+ #include <KoGridData.h>
+ #include <KoPointerEvent.h>
+ #include <KoToolProxy.h>
++#include <KoViewConverter.h>
+ 
+ // Qt includes
+ #include <QBrush>
+ #include <QGraphicsDropShadowEffect>
+ #include <QPainter>
+ #include <QPainterPath>
++#include <QVariant>
+ 
+ KWCanvas::KWCanvas(const QString &viewMode, KWDocument *document, KWView *view, KWGui *parent)
+     : QWidget(parent)
+@@ -66,11 +68,43 @@
+         canvasSize += QSize(AnnotationAreaWidth, 0.0);
+     }
+     Q_EMIT documentSize(canvasSize);
++    updateStereoPaperDepth();
+ }
+ 
+ void KWCanvas::setDocumentOffset(const QPoint &offset)
+ {
+     m_documentOffset = offset;
++    updateStereoPaperDepth();
++}
++
++void KWCanvas::resizeEvent(QResizeEvent *event)
++{
++    QWidget::resizeEvent(event);
++    updateStereoPaperDepth();
++}
++
++void KWCanvas::updateStereoPaperDepth()
++{
++    QVariantList layers;
++    if (m_viewMode && m_viewMode->hasPages() && m_viewConverter && !rect().isEmpty()) {
++        const QRectF viewport = rect();
++        layers.append(QVariantMap{{QStringLiteral("rect"), viewport}, {QStringLiteral("depth"), -1.0}});
++        const auto exposed = m_viewMode->mapExposedRects(viewport.translated(m_documentOffset), m_viewConverter);
++        for (const KWViewMode::ViewMap &mapping : exposed) {
++            // The map also includes annotation strips. Keep only the paper, including its painted edge.
++            const QRectF paper = m_viewConverter->documentToView(mapping.page.rect());
++            const QRectF clip = QRectF(mapping.clipRect).intersected(paper);
++            if (clip.isEmpty())
++                continue;
++            const QRectF visiblePaper = clip.adjusted(-1, -1, 1, 1)
++                                            .translated(mapping.distance - QPointF(m_documentOffset))
++                                            .intersected(viewport);
++            if (!visiblePaper.isEmpty())
++                layers.append(QVariantMap{{QStringLiteral("rect"), visiblePaper}, {QStringLiteral("depth"), 0.0}});
++        }
++    }
++    if (property("_q_stereo_depth_rects").toList() != layers)
++        setProperty("_q_stereo_depth_rects", layers);
+ }
+ 
+ bool KWCanvas::snapToGrid() const
+diff --git a/words/part/KWCanvas.h b/words/part/KWCanvas.h
+--- a/words/part/KWCanvas.h
++++ b/words/part/KWCanvas.h
+@@ -107,6 +107,7 @@
+     void keyReleaseEvent(QKeyEvent *e) override;
+     /// reimplemented method from superclass
+     void paintEvent(QPaintEvent *ev) override;
++    void resizeEvent(QResizeEvent *event) override;
+     /// reimplemented method from superclass
+     void tabletEvent(QTabletEvent *e) override;
+     /// reimplemented method from superclass
+@@ -128,6 +129,8 @@
+     void pageSetupChanged();
+ 
+ private:
++    void updateStereoPaperDepth();
++
+     KWView *m_view;
+ };
+ 
