@@ -1,0 +1,534 @@
+From 237ee79d69993046c3154c4f7b702abaf846a848 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 09:48:05 -0300
+Subject: [PATCH 1/2] autotests: Published EDIDs of other USB-C glasses come up
+ by their identity
+
+mockGlassesTest reads the EDIDs other owners published for their glasses
+(autotests/integration/data/*.hex, each source in usb-c-glasses-edids.txt):
+the VITURE Pro XR (CVT 0x3132) and the XREAL Air 2 Pro (MRG 0x3135) in 2D
+and in Full SBS, where they keep their identity and announce one 3840x1080
+at 60 Hz; the XREAL Air, Nreal Light, VITURE Beast, Rokid Air, Rokid Max
+and the TCL SmartGlasses 0x03D4 and 0x03D5, whose 2D EDID only is public;
+and two controls, a 32:9 monitor and an ordinary monitor with the PnP ID
+MRG. Known glasses have their option on; Full SBS comes up as the side by
+side (full) twin; a 2D mode stays as it is; the controls stay 2D.
+Both measured pairs follow their glasses from 2D to Full SBS and back.
+
+Queue row 132.
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/drm/mockGlassesTest.cpp             | 146 ++++++++++++++++++
+ .../data/control-aoc-ag493ug7r4.hex           |  17 ++
+ .../integration/data/control-mrg-mgme2430.hex |  17 ++
+ autotests/integration/data/nreal-light-2d.hex |   8 +
+ autotests/integration/data/rokid-air-2d.hex   |  17 ++
+ .../integration/data/rokid-max-2d-1200.hex    |  17 ++
+ .../data/tcl-smartglasses-03d4-2d.hex         |  17 ++
+ .../data/tcl-smartglasses-03d5-2d.hex         |  17 ++
+ .../integration/data/usb-c-glasses-edids.txt  |  17 ++
+ .../integration/data/viture-beast-2d.hex      |  17 ++
+ .../integration/data/viture-pro-xr-2d.hex     |  17 ++
+ .../integration/data/viture-pro-xr-full.hex   |  17 ++
+ .../integration/data/xreal-air-2-pro-2d.hex   |   8 +
+ .../integration/data/xreal-air-2-pro-full.hex |   8 +
+ autotests/integration/data/xreal-air-2d.hex   |  17 ++
+ 15 files changed, 357 insertions(+)
+ create mode 100644 autotests/integration/data/control-aoc-ag493ug7r4.hex
+ create mode 100644 autotests/integration/data/control-mrg-mgme2430.hex
+ create mode 100644 autotests/integration/data/nreal-light-2d.hex
+ create mode 100644 autotests/integration/data/rokid-air-2d.hex
+ create mode 100644 autotests/integration/data/rokid-max-2d-1200.hex
+ create mode 100644 autotests/integration/data/tcl-smartglasses-03d4-2d.hex
+ create mode 100644 autotests/integration/data/tcl-smartglasses-03d5-2d.hex
+ create mode 100644 autotests/integration/data/usb-c-glasses-edids.txt
+ create mode 100644 autotests/integration/data/viture-beast-2d.hex
+ create mode 100644 autotests/integration/data/viture-pro-xr-2d.hex
+ create mode 100644 autotests/integration/data/viture-pro-xr-full.hex
+ create mode 100644 autotests/integration/data/xreal-air-2-pro-2d.hex
+ create mode 100644 autotests/integration/data/xreal-air-2-pro-full.hex
+ create mode 100644 autotests/integration/data/xreal-air-2d.hex
+
+diff --git a/autotests/drm/mockGlassesTest.cpp b/autotests/drm/mockGlassesTest.cpp
+index 0a4d69f..d9ac513 100644
+--- a/autotests/drm/mockGlassesTest.cpp
++++ b/autotests/drm/mockGlassesTest.cpp
+@@ -8,6 +8,9 @@
+ // the same identity in every mode. 2D lists 1920x1080 at 90 (preferred), 60 and 120 Hz; the half side by side
+ // mode announces the same bytes as 2D; full side by side one 3840x1080 at 60 Hz; the glasses' own Real 3D
+ // (a 2D to 3D conversion inside them) one 1920x1080 at 60 Hz, which is 2D to the computer.
++// Other glasses are tested on their published EDIDs (autotests/integration/data/*.hex, sources in
++// usb-c-glasses-edids.txt): the VITURE Pro XR and the XREAL Air 2 Pro keep their identity in Full SBS, one 3840x1080
++// at 60 Hz; for the others only the 2D EDID is published, so they are known by identity and stay in their 2D mode.
+ 
+ #include "mock_drm.h"
+ 
+@@ -35,6 +38,7 @@
+ #include <fcntl.h>
+ 
+ using namespace KWin;
++using namespace Qt::StringLiterals;
+ using Flag = OutputModeline::Flag;
+ 
+ static std::unique_ptr<MockGpu> findRenderDevice(int crtcCount)
+@@ -70,6 +74,17 @@ static QByteArray readEdid(const QString &name)
+     return file.readAll();
+ }
+ 
++// the published EDIDs of other glasses, as rows of hex (edid-decode's form); their sources are listed in
++// autotests/integration/data/usb-c-glasses-edids.txt
++static QByteArray readHexEdid(const QString &name)
++{
++    QFile file(QFINDTESTDATA("../integration/data/" + name));
++    if (!file.open(QIODevice::ReadOnly)) {
++        return QByteArray();
++    }
++    return QByteArray::fromHex(file.readAll());
++}
++
+ static void setEdid(MockGpu *gpu, MockConnector *connector, const QByteArray &edid)
+ {
+     auto blob = std::make_unique<MockPropertyBlob>(gpu, edid.constData(), edid.size());
+@@ -207,6 +222,10 @@ private Q_SLOTS:
+     void followsTheGlassesAcrossAReconnect();
+     void realDStaysFlat();
+     void halfAnnouncesNothing();
++    void publishedEdidsComeUpByIdentity_data();
++    void publishedEdidsComeUpByIdentity();
++    void publishedGlassesFollowTheirModes_data();
++    void publishedGlassesFollowTheirModes();
+ };
+ 
+ void MockGlassesTest::initTestCase()
+@@ -484,5 +503,132 @@ void MockGlassesTest::halfAnnouncesNothing()
+     QCOMPARE(stereoFlags(*changes->currentMode), OutputModeline::Flags());
+ }
+ 
++// "1920x1080@60 1920x1080@120": the detailed timings of an EDID in its order, the first one preferred
++static QList<ModeSpec> parseModes(const QString &text)
++{
++    QList<ModeSpec> modes;
++    for (const QString &mode : text.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
++        const QStringList sizeAndRate = mode.split(QLatin1Char('@'));
++        const QStringList size = sizeAndRate[0].split(QLatin1Char('x'));
++        modes.append({size[0].toInt(), size[1].toInt(), sizeAndRate[1].toFloat()});
++    }
++    return modes;
++}
++
++void MockGlassesTest::publishedEdidsComeUpByIdentity_data()
++{
++    QTest::addColumn<QString>("edid");
++    QTest::addColumn<QString>("modes");
++    QTest::addColumn<QByteArray>("pnpId");
++    QTest::addColumn<int>("product");
++    QTest::addColumn<QSize>("size");
++    QTest::addColumn<bool>("twin");
++    QTest::addColumn<bool>("glasses");
++
++    // Full SBS mode, the same identity as in 2D (an owner's captures of 14 Nov 2026): one 3840x1080 at 60 Hz, the twin
++    QTest::newRow("VITURE Pro XR, Full SBS") << u"viture-pro-xr-full.hex"_s << u"3840x1080@60"_s << QByteArrayLiteral("CVT") << 0x3132 << QSize(3840, 1080) << true << true;
++    QTest::newRow("XREAL Air 2 Pro, Full SBS") << u"xreal-air-2-pro-full.hex"_s << u"3840x1080@60"_s << QByteArrayLiteral("MRG") << 0x3135 << QSize(3840, 1080) << true << true;
++    // 2D mode: known glasses, their option on, their 2D mode as it is
++    QTest::newRow("VITURE Pro XR, 2D") << u"viture-pro-xr-2d.hex"_s << u"1920x1080@60 1920x1080@120 1920x1080@90"_s << QByteArrayLiteral("CVT") << 0x3132 << QSize(1920, 1080) << false << true;
++    QTest::newRow("XREAL Air 2 Pro, 2D") << u"xreal-air-2-pro-2d.hex"_s << u"1920x1080@60 1920x1080@90 1920x1080@120"_s << QByteArrayLiteral("MRG") << 0x3135 << QSize(1920, 1080) << false << true;
++    // only their 2D EDID is in a public record: known by identity, and in 2D their 2D mode stays
++    QTest::newRow("XREAL Air, 2D") << u"xreal-air-2d.hex"_s << u"1920x1080@90 1920x1080@60 1920x1080@120"_s << QByteArrayLiteral("MRG") << 0x3132 << QSize(1920, 1080) << false << true;
++    QTest::newRow("Nreal Light, 2D") << u"nreal-light-2d.hex"_s << u"1920x1080@60"_s << QByteArrayLiteral("MRG") << 0x3131 << QSize(1920, 1080) << false << true;
++    QTest::newRow("VITURE Beast, 2D") << u"viture-beast-2d.hex"_s << u"1920x1080@60"_s << QByteArrayLiteral("VIT") << 0x0120 << QSize(1920, 1080) << false << true;
++    QTest::newRow("Rokid Air, 2D") << u"rokid-air-2d.hex"_s << u"1920x1080@60"_s << QByteArrayLiteral("LBT") << 0x4752 << QSize(1920, 1080) << false << true;
++    QTest::newRow("Rokid Max, 2D") << u"rokid-max-2d-1200.hex"_s << u"1920x1080@60 1920x1080@120 1920x1200@60 1920x1200@120"_s << QByteArrayLiteral("LBT") << 0x4753 << QSize(1920, 1080) << false << true;
++    QTest::newRow("TCL SmartGlasses 0x03D4, 2D") << u"tcl-smartglasses-03d4-2d.hex"_s << u"1920x1080@60"_s << QByteArrayLiteral("TCL") << 0x03D4 << QSize(1920, 1080) << false << true;
++    QTest::newRow("TCL SmartGlasses 0x03D5, 2D") << u"tcl-smartglasses-03d5-2d.hex"_s << u"1920x1080@120 1920x1080@60"_s << QByteArrayLiteral("TCL") << 0x03D5 << QSize(1920, 1080) << false << true;
++    // controls: a 32:9 monitor of the glasses' size, and an ordinary monitor with XREAL's own PnP ID
++    QTest::newRow("AOC AG493UG7R4, control") << u"control-aoc-ag493ug7r4.hex"_s << u"3840x1080@60 3840x1080@120 1920x1080@60 2560x1440@120 2560x1440@60"_s << QByteArrayLiteral("AOC") << 0x4930 << QSize(3840, 1080) << false << false;
++    QTest::newRow("MRG MGME2430, control") << u"control-mrg-mgme2430.hex"_s << u"1920x1080@60 1920x1080@75 1280x720@60 1360x768@60"_s << QByteArrayLiteral("MRG") << 0x2411 << QSize(1920, 1080) << false << false;
++}
++
++void MockGlassesTest::publishedEdidsComeUpByIdentity()
++{
++    QFETCH(QString, edid);
++    QFETCH(QString, modes);
++    QFETCH(QByteArray, pnpId);
++    QFETCH(int, product);
++    QFETCH(QSize, size);
++    QFETCH(bool, twin);
++    QFETCH(bool, glasses);
++
++    const QByteArray bytes = readHexEdid(edid);
++    QVERIFY(!bytes.isEmpty());
++    Rig rig(bytes, parseModes(modes));
++    QVERIFY(rig.mockGpu);
++    QVERIFY(rig.gpu->updateOutputs());
++    const auto outputs = rig.outputs();
++    QCOMPARE(outputs.size(), 1);
++    QCOMPARE(outputs[0]->edid().eisaId(), pnpId);
++    QCOMPARE(int(outputs[0]->edid().productCode()), product);
++
++    OutputConfigurationStore store;
++    const auto cfg = store.queryConfig(outputs, false, AccelerometerOrientation::Undefined, false);
++    QVERIFY(cfg);
++    const auto changes = cfg->first.constChangeSet(outputs[0]);
++    QVERIFY(changes->currentMode);
++    QCOMPARE(changes->currentMode->size(), size);
++    QCOMPARE(stereoFlags(*changes->currentMode), twin ? Flag::VirtualStereo | Flag::Stereo3DSideBySideFull : OutputModeline::Flags());
++    QCOMPARE(changes->stereoGlasses.value_or(false), glasses);
++    if (twin) {
++        QCOMPARE(outputs[0]->viewSizeForMode(*changes->currentMode), QSize(size.width() / 2, size.height()));
++        QVERIFY(changes->otherStereoFormats.value_or(false));
++    }
++}
++
++void MockGlassesTest::publishedGlassesFollowTheirModes_data()
++{
++    QTest::addColumn<QString>("flat");
++    QTest::addColumn<QString>("flatModes");
++    QTest::addColumn<QString>("full");
++
++    QTest::newRow("VITURE Pro XR") << u"viture-pro-xr-2d.hex"_s << u"1920x1080@60 1920x1080@120 1920x1080@90"_s << u"viture-pro-xr-full.hex"_s;
++    QTest::newRow("XREAL Air 2 Pro") << u"xreal-air-2-pro-2d.hex"_s << u"1920x1080@60 1920x1080@90 1920x1080@120"_s << u"xreal-air-2-pro-full.hex"_s;
++}
++
++void MockGlassesTest::publishedGlassesFollowTheirModes()
++{
++    // the glasses switch from 2D to Full SBS and back with the cable in: the same output takes each EDID
++    QFETCH(QString, flat);
++    QFETCH(QString, flatModes);
++    QFETCH(QString, full);
++
++    Rig rig(readHexEdid(flat), parseModes(flatModes));
++    QVERIFY(rig.mockGpu);
++    QVERIFY(rig.gpu->updateOutputs());
++    const auto outputs = rig.outputs();
++    QCOMPARE(outputs.size(), 1);
++    const auto step = [&outputs](const QSize &size, OutputModeline::Flags flags) {
++        OutputConfigurationStore store;
++        const auto cfg = store.queryConfig(outputs, false, AccelerometerOrientation::Undefined, false);
++        QVERIFY(cfg);
++        const auto changes = cfg->first.constChangeSet(outputs[0]);
++        QVERIFY(changes->currentMode);
++        QCOMPARE(changes->currentMode->size(), size);
++        QCOMPARE(stereoFlags(*changes->currentMode), flags);
++        outputs[0]->applyChanges(cfg->first);
++        store.storeConfig(outputs, false);
++    };
++    step(QSize(1920, 1080), OutputModeline::Flags());
++    if (QTest::currentTestFailed()) {
++        return;
++    }
++
++    rig.announce(readHexEdid(full), s_sideBySideModes);
++    QVERIFY(rig.gpu->updateOutputs());
++    QCOMPARE(rig.outputs(), outputs);
++    step(QSize(3840, 1080), Flag::VirtualStereo | Flag::Stereo3DSideBySideFull);
++    if (QTest::currentTestFailed()) {
++        return;
++    }
++
++    rig.announce(readHexEdid(flat), parseModes(flatModes));
++    QVERIFY(rig.gpu->updateOutputs());
++    QCOMPARE(rig.outputs(), outputs);
++    step(QSize(1920, 1080), OutputModeline::Flags());
++}
++
+ QTEST_GUILESS_MAIN(MockGlassesTest)
+ #include "mockGlassesTest.moc"
+diff --git a/autotests/integration/data/control-aoc-ag493ug7r4.hex b/autotests/integration/data/control-aoc-ag493ug7r4.hex
+new file mode 100644
+index 0000000..b825a51
+--- /dev/null
++++ b/autotests/integration/data/control-aoc-ag493ug7r4.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 05 e3 30 49 29 02 00 00
++2c 1e 01 03 80 77 22 78 2e dc 45 ac 50 47 a5 26
++11 50 54 bf ef 00 d1 c0 81 80 31 68 31 7c 45 68
++45 7c 61 68 61 7c 1a 68 00 a0 f0 38 1f 40 30 20
++3a 00 a9 50 41 00 00 1a 50 d0 00 a0 f0 38 1f 40
++30 20 3a 00 a9 50 41 00 00 1a 00 00 00 fc 00 41
++47 34 39 33 55 47 37 52 34 0a 20 20 00 00 00 fd
++00 30 78 1e c8 3c 00 0a 20 20 20 20 20 20 01 ea
++
++02 03 3a f1 4e 10 1f 05 14 04 13 03 12 02 11 01
++60 61 3f 23 09 07 07 83 01 00 00 67 03 0c 00 10
++00 38 3c 67 d8 5d c4 01 78 80 03 e3 05 e3 01 e3
++0f 00 18 e6 06 07 01 61 56 1c 02 3a 80 18 71 38
++2d 40 58 2c 45 00 a9 50 41 00 00 1e 6f c2 00 a0
++a0 a0 55 50 30 20 35 00 a9 50 41 00 00 1e 56 5e
++00 a0 a0 a0 29 50 30 20 35 00 a9 50 41 00 00 1e
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 c1
+diff --git a/autotests/integration/data/control-mrg-mgme2430.hex b/autotests/integration/data/control-mrg-mgme2430.hex
+new file mode 100644
+index 0000000..8f15bc1
+--- /dev/null
++++ b/autotests/integration/data/control-mrg-mgme2430.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 36 47 11 24 00 00 00 00
++0a 22 01 03 80 35 1e 78 ea 5d d0 a8 53 47 ab 21
++05 50 54 af cf 00 81 c0 81 40 81 80 90 40 a9 c0
++95 00 b3 00 d1 e8 02 3a 80 18 71 38 2d 40 58 2c
++45 00 55 50 21 00 00 1e 00 00 00 fd 00 30 64 1e
++55 19 00 0a 20 20 20 20 20 20 00 00 00 ff 00 0a
++20 20 20 20 20 20 20 20 20 20 20 20 00 00 00 fc
++00 4d 47 4d 45 32 34 33 30 0a 20 20 20 20 01 d3
++
++02 03 37 f1 4a 90 00 04 03 02 00 00 13 12 11 23
++09 7f 07 83 01 00 00 67 03 0c 00 10 00 38 42 68
++1a 00 00 01 01 30 64 ed e3 05 e3 01 e3 0f 01 00
++e6 06 07 01 60 4f 00 31 44 80 a0 70 38 27 40 30
++20 35 00 55 50 21 00 00 1e 01 1d 00 72 51 d0 1e
++20 6e 28 55 00 55 50 21 00 00 1e 66 21 50 b0 51
++00 1b 30 40 70 36 00 55 50 21 00 00 18 10 59 80
++a0 70 38 14 40 30 20 35 00 12 2c 21 00 00 1e e4
+diff --git a/autotests/integration/data/nreal-light-2d.hex b/autotests/integration/data/nreal-light-2d.hex
+new file mode 100644
+index 0000000..7ce625c
+--- /dev/null
++++ b/autotests/integration/data/nreal-light-2d.hex
+@@ -0,0 +1,8 @@
++00 ff ff ff ff ff ff 00 36 47 31 31 00 88 88 88
++20 1c 01 03 80 0c 07 78 0a 0d c9 a0 57 47 98 27
++12 48 4c 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 02 3a 80 18 71 38 2d 40
++58 2c 45 00 80 38 74 00 00 1e 00 00 00 fd 00 1e
++4b 32 5a 10 00 0a 20 20 20 20 20 20 00 00 00 fc
++00 4c 69 67 68 74 0a 20 20 20 20 20 20 20 00 0d
+diff --git a/autotests/integration/data/rokid-air-2d.hex b/autotests/integration/data/rokid-air-2d.hex
+new file mode 100644
+index 0000000..b3e835b
+--- /dev/null
++++ b/autotests/integration/data/rokid-air-2d.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 30 54 52 47 01 01 01 01
++18 1f 01 03 80 10 09 78 0a 0d c9 a0 57 47 98 27
++12 48 4c 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 fc 00 52
++6f 6b 69 64 20 41 69 72 0a 20 20 20 00 00 00 fd
++00 1e 4b 32 5a 1e 00 0a 20 20 20 20 20 20 01 93
++
++02 03 14 f2 41 10 23 09 07 07 83 01 00 00 65 03
++0c 00 10 00 02 3a 80 18 71 38 2d 40 58 2c 45 00
++80 38 74 00 00 1e 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 65
+diff --git a/autotests/integration/data/rokid-max-2d-1200.hex b/autotests/integration/data/rokid-max-2d-1200.hex
+new file mode 100644
+index 0000000..3c5f99f
+--- /dev/null
++++ b/autotests/integration/data/rokid-max-2d-1200.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 30 54 53 47 00 00 00 00
++0d 21 01 03 80 10 0a 78 0a e2 f5 a7 54 49 99 23
++10 50 54 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 04 74 80 18 71 38 2d 40
++58 2c 45 00 80 38 74 00 00 1e 00 00 00 fc 00 52
++6f 6b 69 64 20 4d 61 78 0a 20 20 20 00 00 00 fd
++00 38 78 32 a0 1e 00 0a 20 20 20 20 20 20 01 bc
++
++02 03 14 f6 23 09 07 07 83 01 00 00 67 03 0c 00
++01 00 00 3c 02 3a 80 18 71 38 2d 40 58 2c 45 00
++80 38 74 00 00 1e 04 74 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 98 3a 80 50 70 b0 32 40
++20 10 95 00 80 b0 74 00 00 1e 30 75 80 50 70 b0
++32 40 20 10 95 00 80 b0 74 00 00 1e 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01
+diff --git a/autotests/integration/data/tcl-smartglasses-03d4-2d.hex b/autotests/integration/data/tcl-smartglasses-03d4-2d.hex
+new file mode 100644
+index 0000000..507449e
+--- /dev/null
++++ b/autotests/integration/data/tcl-smartglasses-03d4-2d.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 50 6c d4 03 11 00 00 00
++01 1e 01 03 80 0c 07 78 0e ee 95 a3 54 4c 99 26
++0f 4f 4f 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 02 3a 80 18 71 38 2d 40
++58 2c 45 00 80 38 74 00 00 1e 00 00 00 fd 00 37
++41 32 46 10 00 0a 20 20 20 20 20 20 00 00 00 fc
++00 53 6d 61 72 74 47 6c 61 73 73 65 73 0a 01 43
++
++02 03 17 f1 41 90 23 09 04 01 83 01 00 00 65 03
++0c 00 00 00 e2 00 0f 02 3a 80 18 71 38 2d 40 58
++2c 45 00 80 38 74 00 00 1e 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0b
+diff --git a/autotests/integration/data/tcl-smartglasses-03d5-2d.hex b/autotests/integration/data/tcl-smartglasses-03d5-2d.hex
+new file mode 100644
+index 0000000..3e1f95c
+--- /dev/null
++++ b/autotests/integration/data/tcl-smartglasses-03d5-2d.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 50 6c d5 03 12 00 00 00
++07 1e 01 03 80 0c 07 78 0e ee 95 a3 54 4c 99 26
++0f 4f 4f 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 b0 72 80 18 71 38 20 40 58 2c
++02 04 80 38 74 00 00 1e b0 72 80 18 71 38 20 40
++58 2c 02 04 80 38 74 00 00 1e 00 00 00 fd 00 37
++41 32 46 1e 00 0a 20 20 20 20 20 20 00 00 00 fc
++00 53 6d 61 72 74 47 6c 61 73 73 65 73 0a 01 f9
++
++02 03 17 f1 41 90 23 09 04 01 83 01 00 00 65 03
++0c 00 00 00 e2 00 0f 4e 39 80 18 71 38 20 40 58
++2c 02 04 80 38 74 00 00 1e 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0c
+diff --git a/autotests/integration/data/usb-c-glasses-edids.txt b/autotests/integration/data/usb-c-glasses-edids.txt
+new file mode 100644
+index 0000000..cb40d06
+--- /dev/null
++++ b/autotests/integration/data/usb-c-glasses-edids.txt
+@@ -0,0 +1,17 @@
++# The published EDIDs mockGlassesTest reads, one file each as rows of hex (edid-decode reads them as they are).
++# FILE  SHA-256 of the bytes  SOURCE. Only the blocks an EDID declares are kept (VESA E-EDID A2, byte 126), as the kernel reads them.
++# Each fails edid-decode --check as shipped; every glasses EDID among its findings gives a detailed timing's image size as its pixels in millimetres.
++
++control-aoc-ag493ug7r4.hex  52316b4ccace649e96ddbd34a0946847d1ac1dd23d73881a4d905e50f9e78dce  linuxhw/EDID 9c0c1bf Digital/AOC/AOC4930/09339E870770 (a 32:9 monitor, the control)
++control-mrg-mgme2430.hex  efbb741435e21eb6e2ade72a59bfd9d93e6eff228496024b311ab1b98e7e7211  linuxhw/EDID 9c0c1bf Digital/Nreal Air/MRG2411/08E4D44B5E20 (an ordinary monitor with the PnP ID MRG, the control; the base block and the one extension it declares)
++nreal-light-2d.hex  9257794ff66bf80273a7180a71024e38695a112c78cdb9cb032533f16db1542b  linuxhw/EDID 9c0c1bf Digital/Nreal Air/MRG3131/C09294F7F372 (the base block, which declares no extension)
++rokid-air-2d.hex  98ae688379f3d9b81842b4694a7220d73b43eb484260059d2d30a7de8686ca7e  linuxhw/EDID 9c0c1bf Digital/LBT/LBT4752/941A6BE4DE5D (the base block and the one extension it declares)
++rokid-max-2d-1200.hex  c54c36f998f2bd90e97d65b79c96368b20efddf22dbb54ba26689f2d1479c3ce  linuxhw/EDID 9c0c1bf Digital/LBT/LBT4753/156DE009689D (the base block and the one extension it declares)
++tcl-smartglasses-03d4-2d.hex  cef45d2173eb8f50dca597a4e6035f84cf618e56e5389a6d9683ccee17b2ab44  linuxhw/EDID 9c0c1bf Digital/TCL/TCL03D4/D782B9A37221 (the base block and the one extension it declares)
++tcl-smartglasses-03d5-2d.hex  2bbc36f99cb19dc6119936718f6c6ade21835f3d412e385022fefb0a0877410a  linuxhw/EDID 9c0c1bf Digital/TCL/TCL03D5/1BEC4618DAC1 (the base block and the one extension it declares)
++viture-beast-2d.hex  ed3b4aa2b5747c4121b232d15b148812aeab22c4d285a8a5bd55c4f67e979d54  https://forums.developer.nvidia.com/t/376114 (attachment bc9777a0d9aa10a512c54206938284003cf53781.txt, edid-decode output, 8 Jul 2026)
++viture-pro-xr-2d.hex  3c1969cd998a3a354e0572ccb29f8a077825772131e90bfe613c9ed8769d199c  https://github.com/SDNick484/xrdome/blob/278c7cd18838/docs/hardware/viture-pro-xr-1080p.txt (an owner's glasses, xrandr --props and edid-decode, 14 Nov 2026); the same bytes in linuxhw/EDID Digital/Others/CVT3132/E84C456A5F2C
++viture-pro-xr-full.hex  22c5493eab78c5e5b877f1c64a980e1895211c3e83d1d8bea4f419c8760c69b1  https://github.com/SDNick484/xrdome/blob/278c7cd18838/docs/hardware/viture-pro-xr-sbs.txt (the same glasses in SBS mode, 14 Nov 2026)
++xreal-air-2-pro-2d.hex  51d43ce0a8d4760023108ef4a5fc718854816e9e4fecb8001d688117378b8af8  https://github.com/SDNick484/xrdome/blob/278c7cd18838/docs/hardware/xreal-air2pro-1080p.txt (14 Nov 2026); the same bytes in https://gitlab.freedesktop.org/drm/misc/kernel/-/issues/53 ("XREAL Air 2 Pro", 28 Oct 2024)
++xreal-air-2-pro-full.hex  c53aeaab78e5185af4281c820a0faef1a9289cd297ee7603015bf558b9b711c6  https://github.com/SDNick484/xrdome/blob/278c7cd18838/docs/hardware/xreal-air2pro-sbs.txt (the same glasses in SBS mode, 14 Nov 2026)
++xreal-air-2d.hex  404b9b5bf9bf34ac96a825ae6602f6bd44b3d6972cd67bf1a5c160ab935136bb  linuxhw/EDID 9c0c1bf Digital/Nreal Air/MRG3132/7378326AB188 (the base block and the one extension it declares)
+diff --git a/autotests/integration/data/viture-beast-2d.hex b/autotests/integration/data/viture-beast-2d.hex
+new file mode 100644
+index 0000000..0e5318b
+--- /dev/null
++++ b/autotests/integration/data/viture-beast-2d.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 59 34 20 01 00 00 00 00
++14 21 01 03 80 32 1f 78 12 ed 85 a7 54 3e ae 26
++0e 50 54 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 00 00 80 18 71 38 2d 40
++58 2c 45 00 40 44 21 00 00 1e 00 00 00 fc 00 56
++49 54 55 52 45 20 42 65 61 73 74 0a 00 00 00 fd
++00 38 78 32 a0 1e 00 0a 20 20 20 20 20 20 01 f0
++
++02 03 14 54 23 09 7f 07 83 01 00 00 67 03 0c 00
++00 00 00 3c 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ab
+diff --git a/autotests/integration/data/viture-pro-xr-2d.hex b/autotests/integration/data/viture-pro-xr-2d.hex
+new file mode 100644
+index 0000000..65c7b26
+--- /dev/null
++++ b/autotests/integration/data/viture-pro-xr-2d.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 0e d4 32 31 00 88 88 88
++20 21 01 04 b5 10 0a 78 0a e2 f5 a7 54 49 99 23
++10 50 54 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 04 74 80 18 71 38 2d 40
++58 2c 45 00 80 38 74 00 00 1e 00 00 00 fc 00 56
++49 54 55 52 45 0a 20 20 20 20 20 20 00 00 00 fd
++00 38 78 32 a0 1e 00 0a 20 20 20 20 20 20 01 b4
++
++02 03 14 f6 23 09 07 07 83 01 00 00 67 03 0c 00
++01 00 00 3c 02 3a 80 18 71 38 2d 40 58 2c 45 00
++80 38 74 00 00 1e 04 74 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 03 57 80 18 71 38 2d 40
++58 2c 45 00 80 38 74 00 00 1e 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 2f
+diff --git a/autotests/integration/data/viture-pro-xr-full.hex b/autotests/integration/data/viture-pro-xr-full.hex
+new file mode 100644
+index 0000000..d377b2b
+--- /dev/null
++++ b/autotests/integration/data/viture-pro-xr-full.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 0e d4 32 31 00 88 88 88
++20 1c 01 04 b5 0c 07 78 0e ee 95 a3 54 4c 99 26
++0f 4f 4f 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 04 74 00 30 f2 38 2d 40 b0 58
++45 00 00 38 f4 00 00 1e 04 74 00 30 f2 38 2d 40
++b0 58 45 00 00 38 f4 00 00 1e 00 00 00 fc 00 56
++49 54 55 52 45 0a 20 20 20 20 20 20 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 06
++
++02 03 14 f1 41 00 23 09 04 01 83 01 00 00 65 03
++0c 00 10 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 7c
+diff --git a/autotests/integration/data/xreal-air-2-pro-2d.hex b/autotests/integration/data/xreal-air-2-pro-2d.hex
+new file mode 100644
+index 0000000..3bb7626
+--- /dev/null
++++ b/autotests/integration/data/xreal-air-2-pro-2d.hex
+@@ -0,0 +1,8 @@
++00 ff ff ff ff ff ff 00 36 47 35 31 00 88 88 88
++08 21 01 03 80 0c 07 78 0a 9e e0 a7 54 48 99 23
++10 50 54 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 03 57 80 18 71 38 2d 40
++58 2c 45 00 80 38 74 00 00 1e 04 74 80 18 71 38
++2d 40 58 2c 45 00 80 38 74 00 00 1e 00 00 00 fc
++00 41 69 72 20 32 20 50 72 6f 0a 20 20 20 00 92
+diff --git a/autotests/integration/data/xreal-air-2-pro-full.hex b/autotests/integration/data/xreal-air-2-pro-full.hex
+new file mode 100644
+index 0000000..7f28a7d
+--- /dev/null
++++ b/autotests/integration/data/xreal-air-2-pro-full.hex
+@@ -0,0 +1,8 @@
++00 ff ff ff ff ff ff 00 36 47 35 31 00 88 88 88
++08 21 01 03 80 0c 07 78 0a 9e e0 a7 54 48 99 23
++10 50 54 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 04 74 00 30 f2 38 2d 40 b0 58
++45 00 00 38 f4 00 00 1e 04 74 00 30 f2 38 2d 40
++b0 58 45 00 00 38 f4 00 00 1e 00 00 00 fd 00 32
++82 14 3c 3c 00 0a 20 20 20 20 20 20 00 00 00 fc
++00 41 69 72 20 32 20 50 72 6f 0a 20 20 20 00 30
+diff --git a/autotests/integration/data/xreal-air-2d.hex b/autotests/integration/data/xreal-air-2d.hex
+new file mode 100644
+index 0000000..9ba9107
+--- /dev/null
++++ b/autotests/integration/data/xreal-air-2d.hex
+@@ -0,0 +1,17 @@
++00 ff ff ff ff ff ff 00 36 47 32 31 00 66 66 66
++08 21 01 03 80 0c 07 78 0a 9e e0 a7 54 48 99 23
++10 50 54 00 00 00 01 01 01 01 01 01 01 01 01 01
++01 01 01 01 01 01 03 57 80 18 71 38 2d 40 58 2c
++45 00 80 38 74 00 00 1e 02 3a 80 18 71 38 2d 40
++58 2c 45 00 80 38 74 00 00 1e 04 74 80 18 71 38
++2d 40 58 2c 45 00 80 38 74 00 00 1e 00 00 00 fc
++00 41 69 72 0a 20 20 20 20 20 20 20 20 20 01 dd
++
++02 03 1a c1 45 84 13 03 02 01 23 09 07 07 83 01
++00 00 67 03 0c 00 10 00 00 44 03 57 80 18 71 38
++2d 40 58 2c 45 00 80 38 74 00 00 1e 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 9b
+-- 
+2.53.0
+

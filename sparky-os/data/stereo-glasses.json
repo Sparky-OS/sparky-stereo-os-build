@@ -1,8 +1,8 @@
 {
   "format": "sparky-stereo-glasses",
   "version": 1,
-  "about": "USB-C 3D glasses known to Sparky Stereo OS, by the EDID identity they announce. One file, two readers: Stereo KWin reads it at build time (src/outputconfigurationstore.cpp, s_stereoGlasses) and the Windows glasses keeper embeds it. Checked by sparky-os/tests/check-stereo-glasses-table.py.",
-  "mode_rule": "The first detailed timing of the EDID at twice the panel width means Full SBS; at the panel width it means 2D or Half SBS, which the cable cannot tell apart. The glasses' own Real 3D mode is 2D to the computer.",
+  "about": "USB-C 3D glasses known to Sparky Stereo OS, by the EDID identity they announce. One file, two readers: Stereo KWin carries the identities (src/outputconfigurationstore.cpp, s_stereoGlasses) and the Windows glasses keeper embeds the file. Every entry comes from a real EDID read from those glasses and published, or read from an owner's glasses; the EDID files are in Stereo KWin's autotests/integration/data, their sources in usb-c-glasses-edids.txt. Checked by sparky-os/tests/check-stereo-glasses-table.py.",
+  "mode_rule": "The first detailed timing of the EDID at twice the panel width means Full SBS; at the panel width it means 2D or Half SBS, which the cable cannot tell apart. The glasses' own Real 3D mode is 2D to the computer. Stereo KWin takes the side by side (full) twin only when the glasses announce a mode two eyes wide under a known identity, so glasses whose Full SBS EDID is not published are known by their 2D identity and the twin follows if they keep it in Full SBS, as the XREAL One Pro, the XREAL Air 2 Pro and the VITURE Pro XR do. A state no public record shows is listed under not_public, never guessed.",
   "glasses": [
     {
       "maker": "MRG",
@@ -10,21 +10,47 @@
       "name": "XREAL One Pro",
       "edid_version": "1.3",
       "serial": 0,
-      "made": { "week": 49, "year": 2024 },
-      "panel_per_eye": { "width": 1920, "height": 1080 },
+      "made": {
+        "week": 49,
+        "year": 2024
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
       "states": [
         {
           "state": "2d",
           "menu": "2D",
           "stereo": false,
-          "modes": [ { "width": 1920, "height": 1080, "refresh_hz": [ 90, 60, 120 ] } ],
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                90,
+                60,
+                120
+              ]
+            }
+          ],
           "edid": "xreal-one-pro-2d.bin"
         },
         {
           "state": "half",
           "menu": "Half SBS",
           "stereo": true,
-          "modes": [ { "width": 1920, "height": 1080, "refresh_hz": [ 90, 60, 120 ] } ],
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                90,
+                60,
+                120
+              ]
+            }
+          ],
           "edid": "xreal-one-pro-half.bin",
           "note": "byte-identical to the 2D dump: the glasses announce nothing for half side by side"
         },
@@ -32,14 +58,30 @@
           "state": "full",
           "menu": "Full SBS",
           "stereo": true,
-          "modes": [ { "width": 3840, "height": 1080, "refresh_hz": [ 60 ] } ],
+          "modes": [
+            {
+              "width": 3840,
+              "height": 1080,
+              "refresh_hz": [
+                60
+              ]
+            }
+          ],
           "edid": "xreal-one-pro-full.bin"
         },
         {
           "state": "realD",
           "menu": "Real 3D",
           "stereo": false,
-          "modes": [ { "width": 1920, "height": 1080, "refresh_hz": [ 60 ] } ],
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                60
+              ]
+            }
+          ],
           "edid": "xreal-one-pro-realD.bin",
           "note": "a 2D to 3D conversion inside the glasses; one 1920x1080 picture to the computer"
         }
@@ -48,10 +90,431 @@
       "transport": null,
       "usb": {
         "vendor": "0x3318",
-        "products": [ "0x0435", "0x0436" ],
+        "products": [
+          "0x0435",
+          "0x0436"
+        ],
         "note": "the IMU link (XRLinuxDriver src/devices/xreal.c); not the display identity"
       },
-      "source": "EDIDs read from an owner's glasses on 24 Oct 2026, one per mode of the glasses' menu; Stereo KWin autotests/integration/data/xreal-one-pro-*.bin"
+      "source": "EDIDs read from an owner's glasses on 24 Oct 2026, one per mode of the glasses' menu; Stereo KWin autotests/integration/data/xreal-one-pro-*.bin",
+      "model": "XREAL One Pro",
+      "kwin_mock_lists": true
+    },
+    {
+      "maker": "MRG",
+      "product": "0x3135",
+      "name": "Air 2 Pro",
+      "model": "XREAL Air 2 Pro",
+      "edid_version": "1.3",
+      "serial": 2290649088,
+      "made": {
+        "week": 8,
+        "year": 2023
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                60,
+                90,
+                120
+              ]
+            }
+          ],
+          "edid": "xreal-air-2-pro-2d.hex"
+        },
+        {
+          "state": "full",
+          "menu": "SBS",
+          "stereo": true,
+          "modes": [
+            {
+              "width": 3840,
+              "height": 1080,
+              "refresh_hz": [
+                60
+              ]
+            }
+          ],
+          "edid": "xreal-air-2-pro-full.hex"
+        }
+      ],
+      "not_public": {
+        "half": "no published capture of the half side by side mode"
+      },
+      "source": "an owner's glasses in 1080p and SBS mode, xrandr --props and edid-decode, 14 Nov 2026: https://github.com/SDNick484/xrdome/blob/278c7cd18838/docs/hardware/xreal-air2pro-1080p.txt and xreal-air2pro-sbs.txt; the 2D bytes also in https://gitlab.freedesktop.org/drm/misc/kernel/-/issues/53 (28 Oct 2024); serial 0x88888800 is a placeholder the glasses share"
+    },
+    {
+      "maker": "CVT",
+      "product": "0x3132",
+      "name": "VITURE",
+      "model": "VITURE Pro XR",
+      "edid_version": "1.4",
+      "serial": 2290649088,
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                60,
+                120,
+                90
+              ]
+            }
+          ],
+          "edid": "viture-pro-xr-2d.hex",
+          "made": {
+            "week": 32,
+            "year": 2023
+          }
+        },
+        {
+          "state": "full",
+          "menu": "3D (SBS)",
+          "stereo": true,
+          "modes": [
+            {
+              "width": 3840,
+              "height": 1080,
+              "refresh_hz": [
+                60
+              ]
+            }
+          ],
+          "edid": "viture-pro-xr-full.hex",
+          "made": {
+            "week": 32,
+            "year": 2018
+          }
+        }
+      ],
+      "not_public": {
+        "half": "no published capture of a half side by side mode"
+      },
+      "source": "an owner's glasses in 1080p and SBS mode, xrandr --props and edid-decode, 14 Nov 2026: https://github.com/SDNick484/xrdome/blob/278c7cd18838/docs/hardware/viture-pro-xr-1080p.txt and viture-pro-xr-sbs.txt; the 2D bytes also in linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/Others/CVT3132/E84C456A5F2C; the two modes differ in their made year, the identity is the same"
+    },
+    {
+      "maker": "MRG",
+      "product": "0x3132",
+      "name": "Air",
+      "model": "XREAL Air (Nreal Air)",
+      "edid_version": "1.3",
+      "serial": 1717986816,
+      "made": {
+        "week": 8,
+        "year": 2023
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                90,
+                60,
+                120
+              ]
+            }
+          ],
+          "edid": "xreal-air-2d.hex"
+        }
+      ],
+      "not_public": {
+        "full": "no published EDID of the 3D mode",
+        "half": "no published capture"
+      },
+      "source": "linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/Nreal Air/MRG3132/7378326AB188; the same identity in its other units there (named \"nreal air\", made 2018) and in https://gitlab.freedesktop.org/drm/misc/kernel/-/issues/53 (two units, 28 Oct 2024)"
+    },
+    {
+      "maker": "MRG",
+      "product": "0x3131",
+      "name": "Light",
+      "model": "Nreal Light",
+      "edid_version": "1.3",
+      "serial": 2290649088,
+      "made": {
+        "week": 32,
+        "year": 2018
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                60
+              ]
+            }
+          ],
+          "edid": "nreal-light-2d.hex"
+        }
+      ],
+      "not_public": {
+        "full": "no published EDID of a 3D mode",
+        "half": "no published capture"
+      },
+      "source": "linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/Nreal Air/MRG3131/C09294F7F372"
+    },
+    {
+      "maker": "VIT",
+      "product": "0x0120",
+      "name": "VITURE Beast",
+      "model": "VITURE Beast",
+      "edid_version": "1.3",
+      "serial": 0,
+      "made": {
+        "week": 20,
+        "year": 2023
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                60
+              ]
+            }
+          ],
+          "edid": "viture-beast-2d.hex"
+        }
+      ],
+      "not_public": {
+        "full": "no published EDID of the 3D mode",
+        "half": "no published capture"
+      },
+      "source": "https://forums.developer.nvidia.com/t/376114 (8 Jul 2026), its edid-decode attachment bc9777a0d9aa10a512c54206938284003cf53781.txt; the mode the glasses were in is not stated there, the one timing is 1920x1080"
+    },
+    {
+      "maker": "LBT",
+      "product": "0x4752",
+      "name": "Rokid Air",
+      "model": "Rokid Air",
+      "edid_version": "1.3",
+      "serial": 16843009,
+      "made": {
+        "week": 24,
+        "year": 2021
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                60
+              ]
+            }
+          ],
+          "edid": "rokid-air-2d.hex"
+        }
+      ],
+      "not_public": {
+        "full": "no published EDID of the 3D mode",
+        "half": "no published capture"
+      },
+      "source": "linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/LBT/LBT4752/941A6BE4DE5D"
+    },
+    {
+      "maker": "LBT",
+      "product": "0x4753",
+      "name": "Rokid Max",
+      "model": "Rokid Max",
+      "edid_version": "1.3",
+      "serial": 0,
+      "made": {
+        "week": 13,
+        "year": 2023
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1200
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                60,
+                120
+              ]
+            },
+            {
+              "width": 1920,
+              "height": 1200,
+              "refresh_hz": [
+                60,
+                120
+              ]
+            }
+          ],
+          "edid": "rokid-max-2d-1200.hex"
+        }
+      ],
+      "not_public": {
+        "full": "no published EDID of the 3D mode",
+        "half": "no published capture"
+      },
+      "source": "linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/LBT/LBT4753/156DE009689D; a second unit there (A470BBBB3FE8) announces 1920x1080 at 60 Hz only; the panel size is the largest timing announced"
+    },
+    {
+      "maker": "TCL",
+      "product": "0x03d4",
+      "name": "SmartGlasses",
+      "model": "TCL SmartGlasses (RayNeo Air series)",
+      "edid_version": "1.3",
+      "serial": 17,
+      "made": {
+        "week": 1,
+        "year": 2020
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                60
+              ]
+            }
+          ],
+          "edid": "tcl-smartglasses-03d4-2d.hex"
+        }
+      ],
+      "not_public": {
+        "full": "no published EDID of the 3D mode",
+        "half": "no published capture"
+      },
+      "source": "linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/TCL/TCL03D4/D782B9A37221; the model is not in the record: obs-nyan-real-3dof (src/core/device_registry.cpp, docs/devices.md) names TCL 0x03D4 \"SmartGlasses\" as the RayNeo Air series, checked there on a RayNeo Air 4 Pro"
+    },
+    {
+      "maker": "TCL",
+      "product": "0x03d5",
+      "name": "SmartGlasses",
+      "model": "TCL SmartGlasses, 120 Hz",
+      "edid_version": "1.3",
+      "serial": 18,
+      "made": {
+        "week": 7,
+        "year": 2020
+      },
+      "panel_per_eye": {
+        "width": 1920,
+        "height": 1080
+      },
+      "states": [
+        {
+          "state": "2d",
+          "menu": "2D",
+          "stereo": false,
+          "modes": [
+            {
+              "width": 1920,
+              "height": 1080,
+              "refresh_hz": [
+                120,
+                60
+              ]
+            }
+          ],
+          "edid": "tcl-smartglasses-03d5-2d.hex"
+        }
+      ],
+      "not_public": {
+        "full": "no published EDID of the 3D mode",
+        "half": "no published capture"
+      },
+      "source": "linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/TCL/TCL03D5/1BEC4618DAC1; the model is not in the record"
+    }
+  ],
+  "controls": [
+    {
+      "maker": "AOC",
+      "product": "0x4930",
+      "name": "AG493UG7R4",
+      "edid": "control-aoc-ag493ug7r4.hex",
+      "why": "a 32:9 monitor whose first timing is 3840x1080, two eyes wide, and not glasses",
+      "source": "linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/AOC/AOC4930/09339E870770"
+    },
+    {
+      "maker": "MRG",
+      "product": "0x2411",
+      "name": "MGME2430",
+      "edid": "control-mrg-mgme2430.hex",
+      "why": "an ordinary monitor announcing XREAL's own PnP ID MRG",
+      "source": "linuxhw/EDID 9c0c1bf (https://github.com/linuxhw/EDID) Digital/Nreal Air/MRG2411/08E4D44B5E20"
+    }
+  ],
+  "not_entered": [
+    {
+      "maker": "MRG",
+      "product": "0x4102",
+      "name": "XREAL 1S",
+      "why": "the identity and the change of EDID in Full SBS (one 3840x1080 mode) are described in https://github.com/kevindurb/xreal-linux docs/findings.md, but no EDID is published"
     }
   ]
 }
