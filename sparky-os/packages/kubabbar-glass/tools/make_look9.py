@@ -2,7 +2,7 @@
 """Kubabbar Glass 9's Look and Feel (the default layout: the person's own panels are kept). It applies in one click the
 Kvantum application style, the colour scheme, the Plasma style, the window decoration with the family's buttons and
 layout (Daniel, 2026-10-14: "left: app menu; right: minimize, maximize/restore, close"), the family's icons and cursors,
-the family's loading screen and the wallpaper. It carries no fonts: Plasma's Look and Feel manager removes a person's
+its own loading screen (tools/make_login9.py) and the wallpaper. It carries no fonts: Plasma's Look and Feel manager removes a person's
 own value of every key it applies (KLookAndFeelManager::writeNewDefaults, revertToDefault), so the fonts and the
 Kvantum theme reach the session through kubabbar-glass-9-sync, which writes only the look's own defaults store.
 GPL-3.0-only."""
@@ -42,7 +42,7 @@ cursorTheme=kubabbar-glass-cursors
 
 [ksplashrc][KSplash]
 Engine=KSplashQML
-Theme=kubabbar-glass
+Theme=kubabbar-glass-9
 """
 
 

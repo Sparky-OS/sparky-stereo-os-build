@@ -103,6 +103,9 @@ Files: *
 
 The GTK themes import the Breeze GTK shapes from the breeze-gtk-theme package (The KDE Developers, LGPL-2.1+, a dependency, not copied);
 colors.css is generated from the KDE colour scheme by tools/kde2gtk_colors.py in the source archive.
+The Kubabbar-Glass-9 themes (and their accent and Apart twins) draw Kubabbar Glass 9's classic controls: original pictures
+made by tools/make_gtk9.py from the same drawings as its Kvantum themes; their GTK 2 part is a theme of its own on GTK 2's
+pixmap engine (gtk2-engines-pixbuf), their GTK 3 and GTK 4 parts draw over the Breeze GTK shapes.
 
 $credit
 
@@ -111,9 +114,10 @@ Free Software Foundation; version 3 of the License.
 On Debian systems, the complete text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
 doc "$g" sparky-stereo-gtk "$work/gtk-copyright"
-control "$g" sparky-stereo-gtk "breeze-gtk-theme, gtk2-engines-oxygen, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin, procps, sparky-stereo-problems" "" "" \
+control "$g" sparky-stereo-gtk "breeze-gtk-theme, gtk2-engines-oxygen, gtk2-engines-pixbuf, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin, procps, sparky-stereo-problems" "" "" \
 	"GTK 2, GTK 3 and GTK 4 themes that follow the Sparky Stereo OS looks" \
 	"Kubabbar-Glass and Sparky-Stereo-Oxygen: the Breeze GTK shapes in each look's colours;" \
+	"Kubabbar-Glass-9: Kubabbar Glass 9's classic controls in GTK 2, 3 and 4, an Apart twin for the scroll arrows at both ends;" \
 	"Sparky-Stereo-Oxygen's GTK 2 part is KDE's Oxygen engine (gtk2-engines-oxygen)." \
 	"sparky-stereo-gtk-sync picks the theme from the KDE colour scheme at login and whenever kdeglobals changes;" \
 	"kde-config-gtk-style keeps the colours in step."
@@ -133,7 +137,8 @@ mkdir -p "$k/usr/share" "$k/usr/bin" "$k/usr/share/sparky/kubabbar-glass-style"
 	--exclude='./plasma/look-and-feel/kubabbar-glass-9' --exclude='./plasma/desktoptheme/kubabbar-glass-9' \
 	--exclude='./aurorae/themes/kubabbar-glass-9' --exclude='./kwin/decorations/kubabbar-glass-9' \
 	--exclude='./color-schemes/kubabbar-glass-9*' --exclude='./Kvantum/KubabbarGlass9*' \
-	--exclude='./wallpapers/kubabbar-glass-9' --exclude='./fontconfig' .) | tar xf - -C "$k/usr/share"
+	--exclude='./wallpapers/kubabbar-glass-9' --exclude='./fontconfig' \
+	--exclude='./plasma/look-and-feel/kubabbar-glass-9-menubar' --exclude='./sddm/themes/kubabbar-glass-9' .) | tar xf - -C "$k/usr/share"
 install -m 755 "$repo/bin/kubabbar-glass-style" "$k/usr/bin/"
 for language in "$repo/lang/"*; do
 	[ -f "$language" ] || continue
