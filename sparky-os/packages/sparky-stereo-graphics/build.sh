@@ -104,12 +104,19 @@ EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
 
+  * Queue row 121, milestone 2: rebuild against Qt
+    6.11.2+dfsg-5+stereo3d26+lc1 for its two directional element steps.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ${SOURCE_DATE_RFC2822:?}
+
+$PACKAGE (0.2.19) unstable; urgency=medium
+
   * Queue row 121: the page asks for the Qt that carries the painting by its
-    exact version, and that Qt is now 6.11.2+dfsg-5+stereo3d26+lc1 (a widget
+    exact version, and that Qt is now 6.11.2+dfsg-5+stereo3d25+lc1 (a widget
     may declare rectangles inside it at their own depth, in steps of the
     person's element limit). Nothing of the page or its tools changed.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ${SOURCE_DATE_RFC2822:?}
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 16:27:58 +0000
 
 $PACKAGE (0.2.18) unstable; urgency=medium
 
