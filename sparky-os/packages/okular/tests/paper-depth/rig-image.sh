@@ -8,6 +8,7 @@
 # The edition's local names map to 127.0.0.1, so no packet reaches the local network; sparky-stereo.sources, which
 # sparky-stereo-apt adds, is removed after any install. NAME is committed from the container; PREFIX names the container.
 # SKIP='REGEX': the packages under test whose names match are left as published (the KWin-older red row).
+# WITH_WORDS=1 also installs Debian Words and the KCM and fake-input test tools.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 BASE=$1 NAME=$2 REPO=$(cd "$3" && pwd -P); shift 3
@@ -22,7 +23,7 @@ docker run --name "$container" --pull=never --ulimit core=1 --cpus 4 --platform 
 	--mount type=bind,src=/usr/share/keyrings/deb-multimedia-keyring.pgp,dst=/usr/share/keyrings/deb-multimedia-keyring.pgp,readonly \
 	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly \
 	--mount "type=bind,src=$HERE/../../../../../tools/https-only-apt.sh,dst=/run/https-only-apt.sh,readonly" \
-	-e "SKIP=${SKIP:-}" "$BASE" bash -c '
+	-e "SKIP=${SKIP:-}" -e "WITH_WORDS=${WITH_WORDS:-0}" "$BASE" bash -c '
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 sh /run/https-only-apt.sh
@@ -36,6 +37,12 @@ apt-get -y -qq --no-install-recommends install kwin-wayland libkscreen-bin okula
 	kwin-style-breeze breeze-cursor-theme > /tmp/install.log 2>&1 \
 	|| { tail -30 /tmp/install.log; exit 1; }
 rm -f /etc/apt/sources.list.d/sparky-stereo.sources
+if [ "$WITH_WORDS" = 1 ]; then
+    apt-cache policy calligrawords kde-cli-tools libwayland-dev plasma-wayland-protocols
+    apt-get -y --no-install-recommends install calligrawords=1:26.08.0+dfsg-1 kde-cli-tools libwayland-dev \
+        plasma-wayland-protocols qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-org-kde-kirigami \
+        qml6-module-org-kde-kcmutils >> /tmp/install.log 2>&1 || { tail -35 /tmp/install.log; exit 1; }
+fi
 if compgen -G "/debs/*/*.deb" > /dev/null; then
 	# the newer build of each package the image has, and okular: by apt, from the files
 	want=()
@@ -52,7 +59,7 @@ if compgen -G "/debs/*/*.deb" > /dev/null; then
 	rm -f /etc/apt/sources.list.d/sparky-stereo.sources
 fi
 useradd --create-home --uid 1000 tester 2>/dev/null || true
-dpkg-query -W kwin-wayland okular libqt6widgets6 libqt6waylandclient6 libqt6printsupport6 plasma-wayland-protocols 2>/dev/null || true
+dpkg-query -W kwin-wayland okular libqt6widgets6 libqt6waylandclient6 libqt6printsupport6 plasma-wayland-protocols calligrawords 2>/dev/null || true
 '
 docker commit "$container" "$NAME" > /dev/null
 docker inspect -f '{{.Id}}' "$container" >> "${CIDS:-/dev/null}"
