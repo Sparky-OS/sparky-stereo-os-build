@@ -43,3 +43,11 @@ For the next rebase: upstream KWin's !10355 ported the screencast plugin away fr
 ## Phone output eye swap (+stereo3d63)
 
 `prepare-source-63.sh STAGED_62_DIR OUT TOOLKIT` uses the accepted +62 descriptor source and adds one edition patch for the split-eye phone output: both the scene rendering and composed-eye copy select the eye from that output's swap setting. DRM conversion and ordinary output capture are unchanged. The existing screencasting fixture gains swapped native and mirrored rows. `build-63.sh` uses the same seven arguments and complete Lean Code/archive gate as +62, with +62 as the previous family.
+
+## Paper depth (row 121)
+
+KWin +stereo3d70 sends the behind and in-front steps for the surface's selected output. Each step uses the global Element limit and its direction's display factor. The 3D Depth page writes `[StereoDepth] ElementLimit` with default 1 and minimum 0. Optional directional reference depths use `SunkLimit` and `PoppedLimit` under `[StereoDepth][<output UUID>]`. The output identifier is in `kwinoutputconfig.json`.
+
+Prepare the source with `prepare-source-70.sh` from the +69 closure and build with `build-70.sh` against plasma-wayland-protocols +14. The sources used for initial qualification have `SOURCE_DATE_EPOCH=1795728303`. Run `testStereoDepthExchange` to check the wire group after moving a window, editing the element limit and overriding one display direction.
+
+The edition's display and element depth work is by Daniel Ramos. KWin's options code credits Matthias Ettrich, Luboš Luňák and Martin Gräßlin. The surface code credits Martin Gräßlin and Vlad Zahorodnii. The display policy comes from libstereo-policy.
