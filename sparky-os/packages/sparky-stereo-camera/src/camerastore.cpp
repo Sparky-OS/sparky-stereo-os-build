@@ -29,6 +29,8 @@ CameraChoice Sparky::Camera::loadChoice(const QString &key)
     QSettings s = settings();
     CameraChoice c;
     s.beginGroup(key);
+    c.exists = !s.childKeys().isEmpty() || !s.childGroups().isEmpty();
+    c.version = s.value(QStringLiteral("version"), 1).toInt();
     c.packing = s.value(QStringLiteral("packing")).toString();
     if (s.contains(QStringLiteral("format"))) {
         c.hasMode = true;
@@ -59,6 +61,7 @@ void Sparky::Camera::saveChoice(const QString &key, const CameraChoice &c)
     QSettings s = settings();
     s.remove(key);
     s.beginGroup(key);
+    s.setValue(QStringLiteral("version"), StoreVersion);
     if (!c.packing.isEmpty()) {
         s.setValue(QStringLiteral("packing"), c.packing);
     }

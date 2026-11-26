@@ -48,8 +48,8 @@ void print(const QJsonValue &v)
 
 int usage()
 {
-    err << "usage: sparky-stereo-camera list | default [NAME] | formats NAME | mode NAME [FOURCC WxH FPS] | controls NAME | control NAME CONTROL [VALUE]"
-           " | reset NAME | packing NAME [ID|list] | save NAME | apply [NAME] | watch\n"
+    err << "usage: sparky-stereo-camera list | default [NAME] | formats NAME | best NAME | mode NAME [FOURCC WxH FPS] | controls NAME"
+           " | control NAME CONTROL [VALUE] | reset NAME | packing NAME [ID|list] | save NAME | apply [NAME] | watch\n"
            "A change on the device is saved for the camera too unless --no-save comes first.\n";
     return 2;
 }
@@ -61,36 +61,39 @@ QJsonObject controlJson(const Control &c)
         menu.append(QJsonObject{{QStringLiteral("index"), double(m.index)}, {QStringLiteral("text"), m.text}});
     }
     static const char *kinds[] = {"integer", "boolean", "menu", "integer-menu", "button", "other"};
-    return {{QStringLiteral("id"), double(c.id)},
-            {QStringLiteral("name"), c.name},
-            {QStringLiteral("kind"), QString::fromLatin1(kinds[c.kind])},
-            {QStringLiteral("min"), double(c.minimum)},
-            {QStringLiteral("max"), double(c.maximum)},
-            {QStringLiteral("step"), double(c.step)},
-            {QStringLiteral("default"), double(c.defaultValue)},
-            {QStringLiteral("value"), double(c.value)},
-            {QStringLiteral("inactive"), c.inactive},
-            {QStringLiteral("readOnly"), c.readOnly},
-            {QStringLiteral("menu"), menu}};
+    QJsonObject o{{QStringLiteral("id"), double(c.id)},
+                  {QStringLiteral("name"), c.name},
+                  {QStringLiteral("kind"), QString::fromLatin1(kinds[c.kind])},
+                  {QStringLiteral("min"), double(c.minimum)},
+                  {QStringLiteral("max"), double(c.maximum)},
+                  {QStringLiteral("step"), double(c.step)},
+                  {QStringLiteral("default"), double(c.defaultValue)},
+                  {QStringLiteral("effectiveDefault"), double(effectiveDefault(c))},
+                  {QStringLiteral("value"), double(c.value)},
+                  {QStringLiteral("valueKnown"), c.valueKnown},
+                  {QStringLiteral("flags"), double(c.flags)},
+                  {QStringLiteral("inactive"), c.inactive},
+                  {QStringLiteral("readOnly"), c.readOnly},
+                  {QStringLiteral("grabbed"), c.grabbed},
+                  {QStringLiteral("keep"), keepName(keepRule(c))},
+                  {QStringLiteral("menu"), menu}};
+    return o;
 }
 
-// The saved choice of a camera is the device's present state of everything that differs from the driver's default
+// The saved choice of a camera: its settings that differ from their default, each taken while it is active (choiceFromDevice)
 void saveState(const CameraInfo &cam, V4l2Camera &dev, bool withMode)
 {
-    CameraChoice c = loadChoice(cam.key);
-    if (withMode) {
-        c.hasMode = true;
-        c.mode = dev.currentMode();
+    saveChoice(cam.key, choiceFromDevice(dev, loadChoice(cam.key), withMode));
+}
+
+void printReport(const ApplyReport &r)
+{
+    for (const QString &m : r.messages) {
+        err << m << Qt::endl;
     }
-    c.controls.clear();
-    c.controlNames.clear();
-    for (const Control &ctl : dev.controls()) {
-        if (ctl.kind != Control::Button && ctl.kind != Control::Other && !ctl.readOnly && ctl.value != ctl.defaultValue) {
-            c.controls.insert(ctl.id, ctl.value);
-            c.controlNames.insert(ctl.id, ctl.name);
-        }
+    for (const QString &l : r.log) {
+        out << l << Qt::endl;
     }
-    saveChoice(cam.key, c);
 }
 
 int cmdList()
@@ -138,9 +141,12 @@ int main(int argc, char **argv)
         return cmdList();
     }
     if (verb == QLatin1String("watch")) {
-        // Apply the saved choices to every camera now and again whenever the set of cameras changes (a plug-in).
+        // Apply the saved choices to every camera now and again whenever the set of cameras changes (a plug-in). A camera is done
+        // once its device was reached; one that PipeWire lists while its device does not open or answer yet (being plugged in,
+        // going away, starting up) is tried again at every pass until it answers, and that is said once.
         QSet<QString> seen;
-        auto pass = [&seen]() {
+        QSet<QString> told;
+        auto pass = [&seen, &told]() {
             QString error;
             const QList<CameraInfo> cams = listCameras(&error);
             if (!error.isEmpty()) {
@@ -148,19 +154,36 @@ int main(int argc, char **argv)
                 return;
             }
             QSet<QString> now;
+            QSet<QString> waiting;
             for (const CameraInfo &c : cams) {
-                const QString sig = c.node.name + QLatin1Char('@') + QString::number(c.node.id);
-                now.insert(sig);
+                // a camera unplugged and plugged in again between two passes can get its old id back, never its old serial
+                const QString sig = c.node.name + QLatin1Char('@') + QString::number(c.node.serial ? c.node.serial : c.node.id);
                 if (seen.contains(sig)) {
+                    now.insert(sig);
                     continue;
                 }
                 const ApplyReport r = applyChoice(c);
+                // a V4L2 camera whose device did not open, or opened and did not answer; a camera of another kind has nothing to apply
+                const bool unreachable = c.key.isEmpty() ? c.openError != 0 : !r.reached;
+                if (unreachable) {
+                    waiting.insert(sig);
+                    if (!told.contains(sig)) {
+                        qWarning().noquote() << QStringLiteral("camera %1: not reached yet, tried again at the next pass: %2")
+                                                    .arg(c.node.name, r.messages.isEmpty() ? c.note : r.messages.join(QLatin1Char(' ')));
+                    }
+                    continue;
+                }
+                now.insert(sig);
                 for (const QString &m : r.messages) {
                     qWarning().noquote() << m;
+                }
+                for (const QString &l : r.log) {
+                    qInfo().noquote() << l;
                 }
                 qInfo().noquote() << QStringLiteral("camera %1: %2 saved settings applied").arg(c.node.name).arg(r.applied);
             }
             seen = now;
+            told = waiting;
         };
         pass();
         QTimer t;
@@ -190,9 +213,7 @@ int main(int argc, char **argv)
         int bad = 0;
         for (const CameraInfo &c : listCameras(&error)) {
             const ApplyReport r = applyChoice(c);
-            for (const QString &m : r.messages) {
-                err << m << Qt::endl;
-            }
+            printReport(r);
             bad += r.messages.size();
         }
         return error.isEmpty() ? (bad ? 1 : 0) : fail(error);
@@ -206,9 +227,7 @@ int main(int argc, char **argv)
     }
     if (verb == QLatin1String("apply")) {
         const ApplyReport r = applyChoice(cam);
-        for (const QString &m : r.messages) {
-            err << m << Qt::endl;
-        }
+        printReport(r);
         return r.ok() ? 0 : 1;
     }
     if (cam.key.isEmpty()) {
@@ -218,9 +237,33 @@ int main(int argc, char **argv)
     if (!dev.isOpen()) {
         return fail(V4l2Camera::explain({false, dev.openError(), QStringLiteral("open")}, cam.node.description));
     }
+    // a device that opens and does not answer (going away, still starting) is said, never answered with an empty list
+    dev.currentMode();
+    if (dev.lastError()) {
+        return fail(V4l2Camera::explain({false, dev.lastError(), QStringLiteral("VIDIOC_G_FMT")}, cam.node.description));
+    }
+    if (verb == QLatin1String("best")) {
+        // the mode this camera starts at when nobody chose one (ORDER 682), and the known machine's caveat that limits it
+        const BestModeChoice best = bestModeFor(dev);
+        QJsonObject o{{QStringLiteral("usb"), usbIdOf(dev.path())}, {QStringLiteral("allowedFormats"), QJsonArray::fromStringList(best.allowedFormats)}};
+        if (best.mode) {
+            o.insert(QStringLiteral("mode"), modeJson(*best.mode));
+        } else {
+            o.insert(QStringLiteral("note"), best.note);
+        }
+        print(o);
+        return best.mode ? 0 : 1;
+    }
     if (verb == QLatin1String("formats")) {
         QJsonArray fs;
-        for (const Format &f : dev.formats()) {
+        const QList<Format> formats = dev.formats();
+        if (dev.lastError()) {
+            return fail(V4l2Camera::explain({false, dev.lastError(), QStringLiteral("VIDIOC_ENUM_FMT")}, cam.node.description));
+        }
+        if (formats.isEmpty()) {
+            return fail(i18n("%1 lists no picture format. It may be starting up or going away: try again, or plug it in again.", cam.node.description));
+        }
+        for (const Format &f : formats) {
             QJsonArray sizes;
             for (const SizeEntry &s : f.sizes) {
                 QJsonObject so = sizeJson(s.size);
@@ -261,7 +304,11 @@ int main(int argc, char **argv)
     }
     if (verb == QLatin1String("controls")) {
         QJsonArray a;
-        for (const Control &c : dev.controls()) {
+        const QList<Control> controls = dev.controls();
+        if (dev.lastError()) {
+            return fail(V4l2Camera::explain({false, dev.lastError(), QStringLiteral("VIDIOC_QUERY_EXT_CTRL")}, cam.node.description));
+        }
+        for (const Control &c : controls) {
             a.append(controlJson(c));
         }
         print(a);
@@ -271,7 +318,14 @@ int main(int argc, char **argv)
         if (args.isEmpty()) {
             return usage();
         }
-        for (const Control &c : dev.controls()) {
+        const QList<Control> controls = dev.controls();
+        QSet<quint32> wasInactive;
+        for (const Control &c : controls) {
+            if (c.inactive) {
+                wasInactive.insert(c.id);
+            }
+        }
+        for (const Control &c : controls) {
             if (c.name != args.first()) {
                 continue;
             }
@@ -285,6 +339,10 @@ int main(int argc, char **argv)
             const Result r = dev.setControl(c.id, c.kind == Control::Button ? 1 : args.at(1).toLongLong());
             if (!r.ok) {
                 return fail(V4l2Camera::explain(r, cam.node.description));
+            }
+            // a saved value that waited for this control's change (automatic white balance off) is set before the camera is saved
+            for (const QString &l : applyWaiting(dev, loadChoice(cam.key), wasInactive)) {
+                out << l << Qt::endl;
             }
             if (save) {
                 saveState(cam, dev, false);

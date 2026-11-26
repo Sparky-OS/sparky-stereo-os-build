@@ -1,18 +1,30 @@
-.TH SPARKY-STEREO-CAMERA 1 "November 2026" "sparky-stereo-camera 0.1.0" "Sparky Stereo OS"
+.TH SPARKY-STEREO-CAMERA 1 "November 2026" "sparky-stereo-camera 0.1.3" "Sparky Stereo OS"
 .SH NAME
 sparky-stereo-camera \- the Camera page of System Settings, as a command
 .SH SYNOPSIS
 .B sparky-stereo-camera
-[\fB\-\-no\-save\fR] \fBlist\fR | \fBdefault\fR [\fINAME\fR] | \fBformats\fR \fINAME\fR | \fBmode\fR \fINAME\fR [\fIFOURCC WxH FPS\fR] | \fBcontrols\fR \fINAME\fR | \fBcontrol\fR \fINAME CONTROL\fR [\fIVALUE\fR] | \fBreset\fR \fINAME\fR | \fBpacking\fR \fINAME\fR [\fIID\fR|\fBlist\fR] | \fBsave\fR \fINAME\fR | \fBapply\fR [\fINAME\fR] | \fBwatch\fR
+[\fB\-\-no\-save\fR] \fBlist\fR | \fBdefault\fR [\fINAME\fR] | \fBformats\fR \fINAME\fR | \fBbest\fR \fINAME\fR | \fBmode\fR \fINAME\fR [\fIFOURCC WxH FPS\fR] | \fBcontrols\fR \fINAME\fR | \fBcontrol\fR \fINAME CONTROL\fR [\fIVALUE\fR] | \fBreset\fR \fINAME\fR | \fBpacking\fR \fINAME\fR [\fIID\fR|\fBlist\fR] | \fBsave\fR \fINAME\fR | \fBapply\fR [\fINAME\fR] | \fBwatch\fR
 .SH DESCRIPTION
 A camera is named by its PipeWire node name (see \fBlist\fR). \fBdefault\fR reads or sets the session's default video source
 (WirePlumber's default.configured.video.source), which every program that asks PipeWire for a camera follows.
 \fBmode\fR and \fBcontrol\fR set the camera's format, size, frame rate or one control on the V4L2 device and keep the choice in
 ~/.config/sparky-stereo-camera/cameras.ini unless \fB\-\-no\-save\fR comes first.
-\fBapply\fR sets the saved choices again; \fBwatch\fR does so whenever a camera appears, and is what the user service sparky-stereo-camera.service runs.
+Only a setting is kept: a control with a range (or a menu or a boolean) that the camera takes and reports and that is active;
+a read-only, write-only, volatile, relative or speed control, an action, or one without a range is shown by \fBcontrols\fR with its
+reason in the field \fBkeep\fR and never saved.
+\fBbest\fR prints the mode a camera starts at when no mode is saved for it: its largest picture, and at that size its highest frame
+rate, among the formats a known machine's caveat names (sparky-stereo-hardware's table).
+\fBapply\fR sets the saved choices again (the controls that change the picture's layout, the saved or the best mode, then the other
+controls, a governing control before the one it governs); a saved setting that is inactive is left for when it is active; \fBwatch\fR does so whenever a camera appears, and is what the user service sparky-stereo-camera.service runs.
 \fBpacking\fR keeps how a two-lens camera packs its two pictures, by the stereo layer's input list (\fBpacking NAME list\fR prints it).
 .PP
-Output is JSON. Exit status 0 is success, 1 a failure the command says, 2 a wrong command line, 3 no default camera.
+A NAME that PipeWire does not list is asked for again for 3 seconds before the command says it is not present.
+.PP
+Output is JSON. Exit status 0 is success, 1 a failure the command says (a camera not present or not answering among them), 2 a wrong command line, 3 no default camera.
+.SH ENVIRONMENT
+.TP
+SPARKY_STEREO_CAMERA_SYSFS
+Replaces /sys where a camera's USB ids are read (a test rig's virtual cameras).
 .SH FILES
 .TP
 ~/.config/sparky-stereo-camera/cameras.ini

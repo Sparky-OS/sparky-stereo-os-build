@@ -1,3 +1,15 @@
+sparky-stereo-camera 0.1.3 (2026-11-26)
+  * Only settings are saved (ORDER 678): a control is kept only when it has a range (or is a menu or a boolean), is not read-only, write-only, volatile, a relative or speed control (a movement) or an action, and is active when it is read; every V4L2 control flag has its rule (README).
+  * The apply step sets the controls that change the picture's layout, then the mode, then the other controls in passes with fresh flags, so a governing control (automatic white balance, exposure, focus) goes before the value it governs, whatever its id; a saved setting still inactive at the end keeps its value and no problem.
+  * An entry written by 0.1.0 to 0.1.2 is cleaned once when its camera is present (the iMac's White Balance Temperature and Iris, Relative), each removal in the journal, and the problems kept for those entries are cleared; the entry is marked version=2.
+  * A camera with no saved mode starts at its largest picture and, at that size, its highest frame rate (ORDER 682): at plug-in, on the page's first values and with Defaults; a known machine's table entry can name the formats that camera delivers correctly. The page saves a mode only when the person chose one.
+  * A control's default outside its own range (the A10's sharpness, 120 for 0 to 100) is taken as the driver holds it, so a reset no longer saves it.
+  * The page says why a control is not kept (moves the camera, changes by itself, no range, held by another program), follows a governing control at once, and keeps a refused mode or reset on screen; five packing names missing since 0.1.2 now come translated from the stereo layer's catalogues.
+  * The user service knows a camera plugged in again by PipeWire's object.serial, which is never given twice: a camera unplugged and plugged in again within one pass got its old node id back and was not applied.
+  * An entry of 0.1.0 to 0.1.2 keeps the values of controls that are inactive now (review of 2026-11-26, from the A10: the person's manual temperature 3000 was removed as "saved while inactive", which nobody measured): an old store cannot tell the person's value from a moving reading, so it stays and waits. A waiting value is set when its control is active again, at plug-in and when the person switches the governing control on the page or with the command. The journal says only what is known.
+  * A camera asked for by name that PipeWire does not list is asked for again for 3 seconds, then said with exit status 1 ("No camera called NAME is present."); a listed camera whose device opens and does not answer is said by every verb, never answered with an empty list or an empty mode; the user service tries such a camera again at its next pass.
+  * The page's sentence about other programs is true again: programs built on Qt Multimedia and programs that ask PipeWire for a camera follow the default camera and choose their own picture size and frame rate (ten languages).
+
 sparky-stereo-camera 0.1.1 (2026-11-20)
   * Translate the System Settings search keywords (ORDER 46).
 

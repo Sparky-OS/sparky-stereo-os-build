@@ -79,11 +79,12 @@ KCM.SimpleKCM {
                 }
             }
             QQC2.Label {
+                objectName: "followers"
                 Kirigami.FormData.label: ""
                 Layout.maximumWidth: Kirigami.Units.gridUnit * 28
                 wrapMode: Text.WordWrap
                 opacity: 0.7
-                text: i18n("A program in which you chose a camera keeps your choice. Programs that open the camera themselves, such as those built on Qt Multimedia, do not follow this default yet.")
+                text: i18n("Programs built on Qt Multimedia, and programs that ask PipeWire for a camera, follow this default camera; they choose their own picture size and frame rate. A program in which you chose a camera keeps your choice.")
             }
         }
 
@@ -253,6 +254,13 @@ KCM.SimpleKCM {
                 wrapMode: Text.WordWrap
                 opacity: 0.7
                 text: i18n("Programs that choose their own size and format are not changed by this.")
+            }
+            QQC2.Label {
+                Kirigami.FormData.label: ""
+                Layout.maximumWidth: Kirigami.Units.gridUnit * 28
+                wrapMode: Text.WordWrap
+                opacity: 0.7
+                text: i18n("A camera you have not set starts at its largest picture and, at that size, its highest frame rate.")
             }
         }
 

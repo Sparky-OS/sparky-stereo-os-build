@@ -4,9 +4,12 @@
 #include "v4l2camera.h"
 
 #include <KLocalizedString>
+#include <QSet>
 #include <QtGlobal>
 
+#include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <fcntl.h>
 #include <linux/videodev2.h>
@@ -62,6 +65,137 @@ QString otherKindName(quint32 type)
         return QStringLiteral("type %1").arg(type);
     }
 }
+
+// The controls the specification describes as a movement, not a position (ext-ctrls-camera.rst): the relative ones "turn" or
+// "move" by an amount and are "write-only"; ZOOM_CONTINUOUS and PAN/TILT_SPEED move at a speed until stopped. A saved value of
+// one of them would move the camera again at every plug-in.
+bool isMotion(quint32 id)
+{
+    switch (id) {
+    case V4L2_CID_PAN_RELATIVE:
+    case V4L2_CID_TILT_RELATIVE:
+    case V4L2_CID_FOCUS_RELATIVE:
+    case V4L2_CID_ZOOM_RELATIVE:
+    case V4L2_CID_IRIS_RELATIVE:
+    case V4L2_CID_ZOOM_CONTINUOUS:
+    case V4L2_CID_PAN_SPEED:
+    case V4L2_CID_TILT_SPEED:
+        return true;
+    default:
+        return false;
+    }
+}
+}
+
+Keep Sparky::Camera::keepRule(const Control &c)
+{
+    if (c.kind == Control::Button) {
+        return Keep::Button;
+    }
+    if (c.flags & (V4L2_CTRL_FLAG_HAS_PAYLOAD | V4L2_CTRL_FLAG_DYNAMIC_ARRAY)) {
+        return Keep::Payload;
+    }
+    if (c.kind == Control::Other) {
+        return Keep::NotEditable;
+    }
+    if (c.readOnly || (c.flags & V4L2_CTRL_FLAG_READ_ONLY)) {
+        return Keep::ReadOnly;
+    }
+    if (isMotion(c.id)) {
+        return Keep::Motion;
+    }
+    if (c.flags & V4L2_CTRL_FLAG_WRITE_ONLY) {
+        return Keep::WriteOnly;
+    }
+    // An auto cluster in automatic mode marks its manual controls "inactive and volatile" (driver-api v4l2-controls, "Handling
+    // autogain/gain-type Controls with Auto Clusters"), and clears both in manual mode: such a control is a setting that waits
+    // for its governing control. Only a control that is volatile while active changes by itself as a matter of course.
+    if ((c.flags & V4L2_CTRL_FLAG_VOLATILE) && !(c.flags & V4L2_CTRL_FLAG_INACTIVE) && !c.inactive) {
+        return Keep::Volatile;
+    }
+    if (c.flags & V4L2_CTRL_FLAG_EXECUTE_ON_WRITE) {
+        return Keep::Action;
+    }
+    if (c.kind == Control::Integer && c.maximum <= c.minimum) {
+        return Keep::NoRange;
+    }
+    return Keep::Setting;
+}
+
+QString Sparky::Camera::keepName(Keep keep)
+{
+    switch (keep) {
+    case Keep::Setting:
+        return QStringLiteral("setting");
+    case Keep::Button:
+        return QStringLiteral("button");
+    case Keep::NotEditable:
+        return QStringLiteral("not-editable");
+    case Keep::Payload:
+        return QStringLiteral("payload");
+    case Keep::ReadOnly:
+        return QStringLiteral("read-only");
+    case Keep::WriteOnly:
+        return QStringLiteral("write-only");
+    case Keep::Volatile:
+        return QStringLiteral("volatile");
+    case Keep::Action:
+        return QStringLiteral("action");
+    case Keep::Motion:
+        return QStringLiteral("motion");
+    case Keep::NoRange:
+        return QStringLiteral("no-range");
+    }
+    return {};
+}
+
+qint64 Sparky::Camera::effectiveDefault(const Control &c)
+{
+    if (c.kind == Control::Boolean) {
+        return std::clamp<qint64>(c.defaultValue, 0, 1);
+    }
+    if (c.kind != Control::Integer || c.maximum <= c.minimum) {
+        return c.defaultValue;
+    }
+    const qint64 v = qBound(c.minimum, c.defaultValue, c.maximum);
+    if (v == c.maximum) {
+        return v;
+    }
+    const qint64 step = c.step > 0 ? c.step : 1;
+    const qint64 rounded = c.minimum + (v - c.minimum + step / 2) / step * step;
+    return qMin(rounded, c.maximum);
+}
+
+std::optional<Mode> Sparky::Camera::bestMode(const QList<ModeCandidate> &candidates, const QStringList &allowedFormats)
+{
+    // a is better than b: the larger picture, the wider one, the faster one, the one that needs no decoding; else the first listed
+    const auto better = [](const ModeCandidate &a, const ModeCandidate &b) {
+        const qint64 pa = qint64(a.size.width) * a.size.height;
+        const qint64 pb = qint64(b.size.width) * b.size.height;
+        if (pa != pb) {
+            return pa > pb;
+        }
+        if (a.size.width != b.size.width) {
+            return a.size.width > b.size.width;
+        }
+        if (std::abs(a.fps - b.fps) > 0.01) {
+            return a.fps > b.fps;
+        }
+        return !a.compressed && b.compressed;
+    };
+    const ModeCandidate *best = nullptr;
+    for (const ModeCandidate &c : candidates) {
+        if (c.size.width <= 0 || c.size.height <= 0 || (!allowedFormats.isEmpty() && !allowedFormats.contains(c.fourcc))) {
+            continue;
+        }
+        if (!best || better(c, *best)) {
+            best = &c;
+        }
+    }
+    if (!best) {
+        return std::nullopt;
+    }
+    return Mode{best->fourcc, best->size, best->fps};
 }
 
 V4l2Camera::V4l2Camera(const QString &path)
@@ -109,12 +243,17 @@ quint32 V4l2Camera::fourccCode(const QString &text)
 QList<Format> V4l2Camera::formats()
 {
     QList<Format> result;
+    m_error = 0;
     for (quint32 i = 0;; ++i) {
         v4l2_fmtdesc d;
         std::memset(&d, 0, sizeof d);
         d.index = i;
         d.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (xioctl(m_fd, VIDIOC_ENUM_FMT, &d) < 0) {
+            // EINVAL past the last format is the end of the list (VIDIOC_ENUM_FMT); anything else is the device not answering
+            if (errno != EINVAL) {
+                m_error = errno;
+            }
             break;
         }
         Format f;
@@ -172,15 +311,33 @@ QList<double> V4l2Camera::frameRates(const QString &fourcc, Size size)
     return rates;
 }
 
+QList<ModeCandidate> V4l2Camera::modeCandidates()
+{
+    QList<ModeCandidate> result;
+    for (const Format &f : formats()) {
+        for (const SizeEntry &s : f.sizes) {
+            ModeCandidate c{f.fourcc, f.compressed, s.stepwise ? s.max : s.size, 0};
+            for (double r : frameRates(f.fourcc, c.size)) {
+                c.fps = std::max(c.fps, r);
+            }
+            result.append(c);
+        }
+    }
+    return result;
+}
+
 Mode V4l2Camera::currentMode()
 {
     Mode mode;
+    m_error = 0;
     v4l2_format f;
     std::memset(&f, 0, sizeof f);
     f.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (xioctl(m_fd, VIDIOC_G_FMT, &f) == 0) {
         mode.fourcc = fourccText(f.fmt.pix.pixelformat);
         mode.size = {int(f.fmt.pix.width), int(f.fmt.pix.height)};
+    } else {
+        m_error = errno;
     }
     v4l2_streamparm p;
     std::memset(&p, 0, sizeof p);
@@ -231,57 +388,85 @@ Result V4l2Camera::setMode(const Mode &mode)
     return {};
 }
 
+Control V4l2Camera::readControl(const ::v4l2_query_ext_ctrl &q)
+{
+    Control c;
+    c.id = q.id;
+    c.name = QString::fromLocal8Bit(q.name);
+    c.kind = kindOf(q.type);
+    c.minimum = q.minimum;
+    c.maximum = q.maximum;
+    c.step = q.step ? q.step : 1;
+    c.defaultValue = q.default_value;
+    c.flags = q.flags;
+    c.inactive = q.flags & V4L2_CTRL_FLAG_INACTIVE;
+    c.readOnly = q.flags & V4L2_CTRL_FLAG_READ_ONLY;
+    c.grabbed = q.flags & V4L2_CTRL_FLAG_GRABBED;
+    if (c.kind == Control::Other) {
+        c.otherKind = otherKindName(q.type);
+    } else if (c.kind != Control::Button && !(q.flags & V4L2_CTRL_FLAG_WRITE_ONLY)) {
+        // a write-only control has no value to read: the driver answers EACCES (VIDIOC_QUERYCTRL, V4L2_CTRL_FLAG_WRITE_ONLY)
+        v4l2_ext_control ec;
+        v4l2_ext_controls ecs;
+        std::memset(&ec, 0, sizeof ec);
+        std::memset(&ecs, 0, sizeof ecs);
+        ec.id = q.id;
+        ecs.count = 1;
+        ecs.controls = &ec;
+        ecs.which = V4L2_CTRL_WHICH_CUR_VAL;
+        if (xioctl(m_fd, VIDIOC_G_EXT_CTRLS, &ecs) == 0) {
+            c.value = ec.value;
+            c.valueKnown = true;
+        }
+    }
+    if (c.kind == Control::Menu || c.kind == Control::IntegerMenu) {
+        for (qint64 i = q.minimum; i <= q.maximum; ++i) {
+            v4l2_querymenu m;
+            std::memset(&m, 0, sizeof m);
+            m.id = q.id;
+            m.index = quint32(i);
+            if (xioctl(m_fd, VIDIOC_QUERYMENU, &m) == 0) {
+                c.menu.append({i, c.kind == Control::Menu ? QString::fromLocal8Bit(reinterpret_cast<const char *>(m.name)) : QString::number(qint64(m.value))});
+            }
+        }
+    }
+    return c;
+}
+
 QList<Control> V4l2Camera::controls()
 {
     QList<Control> result;
     v4l2_query_ext_ctrl q;
     std::memset(&q, 0, sizeof q);
     q.id = V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
-    while (xioctl(m_fd, VIDIOC_QUERY_EXT_CTRL, &q) == 0) {
+    m_error = 0;
+    while (true) {
+        if (xioctl(m_fd, VIDIOC_QUERY_EXT_CTRL, &q) < 0) {
+            // EINVAL after the last control is the end of the list (VIDIOC_QUERYCTRL); anything else is the device not answering
+            if (errno != EINVAL) {
+                m_error = errno;
+            }
+            break;
+        }
         const quint32 nextId = q.id | V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
+        // DISABLED: "permanently disabled and should be ignored by the application"
         if (q.type != V4L2_CTRL_TYPE_CTRL_CLASS && !(q.flags & V4L2_CTRL_FLAG_DISABLED)) {
-            Control c;
-            c.id = q.id;
-            c.name = QString::fromLocal8Bit(q.name);
-            c.kind = kindOf(q.type);
-            c.minimum = q.minimum;
-            c.maximum = q.maximum;
-            c.step = q.step ? q.step : 1;
-            c.defaultValue = q.default_value;
-            c.inactive = q.flags & V4L2_CTRL_FLAG_INACTIVE;
-            c.readOnly = q.flags & V4L2_CTRL_FLAG_READ_ONLY;
-            c.grabbed = q.flags & V4L2_CTRL_FLAG_GRABBED;
-            if (c.kind == Control::Other) {
-                c.otherKind = otherKindName(q.type);
-            } else if (c.kind != Control::Button) {
-                v4l2_ext_control ec;
-                v4l2_ext_controls ecs;
-                std::memset(&ec, 0, sizeof ec);
-                std::memset(&ecs, 0, sizeof ecs);
-                ec.id = q.id;
-                ecs.count = 1;
-                ecs.controls = &ec;
-                ecs.which = V4L2_CTRL_WHICH_CUR_VAL;
-                if (xioctl(m_fd, VIDIOC_G_EXT_CTRLS, &ecs) == 0) {
-                    c.value = ec.value;
-                }
-            }
-            if (c.kind == Control::Menu || c.kind == Control::IntegerMenu) {
-                for (qint64 i = q.minimum; i <= q.maximum; ++i) {
-                    v4l2_querymenu m;
-                    std::memset(&m, 0, sizeof m);
-                    m.id = q.id;
-                    m.index = quint32(i);
-                    if (xioctl(m_fd, VIDIOC_QUERYMENU, &m) == 0) {
-                        c.menu.append({i, c.kind == Control::Menu ? QString::fromLocal8Bit(reinterpret_cast<const char *>(m.name)) : QString::number(qint64(m.value))});
-                    }
-                }
-            }
-            result.append(c);
+            result.append(readControl(q));
         }
         q.id = nextId;
     }
     return result;
+}
+
+std::optional<Control> V4l2Camera::control(quint32 id)
+{
+    v4l2_query_ext_ctrl q;
+    std::memset(&q, 0, sizeof q);
+    q.id = id;
+    if (xioctl(m_fd, VIDIOC_QUERY_EXT_CTRL, &q) < 0 || q.type == V4L2_CTRL_TYPE_CTRL_CLASS || (q.flags & V4L2_CTRL_FLAG_DISABLED)) {
+        return std::nullopt;
+    }
+    return readControl(q);
 }
 
 Result V4l2Camera::setControl(quint32 id, qint64 value)
@@ -301,18 +486,68 @@ Result V4l2Camera::setControl(quint32 id, qint64 value)
     return {};
 }
 
+QList<V4l2Camera::SetOutcome> V4l2Camera::setControls(const QList<QPair<quint32, qint64>> &values)
+{
+    QList<SetOutcome> done;
+    QList<QPair<quint32, qint64>> pending = values;
+    QSet<quint32> update;
+    for (const Control &c : controls()) {
+        if (c.flags & V4L2_CTRL_FLAG_UPDATE) {
+            update.insert(c.id);
+        }
+    }
+    std::stable_sort(pending.begin(), pending.end(), [&update](const auto &a, const auto &b) {
+        const bool ua = update.contains(a.first);
+        const bool ub = update.contains(b.first);
+        return ua != ub ? ua : a.first < b.first;
+    });
+    for (bool progress = true; progress && !pending.isEmpty();) {
+        progress = false;
+        for (auto it = pending.begin(); it != pending.end();) {
+            SetOutcome o;
+            o.id = it->first;
+            o.control = control(it->first);
+            if (!o.control) {
+                o.state = SetOutcome::Missing;
+            } else if (!isSetting(*o.control)) {
+                o.state = SetOutcome::NotSetting;
+            } else if (o.control->inactive) {
+                ++it;
+                continue;
+            } else {
+                o.result = setControl(it->first, it->second);
+                o.state = o.result.ok ? SetOutcome::Applied : SetOutcome::Refused;
+            }
+            done.append(o);
+            it = pending.erase(it);
+            progress = true;
+        }
+    }
+    for (const auto &[id, value] : std::as_const(pending)) {
+        Q_UNUSED(value)
+        SetOutcome o;
+        o.id = id;
+        o.state = SetOutcome::Inactive;
+        o.control = control(id);
+        done.append(o);
+    }
+    return done;
+}
+
 Result V4l2Camera::resetControls(QStringList *failed)
 {
-    Result overall;
+    QList<QPair<quint32, qint64>> values;
     for (const Control &c : controls()) {
-        if (c.kind == Control::Button || c.kind == Control::Other || c.readOnly || c.inactive || c.value == c.defaultValue) {
-            continue;
+        if (isSetting(c) && !c.inactive && c.valueKnown && c.value != effectiveDefault(c)) {
+            values.append({c.id, effectiveDefault(c)});
         }
-        const Result r = setControl(c.id, c.defaultValue);
-        if (!r.ok) {
-            overall = r;
+    }
+    Result overall;
+    for (const SetOutcome &o : setControls(values)) {
+        if (o.state == SetOutcome::Refused) {
+            overall = o.result;
             if (failed) {
-                failed->append(c.name);
+                failed->append(o.control ? o.control->name : QString::number(o.id));
             }
         }
     }

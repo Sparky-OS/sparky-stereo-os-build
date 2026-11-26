@@ -13,6 +13,8 @@
 #include <QQmlEngine>
 #include <QVariantMap>
 
+#include <linux/videodev2.h>
+
 using namespace Sparky::Camera;
 
 K_PLUGIN_CLASS_WITH_JSON(CameraKcm, "kcm_sparkystereo_camera.json")
@@ -63,7 +65,8 @@ void CameraKcm::refresh()
     QString now;
     for (const CameraInfo &c : infos) {
         list.append(QVariantMap{{QStringLiteral("name"), c.node.name}, {QStringLiteral("description"), c.node.description}, {QStringLiteral("isDefault"), c.node.isDefault},
-                                {QStringLiteral("api"), c.node.api}, {QStringLiteral("note"), c.note}, {QStringLiteral("nodeId"), c.node.id}});
+                                {QStringLiteral("api"), c.node.api}, {QStringLiteral("note"), c.note}, {QStringLiteral("nodeId"), c.node.id},
+                                {QStringLiteral("serial"), c.node.serial}});
         if (c.node.isDefault) {
             now = c.node.name;
         }
@@ -161,13 +164,20 @@ void CameraKcm::readDetails()
                 m_formats.append(QVariantMap{{QStringLiteral("fourcc"), f.fourcc}, {QStringLiteral("description"), formatLabel(f.fourcc, f.description)}, {QStringLiteral("compressed"), f.compressed}, {QStringLiteral("sizes"), sizes}});
             }
             const Mode mode = dev.currentMode();
+            if (dev.lastError()) {
+                // listed by PipeWire, its device opened and does not answer: going away or still starting, said on the page
+                m_modeError = V4l2Camera::explain({false, dev.lastError(), QStringLiteral("VIDIOC_G_FMT")}, info.node.description);
+            }
             m_mode = {{QStringLiteral("fourcc"), mode.fourcc}, {QStringLiteral("width"), mode.size.width}, {QStringLiteral("height"), mode.size.height}, {QStringLiteral("fps"), mode.fps}};
+            m_controlFlags.clear();
             for (const Control &c : dev.controls()) {
                 static const char *kinds[] = {"integer", "boolean", "menu", "integer-menu", "button", "other"};
                 QVariantList menu;
                 for (const auto &m : c.menu) {
                     menu.append(QVariantMap{{QStringLiteral("index"), m.index}, {QStringLiteral("text"), menuLabel(c.id, m.index, m.text)}});
                 }
+                // Every control is shown; the note says why one cannot be changed now or is not kept (keepRule)
+                const Keep keep = keepRule(c);
                 QString note;
                 if (c.kind == Control::Other) {
                     note = i18n("This page cannot change this kind of control (%1).", c.otherKind);
@@ -175,12 +185,21 @@ void CameraKcm::readDetails()
                     note = i18n("The camera only reports this value.");
                 } else if (c.inactive) {
                     note = i18n("The camera is not using this control now. Another setting turns it on.");
+                } else if (c.grabbed) {
+                    note = i18n("Another program is using this control now, so it cannot be changed here.");
+                } else if (keep == Keep::Motion || keep == Keep::WriteOnly || keep == Keep::Action) {
+                    note = i18n("This control moves the camera or starts an action, so it is not kept for the next time the camera is plugged in.");
+                } else if (keep == Keep::Volatile) {
+                    note = i18n("The camera changes this value by itself, so it is not kept.");
+                } else if (keep == Keep::NoRange) {
+                    note = i18n("The camera gives this control no range, so there is nothing to set or keep.");
                 }
+                m_controlFlags.insert(c.id, c.flags);
                 m_controls.append(QVariantMap{{QStringLiteral("id"), c.id}, {QStringLiteral("name"), c.name}, {QStringLiteral("label"), controlLabel(c.id, c.name)}, {QStringLiteral("kind"), QString::fromLatin1(kinds[c.kind])},
                                               {QStringLiteral("min"), c.minimum}, {QStringLiteral("max"), c.maximum}, {QStringLiteral("step"), c.step},
-                                              {QStringLiteral("default"), c.defaultValue}, {QStringLiteral("value"), c.value}, {QStringLiteral("inactive"), c.inactive},
-                                              {QStringLiteral("readOnly"), c.readOnly}, {QStringLiteral("editable"), c.kind != Control::Other && !c.readOnly}, {QStringLiteral("menu"), menu},
-                                              {QStringLiteral("note"), note}});
+                                              {QStringLiteral("default"), effectiveDefault(c)}, {QStringLiteral("value"), c.value}, {QStringLiteral("inactive"), c.inactive},
+                                              {QStringLiteral("readOnly"), c.readOnly}, {QStringLiteral("editable"), c.kind != Control::Other && !c.readOnly && !c.grabbed},
+                                              {QStringLiteral("kept"), keep == Keep::Setting}, {QStringLiteral("menu"), menu}, {QStringLiteral("note"), note}});
             }
         } else {
             m_modeError = V4l2Camera::explain({false, dev.openError(), QStringLiteral("open")}, info.node.description);
@@ -204,20 +223,34 @@ QVariantList CameraKcm::frameRates(const QString &fourcc, int width, int height)
 void CameraKcm::setMode(const QString &fourcc, int width, int height, double fps)
 {
     const CameraInfo info = currentInfo();
-    V4l2Camera dev(info.node.v4l2Path);
-    m_modeError.clear();
-    if (!dev.isOpen()) {
-        m_modeError = V4l2Camera::explain({false, dev.openError(), QStringLiteral("open")}, info.node.description);
-    } else {
-        const Result r = dev.setMode({fourcc, {width, height}, fps});
-        if (!r.ok) {
-            m_modeError = V4l2Camera::explain(r, info.node.description);
+    QString error;
+    {
+        V4l2Camera dev(info.node.v4l2Path);
+        if (!dev.isOpen()) {
+            error = V4l2Camera::explain({false, dev.openError(), QStringLiteral("open")}, info.node.description);
         } else {
-            m_touched.insert(m_current);
-            setNeedsSave(true);
+            const Result r = dev.setMode({fourcc, {width, height}, fps});
+            if (!r.ok) {
+                error = V4l2Camera::explain(r, info.node.description);
+            } else {
+                m_touched.insert(m_current);
+                m_modeChosen.insert(m_current);
+                m_modeDefault.remove(m_current);
+                setNeedsSave(true);
+            }
         }
     }
     readDetails();
+    showError(error);
+}
+
+void CameraKcm::showError(const QString &error)
+{
+    // readDetails() starts from a clean page; a refusal of the step that called it is said after it, so it stays on the page
+    if (!error.isEmpty()) {
+        m_modeError = error;
+        Q_EMIT detailsChanged();
+    }
 }
 
 QString CameraKcm::setControl(int controlId, double value)
@@ -233,34 +266,65 @@ QString CameraKcm::setControl(int controlId, double value)
     }
     m_touched.insert(m_current);
     setNeedsSave(true);
+    // a saved value that waited for this change (the temperature once automatic white balance is off) is set on the camera now
+    QSet<quint32> wasInactive;
+    for (auto it = m_controlFlags.cbegin(); it != m_controlFlags.cend(); ++it) {
+        if (it.value() & V4L2_CTRL_FLAG_INACTIVE) {
+            wasInactive.insert(it.key());
+        }
+    }
+    for (const QString &line : applyWaiting(dev, loadChoice(info.key), wasInactive)) {
+        qInfo().noquote() << line;
+    }
+    // A governing control changes whether others are in use (automatic white balance and its temperature; the driver may say
+    // so with V4L2_CTRL_FLAG_UPDATE, uvcvideo only through the others' INACTIVE flag): the page follows when another control's
+    // flags changed. A value that only moved (a slider being dragged) does not rebuild the list under the pointer.
+    constexpr quint32 shown = V4L2_CTRL_FLAG_INACTIVE | V4L2_CTRL_FLAG_GRABBED | V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_WRITE_ONLY | V4L2_CTRL_FLAG_VOLATILE;
+    for (const Control &c : dev.controls()) {
+        if (c.id != quint32(controlId) && (c.flags & shown) != (m_controlFlags.value(c.id) & shown)) {
+            readDetails();
+            break;
+        }
+    }
     return {};
 }
 
 void CameraKcm::resetControls()
 {
     const CameraInfo info = currentInfo();
-    V4l2Camera dev(info.node.v4l2Path);
-    if (dev.isOpen()) {
-        QStringList failed;
-        const Result r = dev.resetControls(&failed);
-        if (!r.ok) {
-            m_modeError = V4l2Camera::explain(r, info.node.description) + QLatin1Char(' ') + failed.join(QStringLiteral(", "));
+    QString error;
+    {
+        V4l2Camera dev(info.node.v4l2Path);
+        if (dev.isOpen()) {
+            QStringList failed;
+            const Result r = dev.resetControls(&failed);
+            if (!r.ok) {
+                error = V4l2Camera::explain(r, info.node.description) + QLatin1Char(' ') + failed.join(QStringLiteral(", "));
+            }
+            m_touched.insert(m_current);
+            setNeedsSave(true);
         }
-        m_touched.insert(m_current);
-        setNeedsSave(true);
     }
     readDetails();
+    showError(QString(m_pendingError + QLatin1Char(' ') + error).trimmed());
+    m_pendingError.clear();
 }
 
 void CameraKcm::load()
 {
     m_touched.clear();
+    m_modeChosen.clear();
+    m_modeDefault.clear();
     m_defaultChoice = m_defaultInStore;
     refresh();
-    // what the person changed and did not save goes back to what was saved
+    // what the person changed and did not save goes back to what was saved; a camera nobody set goes to its best mode
     m_savedNotes.clear();
     for (const CameraInfo &c : m_infos) {
-        m_savedNotes << applyChoice(c).messages;
+        const ApplyReport r = applyChoice(c);
+        m_savedNotes << r.messages;
+        for (const QString &line : r.log) {
+            qInfo().noquote() << line;
+        }
     }
     readDetails();
     Q_EMIT defaultCameraChanged();
@@ -287,27 +351,40 @@ void CameraKcm::save()
                 choice.packing = m_packing == QLatin1String("mono") ? QString() : m_packing;
             }
             if (dev.isOpen()) {
-                choice.hasMode = true;
-                choice.mode = dev.currentMode();
-                choice.controls.clear();
-                choice.controlNames.clear();
-                for (const Control &ctl : dev.controls()) {
-                    if (ctl.kind != Control::Button && ctl.kind != Control::Other && !ctl.readOnly && ctl.value != ctl.defaultValue) {
-                        choice.controls.insert(ctl.id, ctl.value);
-                        choice.controlNames.insert(ctl.id, ctl.name);
-                    }
+                // only what is a setting, and the mode only when the person chose one here (ORDER 678 and 682)
+                choice = choiceFromDevice(dev, choice, m_modeChosen.contains(name));
+                if (m_modeDefault.contains(name)) {
+                    choice.hasMode = false;
                 }
             }
             saveChoice(c.key, choice);
         }
     }
     m_touched.clear();
+    m_modeChosen.clear();
+    m_modeDefault.clear();
     setNeedsSave(false);
     refresh();
 }
 
 void CameraKcm::defaults()
 {
+    // the camera as it starts when nobody set it: its controls at their defaults and its best mode, the saved mode forgotten on Apply
+    const CameraInfo info = currentInfo();
+    {
+        V4l2Camera dev(info.node.v4l2Path);
+        if (dev.isOpen()) {
+            const BestModeChoice best = bestModeFor(dev);
+            if (best.mode) {
+                const Result r = dev.setMode(*best.mode);
+                if (!r.ok) {
+                    m_pendingError = V4l2Camera::explain(r, info.node.description);
+                }
+            }
+            m_modeDefault.insert(m_current);
+            m_modeChosen.remove(m_current);
+        }
+    }
     resetControls();
 }
 

@@ -84,6 +84,8 @@ NodeList Sparky::Camera::listCameraNodes()
         }
         CameraNode n;
         n.id = o.value(QStringLiteral("id")).toInt();
+        // object.serial (PipeWire's PW_KEY_OBJECT_SERIAL) is never given again; a freed id is
+        n.serial = props.value(QStringLiteral("object.serial")).toVariant().toLongLong();
         n.name = props.value(QStringLiteral("node.name")).toString();
         n.description = props.value(QStringLiteral("node.description")).toString();
         if (n.description.isEmpty()) {

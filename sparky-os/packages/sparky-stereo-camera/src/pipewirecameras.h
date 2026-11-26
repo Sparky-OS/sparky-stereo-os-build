@@ -13,6 +13,7 @@ namespace Sparky::Camera
 {
 struct CameraNode {
     int id = 0;
+    qint64 serial = 0; // object.serial: unique for the session's life, so a camera plugged in again is a new node even with a reused id
     QString name; // node.name: the stable name WirePlumber stores
     QString description;
     QString v4l2Path; // /dev/videoN when the node is a V4L2 device
