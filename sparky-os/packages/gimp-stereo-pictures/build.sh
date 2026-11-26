@@ -1,12 +1,12 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/26
 # Copyright 2026 under the GNU GPL3 License
-# Sparky Stereo OS: builds gimp-stereo-pictures 0.2.0+lc1 (queue row 137 with row 148, the stereo GIMP's milestone 1):
+# Sparky Stereo OS: builds gimp-stereo-pictures 0.2.0-1+lc1 (queue row 137 with row 148, the stereo GIMP's milestone 1):
 # make-source.sh, then release/build-from-lc-dsc.sh with the Lean Code link and start gate. The gate's archive list is
 # this folder's archive-sources.json (Debian testing, deb-multimedia, the edition's tree) unless SPARKY_LC_ARCHIVE_DIR
 # names one.
 #   build.sh WORK PHOTOGIMP_REPO REPO [IMAGE]
-#   WORK            an empty folder: source/ (the .dsc and its tarball) and out/ (packages, buildinfo, changes, record)
+#   WORK            an empty folder: source/ (the .dsc and its tarballs) and out/ (packages, buildinfo, changes, record)
 #   PHOTOGIMP_REPO  a git repository holding the commit of source.pin (a clone of Sparky-OS/PhotoGIMP)
 #   REPO            the edition's repository, mounted read-only
 #   IMAGE           the build image (default sparky-lc-migration:20261020)
@@ -27,4 +27,4 @@ if [ -z "${SPARKY_LC_ARCHIVE_DIR:-}" ]; then
 fi
 export SPARKY_LC_ARCHIVE_DIR
 bash "$HERE/make-source.sh" "$PG" "$WORK/source" "$IMG"
-bash "$TOP/release/build-from-lc-dsc.sh" "$WORK/source/gimp-stereo-pictures_0.2.0+lc1.dsc" amd64 "$IMG" "$REPO" "$WORK/out"
+bash "$TOP/release/build-from-lc-dsc.sh" "$WORK/source/gimp-stereo-pictures_0.2.0-1+lc1.dsc" amd64 "$IMG" "$REPO" "$WORK/out"
