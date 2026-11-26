@@ -7,10 +7,16 @@
 # nothing, and leaves no mark, so it signs at the first start after Secure Boot is turned on. It starts after the
 # hardware layer has settled NVIDIA's driver on a machine without the card (sparky-stereo-hardware-nvidia-card.service,
 # ordering only), so a module that is about to leave is not built again to be signed.
+# 3.4.4-1+sparky6: no default dependencies. A target waits for every unit it wants that has them, and this unit waits
+# for the NVIDIA step, so with +sparky5 the first start reached multi-user.target only when that step had ended
+# (measured in a guest under a real systemd). What the default dependencies gave is written out below.
 [Unit]
 Description=Sign the DKMS modules built without a signature, once, at the first boot
 Documentation=man:dkms(8)
-After=sparky-stereo-hardware-nvidia-card.service
+DefaultDependencies=no
+After=basic.target sparky-stereo-hardware-nvidia-card.service
+Conflicts=shutdown.target
+Before=shutdown.target
 ConditionPathExists=!/var/lib/dkms/dkms-sign-unsigned.first-boot
 ConditionKernelCommandLine=!boot=live
 ConditionVirtualization=!container

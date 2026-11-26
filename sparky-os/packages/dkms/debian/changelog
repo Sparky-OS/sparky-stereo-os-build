@@ -1,3 +1,16 @@
+dkms (3.4.4-1+sparky6) unstable; urgency=medium
+
+  * dkms-sign-unsigned.service no longer holds the start. +sparky5 (staged,
+    never published) ordered it after the hardware layer's NVIDIA step;
+    multi-user.target wants this unit and waits for every unit it wants
+    that has default dependencies, so the first start reached the target
+    only when NVIDIA's driver had been removed (measured in a guest under
+    a real systemd: 20 minutes under emulation). The unit has
+    DefaultDependencies=no now, with After=basic.target and the shutdown
+    ordering written out; the order after the NVIDIA step stays.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 02:00:00 +0000
+
 dkms (3.4.4-1+sparky5) unstable; urgency=medium
 
   * dkms-sign-unsigned builds nothing where no module needs a signature

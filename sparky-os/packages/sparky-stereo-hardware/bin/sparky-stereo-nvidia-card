@@ -147,6 +147,8 @@ remove() {
 }
 metered() {
 	local value
+	# at an early start NetworkManager has not said yet what the connection is: wait for it, a minute at most
+	if command -v nm-online >/dev/null 2>&1; then nm-online -q -t 60 >/dev/null 2>&1 || true; fi
 	value=$(busctl get-property org.freedesktop.NetworkManager /org/freedesktop/NetworkManager org.freedesktop.NetworkManager Metered 2>/dev/null) || return 1
 	[[ $value == 'u 1' || $value == 'u 3' ]]
 }

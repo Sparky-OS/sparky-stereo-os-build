@@ -11,7 +11,7 @@
 Description=NVIDIA's driver only where an NVIDIA graphics card is
 Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
 DefaultDependencies=no
-After=sysinit.target local-fs.target
+After=sysinit.target local-fs.target basic.target
 Conflicts=shutdown.target
 Before=shutdown.target dkms-sign-unsigned.service
 ConditionKernelCommandLine=!boot=live

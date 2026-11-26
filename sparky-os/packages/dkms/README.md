@@ -34,7 +34,7 @@ Sources:
 - The upstream tree is https://github.com/dkms-project/dkms, tag v3.4.4, commit cb2790f3d900598d5e55865540f45a049a696e66, tree acfb0ae90df39ecdf90b083183c1f3bc489da3b8, the same tree as the GitHub release tarball that Debian's pristine-tar records. `build.sh` checks both.
 
 Versions and pins:
-- `3.4.4-1+sparky5`, the `+sparkyN` of a package the edition carries newer than Debian (as openrgb and protontricks). Lean Code adds `+lc1`.
+- `3.4.4-1+sparky6`, the `+sparkyN` of a package the edition carries newer than Debian (as openrgb and protontricks). Lean Code adds `+lc1`.
 - The edition's repository is at 1001 (`sparky-stereo`), so this build is the candidate over Debian's 3.2.2-1 (500) and over NVIDIA's 3.4.4-1 in its CUDA repository (100, `91sparky-stereo-cuda`); `sparky-stereo-only-ours` blocks Debian's builds once it is regenerated from a repository that has these packages.
 - A person who wants another build writes their own pins, as `sparky-stereo-apt`'s README shows.
 
