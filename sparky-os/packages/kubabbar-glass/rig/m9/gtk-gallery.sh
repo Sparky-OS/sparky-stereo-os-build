@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-only
-# gtk-gallery.sh TOOLKIT THEME OUT: one GTK gallery (gtk2, gtk3 or gtk4) in a fresh X server (Xvfb, no window manager),
+# gtk-gallery.sh TOOLKIT THEME|session OUT: one GTK gallery (gtk2, gtk3 or gtk4) in a fresh X server (Xvfb, no window manager),
 # the theme named the way each toolkit reads it (GTK 2: a gtkrc naming it, as KDE's GTK settings write ~/.gtkrc-2.0;
 # GTK 3 and 4: settings.ini, as sparky-stereo-gtk-sync writes it); three captures of the screen with real input:
 # OUT-window.png (the window), OUT-menu.png (the File menu opened by a click), OUT-tip.png (the OK button's tool tip
@@ -8,14 +8,24 @@
 set -euo pipefail
 kit=$1 theme=$2 out=$3
 M9=$(cd "$(dirname "$0")" && pwd)
-home=$(mktemp -d)
-trap 'kill "${app:-}" "${xvfb:-}" 2>/dev/null || true; rm -rf "$home"' EXIT
-export HOME=$home XDG_CONFIG_HOME=$home/.config XDG_RUNTIME_DIR=$home/run NO_AT_BRIDGE=1 GDK_BACKEND=x11
-mkdir -p "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME/gtk-3.0" "$XDG_CONFIG_HOME/gtk-4.0"
-chmod 700 "$XDG_RUNTIME_DIR"
-printf '[Settings]\ngtk-theme-name=%s\ngtk-overlay-scrolling=%s\n' "$theme" "${OVERLAY:-false}" | tee "$XDG_CONFIG_HOME/gtk-3.0/settings.ini" > "$XDG_CONFIG_HOME/gtk-4.0/settings.ini"
-printf 'gtk-theme-name="%s"\n' "$theme" > "$home/.gtkrc-2.0"
-export GTK2_RC_FILES=$home/.gtkrc-2.0
+if [ "$theme" = session ]; then
+	# the person's own settings, as sparky-stereo-gtk-sync wrote them; GTK 2 takes the same name (in a Plasma session
+	# from XSETTINGS or ~/.gtkrc-2.0), here from a gtkrc of the case naming it
+	theme=$(sed -n 's/^gtk-theme-name=//p' "${XDG_CONFIG_HOME:?}/gtk-3.0/settings.ini")
+	home=$(mktemp -d)
+	trap 'kill "${app:-}" "${xvfb:-}" 2>/dev/null || true; rm -rf "$home"' EXIT
+else
+	home=$(mktemp -d)
+	trap 'kill "${app:-}" "${xvfb:-}" 2>/dev/null || true; rm -rf "$home"' EXIT
+	export HOME=$home XDG_CONFIG_HOME=$home/.config XDG_RUNTIME_DIR=$home/run
+	mkdir -p "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME/gtk-3.0" "$XDG_CONFIG_HOME/gtk-4.0"
+	chmod 700 "$XDG_RUNTIME_DIR"
+	printf '[Settings]\ngtk-theme-name=%s\ngtk-overlay-scrolling=%s\n' "$theme" "${OVERLAY:-false}" | tee "$XDG_CONFIG_HOME/gtk-3.0/settings.ini" > "$XDG_CONFIG_HOME/gtk-4.0/settings.ini"
+fi
+export NO_AT_BRIDGE=1 GDK_BACKEND=x11
+printf 'gtk-theme-name="%s"\n' "$theme" > "$home/gtkrc-2.0"
+export GTK2_RC_FILES=$home/gtkrc-2.0
+echo "$theme" > "$out.theme"
 display=:$(( 50 + RANDOM % 400 ))
 Xvfb "$display" -screen 0 1100x760x24 -nolisten tcp > "$out-xvfb.log" 2>&1 &
 xvfb=$!

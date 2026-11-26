@@ -31,7 +31,40 @@ def find(name, rect):
     return hits
 
 
+def found(picture, rect, face_picture):
+    """The picture in the rectangle, composited over the scroll box's face (the interior of face_picture): at a whole
+    pixel, or at half a pixel across, along or both, since GTK 3 and 4 centre a background picture at half a pixel when the
+    box's length is odd (each row or column then the mean of two neighbouring ones)."""
+    pic = np.asarray(Image.open(f"{assets}/{picture}.png").convert("RGBA")).astype(float)
+    fp = np.asarray(Image.open(f"{assets}/{face_picture}.png").convert("RGB")).astype(float)
+    face = fp[fp.shape[0] // 2, fp.shape[1] // 2]
+    a = pic[..., 3:4] / 255
+    comp = pic[..., :3] * a + face * (1 - a)
+    padded = np.pad(comp, ((1, 1), (1, 1), (0, 0)), mode="constant")
+    padded[0, :], padded[-1, :], padded[:, 0], padded[:, -1] = face, face, face, face
+    both = (padded[:-1, :-1] + padded[1:, :-1] + padded[:-1, 1:] + padded[1:, 1:]) / 4
+    variants = [comp, (padded[:-1, 1:-1] + padded[1:, 1:-1]) / 2, (padded[1:-1, :-1] + padded[1:-1, 1:]) / 2, both]
+    x, y, w, h = rect
+    for i, v in enumerate(variants):
+        # a half-pixel picture is GTK's resampling of rows that are themselves partly covered: 16 levels (measured 13
+        # on GTK 3, against 89 at every other place); a whole-pixel one within rounding
+        limit = 6 if i == 0 else 16
+        vh, vw = v.shape[:2]
+        for yy in range(y - 2, y + h - vh + 3):
+            for xx in range(x - 2, x + w - vw + 3):
+                win = cap[yy:yy + vh, xx:xx + vw]
+                if win.shape[:2] == (vh, vw) and np.abs(win - v).max() <= limit:
+                    return True
+    return False
+
+
 ok = True
+# the theme is drawn: the scroll box's grip, the theme's own picture, is in each bar (GTK 4's bars have no arrows, so
+# without this a bar that the theme never reached would pass as "none")
+for bar, grip in (("v", "grip-normal"), ("h", "grip-h-normal")):
+    has = found(grip, rep["bars"][bar], "scrollbarslider-normal")
+    ok &= has
+    print(f"{bar} bar: the scroll box's grip {'found' if has else 'NOT found'}")
 for bar, (back, fwd, axis) in {"v": ("up", "down", 1), "h": ("left", "right", 0)}.items():
     rect = rep["bars"][bar]
     length = rect[3] if bar == "v" else rect[2]
