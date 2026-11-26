@@ -45,6 +45,9 @@ EXCLUDE = [
     ('/etc/apt/*', 'APT configuration: its own grammar, no qualified adapter yet'),
     ('/usr/lib/python3*/test/*', 'Python test data (some read their own comments)'),
     ('/usr/lib/python3/dist-packages/*/tests/*', 'test suites read their own text'),
+    # GIMP's Goat Exercises open their own installed file and show it, comments included, in their dialog (the C
+    # exercise reads goat-exercise-c.c beside its binary, the Python one opens os.path.realpath(__file__)).
+    ('/usr/lib/*/gimp/*/extensions/*/goat-exercise-*', "GIMP's Goat Exercises show their own source text in their dialog"),
 ]
 
 SYSTEMD_UNIT = ('.service', '.socket', '.timer', '.target', '.path', '.mount', '.automount', '.slice',

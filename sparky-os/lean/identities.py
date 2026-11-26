@@ -74,6 +74,11 @@ RELEASED = {
     # render is unchanged, and so is a JavaScript file's check.
     '0.1.32': {'ae496e74be2b97cc82e68fb1a1349dc4d0f4361f4396fe8f716d5b5fc017044f':
                'lean 0.1.32 (collapse-blank,pointer,c-drop-lines) code ae496e74be2b97cc'},
+    # Row 137 with row 148: GIMP's Goat Exercises show their own installed source, so it stays authored (consumers.py);
+    # a Python script that opens its own path through os.path.realpath, os.path.abspath or pathlib is left, as one
+    # that opens __file__ was.
+    '0.1.33': {'30c77e49dc5a2cf14c0b1781643d5b6c897af7c5c2ba3833f0d383006767a8e1':
+               'lean 0.1.33 (collapse-blank,pointer,c-drop-lines) code 30c77e49dc5a2cf1'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.
