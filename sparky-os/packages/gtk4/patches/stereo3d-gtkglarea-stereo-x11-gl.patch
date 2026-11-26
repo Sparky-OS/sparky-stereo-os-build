@@ -4,12 +4,18 @@ Description: GtkGLArea: the views of an X11 stereo area drawn on their window wi
  through main memory for every frame. The child window now has an EGL or GLX
  surface of the display's own configuration, and the area's context draws the
  two views on it with a blit and swaps it: nothing leaves the graphics card.
- Measured for the same work (two 1920x1080 views a frame, row 137): about 58
- frames a second at 2.8 ms of processor a frame against 18 at 19 ms on zink,
- 60 at 1.7 against 26 to 33 at 16 on NVIDIA's own libraries; on a software
- renderer both ways are slow (12 to 15 frames a second). The OpenGL way is
- the default; the readback stays for a display that gives the window no
- OpenGL surface, said in the log, and behind GDK_X11_STEREO_READBACK=1.
+ Measured for the same work (two 1920x1080 views a frame, row 137, a loaded
+ machine): on zink 60 frames a second for 2.2 ms of processor a frame against
+ 42 for 17.9 ms, on NVIDIA's own libraries 60 for 0.9 ms against 56 for
+ 14.5 ms. A software renderer copies through memory either way, and there the
+ readback is the cheaper copy (llvmpipe: 64 ms of processor a frame against
+ 88, 37 frames a second both ways). So the way follows the renderer: OpenGL
+ on a graphics card, the readback on llvmpipe and softpipe, and for a display
+ that gives the window no OpenGL surface (said in the log).
+ GDK_X11_STEREO_READBACK=1 takes the readback and =0 OpenGL on any renderer.
+ (This patch brings the OpenGL way with the readback behind the variable; the
+ choice by the renderer is in stereo3d-gtkglarea-format-color-state, the patch
+ after it, which holds the later corrections of the area.)
  The first frames are repeated until the window manager has taken the
  declaration (its _KDE_NET_WM_STEREO_DEPTH_LIMITS on the child, version 11 of
  _KDE_NET_WM_STEREO_CONTENT_SUPPORTED) instead of for a fixed second.
