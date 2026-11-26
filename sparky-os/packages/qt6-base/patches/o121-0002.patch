@@ -1,0 +1,486 @@
+From e346cbfd9448f41f8deaa3c234e521c521ae29dd Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 13:02:03 -0300
+Subject: [PATCH 2/3] Widgets: draw rectangles a widget declares inside it at
+ their own depth
+
+A widget that paints several surfaces in one widget, such as a document
+viewer's desk and the pages on it, can now say where each lies: the dynamic
+property _q_stereo_depth_rects, a list of maps with a "rect" (in the
+widget's coordinates) and a "depth" (a fraction of one step of depth inside
+a window, from -1 behind what the rectangle lies on to 1 in front of it).
+A program never gives pixels: the step is the person's element limit,
+which the platform hears from the compositor (_q_stereo_element_limit,
+pixels of a view 1920 wide), taken on the window's screen as that share of
+the screen's width, in device pixels, never by the size of the window or
+of an element.
+
+Declaring makes the window follow its depth with the compositor
+(_q_stereo_follow_depth through the native interface), so it is painted
+once per eye while the compositor says it is awake (_q_stereo_awake) and
+one step is at least half a device pixel, whatever style draws it; a style
+that shows depth (_q_stereo_depth) still does as before.
+
+While a window is painted per eye, such a widget is drawn a rectangle at a
+time, each moved by its own eye shift in whole pixels by the rule the
+repaint manager moves widgets by: nearer than what it lies on, drawn whole;
+deeper, seen through its own rectangle, cut to it. The strip of what lies
+beneath that a nearer rectangle's shift uncovers, which the widget never
+drew, continues what lies beneath from the column just outside the
+rectangle, so the rectangle's edge keeps its own depth in both eyes. Child
+widgets lie on the widget's own plane.
+
+Without the property, without the compositor's word, with the element
+limit at 0 or on a window lying behind the active one, the window is
+painted once, as before (tst_qwidgetrepaintmanager paintRectsAtTheirDepth).
+
+Assisted-by: Claude Opus 5.5
+---
+ src/widgets/kernel/qwidget.cpp                | 138 +++++++++++++++++-
+ src/widgets/kernel/qwidget_p.h                |   3 +
+ src/widgets/kernel/qwidgetrepaintmanager.cpp  |  71 ++++++++-
+ src/widgets/kernel/qwidgetrepaintmanager_p.h  |   5 +
+ src/widgets/kernel/qwidgetwindow.cpp          |   9 ++
+ .../tst_qwidgetrepaintmanager.cpp             | 111 ++++++++++++++
+ 6 files changed, 329 insertions(+), 8 deletions(-)
+
+diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
+index 2cbd3c81..8bd55ea9 100644
+--- a/src/widgets/kernel/qwidget.cpp
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -6009,12 +6009,146 @@ void QWidgetPrivate::paintSiblingsRecursive(QPaintDevice *pdev, const QObjectLis
+                     wRegion &= wd->extra->mask;
+             }
+         }
+-        wd->drawWidget(pdev, wRegion, offset + widgetPos + shift, flags, sharedPainter, repaintManager);
++        // A widget that declares rectangles inside it at their own depth is drawn a rectangle at a time.
++        if (!eye || !wd->paintStereoDepthRects(pdev, wRegion, offset + widgetPos + shift, flags, sharedPainter, repaintManager))
++            wd->drawWidget(pdev, wRegion, offset + widgetPos + shift, flags, sharedPainter, repaintManager);
+         if (fractional)
+             qt_widget_set_stereo_subpixel(repaintManager, parentSubPixel, parentSlack);
+     }
+ }
+ 
++/*
++    A widget declares rectangles inside it at their own depth, as the dynamic property
++    _q_stereo_depth_rects: a list of maps, each with a "rect" (QRect or QRectF, in the widget's
++    coordinates) and a "depth" (a fraction of one step of depth inside a window, from -1, one step
++    behind what the rectangle lies on, to 1, one step in front of it). The step is the person's
++    element limit (qt_widget_stereo_element_step()); a program never gives pixels. A rectangle lies
++    on the last rectangle before it in the list that holds it whole, else on the widget, whose own
++    plane is 0; what the widget paints outside every rectangle lies on that plane, and so do its
++    child widgets, which keep their own depth from there. A document viewer, for example, declares
++    its desk (the whole view) at -1 and each page at 0: the desk sinks one step and the paper lies
++    at the window's plane, its text and pictures with it, its shadow on the desk.
++
++    The declaring widget follows its window's depth with the compositor (the platform's
++    _q_stereo_awake and _q_stereo_element_limit on the window), so the window is painted once per
++    eye while the compositor shows depth inside it, whatever style draws it.
++*/
++void QWidgetPrivate::stereoDepthRectsChanged()
++{
++    Q_Q(QWidget);
++    QWidget *tlw = q->window();
++    // the rectangles move only while the window shows depth: elsewhere a program that declares
++    // them as it scrolls keeps its scrolling's partial repaints
++    if (const QWindow *window = tlw->windowHandle(); window && window->property("_q_stereo_awake").toBool())
++        q->update();
++    if (!q->property("_q_stereo_depth_rects").isValid())
++        return;
++    if (!tlw->property("_q_stereo_follow_depth").toBool())
++        tlw->setProperty("_q_stereo_follow_depth", true);
++    qt_widget_follow_stereo_depth(tlw);
++}
++
++/*
++    While a window is painted once per eye, draws a widget that declares rectangles at their own
++    depth (stereoDepthRectsChanged()) a rectangle at a time, each moved by its own eye shift on top
++    of the widget's, in whole pixels, by the rule paintSiblingsRecursive() moves widgets by: one
++    nearer than what it lies on is drawn whole, over its surroundings; a deeper one is seen through
++    its own rectangle, cut to it. What lies beneath a nearer rectangle was drawn with its own shift,
++    so where the two shifts differ a strip of it shows beside the rectangle that the widget never
++    drew (it painted the rectangle there): the strip continues what lies beneath from the column
++    just outside the rectangle, so the rectangle's edge stays at its own depth in both eyes. The
++    widget's children follow, on the widget's own plane. Returns false, having drawn nothing, when
++    the widget declares nothing that moves; the caller then draws it as before.
++*/
++bool QWidgetPrivate::paintStereoDepthRects(QPaintDevice *pdev, const QRegion &rgn, const QPoint &offset, DrawWidgetFlags flags,
++                                           QPainter *sharedPainter, QWidgetRepaintManager *repaintManager)
++{
++    Q_Q(QWidget);
++    const int eye = qt_widget_stereo_eye();
++    if (!eye || sharedPainter || rgn.isEmpty())
++        return false;
++#if QT_CONFIG(graphicseffect)
++    if (graphicsEffect && graphicsEffect->isEnabled())
++        return false;
++#endif
++    const QVariantList declared = q->property("_q_stereo_depth_rects").toList();
++    if (declared.isEmpty())
++        return false;
++    const qreal dpr = pdev->devicePixelRatio() > 0 ? pdev->devicePixelRatio() : 1;
++    const qreal step = qt_widget_stereo_element_step(q->window(), dpr);
++    if (!(step > 0))
++        return false;
++
++    auto eyeShift = [eye](int p) {
++        return eye == 1 ? p - p / 2 : -(p / 2);
++    };
++    const int own = stereoParallax(q);
++    struct Layer {
++        QRect rect;
++        int parallax = 0; // device pixels, relative to the widget's own plane
++        int shift = 0; // logical pixels, relative to where the widget is drawn
++        qsizetype under = 0; // the layer it lies on
++    };
++    QVarLengthArray<Layer, 8> layers;
++    layers.append(Layer{q->rect(), 0, 0, 0});
++    bool moves = false;
++    for (const QVariant &entry : declared) {
++        const QVariantMap map = entry.toMap();
++        const QRect rect = map.value(QStringLiteral("rect")).toRectF().toAlignedRect() & q->rect();
++        if (rect.isEmpty())
++            continue;
++        Layer layer;
++        layer.rect = rect;
++        layer.parallax = qRound(std::clamp(map.value(QStringLiteral("depth")).toReal(), qreal(-1), qreal(1)) * step);
++        layer.shift = qRound((eyeShift(own + layer.parallax) - eyeShift(own)) / dpr);
++        for (qsizetype i = layers.size() - 1; i > 0; --i) {
++            if (layers.at(i).rect.contains(rect)) {
++                layer.under = i;
++                break;
++            }
++        }
++        moves = moves || layer.shift != 0;
++        layers.append(layer);
++    }
++    if (!moves)
++        return false;
++
++    const DrawWidgetFlags ownFlags = flags & ~DrawRecursive;
++    // what the widget paints of itself in the output region \a out (relative to where the widget
++    // is drawn), moved by \a shift
++    auto paintMoved = [&](const QRegion &out, int shift) {
++        const QRegion local = out.translated(-shift, 0);
++        if (!local.isEmpty())
++            drawWidget(pdev, local, offset + QPoint(shift, 0), ownFlags, sharedPainter, repaintManager);
++    };
++    // the widget's own plane, beneath every rectangle
++    paintMoved(rgn, 0);
++    for (qsizetype j = 1; j < layers.size(); ++j) {
++        const Layer &layer = layers.at(j);
++        const Layer &under = layers.at(layer.under);
++        const QRegion underShown = layer.under ? (rgn & under.rect) : rgn;
++        if (layer.parallax >= under.parallax) {
++            // nearer: the strip of what lies beneath that its shift uncovers, then the rectangle whole
++            const int delta = under.shift - layer.shift;
++            const int source = delta < 0 ? layer.rect.left() - 1 : layer.rect.right() + 1;
++            for (int k = 0; k < qAbs(delta); ++k) {
++                const int column = delta < 0 ? layer.rect.left() + under.shift + k : layer.rect.right() + 1 + layer.shift + k;
++                const QRegion out = QRegion(column, layer.rect.top(), 1, layer.rect.height()) & underShown;
++                paintMoved(out, column - source);
++            }
++            paintMoved(QRegion(layer.rect.translated(layer.shift, 0)) & rgn, layer.shift);
++        } else {
++            // deeper: seen through its own rectangle, cut to it
++            paintMoved(QRegion(layer.rect) & rgn & QRegion(layer.rect.translated(layer.shift, 0)), layer.shift);
++        }
++    }
++
++    if ((flags & DrawRecursive) && !children.isEmpty())
++        paintSiblingsRecursive(pdev, children, children.size() - 1, rgn, offset, flags & ~DrawAsRoot,
++                               sharedPainter, repaintManager);
++    return true;
++}
++
+ /*
+     As stereoParallax(), with the parts of a pixel the style gave.
+ */
+@@ -9675,6 +9809,8 @@ bool QWidget::event(QEvent *event)
+         }
+         if (windowHandle() && !qstrncmp(propName, "_q_platform_", 12))
+             windowHandle()->setProperty(propName, property(propName));
++        if (propName == "_q_stereo_depth_rects")
++            d->stereoDepthRectsChanged();
+         Q_FALLTHROUGH();
+     }
+     default:
+diff --git a/src/widgets/kernel/qwidget_p.h b/src/widgets/kernel/qwidget_p.h
+index 08795cd9..8aa6f5bc 100644
+--- a/src/widgets/kernel/qwidget_p.h
++++ b/src/widgets/kernel/qwidget_p.h
+@@ -312,6 +312,9 @@ public:
+ 
+ 
+     static int stereoParallax(const QWidget *widget);
++    void stereoDepthRectsChanged();
++    bool paintStereoDepthRects(QPaintDevice *pdev, const QRegion &rgn, const QPoint &offset, DrawWidgetFlags flags,
++                               QPainter *sharedPainter, QWidgetRepaintManager *repaintManager);
+     static qreal stereoParallaxF(const QWidget *widget);
+     void paintSiblingsRecursive(QPaintDevice *pdev, const QObjectList& children, int index,
+                                 const QRegion &rgn, const QPoint &offset, DrawWidgetFlags flags,
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+index 5c84af83..487d9ce7 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -25,6 +25,8 @@
+ #include <QtGui/private/qwindow_p.h>
+ 
+ #include <qpa/qplatformbackingstore.h>
++#include <qpa/qplatformnativeinterface.h>
++#include <QtGui/qscreen.h>
+ 
+ #include <chrono>
+ 
+@@ -557,18 +559,70 @@ void qt_widget_set_stereo_subpixel(QWidgetRepaintManager *manager, qreal subPixe
+ }
+ 
+ /*
+-    Whether the window's style draws its elements in depth now: the style sets the window's
++    One step of depth inside a window, in the window's device pixels: the person's element limit,
++    which the platform hears from the compositor for a window that follows its depth
++    (_q_stereo_element_limit, pixels of a view 1920 wide, the unit of the desktop's depth settings),
++    taken on this screen as that share of the screen's width, as the stereo layer gives a Qt Quick
++    window its limits. It never follows the size of the window or of an element. 0 while the
++    platform has said no limit, or when the person's limit is 0.
++*/
++qreal qt_widget_stereo_element_step(const QWidget *tlw, qreal devicePixelRatio)
++{
++    const QWindow *window = tlw ? tlw->windowHandle() : nullptr;
++    const QScreen *screen = window ? window->screen() : nullptr;
++    if (!screen)
++        return 0;
++    const qreal limit = window->property("_q_stereo_element_limit").toReal();
++    if (!(limit > 0))
++        return 0;
++    return limit * screen->geometry().width() * devicePixelRatio / 1920;
++}
++
++/*
++    A widget inside \a tlw declares rectangles at their own depth (_q_stereo_depth_rects): the
++    window follows its depth with the compositor, through the platform, on every platform window it
++    gets. The top level widget keeps the wish, so a window made after the declaration follows too.
++*/
++void qt_widget_follow_stereo_depth(QWidget *tlw)
++{
++    QWindow *window = tlw ? tlw->windowHandle() : nullptr;
++    if (!window || !window->handle())
++        return;
++    if (!window->property("_q_stereo_follow_depth").toBool())
++        window->setProperty("_q_stereo_follow_depth", true);
++    QPlatformNativeInterface *native = QGuiApplication::platformNativeInterface();
++    const QString name = QStringLiteral("_q_stereo_follow_depth");
++    if (native && !native->windowProperty(window->handle(), name).toBool())
++        native->setWindowProperty(window->handle(), name, true);
++}
++
++/*
++    Whether elements inside the window that declare their own depth may be shown in depth now: the
++    platform follows the window's depth for them and says the window is awake (_q_stereo_awake),
++    and one step of depth is at least half a device pixel.
++*/
++static bool declaredDepthShown(QWidget *tlw)
++{
++    const QWindow *window = tlw->windowHandle();
++    return window && window->property("_q_stereo_follow_depth").toBool() && window->property("_q_stereo_awake").toBool()
++            && qt_widget_stereo_element_step(tlw, window->devicePixelRatio()) >= 0.5;
++}
++
++/*
++    Whether the window's elements are shown in depth now: the style sets the window's
+     _q_stereo_depth while the compositor shows depth inside the window (it is on a stereo output
+-    and awake). Such a window is painted once per eye, each widget moved by its own eye shift
+-    (QWidgetPrivate::paintSiblingsRecursive()), into a backing store twice as wide, the left eye
+-    first; the platform hands the pair over as the desktop's own depth (_q_stereo_pair).
+-    Render-to-texture widgets are composited per window, and a frame the client draws around the
+-    window would be drawn into one half only, so a window that has either is painted once.
++    and awake), or elements inside the window declare their own depth and the platform says the
++    window is awake (declaredDepthShown()). Such a window is painted once per eye, each widget moved
++    by its own eye shift (QWidgetPrivate::paintSiblingsRecursive()), into a backing store twice as
++    wide, the left eye first; the platform hands the pair over as the desktop's own depth
++    (_q_stereo_pair). Render-to-texture widgets are composited per window, and a frame the client
++    draws around the window would be drawn into one half only, so a window that has either is
++    painted once.
+ */
+ static bool paintsPerEye(QWidget *tlw)
+ {
+     const QWindow *window = tlw->windowHandle();
+-    if (!window || !window->property("_q_stereo_depth").toBool())
++    if (!window || !(window->property("_q_stereo_depth").toBool() || declaredDepthShown(tlw)))
+         return false;
+     const bool hasFrame = !window->frameMargins().isNull();
+     if (hasFrame && !window->property("_q_stereo_csd_pair_supported").toBool())
+@@ -786,6 +840,9 @@ void QWidgetRepaintManager::paintAndFlush()
+     bool repaintAllWidgets = false;
+ 
+     const QRect tlwRect = tlw->data->crect;
++    // a window made after one of its widgets declared depth of its own follows its depth too
++    if (tlw->property("_q_stereo_follow_depth").toBool())
++        qt_widget_follow_stereo_depth(tlw);
+     const bool perEye = paintsPerEye(tlw);
+     const QSize storeSize = perEye ? QSize(2 * tlwRect.width(), tlwRect.height()) : tlwRect.size();
+     if (!updatesDisabled && store->size() != storeSize) {
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager_p.h b/src/widgets/kernel/qwidgetrepaintmanager_p.h
+index e6cbfff0..aa868c2e 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager_p.h
++++ b/src/widgets/kernel/qwidgetrepaintmanager_p.h
+@@ -124,6 +124,11 @@ private:
+ // The eye a window drawn once per eye is being painted for while it is: 1 the left eye, 2 the
+ // right eye, else 0.
+ int qt_widget_stereo_eye();
++// One step of depth inside the window, in device pixels at devicePixelRatio: the person's element
++// limit for the window's screen; 0 when there is none.
++qreal qt_widget_stereo_element_step(const QWidget *tlw, qreal devicePixelRatio);
++// The window follows its depth for the elements inside it that declare their own.
++void qt_widget_follow_stereo_depth(QWidget *tlw);
+ 
+ // GPU painting (prototype): whether the window being painted once per eye moves its widgets by
+ // parts of a pixel, the part the widget being painted is moved by (device pixels), and the side
+diff --git a/src/widgets/kernel/qwidgetwindow.cpp b/src/widgets/kernel/qwidgetwindow.cpp
+index 4d56b26c..f4123d89 100644
+--- a/src/widgets/kernel/qwidgetwindow.cpp
++++ b/src/widgets/kernel/qwidgetwindow.cpp
+@@ -389,6 +389,15 @@ bool QWidgetWindow::event(QEvent *event)
+         QWidgetPrivate::get(m_widget)->updateContentsRect();
+         break;
+ 
++    case QEvent::DynamicPropertyChange: {
++        // The platform says whether the elements that declare their own depth may be shown in
++        // depth now, and how far one step goes: the window is painted again, once or per eye.
++        const QByteArray &name = static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName();
++        if (name == "_q_stereo_awake" || name == "_q_stereo_element_limit")
++            m_widget->update();
++        break;
++    }
++
+     default:
+         break;
+     }
+diff --git a/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp b/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
+index ea04f4c2..27e7bfab 100644
+--- a/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
++++ b/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
+@@ -264,6 +264,7 @@ private slots:
+     void evaluateRhi();
+     void rhiRecreateMaintainsWindowProperties();
+     void paintOncePerEye();
++    void paintRectsAtTheirDepth();
+ 
+ #if defined(QT_BUILD_INTERNAL)
+     void scrollWithOverlap();
+@@ -1195,5 +1196,115 @@ void tst_QWidgetRepaintManager::paintOncePerEye()
+     QVERIFY(!framed.windowHandle()->property("_q_stereo_pair").toBool());
+ }
+ 
++namespace {
++// A view that paints a desk (grey, with a red and a blue mark) and a page on it (white, with a green
++// mark), the way a document viewer paints its pages in one widget.
++class PaperView : public QWidget
++{
++public:
++    using QWidget::QWidget;
++    static constexpr QRect page{30, 5, 40, 30};
++
++protected:
++    void paintEvent(QPaintEvent *) override
++    {
++        QPainter p(this);
++        p.fillRect(rect(), Qt::gray);
++        p.fillRect(QRect(10, 0, 1, height()), Qt::red);
++        p.fillRect(QRect(90, 0, 1, height()), Qt::blue);
++        p.fillRect(page, Qt::white);
++        p.fillRect(QRect(50, page.top(), 1, page.height()), Qt::green);
++    }
++};
++} // namespace
++
++/*
++    A widget declares rectangles inside it at their own depth (_q_stereo_depth_rects), in steps of
++    the person's element limit, which the platform gives the window with whether it is awake
++    (_q_stereo_awake, _q_stereo_element_limit). Its window is then painted once per eye whatever
++    style draws it: here the desk one step down, the page at the view's plane with its mark, the
++    strip of desk beside the page that a shift uncovers continued from the desk next to it, a child
++    widget at the view's plane, nothing moved outside the view. With the limit at 0, or the window
++    not awake, it is painted once, exactly as before.
++*/
++void tst_QWidgetRepaintManager::paintRectsAtTheirDepth()
++{
++    if (QGuiApplication::platformName() != QLatin1String("offscreen"))
++        QSKIP("Reads the offscreen backing store");
++
++    QWidget window(nullptr, Qt::FramelessWindowHint);
++    window.setGeometry(QRect(QPoint(100, 100), QSize(120, 60)));
++    QPalette palette = window.palette();
++    palette.setColor(QPalette::Window, Qt::white);
++    window.setPalette(palette);
++    window.setAutoFillBackground(true);
++    auto *view = new PaperView(&window);
++    view->setGeometry(10, 10, 100, 40);
++    filled(view, QRect(80, 30, 10, 5), Qt::yellow);
++    window.show();
++    QVERIFY(QTest::qWaitForWindowExposed(&window));
++    QPlatformBackingStore *store = window.backingStore()->handle();
++    if (store->toImage().devicePixelRatio() != 1)
++        QSKIP("Measures in whole device pixels");
++    const QImage flat = store->toImage().copy(0, 0, 120, 60);
++
++    view->setProperty("_q_stereo_depth_rects", QVariantList{
++            QVariantMap{{QStringLiteral("rect"), view->rect()}, {QStringLiteral("depth"), -1.0}},
++            QVariantMap{{QStringLiteral("rect"), PaperView::page}, {QStringLiteral("depth"), 0.0}}});
++    QVERIFY(window.windowHandle()->property("_q_stereo_follow_depth").toBool());
++    QTest::qWait(50);
++    // not awake: painted once
++    QCOMPARE(store->toImage().width(), 120);
++    QCOMPARE(store->toImage(), flat);
++
++    // awake, and one step is 2 device pixels on this screen: the desk 1 to the left in the left
++    // eye and 1 to the right in the right eye, as Stereo KWin splits a parallax of -2
++    const int screenWidth = window.screen()->geometry().width();
++    window.windowHandle()->setProperty("_q_stereo_awake", true);
++    window.windowHandle()->setProperty("_q_stereo_element_limit", 2.0 * 1920 / screenWidth);
++    QTRY_COMPARE(store->toImage().width(), 240);
++    QVERIFY(window.windowHandle()->property("_q_stereo_pair").toBool());
++
++    const QImage pair = store->toImage();
++    // a pixel of the view in an eye, at the view's row y
++    auto at = [&pair](int eye, int x, int y = 20) { return QColor(pair.pixel((eye == 2 ? 120 : 0) + 10 + x, 10 + y)); };
++    // the desk's marks moved with the desk
++    QCOMPARE(at(1, 9), QColor(Qt::red));
++    QCOMPARE(at(1, 10), QColor(Qt::gray));
++    QCOMPARE(at(1, 89), QColor(Qt::blue));
++    QCOMPARE(at(2, 11), QColor(Qt::red));
++    QCOMPARE(at(2, 10), QColor(Qt::gray));
++    QCOMPARE(at(2, 91), QColor(Qt::blue));
++    // the page in its place in both eyes, its mark with it
++    for (int eye : {1, 2}) {
++        QCOMPARE(at(eye, 30), QColor(Qt::white));
++        QCOMPARE(at(eye, 69), QColor(Qt::white));
++        QCOMPARE(at(eye, 50), QColor(Qt::green));
++        QCOMPARE(at(eye, 29), QColor(Qt::gray));
++        QCOMPARE(at(eye, 70), QColor(Qt::gray));
++        // the child lies on the view's plane
++        QCOMPARE(at(eye, 80, 32), QColor(Qt::yellow));
++        QCOMPARE(at(eye, 89, 32), QColor(Qt::yellow));
++    }
++    // nothing moved outside the view
++    QCOMPARE(pair.copy(0, 0, 120, 10), flat.copy(0, 0, 120, 10));
++    QCOMPARE(pair.copy(120, 0, 120, 10), flat.copy(0, 0, 120, 10));
++    QCOMPARE(pair.copy(0, 0, 10, 60), flat.copy(0, 0, 10, 60));
++    QCOMPARE(pair.copy(120, 0, 10, 60), flat.copy(0, 0, 10, 60));
++
++    // the person's element limit at 0: painted once, exactly as before
++    window.windowHandle()->setProperty("_q_stereo_element_limit", 0.0);
++    QTRY_COMPARE(store->toImage().width(), 120);
++    QVERIFY(!window.windowHandle()->property("_q_stereo_pair").toBool());
++    QCOMPARE(store->toImage(), flat);
++
++    // not awake (a window lying behind the active one): painted once
++    window.windowHandle()->setProperty("_q_stereo_element_limit", 2.0 * 1920 / screenWidth);
++    QTRY_COMPARE(store->toImage().width(), 240);
++    window.windowHandle()->setProperty("_q_stereo_awake", false);
++    QTRY_COMPARE(store->toImage().width(), 120);
++    QCOMPARE(store->toImage(), flat);
++}
++
+ QTEST_MAIN(tst_QWidgetRepaintManager)
+ #include "tst_qwidgetrepaintmanager.moc"

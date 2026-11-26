@@ -1,0 +1,581 @@
+From e860ae4b172f888d0e1c52f7c3143f0d95ccd61a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 12:59:32 -0300
+Subject: [PATCH 1/3] Wayland: follow a window's depth for the elements that
+ declare their own
+
+A widget may declare rectangles inside it at their own depth (Qt Widgets,
+_q_stereo_depth_rects). Such a window has to know, from the compositor,
+whether the elements inside it may be shown in depth now and how far one
+step of depth inside a window goes, whatever style draws it.
+
+Qt Widgets sets the window's _q_stereo_follow_depth through the native
+interface. The window then makes a kde_stereo_depth_v1 object of its own
+for its surface, on every surface it gets, and the compositor's word
+reaches the window as two properties: _q_stereo_awake (depth_state) and
+_q_stereo_element_limit, the person's element limit in pixels of a view
+1920 wide (element_limit, version 7 of kde_stereo_content_v1). With a
+compositor older than version 7 the window never hears an element limit,
+its elements are drawn flat, and the log says why, once per window.
+
+The protocol copy is version 7 (plasma-wayland-protocols +stereo3d13,
+the same file), and the manager is bound at the compositor's version up to
+7. A window that declares nothing makes no new object, so every other
+window talks to the compositor as before.
+
+Assisted-by: Claude Opus 5.5
+---
+ .../kde-stereo-content-v1.xml                 | 134 +++++++++++++--
+ .../wayland/qwaylandnativeinterface.cpp       |   8 +
+ .../platforms/wayland/qwaylandstereodepth.cpp | 157 ++++++++++++++++--
+ .../platforms/wayland/qwaylandstereodepth_p.h |  11 +-
+ .../platforms/wayland/qwaylandwindow.cpp      |   3 +
+ 5 files changed, 279 insertions(+), 34 deletions(-)
+
+diff --git a/src/3rdparty/wayland/protocols/kde-stereo-content/kde-stereo-content-v1.xml b/src/3rdparty/wayland/protocols/kde-stereo-content/kde-stereo-content-v1.xml
+index 19728680..a87ddb02 100644
+--- a/src/3rdparty/wayland/protocols/kde-stereo-content/kde-stereo-content-v1.xml
++++ b/src/3rdparty/wayland/protocols/kde-stereo-content/kde-stereo-content-v1.xml
+@@ -6,16 +6,17 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-<interface name="kde_stereo_content_manager_v1" version="3">
++<interface name="kde_stereo_content_manager_v1" version="7">
+   <description summary="declare stereo content of surfaces">
+     A program tells the compositor that a surface's picture holds two
+-    views, one per eye, packed full side by side, with the left eye first.
+-    The compositor renders the declared surface once per eye with that
+-    eye's view. The global being present announces support.
++    views packed full side by side, with the left view first.
++    The compositor renders the declared surface using each view.
++    The global being present announces support.
+ 
+     Since version 3, a program may also follow a surface's desktop depth
+     with get_depth, to draw the elements inside the surface at their own
+-    depths.
++    depths; since version 7 it is also told the user's element limit, the
++    step of depth inside a window.
+ 
+     Clients may use this protocol to declare stereo content. The version 1
+     wire values are stable; future requests must use a new interface version.
+@@ -52,25 +53,28 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_content_v1" version="3">
++<interface name="kde_stereo_content_v1" version="7">
+   <description summary="stereo content declaration of one surface">
+     The declaration of one surface, created with
+     kde_stereo_content_manager_v1.create.
+ 
+-    Since version 2, a surface declared side_by_side_full is one eye
+-    wide and its buffer holds both eyes: unless a wp_viewport destination
++    Since version 2, a surface declared side_by_side_full is one view
++    wide and its buffer holds both views: unless a wp_viewport destination
+     is set, the surface's size is half the width the buffer would give it
+     (after the buffer scale, the buffer transform and a viewport source)
+     by the full height. A viewport destination, when set, is the size of
+-    one eye. With version 1 the surface's size follows its buffer as for
++    one view. With version 1 the surface's size follows its buffer as for
+     any other surface, so a client that declares at version 1 maps the
+-    buffer onto one eye's size itself, for example with a viewport.
++    buffer onto one view's size itself, for example with a viewport.
+ 
+     Version 3 changes nothing in this interface.
++    Version 4 adds a double-buffered native source rectangle for each view.
++    Versions 5 to 7 change nothing in this interface.
+   </description>
+ 
+   <enum name="error">
+     <entry name="no_surface" value="0" summary="the surface no longer exists"/>
++    <entry name="bad_source" value="1" since="4" summary="invalid per-view source rectangle"/>
+   </enum>
+ 
+   <request name="destroy" type="destructor">
+@@ -85,7 +89,7 @@
+       The value matches the X11 property _KDE_NET_WM_STEREO_CONTENT.
+     </description>
+     <entry name="none" value="0" summary="no stereo content"/>
+-    <entry name="side_by_side_full" value="3" summary="side by side, full width per eye, left first"/>
++    <entry name="side_by_side_full" value="3" summary="side by side, native width per view, left first"/>
+   </enum>
+ 
+   <request name="set_content">
+@@ -94,18 +98,42 @@
+       are treated as none. Declaring none clears the format and does not
+       destroy the declaration object.
+     </description>
+-    <arg name="content" type="uint" enum="content" summary="packing and eye order"/>
++    <arg name="content" type="uint" enum="content" summary="packing and view order"/>
+   </request>
+ 
++  <request name="set_view_source" since="4">
++    <description summary="select the same native source rectangle in both views">
++      Select a rectangle independently within each view of side_by_side_full
++      content. Coordinates are native buffer pixels after the buffer transform,
++      relative to the top left of each half of the viewport source rectangle.
++      The viewport destination remains the logical size of one drawing area.
++      No new packing or view-order value is introduced.
++
++      The rectangle is double buffered with wl_surface.commit. Initially it is
++      unset. Set all four values to -1 to unset it. Otherwise x and y must be
++      nonnegative and width and height strictly positive. The rectangle must
++      fit inside each view when a buffer is committed; otherwise bad_source is
++      raised. With no viewport destination, the rectangle's size divided by
++      buffer scale gives the surface size. Fractional edges are retained.
++
++      Setting content to none or destroying the declaration also unsets the
++      rectangle. This request on a destroyed wl_surface raises no_surface.
++      Existing clients which do not set a view source keep their behavior.
++    </description>
++    <arg name="x" type="fixed"/>
++    <arg name="y" type="fixed"/>
++    <arg name="width" type="fixed"/>
++    <arg name="height" type="fixed"/>
++  </request>
+ </interface>
+ 
+-<interface name="kde_stereo_depth_v1" version="3">
++<interface name="kde_stereo_depth_v1" version="7">
+   <description summary="desktop depth of one surface">
+     The compositor shows the desktop's own surfaces at depth levels: the
+     active window at the screen, the windows lying behind it sunk, menus,
+     tooltips and popups popped. This object lets a client show depth
+     inside a surface as well, by drawing the surface's elements once per
+-    eye at their own depths and handing the two views over full side by
++    view at their own depths and handing the two views over full side by
+     side, declared with kde_stereo_content_v1:
+ 
+     - the compositor tells the client when the elements inside the surface
+@@ -115,7 +143,19 @@
+       stereo content;
+     - a popup surface may declare its place.
+ 
+-    The depth limits are the user's settings; the client reads them itself.
++    The depth limits are the user's settings, built on the display they are
++    shown on: since version 5 the compositor tells the client the limits of
++    the output the surface mainly sits on (depth_limits), the same limits it
++    applies to its own surfaces there, so that an element drawn inside the
++    surface at the popped limit and a menu the compositor pops lie at the same
++    depth on the same screen. Before version 5 the client reads the user's
++    settings itself.
++
++    Since version 7 the compositor also tells the client the user's element
++    limit (element_limit): how far an element drawn inside the surface may
++    lie in front of or behind what it lies on, a pixel or so, where the
++    depth limits above are for the desktop's own surfaces. A toolkit that
++    draws a surface's elements at their own depths takes its steps from it.
+ 
+     A surface may have any number of these objects. The depth state is sent
+     to each of them. The surface is marked as desktop depth while any of
+@@ -161,15 +201,17 @@
+     <arg name="output_edges" type="uint" enum="edge" summary="the surface's edges on its output's edge"/>
+   </event>
+ 
++
++
+   <request name="set_desktop_depth">
+     <description summary="Mark the surface's pair as the desktop's own depth">
+       Nonzero marks the full side-by-side pair the surface shows, declared
+       with kde_stereo_content_v1 by this client or its graphics library, as
+-      the desktop's own elements drawn once per eye rather than stereo
++      the desktop's own elements drawn once per view rather than stereo
+       content: where the compositor treats stereo content differently, for
+       example in switching a display into a 3D mode, in stereo screenshots
+       or in estimating the depth of content, the surface counts as part of
+-      the desktop. The compositor still shows each view in its eye. Zero
++      the desktop. The compositor still presents each view separately. Zero
+       withdraws the mark.
+ 
+       Takes effect with the next wl_surface commit.
+@@ -199,6 +241,64 @@
+       wl_surface commit.
+     </description>
+   </request>
++
++  <event name="depth_limits" since="5">
++    <description summary="The depth limits on the surface's output">
++      Sent after depth_state once the object is created and again whenever
++      either value changes, such as when the surface moves to another output,
++      the output's mode or kind changes, or the user changes the settings.
++
++      sunk and popped are how far behind and in front of the screen the
++      compositor lets anything go on the output the surface mainly sits on,
++      in pixels of a view 1920 wide. They are the user's limits built on the
++      output's display: a headset gets more separation, a framed 3D screen
++      less (the display's kind and physical size, libstereo-policy). A
++      surface uses the limits for that screen through the shared
++      stereo_depth_limits_for_buffer conversion, never by its own width.
++      Since version 6, output_width is sent immediately before every
++      depth_limits event. Together they describe the same selected output.
++      The compositor sends both again when that output or its pixel width
++      changes, even when sunk and popped stay the same.
++    </description>
++    <arg name="sunk" type="fixed" summary="the sunk limit, pixels of a view 1920 wide"/>
++    <arg name="popped" type="fixed" summary="the popped limit, pixels of a view 1920 wide"/>
++  </event>
++
++  <event name="output_width" since="6">
++    <description summary="Pixel width of the output the limits are for">
++      Sent immediately before each depth_limits event to resources of
++      version 6 or newer. The width is the pixel width of one view of the
++      output the surface mainly sits on, the same output as the following
++      limits. It is independent of the surface, window and buffer sizes.
++      Zero means the surface has no selected output with a known pixel width.
++
++      One separation setting, centralized, tailored to the screen, not to
++      the element size: the person's choice, built on the display. Clients
++      pass this width and the following limits to the shared buffer-pixel
++      conversion; they never rescale depth by their own window's width.
++    </description>
++    <arg name="width" type="uint" summary="selected output width in pixels per view, or zero"/>
++  </event>
++
++  <event name="element_limit" since="7">
++    <description summary="The element limit on the surface's output">
++      Sent to resources of version 7 or newer immediately before
++      output_width, so before every depth_limits event, and whenever the
++      value changes; depth_limits ends the group, and all three describe the
++      same selected output.
++
++      limit is how far an element drawn inside the surface (a button, a
++      field, a page) may lie in front of or behind the surface it lies on,
++      in pixels of a view 1920 wide: the user's element limit, one step of
++      depth inside a window. Zero means the elements inside the surface lie
++      flat. The compositor gives it as the user set it; a client converts
++      it to its buffer's pixels as it converts the depth limits, through the
++      shared stereo_depth_limits_for_buffer conversion, and never rescales
++      it by the size of its window or of an element.
++    </description>
++    <arg name="limit" type="fixed" summary="the element limit, pixels of a view 1920 wide"/>
++  </event>
++
+ </interface>
+ 
+ </protocol>
+diff --git a/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp b/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
+index f4cc3015..3fcb5411 100644
+--- a/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
++++ b/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
+@@ -12,6 +12,7 @@
+ #include "qwaylandwindowmanagerintegration_p.h"
+ #include "qwaylandscreen_p.h"
+ #include "qwaylandinputdevice_p.h"
++#include "qwaylandstereodepth_p.h"
+ #include <QtCore/private/qnativeinterface_p.h>
+ #include <QtGui/private/qguiapplication_p.h>
+ #include <QtGui/QScreen>
+@@ -246,6 +247,13 @@ QVariant QWaylandNativeInterface::windowProperty(QPlatformWindow *window, const
+ void QWaylandNativeInterface::setWindowProperty(QPlatformWindow *window, const QString &name, const QVariant &value)
+ {
+     QWaylandWindow *wlWindow = static_cast<QWaylandWindow*>(window);
++    // Said by Qt Widgets for a window whose elements declare their own depth: the window follows
++    // its depth with the compositor. It is not a property of the window for the compositor.
++    if (name == QLatin1String("_q_stereo_follow_depth")) {
++        wlWindow->setProperty(name, value);
++        QWaylandStereoDepth::setFollowDepth(wlWindow, value.toBool());
++        return;
++    }
+ #if QT_CONFIG(vulkan)
+     // Said by whoever made a Vulkan window's swapchain, on its thread: the views it has. It is
+     // not a property of the window for the compositor.
+diff --git a/src/plugins/platforms/wayland/qwaylandstereodepth.cpp b/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
+index 68d07972..abba7af5 100644
+--- a/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
++++ b/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
+@@ -8,17 +8,27 @@
+ 
+ #include <QtWaylandClient/private/qwayland-kde-stereo-content-v1.h>
+ 
++#include <QtCore/qloggingcategory.h>
+ #include <QtCore/qmutex.h>
++#include <QtCore/qpointer.h>
++#include <QtGui/qwindow.h>
+ 
+ #include <memory>
++#include <optional>
+ #include <unordered_map>
+ 
+ QT_BEGIN_NAMESPACE
+ 
++Q_STATIC_LOGGING_CATEGORY(lcStereoDepth, "qt.qpa.wayland.stereodepth")
++
+ namespace QtWaylandClient {
+ 
+ namespace {
+ 
++// Version 3 marks a pair as the desktop's own depth; version 7 tells the person's element limit.
++constexpr uint32_t s_maxVersion = 7;
++constexpr uint32_t s_elementLimitVersion = 7;
++
+ class ManagerProxy : public QtWayland::kde_stereo_content_manager_v1
+ {
+ public:
+@@ -42,8 +52,19 @@ public:
+ class Depth : public QtWayland::kde_stereo_depth_v1
+ {
+ public:
+-    using kde_stereo_depth_v1::kde_stereo_depth_v1;
++    Depth(struct ::kde_stereo_depth_v1 *object, QWaylandWindow *window)
++        : kde_stereo_depth_v1(object)
++        , m_window(window)
++    {
++    }
+     ~Depth() override { destroy(); }
++
++protected:
++    void kde_stereo_depth_v1_depth_state(uint32_t awake, uint32_t output_edges) override;
++    void kde_stereo_depth_v1_element_limit(wl_fixed_t limit) override;
++
++private:
++    QWaylandWindow *m_window;
+ };
+ 
+ struct WindowState
+@@ -53,6 +74,12 @@ struct WindowState
+     std::unique_ptr<Depth> depth;
+     bool pair = false;
+     bool desktopDepth = false;
++    // following the depth for the elements inside the window that declare their own, with an object
++    // of its own: the compositor tells a new object the state at once, and only changes after that
++    std::unique_ptr<Depth> followDepth;
++    bool follow = false;
++    QPointer<QWindow> window;
++    bool toldNoElementLimit = false;
+ };
+ 
+ // A window's render thread marks its surface while the gui thread may declare others.
+@@ -70,14 +97,71 @@ std::unordered_map<QWaylandWindow *, WindowState> &windows()
+     return s_windows;
+ }
+ 
++// What a followed window hears is said on the window itself, outside the lock, on the gui thread
++// that dispatches the compositor's events.
++void tellWindow(QWindow *window, const char *name, const QVariant &value)
++{
++    if (window && window->property(name) != value)
++        window->setProperty(name, value);
++}
++
++// A window whose surface goes is not awake until its next surface hears so; the window may be
++// going away itself, so it is told after the event at hand, if it is still there.
++void tellAsleepLater(const QPointer<QWindow> &window)
++{
++    if (!window)
++        return;
++    QWindow *target = window.data();
++    QMetaObject::invokeMethod(target, [target] { tellWindow(target, "_q_stereo_awake", false); }, Qt::QueuedConnection);
++}
++
+ void forgetWindowsOf(QWaylandDisplay *display)
+ {
+     for (auto window = windows().begin(); window != windows().end();) {
+-        if (window->first->display() == display)
++        if (window->first->display() == display) {
++            if (window->second.follow)
++                tellAsleepLater(window->second.window);
+             window = windows().erase(window);
+-        else
++        } else {
+             ++window;
++        }
++    }
++}
++
++void Depth::kde_stereo_depth_v1_depth_state(uint32_t awake, uint32_t output_edges)
++{
++    Q_UNUSED(output_edges);
++    QPointer<QWindow> target;
++    bool tellNoLimit = false;
++    {
++        QMutexLocker locker(&s_mutex);
++        auto it = windows().find(m_window);
++        if (it == windows().end() || !it->second.follow || it->second.followDepth.get() != this)
++            return;
++        target = it->second.window;
++        if (awake && version() < s_elementLimitVersion && !it->second.toldNoElementLimit) {
++            it->second.toldNoElementLimit = true;
++            tellNoLimit = true;
++        }
++    }
++    if (tellNoLimit)
++        qCWarning(lcStereoDepth).noquote() << "the elements of" << target.data()
++                                           << "that declare their own depth are drawn flat: the compositor does not send the"
++                                              " person's element limit (kde_stereo_depth_v1 version 7)";
++    tellWindow(target, "_q_stereo_awake", awake != 0);
++}
++
++void Depth::kde_stereo_depth_v1_element_limit(wl_fixed_t limit)
++{
++    QPointer<QWindow> target;
++    {
++        QMutexLocker locker(&s_mutex);
++        auto it = windows().find(m_window);
++        if (it == windows().end() || !it->second.follow || it->second.followDepth.get() != this)
++            return;
++        target = it->second.window;
+     }
++    tellWindow(target, "_q_stereo_element_limit", qMax(0.0, wl_fixed_to_double(limit)));
+ }
+ 
+ } // namespace
+@@ -90,7 +174,7 @@ void QWaylandStereoDepth::addGlobal(QWaylandDisplay *display, ::wl_registry *reg
+         return;
+     Manager &entry = managers()[display];
+     entry.id = id;
+-    entry.manager = std::make_unique<ManagerProxy>(registry, id, 3);
++    entry.manager = std::make_unique<ManagerProxy>(registry, id, qMin(version, s_maxVersion));
+ }
+ 
+ void QWaylandStereoDepth::removeGlobal(QWaylandDisplay *display, uint32_t id)
+@@ -122,16 +206,24 @@ bool QWaylandStereoDepth::isSupported(QWaylandDisplay *display)
+     return isSupportedLocked(display);
+ }
+ 
+-void QWaylandStereoDepth::setPair(QWaylandWindow *window, bool pair)
++// The window's state for its current surface: the objects of an earlier surface went with it.
++static std::unordered_map<QWaylandWindow *, WindowState>::iterator currentState(QWaylandWindow *window, ::wl_surface *surface)
+ {
+-    QMutexLocker locker(&s_mutex);
+-    ::wl_surface *surface = window->wlSurface();
+     auto it = windows().find(window);
+     if (it != windows().end() && it->second.surface != surface) {
+-        // A new surface: the old one's objects went with it.
++        if (it->second.follow)
++            tellAsleepLater(it->second.window);
+         windows().erase(it);
+         it = windows().end();
+     }
++    return it;
++}
++
++void QWaylandStereoDepth::setPair(QWaylandWindow *window, bool pair)
++{
++    QMutexLocker locker(&s_mutex);
++    ::wl_surface *surface = window->wlSurface();
++    auto it = currentState(window, surface);
+     if (!pair && it == windows().end())
+         return;
+     if (!surface || !isSupportedLocked(window->display()))
+@@ -145,7 +237,7 @@ void QWaylandStereoDepth::setPair(QWaylandWindow *window, bool pair)
+     if (!state.content)
+         state.content = std::make_unique<Content>(manager->create(surface));
+     if (!state.depth)
+-        state.depth = std::make_unique<Depth>(manager->get_depth(surface));
++        state.depth = std::make_unique<Depth>(manager->get_depth(surface), window);
+     state.content->set_content(pair ? QtWayland::kde_stereo_content_v1::content_side_by_side_full
+                                     : QtWayland::kde_stereo_content_v1::content_none);
+     state.depth->set_desktop_depth(pair ? 1 : 0);
+@@ -157,11 +249,7 @@ void QWaylandStereoDepth::setDesktopDepth(QWaylandWindow *window, bool desktopDe
+ {
+     QMutexLocker locker(&s_mutex);
+     ::wl_surface *surface = window->wlSurface();
+-    auto it = windows().find(window);
+-    if (it != windows().end() && it->second.surface != surface) {
+-        windows().erase(it);
+-        it = windows().end();
+-    }
++    auto it = currentState(window, surface);
+     if (!desktopDepth && it == windows().end())
+         return;
+     if (!surface || !isSupportedLocked(window->display()))
+@@ -172,16 +260,53 @@ void QWaylandStereoDepth::setDesktopDepth(QWaylandWindow *window, bool desktopDe
+         return;
+     if (!state.depth) {
+         state.surface = surface;
+-        state.depth = std::make_unique<Depth>(managers()[window->display()].manager->get_depth(surface));
++        state.depth = std::make_unique<Depth>(managers()[window->display()].manager->get_depth(surface), window);
+     }
+     state.depth->set_desktop_depth(desktopDepth ? 1 : 0);
+     state.desktopDepth = desktopDepth;
+ }
+ 
++void QWaylandStereoDepth::setFollowDepth(QWaylandWindow *window, bool follow)
++{
++    QMutexLocker locker(&s_mutex);
++    ::wl_surface *surface = window->wlSurface();
++    auto it = currentState(window, surface);
++    if (!follow) {
++        if (it != windows().end() && it->second.follow) {
++            it->second.follow = false;
++            it->second.followDepth.reset();
++            tellAsleepLater(it->second.window);
++        }
++        return;
++    }
++    // without a surface yet, the window follows its depth once it has one (surfaceCreated())
++    if (!surface || !isSupportedLocked(window->display()))
++        return;
++
++    WindowState &state = it != windows().end() ? it->second : windows()[window];
++    if (state.follow && state.followDepth)
++        return;
++    state.surface = surface;
++    state.follow = true;
++    state.window = window->window();
++    state.followDepth = std::make_unique<Depth>(managers()[window->display()].manager->get_depth(surface), window);
++}
++
++void QWaylandStereoDepth::surfaceCreated(QWaylandWindow *window)
++{
++    if (window->property(QStringLiteral("_q_stereo_follow_depth")).toBool())
++        setFollowDepth(window, true);
++}
++
+ void QWaylandStereoDepth::forgetWindow(QWaylandWindow *window)
+ {
+     QMutexLocker locker(&s_mutex);
+-    windows().erase(window);
++    auto it = windows().find(window);
++    if (it == windows().end())
++        return;
++    if (it->second.follow)
++        tellAsleepLater(it->second.window);
++    windows().erase(it);
+ }
+ 
+ } // namespace QtWaylandClient
+diff --git a/src/plugins/platforms/wayland/qwaylandstereodepth_p.h b/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
+index 253382c6..cddd7540 100644
+--- a/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
++++ b/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
+@@ -34,7 +34,7 @@ class QWaylandWindow;
+ // window's own state.
+ namespace QWaylandStereoDepth {
+ 
+-// The compositor's kde_stereo_content_manager_v1, bound at version 3 at most.
++// The compositor's kde_stereo_content_manager_v1, bound at version 7 at most.
+ void addGlobal(QWaylandDisplay *display, ::wl_registry *registry, uint32_t id, uint32_t version);
+ void removeGlobal(QWaylandDisplay *display, uint32_t id);
+ void removeDisplay(QWaylandDisplay *display);
+@@ -48,6 +48,15 @@ Q_WAYLANDCLIENT_EXPORT void setPair(QWaylandWindow *window, bool pair);
+ // Marks, with the window's next commit, the pair someone else declares (the EGL implementation
+ // for a surface with two views) as the desktop's own depth, or withdraws the mark. Any thread.
+ Q_WAYLANDCLIENT_EXPORT void setDesktopDepth(QWaylandWindow *window, bool desktopDepth);
++// Follows the window's depth for the elements inside it that declare their own (a widget's
++// _q_stereo_depth_rects): while following, the compositor's word reaches the window as its
++// _q_stereo_awake (whether the elements inside it may be shown in depth now) and its
++// _q_stereo_element_limit (the person's element limit, pixels of a view 1920 wide, from version 7
++// of kde_stereo_content_v1). The choice is the window's _q_stereo_follow_depth property, set
++// through the native interface; it holds for every surface the window gets.
++Q_WAYLANDCLIENT_EXPORT void setFollowDepth(QWaylandWindow *window, bool follow);
++// After the window got a new surface.
++void surfaceCreated(QWaylandWindow *window);
+ // Before the window's surface goes away.
+ void forgetWindow(QWaylandWindow *window);
+ 
+diff --git a/src/plugins/platforms/wayland/qwaylandwindow.cpp b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+index 7c5d93bc..b61235ce 100644
+--- a/src/plugins/platforms/wayland/qwaylandwindow.cpp
++++ b/src/plugins/platforms/wayland/qwaylandwindow.cpp
+@@ -254,6 +254,9 @@ void QWaylandWindow::initializeWlSurface(bool colorSpace)
+     if (colorSpace) {
+         initializeColorSpace();
+     }
++
++    // a window whose elements declare their own depth follows it on every surface it gets
++    QWaylandStereoDepth::surfaceCreated(this);
+ }
+ 
+ void QWaylandWindow::initializeColorSpace()

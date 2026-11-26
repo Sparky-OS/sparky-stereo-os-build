@@ -1,0 +1,19 @@
+A widget may declare rectangles inside it at their own depth, in steps of
+the person's element limit (_q_stereo_depth_rects, a list of rectangles each
+with a depth from -1 to 1 of one step, queue row 121): a document viewer's
+desk one step behind the window and its pages at the window's plane. The
+window is then painted once per eye while the compositor shows depth inside
+it, whatever style draws it, each rectangle moved by its own share by the
+rule widgets are moved by, and the strip a nearer rectangle's shift uncovers
+continues what lies beneath it, so its edge keeps its depth (o121-0002).
+
+The window learns from the compositor whether it is awake and the person's
+element limit (version 7 of kde_stereo_content_v1, the element_limit event,
+which Stereo KWin +stereo3d69 sends); with an older compositor the declared
+rectangles are drawn flat and the log says why, once per window (o121-0001).
+
+Every Qt program's print preview (QPrintPreviewWidget) declares its desk one
+step down and its paper at the window's plane, its shadows on the desk
+(o121-0003). Without the compositor's word, on a 2D screen, in a window lying
+behind the active one or with the element limit at 0, everything is drawn as
+before.

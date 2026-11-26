@@ -1,0 +1,123 @@
+From 3cced2778e851c4b97869c9c46e0f06a11b72167 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 13:02:49 -0300
+Subject: [PATCH 3/3] QPrintPreviewWidget: the desk one step down, the pages at
+ the window's plane
+
+Every Qt program's print preview paints its desk and its pages in one
+view. On a stereo output, where the window shows depth inside it, the desk
+around the pages now sinks one step of depth inside a window and the paper
+lies at the window's plane, its contents with it and its shadow on the
+desk: the view declares its desk at -1 and each page's paper at 0
+(_q_stereo_depth_rects), in steps of the person's element limit, never in
+pixels of its own. The rectangles are said again whenever the view moves,
+scales or lays out its pages, so a page scrolled under the toolbar is cut
+at its own level. Elsewhere, and with the element limit at 0, the preview
+is drawn as before.
+
+Assisted-by: Claude Opus 5.5
+---
+ .../widgets/qprintpreviewwidget.cpp           | 38 +++++++++++++++++++
+ 1 file changed, 38 insertions(+)
+
+diff --git a/src/printsupport/widgets/qprintpreviewwidget.cpp b/src/printsupport/widgets/qprintpreviewwidget.cpp
+index e26e9778..e7eb8b59 100644
+--- a/src/printsupport/widgets/qprintpreviewwidget.cpp
++++ b/src/printsupport/widgets/qprintpreviewwidget.cpp
+@@ -34,6 +34,10 @@ public:
+     inline int pageNumber() const
+     { return pageNum; }
+ 
++    // the paper itself, without its shadow
++    QRectF paperRect() const
++    { return QRectF(QPointF(0, 0), QSizeF(paperSize)); }
++
+     void paint(QPainter *painter, const QStyleOptionGraphicsItem *item, QWidget *widget) override;
+ 
+ private:
+@@ -116,6 +120,28 @@ public:
+         setFrameStyle(QFrame::NoFrame);
+ #endif
+     }
++    // On a stereo output, where the window shows depth inside it, the desk around the pages sinks
++    // one step of depth inside a window and the paper lies at the window's plane, its contents with
++    // it and its shadow on the desk (Qt Widgets, _q_stereo_depth_rects: the step is the person's
++    // element limit). Elsewhere nothing changes. Said again whenever the view moves or scales.
++    void updatePaperDepth()
++    {
++        const QRect shown = viewport()->rect();
++        QVariantList rects;
++        rects.append(QVariantMap{{QStringLiteral("rect"), shown}, {QStringLiteral("depth"), -1.0}});
++        if (QGraphicsScene *pages = scene()) {
++            const QTransform toViewport = viewportTransform();
++            const QList<QGraphicsItem *> items = pages->items();
++            for (QGraphicsItem *item : items) {
++                const QRectF paper = item->mapRectToScene(static_cast<PageItem *>(item)->paperRect());
++                const QRect inView = toViewport.mapRect(paper).toAlignedRect();
++                if (inView.intersects(shown))
++                    rects.append(QVariantMap{{QStringLiteral("rect"), inView}, {QStringLiteral("depth"), 0.0}});
++            }
++        }
++        viewport()->setProperty("_q_stereo_depth_rects", rects);
++    }
++
+ signals:
+     void resized();
+ 
+@@ -126,9 +152,16 @@ protected:
+             const QSignalBlocker blocker(verticalScrollBar()); // Don't change page, QTBUG-14517
+             QGraphicsView::resizeEvent(e);
+         }
++        updatePaperDepth();
+         emit resized();
+     }
+ 
++    void scrollContentsBy(int dx, int dy) override
++    {
++        QGraphicsView::scrollContentsBy(dx, dy);
++        updatePaperDepth();
++    }
++
+     void showEvent(QShowEvent* e) override
+     {
+         QGraphicsView::showEvent(e);
+@@ -238,6 +271,7 @@ void QPrintPreviewWidgetPrivate::_q_fit(bool doFitting)
+     }
+ 
+     zoomFactor = graphicsView->transform().m11() * (float(printer->logicalDpiY()) / q->logicalDpiY());
++    graphicsView->updatePaperDepth();
+     emit q->previewChanged();
+ }
+ 
+@@ -351,6 +385,7 @@ void QPrintPreviewWidgetPrivate::layoutPages()
+         }
+     }
+     scene->setSceneRect(scene->itemsBoundingRect());
++    graphicsView->updatePaperDepth();
+ }
+ 
+ void QPrintPreviewWidgetPrivate::generatePreview()
+@@ -402,6 +437,7 @@ void QPrintPreviewWidgetPrivate::zoom(qreal zoom)
+ {
+     zoomFactor *= zoom;
+     graphicsView->scale(zoom, zoom);
++    graphicsView->updatePaperDepth();
+ }
+ 
+ void QPrintPreviewWidgetPrivate::setZoomFactor(qreal _zoomFactor)
+@@ -413,6 +449,7 @@ void QPrintPreviewWidgetPrivate::setZoomFactor(qreal _zoomFactor)
+     int printer_dpi_y = printer->logicalDpiY();
+     graphicsView->scale(zoomFactor*(dpi_y/float(printer_dpi_y)),
+                         zoomFactor*(dpi_y/float(printer_dpi_y)));
++    graphicsView->updatePaperDepth();
+ }
+ 
+ ///////////////////////////////////////
+@@ -549,6 +586,7 @@ void QPrintPreviewWidget::setViewMode(ViewMode mode)
+         d->fitting = false;
+         d->zoomMode = QPrintPreviewWidget::CustomZoom;
+         d->zoomFactor = d->graphicsView->transform().m11() * (float(d->printer->logicalDpiY()) / logicalDpiY());
++        d->graphicsView->updatePaperDepth();
+         emit previewChanged();
+     } else {
+         d->fitting = true;

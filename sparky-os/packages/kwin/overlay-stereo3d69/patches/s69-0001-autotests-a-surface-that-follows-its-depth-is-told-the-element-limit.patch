@@ -1,0 +1,152 @@
+From 0aa5ced4edc7eb276153f16141180a14d02b9869 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 13:10:42 -0300
+Subject: [PATCH 1/2] autotests: A surface that follows its depth is told the
+ element limit
+
+testElementLimit: since version 7 of kde_stereo_content_v1 a surface that
+follows its depth hears the person's element limit (element_limit, pixels
+of a view 1920 wide), 1 by default, before output_width and depth_limits,
+again when the person changes it, unchanged when only the desktop's limits
+change, and 0 when the person lays the elements flat. The test client keeps
+the order of the group's events.
+
+The test's init() checks the manager's version against the protocol's, 7;
+it still expected 5 after version 6, so every function of the test failed
+at init (queue row 910).
+
+Assisted-by: Claude Opus 5.5
+---
+ autotests/integration/kwin_wayland_test.h     |  7 +++
+ .../stereo_depth_exchange_test.cpp            | 46 ++++++++++++++++++-
+ autotests/integration/test_helpers.cpp        | 15 ++++++
+ 3 files changed, 67 insertions(+), 1 deletion(-)
+
+diff --git a/autotests/integration/kwin_wayland_test.h b/autotests/integration/kwin_wayland_test.h
+index edc441d..961fe3d 100644
+--- a/autotests/integration/kwin_wayland_test.h
++++ b/autotests/integration/kwin_wayland_test.h
+@@ -1088,6 +1088,11 @@ public:
+     double sunk = 0;
+     double popped = 0;
+     int limits = 0;
++    // the last element_limit (pixels of a view 1920 wide), and how many arrived
++    double elementLimit = 0;
++    int elementLimits = 0;
++    // the events of the last group, in the order they arrived: 'e' element_limit, 'w' output_width, 'l' depth_limits
++    QByteArray order;
+ 
+ Q_SIGNALS:
+     void stateReceived();
+@@ -1096,6 +1101,8 @@ Q_SIGNALS:
+ protected:
+     void kde_stereo_depth_v1_depth_state(uint32_t awake, uint32_t output_edges) override;
+     void kde_stereo_depth_v1_depth_limits(wl_fixed_t sunk, wl_fixed_t popped) override;
++    void kde_stereo_depth_v1_output_width(uint32_t width) override;
++    void kde_stereo_depth_v1_element_limit(wl_fixed_t limit) override;
+ };
+ 
+ class WlKeyboard;
+diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/integration/stereo_depth_exchange_test.cpp
+index c54bea4..f8bd4e1 100644
+--- a/autotests/integration/stereo_depth_exchange_test.cpp
++++ b/autotests/integration/stereo_depth_exchange_test.cpp
+@@ -55,6 +55,7 @@ private Q_SLOTS:
+     void testDeclaredPlace();
+     void testLimitsFollowTheOutput();
+     void testLimitsOnDeclaredSubsurface();
++    void testElementLimit();
+     void testResourceVersion_data();
+     void testResourceVersion();
+     void testInertWithoutSurface();
+@@ -151,10 +152,11 @@ void StereoDepthExchangeTest::init()
+         .modes = {plainMode(), stereoMode()},
+     }});
+     QVERIFY(Test::setupWaylandConnection(Test::AdditionalWaylandInterface::StereoContentV1));
+-    QCOMPARE(Test::stereoContentManager()->version(), 5u);
++    QCOMPARE(Test::stereoContentManager()->version(), 7u);
+     QVERIFY(stereoOutput(true));
+     options->setStereoSunkLimit(10);
+     options->setStereoPoppedLimit(4);
++    options->setStereoElementLimit(1);
+     workspace()->setActiveOutput(QPoint(640, 512));
+     input()->pointer()->warp(QPoint(640, 512));
+ }
+@@ -481,6 +483,48 @@ void StereoDepthExchangeTest::testLimitsOnDeclaredSubsurface()
+     QVERIFY(depth->sunk > 0 && depth->popped > 0);
+ }
+ 
++// Since version 7 a surface that follows its depth is told the person's element limit, the step of depth inside a
++// window, as the person set it, before output_width and depth_limits; again when it changes, and 0 lays the elements flat.
++void StereoDepthExchangeTest::testElementLimit()
++{
++    auto window = createWindow(QPointF(100, 100));
++    QVERIFY(window->window);
++    auto depth = follow(window->surface.get());
++    QVERIFY(waitFor(depth.get(), [&depth]() {
++        return depth->limits > 0;
++    }));
++    QCOMPARE(depth->elementLimits, 1);
++    QCOMPARE(depth->elementLimit, 1.0);
++    QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
++
++    // the person sets another element limit: it is sent again, and the group ends with depth_limits
++    options->setStereoElementLimit(3);
++    QVERIFY(waitFor(depth.get(), [&depth]() {
++        return depth->elementLimits > 1;
++    }));
++    QVERIFY(Test::waylandSync());
++    QCOMPARE(depth->elementLimit, 3.0);
++    QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
++    QCOMPARE(depth->sunk, 10.0);
++    QCOMPARE(depth->popped, 4.0);
++
++    // no display factor is applied to it: the sunk and popped limits are unchanged and so is the element limit
++    // whatever the limits of the desktop's own surfaces are
++    options->setStereoSunkLimit(20);
++    QVERIFY(waitFor(depth.get(), [&depth]() {
++        return depth->sunk == 20.0;
++    }));
++    QCOMPARE(depth->elementLimit, 3.0);
++
++    // zero lays the elements flat, and is said
++    options->setStereoElementLimit(0);
++    QVERIFY(waitFor(depth.get(), [&depth]() {
++        return depth->elementLimit == 0.0;
++    }));
++    QVERIFY(Test::waylandSync());
++    QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
++}
++
+ void StereoDepthExchangeTest::testResourceVersion_data()
+ {
+     QTest::addColumn<uint32_t>("version");
+diff --git a/autotests/integration/test_helpers.cpp b/autotests/integration/test_helpers.cpp
+index 2bcc6a7..6fc5b5a 100644
+--- a/autotests/integration/test_helpers.cpp
++++ b/autotests/integration/test_helpers.cpp
+@@ -2093,9 +2093,24 @@ void StereoDepthV1::kde_stereo_depth_v1_depth_limits(wl_fixed_t sunk, wl_fixed_t
+     this->sunk = wl_fixed_to_double(sunk);
+     this->popped = wl_fixed_to_double(popped);
+     limits++;
++    order += 'l';
+     Q_EMIT limitsReceived();
+ }
+ 
++void StereoDepthV1::kde_stereo_depth_v1_output_width(uint32_t width)
++{
++    Q_UNUSED(width);
++    order += 'w';
++}
++
++void StereoDepthV1::kde_stereo_depth_v1_element_limit(wl_fixed_t limit)
++{
++    elementLimit = wl_fixed_to_double(limit);
++    elementLimits++;
++    // a new group starts
++    order = QByteArrayLiteral("e");
++}
++
+ FifoManagerV1::FifoManagerV1(::wl_registry *registry, uint32_t id, int version)
+     : QtWayland::wp_fifo_manager_v1(registry, id, version)
+ {
