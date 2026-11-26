@@ -66,7 +66,7 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
  
  #include <functional>
  
-@@ -483,45 +487,72 @@
+@@ -483,45 +487,76 @@
      QVERIFY(depth->sunk > 0 && depth->popped > 0);
  }
  
@@ -114,12 +114,21 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
      QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
  
 -    // the person sets another element limit: it is sent again, and the group ends with depth_limits
-     options->setStereoElementLimit(3);
+-    options->setStereoElementLimit(3);
 -    QVERIFY(waitFor(depth.get(), [&depth]() {
 -        return depth->elementLimits > 1;
 -    }));
 -    QVERIFY(Test::waylandSync());
 -    QCOMPARE(depth->elementLimit, 3.0);
++    KConfigGroup settings(kwinApp()->config(), "StereoDepth");
++    KConfigGroup display = settings.group(television->backendOutput()->uuid());
++    const auto restore = qScopeGuard([&settings, &display] {
++        settings.deleteEntry("ElementLimit");
++        display.deleteEntry("PoppedLimit");
++        options->updateSettings();
++    });
++    settings.writeEntry("ElementLimit", 3.0);
++    options->updateSettings();
 +    QTRY_COMPARE(depth->elementBehind, 3.0);
 +    QCOMPARE(depth->elementInFront, 3.0);
      QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
@@ -142,28 +151,25 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
 +        return wl_fixed_to_double(wl_fixed_from_double(value));
 +    };
 +    window->window->move(QPointF(s_outputSize.width() + 100, 100));
-+    QCOMPARE(window->window->output(), television);
++    QTRY_COMPARE(window->window->output(), television);
 +    QTRY_COMPARE(depth->elementBehind, wire(3 * televisionFactor));
 +    QCOMPARE(depth->elementInFront, depth->elementBehind);
 +    QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
 +
 +    // Change one display direction without moving the surface or changing the global ElementLimit.
-+    KConfigGroup display = KConfigGroup(kwinApp()->config(), "StereoDepth").group(television->backendOutput()->uuid());
-+    const auto restore = qScopeGuard([&display] {
-+        display.deleteEntry("PoppedLimit");
-+        options->updateSettings();
-+    });
 +    display.writeEntry("PoppedLimit", 8.0);
 +    options->updateSettings();
 +    QTRY_COMPARE(depth->elementInFront, 6.0);
 +    QCOMPARE(depth->elementBehind, wire(3 * televisionFactor));
 +    QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
 +
-     options->setStereoElementLimit(0);
+-    options->setStereoElementLimit(0);
 -    QVERIFY(waitFor(depth.get(), [&depth]() {
 -        return depth->elementLimit == 0.0;
 -    }));
 -    QVERIFY(Test::waylandSync());
++    settings.writeEntry("ElementLimit", 0.0);
++    options->updateSettings();
 +    QTRY_COMPARE(depth->elementBehind, 0.0);
 +    QCOMPARE(depth->elementInFront, 0.0);
      QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
