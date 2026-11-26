@@ -1,0 +1,95 @@
+Description: Size the PipeWire format params buffer to fit
+ An NVIDIA modifier list can exceed the fixed 4096-byte builder. Grow
+ the buffer and rebuild the list until all PipeWire formats are offered.
+ The 6.7.4 backport retains the original buildFormat signature.
+Origin: upstream, https://invent.kde.org/plasma/kpipewire/-/commit/71ba11ff887c6eb900b5541b4a8d7bf74bd3ae28
+Author: Zhongli Wu
+Bug: https://bugs.kde.org/show_bug.cgi?id=524881
+Applied-Upstream: 6.9.0, commit:71ba11ff887c6eb900b5541b4a8d7bf74bd3ae28
+Last-Update: 2026-11-26
+
+--- a/src/pipewiresourcestream.cpp
++++ b/src/pipewiresourcestream.cpp
+@@ -244,9 +244,8 @@
+ void PipeWireSourceStream::onRenegotiate(void *data, uint64_t)
+ {
+     PipeWireSourceStream *pw = static_cast<PipeWireSourceStream *>(data);
+-    uint8_t buffer[4096];
+-    spa_pod_builder podBuilder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+-    auto params = pw->createFormatsParams(podBuilder);
++    QByteArray buffer;
++    auto params = pw->createFormatsParams(buffer);
+     pw_stream_update_params(pw->d->pwStream, params.data(), params.size());
+ }
+
+@@ -470,7 +469,7 @@
+     d->usageHint = hint;
+ }
+
+-QList<const spa_pod *> PipeWireSourceStream::createFormatsParams(spa_pod_builder podBuilder)
++QList<const spa_pod *> PipeWireSourceStream::createFormatsParams(QByteArray &buffer)
+ {
+     const auto pwServerVersion = d->pwCore->serverVersion();
+     static constexpr auto formats = {
+@@ -513,12 +512,24 @@
+         d->m_availableModifiers = availableModifiers;
+     }
+
+-    for (auto it = d->m_availableModifiers.constBegin(), itEnd = d->m_availableModifiers.constEnd(); it != itEnd; ++it) {
+-        if (d->m_allowDmaBuf && !it->isEmpty()) {
+-            params += buildFormat(&podBuilder, it.key(), it.value(), withDontFixate, d->maxFramerate);
+-        }
+-
+-        params += buildFormat(&podBuilder, it.key(), {}, withDontFixate, d->maxFramerate);
++    // The modifier lists can be long. The builder does not write past its end but keeps counting,
++    // so if it ran out of space, build again into a buffer of the size it needed.
++    // Start with 4096 bytes, which is enough in most cases.
++    buffer.resize(4096);
++    for (;;) {
++        spa_pod_builder podBuilder = SPA_POD_BUILDER_INIT(buffer.data(), uint32_t(buffer.size()));
++        params.clear();
++        for (auto it = d->m_availableModifiers.constBegin(), itEnd = d->m_availableModifiers.constEnd(); it != itEnd; ++it) {
++            if (d->m_allowDmaBuf && !it->isEmpty()) {
++                params += buildFormat(&podBuilder, it.key(), it.value(), withDontFixate, d->maxFramerate);
++            }
++
++            params += buildFormat(&podBuilder, it.key(), {}, withDontFixate, d->maxFramerate);
++        }
++        if (podBuilder.state.offset <= podBuilder.size) {
++            break;
++        }
++        buffer.resize(podBuilder.state.offset);
+     }
+
+     // BUG 492400: Workaround for pipewire < 0.3.49 https://github.com/PipeWire/pipewire/commit/8646117374df6fa3b73f63f9b35cda78a6aaa2f4
+@@ -560,9 +571,8 @@
+
+     m_renegotiateEvent = pw_loop_add_event(pwCore->loop(), q->onRenegotiate, q);
+
+-    uint8_t buffer[4096];
+-    spa_pod_builder podBuilder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+-    auto params = q->createFormatsParams(podBuilder);
++    QByteArray buffer;
++    auto params = q->createFormatsParams(buffer);
+     pw_stream_flags s = (pw_stream_flags)(PW_STREAM_FLAG_DONT_RECONNECT | PW_STREAM_FLAG_AUTOCONNECT);
+     if (pw_stream_connect(pwStream, PW_DIRECTION_INPUT, pwNodeId, s, params.data(), params.size()) != 0) {
+         qCWarning(PIPEWIRE_LOGGING) << "Could not connect to stream";
+--- a/src/pipewiresourcestream.h
++++ b/src/pipewiresourcestream.h
+@@ -10,6 +10,7 @@
+
+ #include <QDebug>
+ #include <QHash>
++#include <QByteArray>
+ #include <QImage>
+ #include <QObject>
+ #include <QPoint>
+@@ -169,7 +170,7 @@
+     static void onStreamStateChanged(void *data, pw_stream_state old, pw_stream_state state, const char *error_message);
+     static void onRenegotiate(void *data, uint64_t);
+     static void onDestroy(void *data);
+-    QList<const spa_pod *> createFormatsParams(spa_pod_builder podBuilder);
++    QList<const spa_pod *> createFormatsParams(QByteArray &buffer);
+
+     void coreFailed(const QString &errorMessage);
+     QScopedPointer<PipeWireSourceStreamPrivate> d;
