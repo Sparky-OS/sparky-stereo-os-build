@@ -6,12 +6,13 @@
 # Wayland client's problem messages (lang/, unchanged since +stereo3d23: row 121 adds no sentence a person reads), the manifest of the patches that are ours made
 # again with them, and the changelog entry of the plain version then the Lean Code entry on top of that source's history
 # (repo/lc-successor.py --in-place --overlay), so the old changelog stays a byte identical suffix. Control, rules, the
-# client's postrm and the symbols are +stereo3d23's, and no symbol is added. +stereo3d24 is the first free number: no
+# client's postrm and the symbols are +stereo3d23's, and no symbol is added. +stereo3d25 is the first free number: no
 # stage, round or recipe holds another (searched 2026-11-26).
-#   next-source-24.sh PREVIOUS.dsc OUT
+#   next-source-25.sh PREVIOUS.dsc OUT
 #   PREVIOUS.dsc: the +stereo3d24+lc1 source (its orig tarball beside it)
 #   OUT: receives the new .dsc, Debian tarball, both changelogs and the successor report
-# Run it twice into two folders: the .dsc and the Debian tarball must hash the same. The date is this folder's last commit.
+# Run it twice into two folders: the .dsc and the Debian tarball must hash the same. The date is this folder's last commit,
+# or SOURCE_DATE_EPOCH: the staged +25 (.dsc sha256 785aab07...) is SOURCE_DATE_EPOCH=1795709136 (2026-11-26 16:05:36 UTC).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../repo" && pwd)
