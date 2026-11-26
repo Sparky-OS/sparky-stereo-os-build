@@ -8,21 +8,24 @@ Description: the canvas of a stereo image per eye, through a stereo GtkGLArea
  each eye, each from that eye's own content at the canvas's own size: the
  shell's render code renders each eye into a render cache of its own from the
  eye's sources (the eye's layer, or the eye's view of the packed picture in
- both halves, so the canvas keeps the image's size and coordinates).  The two
- pictures go to the compositor through a stereo GtkGLArea (the edition's GTK
- 3, which hands them over side by side, left first, declared once as full
- side by side stereo content, on a surface of its own below a hole in the
- window).  The area lies under the canvas items (GimpCanvas's underlay, drawn
- by the shell between the backdrop and the items), so guides, the selection,
- paths and the tools' outlines stay over the picture at the screen, the same
- in both eyes.  When the area cannot show the canvas per eye it shows the left
- eye, and the person is told why in the status bar.  View > Display
- Settings... opens the display settings (kcmshell6 kcm_kscreen), where each
- screen's 3D mode is chosen.  On X11 the image window gets an alpha channel
- when the screen is composited, so that the stereo child window can lie below
- it.  A 2D image, and every image with Enable 3D off, is drawn as before.
- The feature is built only with a GtkGLArea that has gtk_gl_area_set_stereo()
- (meson: HAVE_GTK_GL_AREA_STEREO, OpenGL through epoxy).
+ both halves, so the canvas keeps the image's size and coordinates), and
+ scrolling moves those caches as it moves the shell's own.  The two pictures
+ go to the compositor through a stereo GtkGLArea (the edition's GTK 3, which
+ hands them over side by side, left first, declared once as full side by side
+ stereo content, on a surface of its own below a hole in the window).  The
+ area lies under the canvas items (GimpCanvas's underlay, drawn by the shell
+ between the backdrop and the items), so guides, the selection, paths and the
+ tools' outlines stay over the picture at the screen, the same in both eyes.
+ Each eye's picture carries what lies under the canvas in 2D (the backgrounds
+ of the widgets around it).  When the area cannot show the canvas per eye it
+ shows the left eye, and the person is told why in the status bar.  View >
+ Display Settings... opens the display settings (kcmshell6 kcm_kscreen),
+ where each screen's 3D mode is chosen.  On X11 the image window gets an
+ alpha channel when the screen is composited, so that the stereo child window
+ can lie below it.  A 2D image, and every image with Enable 3D off, is drawn
+ as before.  The feature is built only with a GtkGLArea that has
+ gtk_gl_area_set_stereo() (meson: HAVE_GTK_GL_AREA_STEREO, OpenGL through
+ epoxy).
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Origin: other, Sparky Stereo OS (queue row 137, the stereo GIMP's milestone 1)
 Forwarded: no
@@ -1051,12 +1054,33 @@ index 32aacca..049e027 100644
  gboolean gimp_display_shell_render_is_valid        (GimpDisplayShell *shell,
                                                      gint              x,
                                                      gint              y,
+diff --git a/app/display/gimpdisplayshell-scroll.c b/app/display/gimpdisplayshell-scroll.c
+index 0c340d7..ca9bed7 100644
+--- a/app/display/gimpdisplayshell-scroll.c
++++ b/app/display/gimpdisplayshell-scroll.c
+@@ -41,6 +41,7 @@
+ #include "gimpdisplayshell-rulers.h"
+ #include "gimpdisplayshell-scale.h"
+ #include "gimpdisplayshell-scroll.h"
++#include "gimpdisplayshell-stereo.h"
+ #include "gimpdisplayshell-scrollbars.h"
+ #include "gimpdisplayshell-transform.h"
+ 
+@@ -137,6 +138,8 @@ gimp_display_shell_scroll (GimpDisplayShell *shell,
+ 
+           cairo_region_intersect_rectangle (shell->render_cache_valid, &rect);
+         }
++
++      gimp_display_shell_stereo_scroll (shell, x_offset, y_offset);
+     }
+ 
+   /* re-enable the active tool */
 diff --git a/app/display/gimpdisplayshell-stereo.c b/app/display/gimpdisplayshell-stereo.c
 new file mode 100644
-index 0000000..19a5347
+index 0000000..79ad64d
 --- /dev/null
 +++ b/app/display/gimpdisplayshell-stereo.c
-@@ -0,0 +1,1044 @@
+@@ -0,0 +1,1106 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -1403,6 +1427,68 @@ index 0000000..19a5347
 +
 +  for (i = 0; i < 2; i++)
 +    g_clear_pointer (&stereo->render_cache_valid[i], cairo_region_destroy);
++}
++
++/*  Scrolling moves each eye's render cache and its valid region as
++ *  gimp_display_shell_scroll() moves the shell's own.
++ */
++void
++gimp_display_shell_stereo_scroll (GimpDisplayShell *shell,
++                                  gint              x_offset,
++                                  gint              y_offset)
++{
++  GimpDisplayShellStereo *stereo;
++  gint                    i;
++
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  stereo = shell->stereo;
++
++  if (! stereo)
++    return;
++
++  for (i = 0; i < 2; i++)
++    {
++      if (stereo->render_cache[i])
++        {
++          cairo_surface_t *surface;
++          cairo_t         *cr;
++
++          surface = cairo_surface_create_similar_image (
++            stereo->render_cache[i],
++            CAIRO_FORMAT_ARGB32,
++            cairo_image_surface_get_width  (stereo->render_cache[i]),
++            cairo_image_surface_get_height (stereo->render_cache[i]));
++
++          cr = cairo_create (surface);
++          cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
++          cairo_set_source_surface (cr, stereo->render_cache[i], 0, 0);
++          cairo_paint (cr);
++          cairo_destroy (cr);
++
++          cr = cairo_create (stereo->render_cache[i]);
++          cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
++          cairo_set_source_surface (cr, surface,
++                                    -x_offset * shell->render_scale,
++                                    -y_offset * shell->render_scale);
++          cairo_paint (cr);
++          cairo_destroy (cr);
++
++          cairo_surface_destroy (surface);
++        }
++
++      if (stereo->render_cache_valid[i])
++        {
++          cairo_rectangle_int_t rect = { 0, 0,
++                                         shell->disp_width,
++                                         shell->disp_height };
++
++          cairo_region_translate (stereo->render_cache_valid[i],
++                                  -x_offset, -y_offset);
++          cairo_region_intersect_rectangle (stereo->render_cache_valid[i],
++                                            &rect);
++        }
++    }
 +}
 +
 +/*  The render cache of one eye, the size of the shell's own: recreated,
@@ -2103,10 +2189,10 @@ index 0000000..19a5347
 +#endif /* HAVE_GTK_GL_AREA_STEREO */
 diff --git a/app/display/gimpdisplayshell-stereo.h b/app/display/gimpdisplayshell-stereo.h
 new file mode 100644
-index 0000000..97d8d00
+index 0000000..0d2248a
 --- /dev/null
 +++ b/app/display/gimpdisplayshell-stereo.h
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,73 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -2159,6 +2245,9 @@ index 0000000..97d8d00
 +                                                             gint                    width,
 +                                                             gint                    height);
 +void         gimp_display_shell_stereo_invalidate_full      (GimpDisplayShell       *shell);
++void         gimp_display_shell_stereo_scroll               (GimpDisplayShell       *shell,
++                                                             gint                    x_offset,
++                                                             gint                    y_offset);
 +
 +cairo_surface_t ** gimp_display_shell_stereo_get_render_cache
 +                                                            (GimpDisplayShell       *shell,
