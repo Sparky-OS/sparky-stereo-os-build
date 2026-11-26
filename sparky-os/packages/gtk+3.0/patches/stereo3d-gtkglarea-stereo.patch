@@ -20,14 +20,17 @@ Description: GtkGLArea: stereo, one view per eye, on a surface of its own, with 
  it.
  .
  An area that cannot be shown per eye says why, once, and renders its left
- view alone until stereo is asked again. An area without stereo is unchanged.
+ view alone until stereo is asked again; what can be known before the views
+ are rendered (the export, a colour state the compositor or an X window cannot
+ be told, a depth an X window cannot hold) is found before the first view. An
+ area without stereo is unchanged.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Origin: other, Sparky Stereo OS
 Forwarded: no
 Last-Update: 2026-11-26
 ---
 diff --git a/gtk/gtkglarea.c b/gtk/gtkglarea.c
-index 802303e..94a748c 100644
+index 802303e..92ec10b 100644
 --- a/gtk/gtkglarea.c
 +++ b/gtk/gtkglarea.c
 @@ -28,6 +28,11 @@
@@ -498,7 +501,7 @@ index 802303e..94a748c 100644
 +    }
 +
 +  pair = gtk_gl_area_stereo_begin (priv->stereo_output, view_width, view_height,
-+                                   gtk_gl_area_internal_format (area, TRUE), &error);
++                                   gtk_gl_area_internal_format (area, TRUE), priv->color_state, &error);
 +  if (pair == 0)
 +    goto failed;
 +
@@ -1109,10 +1112,10 @@ index d769a64..60a4335 100644
  #endif /* __GTK_GL_AREA_H__ */
 diff --git a/gtk/gtkglareastereo.c b/gtk/gtkglareastereo.c
 new file mode 100644
-index 0000000..f005bfe
+index 0000000..2900a42
 --- /dev/null
 +++ b/gtk/gtkglareastereo.c
-@@ -0,0 +1,1478 @@
+@@ -0,0 +1,1541 @@
 +/* GTK - The GIMP Toolkit
 + *
 + * gtkglareastereo.c: the surface of a GtkGLArea that hands its picture to the compositor itself
@@ -1909,25 +1912,22 @@ index 0000000..f005bfe
 +  .ready = description_ready,
 +};
 +
++/* Whether the compositor can be told @state: the protocol's names for its primaries and transfer function, which the
++ * compositor lists; FALSE with @error set otherwise. A compositor without colour management takes sRGB, undescribed */
 +static gboolean
-+wayland_describe (GtkGLAreaStereo  *stereo,
-+                  GdkColorState    *state,
-+                  GError          **error)
++wayland_can_describe (WaylandGlobals  *globals,
++                      GdkColorState   *state,
++                      guint32         *named_p_out,
++                      guint32         *named_t_out,
++                      GError         **error)
 +{
-+  WaylandGlobals *globals = stereo->globals;
 +  GdkCicpParams *cicp;
 +  guint primaries, transfer;
 +  guint32 named_p, named_t;
-+  struct wp_image_description_creator_params_v1 *creator;
-+  struct wp_image_description_v1 *description;
-+  DescriptionResult result = { FALSE, FALSE, NULL };
 +
-+  if (stereo->described != NULL && gdk_color_state_equal (stereo->described, state))
-+    return TRUE;
-+
++  *named_p_out = *named_t_out = 0;
 +  if (globals->color_manager == NULL)
 +    {
-+      /* a surface nothing describes is sRGB */
 +      if (gdk_color_state_equal (state, gdk_color_state_get_srgb ()))
 +        return TRUE;
 +      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
@@ -1961,6 +1961,31 @@ index 0000000..f005bfe
 +      return FALSE;
 +    }
 +
++  *named_p_out = named_p;
++  *named_t_out = named_t;
++  return TRUE;
++}
++
++static gboolean
++wayland_describe (GtkGLAreaStereo  *stereo,
++                  GdkColorState    *state,
++                  GError          **error)
++{
++  WaylandGlobals *globals = stereo->globals;
++  guint32 named_p, named_t;
++  struct wp_image_description_creator_params_v1 *creator;
++  struct wp_image_description_v1 *description;
++  DescriptionResult result = { FALSE, FALSE, NULL };
++
++  if (stereo->described != NULL && gdk_color_state_equal (stereo->described, state))
++    return TRUE;
++
++  if (!wayland_can_describe (globals, state, &named_p, &named_t, error))
++    return FALSE;
++  /* a surface nothing describes is sRGB */
++  if (globals->color_manager == NULL)
++    return TRUE;
++
 +  if (stereo->color_surface == NULL)
 +    stereo->color_surface = wp_color_manager_v1_get_surface (globals->color_manager, stereo->surface);
 +
@@ -1989,8 +2014,8 @@ index 0000000..f005bfe
 +  g_clear_pointer (&stereo->described, gdk_color_state_unref);
 +  stereo->described = gdk_color_state_ref (state);
 +
-+  g_debug ("GtkGLArea %p: its surface is described with named primaries %u and transfer function %u (H.273 %u, %u)",
-+           stereo->area, named_p, named_t, primaries, transfer);
++  g_debug ("GtkGLArea %p: its surface is described with named primaries %u and transfer function %u",
++           stereo->area, named_p, named_t);
 +  return TRUE;
 +}
 +
@@ -2214,6 +2239,42 @@ index 0000000..f005bfe
 +  XDestroyImage (image);
 +}
 +
++/* What an X window cannot carry: a colour description, a picture deeper than its visual */
++static gboolean
++x11_can_carry (GtkGLAreaStereo  *stereo,
++               GLenum            internal_format,
++               GdkColorState    *state,
++               GError          **error)
++{
++  XWindowAttributes toplevel;
++
++  if (!gdk_color_state_equal (state, gdk_color_state_get_srgb ()))
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                           "An X window has no colour description: an area in a colour state other than sRGB cannot be shown on X11");
++      return FALSE;
++    }
++
++  if (stereo->visual == NULL)
++    {
++      gdk_x11_display_error_trap_push (stereo->display);
++      XGetWindowAttributes (stereo->xdisplay, stereo->toplevel, &toplevel);
++      gdk_x11_display_error_trap_pop_ignored (stereo->display);
++      stereo->visual = toplevel.visual;
++      stereo->depth = toplevel.depth;
++    }
++  if (internal_format != GL_RGBA8 &&
++      !(internal_format == GL_RGB10_A2 && stereo->visual->bits_per_rgb >= 10))
++    {
++      g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                   "The X window holds %d bits a channel: the area's deeper picture cannot be carried on X11",
++                   stereo->visual->bits_per_rgb);
++      return FALSE;
++    }
++
++  return TRUE;
++}
++
 +static gboolean
 +x11_present (GtkGLAreaStereo     *stereo,
 +             PairBuffer          *buffer,
@@ -2228,27 +2289,13 @@ index 0000000..f005bfe
 +  gboolean resized;
 +  int result;
 +
-+  if (!gdk_color_state_equal (state, gdk_color_state_get_srgb ()))
-+    {
-+      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
-+                           "An X window has no colour description: an area in a colour state other than sRGB cannot be shown on X11");
-+      return FALSE;
-+    }
++  if (!x11_can_carry (stereo, buffer->internal_format, state, error))
++    return FALSE;
 +
 +  gdk_x11_display_error_trap_push (stereo->display);
 +
 +  if (stereo->own == None)
 +    x11_create_windows (stereo);
-+
-+  if (buffer->internal_format != GL_RGBA8 &&
-+      !(buffer->internal_format == GL_RGB10_A2 && stereo->visual->bits_per_rgb >= 10))
-+    {
-+      gdk_x11_display_error_trap_pop_ignored (stereo->display);
-+      g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
-+                   "The X window holds %d bits a channel: the area's deeper picture cannot be carried on X11",
-+                   stereo->visual->bits_per_rgb);
-+      return FALSE;
-+    }
 +
 +  resized = view_width != stereo->view_width || view_height != stereo->view_height ||
 +            shown_width != stereo->shown_width || shown_height != stereo->shown_height;
@@ -2453,12 +2500,15 @@ index 0000000..f005bfe
 +  g_free (stereo);
 +}
 +
-+/* Returns the framebuffer the two views are copied into, side by side, left first, or 0 with @error set */
++/* Returns the framebuffer the two views are copied into, side by side, left first, or 0 with @error set. Every failure
++ * that can be known before the views are rendered is found here: the picture's export, a colour state the compositor
++ * or an X window cannot be told, a depth an X window cannot hold */
 +guint
 +gtk_gl_area_stereo_begin (GtkGLAreaStereo  *stereo,
 +                          int               view_width,
 +                          int               view_height,
 +                          GLenum            internal_format,
++                          GdkColorState    *color_state,
 +                          GError          **error)
 +{
 +  PairBuffer *buffer = NULL;
@@ -2501,6 +2551,22 @@ index 0000000..f005bfe
 +      if (!pair_buffer_allocate (stereo, buffer, 2 * view_width, view_height, internal_format, error))
 +        return 0;
 +    }
++
++#ifdef GDK_WINDOWING_WAYLAND
++  if (stereo->route == ROUTE_WAYLAND)
++    {
++      guint32 named_p, named_t;
++
++      if (!wayland_can_describe (stereo->globals, color_state, &named_p, &named_t, error) ||
++          !pair_buffer_export (stereo, buffer, error))
++        return 0;
++    }
++#endif
++
++#ifdef GDK_WINDOWING_X11
++  if (stereo->route == ROUTE_X11 && !x11_can_carry (stereo, internal_format, color_state, error))
++    return 0;
++#endif
 +
 +  return buffer->framebuffer;
 +}
@@ -2593,10 +2659,10 @@ index 0000000..f005bfe
 +}
 diff --git a/gtk/gtkglareastereoprivate.h b/gtk/gtkglareastereoprivate.h
 new file mode 100644
-index 0000000..ae10a23
+index 0000000..0680e72
 --- /dev/null
 +++ b/gtk/gtkglareastereoprivate.h
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,56 @@
 +/* GTK - The GIMP Toolkit
 + *
 + * gtkglareastereoprivate.h: the surface of a GtkGLArea that hands its picture to the compositor itself
@@ -2635,6 +2701,7 @@ index 0000000..ae10a23
 +                                                    int                 view_width,
 +                                                    int                 view_height,
 +                                                    GLenum              internal_format,
++                                                    GdkColorState      *color_state,
 +                                                    GError            **error);
 +gboolean          gtk_gl_area_stereo_present       (GtkGLAreaStereo    *stereo,
 +                                                    const GdkRectangle *place,
