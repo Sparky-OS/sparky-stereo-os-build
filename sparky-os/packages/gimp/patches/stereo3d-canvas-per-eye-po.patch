@@ -1,0 +1,380 @@
+Description: the stereo canvas's strings in nine languages
+ Enable 3D, Display Settings..., their tooltips and the canvas's three
+ messages in Polish, Brazilian Portuguese, French, German, Spanish, Japanese,
+ Korean and Chinese (simplified and traditional).  "Enable 3D" and "Display
+ Settings..." are the words of the edition's stereo layer, so GIMP says what
+ the edition's Qt programs say.  For GIMP's translators to take over upstream.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, the stereo GIMP's milestone 1)
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff --git a/po/de.po b/po/de.po
+index edcb9c0..b759284 100644
+--- a/po/de.po
++++ b/po/de.po
+@@ -32280,3 +32280,36 @@
+ 
+ #~ msgid "Whether data is being read from the swap"
+ #~ msgstr "Gibt an, ob Daten aus dem Auslagerungsspeicher gelesen werden"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "3D aktivieren"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "Auf einem 3D-Bildschirm für jedes Auge das eigene Bild eines Stereobildes zeigen"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "Anzeigeeinstellungen …"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "Die Anzeigeeinstellungen öffnen, in denen der 3D-Modus jedes Bildschirms gewählt wird"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "Dieses Fenster wird vom Prozessor gezeichnet, nicht von einer Grafikkarte, und ein Bild für jedes Auge braucht eine Grafikkarte: Das linke Auge wird gezeigt."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "Die Leinwand kann hier nicht in 3D gezeigt werden, daher wird das linke Auge gezeigt; der Grund steht im Protokoll."
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "Die Anzeigeeinstellungen konnten nicht geöffnet werden: %s"
+diff --git a/po/es.po b/po/es.po
+index c3b8f0d..439d7ad 100644
+--- a/po/es.po
++++ b/po/es.po
+@@ -34748,3 +34748,36 @@
+ #~ msgctxt "filters-action"
+ #~ msgid "Change the color temperature of the image"
+ #~ msgstr "Cambia la temperatura del color de la imagen"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "Activar 3D"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "Mostrar en una pantalla 3D la imagen propia de cada ojo de una imagen estereoscópica"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "Configuración de pantalla…"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "Abrir la configuración de pantalla, donde se elige el modo 3D de cada pantalla"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "Esta ventana la dibuja el procesador, no una tarjeta gráfica, y una imagen para cada ojo necesita una tarjeta gráfica: se muestra el ojo izquierdo."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "El lienzo no se puede mostrar en 3D aquí, así que se muestra el ojo izquierdo; el motivo está en el registro."
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "No se pudo abrir la configuración de pantalla: %s"
+diff --git a/po/fr.po b/po/fr.po
+index 879afcb..6ca41e9 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -29901,3 +29901,36 @@
+ 
+ #~ msgid "You can drop dockable dialogs here"
+ #~ msgstr "Vous pouvez déposer les fenêtres ancrables ici"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "Activer la 3D"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "Afficher sur un écran 3D l’image propre à chaque œil d’une image stéréoscopique"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "Paramètres d’affichage…"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "Ouvrir les paramètres d’affichage, où l’on choisit le mode 3D de chaque écran"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "Cette fenêtre est dessinée par le processeur, pas par une carte graphique, et une image pour chaque œil demande une carte graphique : l’œil gauche est affiché."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "Le canevas ne peut pas être affiché en 3D ici, l’œil gauche est donc affiché ; la raison se trouve dans le journal."
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "Impossible d’ouvrir les paramètres d’affichage : %s"
+diff --git a/po/ja.po b/po/ja.po
+index 7489736..906b45a 100644
+--- a/po/ja.po
++++ b/po/ja.po
+@@ -32988,3 +32988,36 @@
+ 
+ #~ msgid "keyboard label|Backslash"
+ #~ msgstr "バックスラッシュ(\\)"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "3D を有効にする"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "立体画像の各眼用の画像を 3D ディスプレイに表示します"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "ディスプレイの設定…"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "各画面の 3D モードを選ぶディスプレイの設定を開きます"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "このウィンドウはグラフィックカードではなくプロセッサーで描画されています。各眼用の画像にはグラフィックカードが必要なため、左眼の画像を表示しています。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "ここではキャンバスを 3D で表示できないため、左眼の画像を表示しています。理由はログにあります。"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "ディスプレイの設定を開けませんでした: %s"
+diff --git a/po/ko.po b/po/ko.po
+index 9924d24..e553f54 100644
+--- a/po/ko.po
++++ b/po/ko.po
+@@ -31116,3 +31116,36 @@
+ 
+ #~ msgid "Error saving XCF file: %s"
+ #~ msgstr "XCF 파일 저장 오류: %s"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "3D 사용"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "3D 디스플레이에서 입체 이미지의 각 눈에 해당하는 그림을 표시합니다"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "디스플레이 설정…"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "각 화면의 3D 모드를 선택하는 디스플레이 설정을 엽니다"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "이 창은 그래픽 카드가 아닌 프로세서로 그려지며, 각 눈의 그림에는 그래픽 카드가 필요합니다. 왼쪽 눈의 그림을 표시합니다."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "여기서는 캔버스를 3D로 표시할 수 없어 왼쪽 눈의 그림을 표시합니다. 이유는 로그에 있습니다."
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "디스플레이 설정을 열 수 없습니다: %s"
+diff --git a/po/pl.po b/po/pl.po
+index 46b07c9..0b60b1d 100644
+--- a/po/pl.po
++++ b/po/pl.po
+@@ -28268,3 +28268,36 @@
+ #: ../data/tags/gimp-tags-default.xml.in.h:3
+ msgid "fuzzy"
+ msgstr "rozmyty"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "Włącz 3D"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "Pokaż na wyświetlaczu 3D własny obraz każdego oka obrazu stereoskopowego"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "Ustawienia ekranu…"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "Otwórz ustawienia ekranu, w których wybiera się tryb 3D każdego ekranu"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "To okno jest rysowane przez procesor, a nie przez kartę graficzną, a obraz dla każdego oka wymaga karty graficznej: pokazano lewe oko."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "Płótna nie można tu pokazać w 3D, więc pokazano lewe oko; przyczyna jest w dzienniku."
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "Nie można otworzyć ustawień ekranu: %s"
+diff --git a/po/pt_BR.po b/po/pt_BR.po
+index 0c84aab..a3ec1f4 100644
+--- a/po/pt_BR.po
++++ b/po/pt_BR.po
+@@ -31466,3 +31466,36 @@
+ 
+ #~ msgid "Close _without Saving"
+ #~ msgstr "Fechar _sem salvar"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "Ativar 3D"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "Mostra numa tela 3D a imagem própria de cada olho de uma imagem estéreo"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "Configurações de tela…"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "Abre as configurações de tela, onde se escolhe o modo 3D de cada tela"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "Esta janela é desenhada pelo processador, não por uma placa de vídeo, e uma imagem para cada olho precisa de uma placa de vídeo: o olho esquerdo é mostrado."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "A tela de pintura não pode ser mostrada em 3D aqui, então o olho esquerdo é mostrado; o motivo está no registro."
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "Não foi possível abrir as configurações de tela: %s"
+diff --git a/po/zh_CN.po b/po/zh_CN.po
+index 8d95735..9bd1754 100644
+--- a/po/zh_CN.po
++++ b/po/zh_CN.po
+@@ -32312,3 +32312,36 @@
+ 
+ #~ msgid "Flip Type  (%s)"
+ #~ msgstr "翻转类型(%s)"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "启用 3D"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "在 3D 显示器上显示立体图像中每只眼睛各自的画面"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "显示设置…"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "打开显示设置，在其中选择每个屏幕的 3D 模式"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "此窗口由处理器而非显卡绘制，而每只眼睛各一幅画面需要显卡：现显示左眼画面。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "此处无法以 3D 显示画布，因此显示左眼画面；原因见日志。"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "无法打开显示设置：%s"
+diff --git a/po/zh_TW.po b/po/zh_TW.po
+index ed2b87e..2977c10 100644
+--- a/po/zh_TW.po
++++ b/po/zh_TW.po
+@@ -29378,3 +29378,36 @@
+ #~ msgctxt "paint-select-mode"
+ #~ msgid "Subtract from selection"
+ #~ msgstr "從選取範圍刪去"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Enable 3D"
++msgstr "啟用 3D"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Show each eye's own picture of a stereo image on a 3D display"
++msgstr "在 3D 顯示器上顯示立體影像中每隻眼睛各自的畫面"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Display Settings…"
++msgstr "顯示設定…"
++
++#: app/actions/view-actions.c
++msgctxt "view-action"
++msgid "Open the display settings, where each screen's 3D mode is chosen"
++msgstr "開啟顯示設定，在其中選擇每個螢幕的 3D 模式"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card: the left eye is shown."
++msgstr "此視窗由處理器而非顯示卡繪製，而每隻眼睛各一幅畫面需要顯示卡：現顯示左眼畫面。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "The canvas cannot be shown in 3D here, so the left eye is shown; the reason is in the log."
++msgstr "此處無法以 3D 顯示畫布，因此顯示左眼畫面；原因請見記錄。"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "Display Settings could not be opened: %s"
++msgstr "無法開啟顯示設定：%s"

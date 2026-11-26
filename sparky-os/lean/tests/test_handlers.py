@@ -200,6 +200,21 @@ print(f(len(TEXT)), data, f.__doc__, __doc__)
         r, _ = P('/usr/lib/python3/dist-packages/m.py', '# c\nimport inspect\nprint(inspect.getcomments(inspect))\n')
         self.assertEqual(r.status, 'left')
 
+    def test_a_script_that_opens_its_own_path_is_left(self):
+        # GIMP's Goat Exercise shows its own source: open(os.path.realpath(__file__), 'r')
+        for opener in ("open(os.path.realpath(__file__), 'r')", 'open(os.path.abspath( __file__))',
+                       'open(__file__)'):
+            src = '# shown to the person\nimport os\nwith %s as f:\n    print(f.read())\n' % opener
+            r, _ = P('/usr/lib/python3/dist-packages/show.py', src)
+            self.assertEqual(r.status, 'left', opener)
+        src = '# shown\nfrom pathlib import Path\nprint(Path(__file__).read_text())\n'
+        r, _ = P('/usr/lib/python3/dist-packages/show2.py', src)
+        self.assertEqual(r.status, 'left')
+        # a script that only names its folder is still projected
+        src = '# a comment\nimport os\nprint(os.path.dirname(os.path.realpath(__file__)))\n'
+        r, _ = P('/usr/lib/python3/dist-packages/where.py', src)
+        self.assertEqual(r.status, 'projected', r.reason)
+
 
 @unittest.skipUnless(shutil.which('node'), 'needs node')
 class JavaScript(unittest.TestCase):
@@ -302,6 +317,16 @@ class Data(unittest.TestCase):
     def test_json_left(self):
         r, _ = P('/usr/share/x/c.json', '{"a": 1}\n')
         self.assertEqual(r.status, 'left')
+
+    def test_gimp_goat_exercises_left(self):
+        # they open their installed file and show it in their dialog, comments included
+        for path, src in (('/usr/lib/x86_64-linux-gnu/gimp/3.0/extensions/org.gimp.extension.goat-exercises/goat-exercise-c.c',
+                           '/* shown to the person */\nint main (void) { return 0; }\n'),
+                          ('/usr/lib/x86_64-linux-gnu/gimp/3.0/extensions/org.gimp.extension.goat-exercises/goat-exercise-py3.py',
+                           '#!/usr/bin/env python3\n# shown to the person\nprint(1)\n')):
+            r, _ = P(path, src)
+            self.assertEqual(r.status, 'left', path)
+            self.assertIn('Goat Exercises', r.reason)
 
     def test_dpkg_stereo_itself_left(self):
         src = '# the projector\nimport os  # used below\nprint(os.sep)\n'

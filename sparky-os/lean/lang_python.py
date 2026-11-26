@@ -25,7 +25,11 @@ EXTS = frozenset({'.py'})
 INTERPRETERS = ('python', 'python3')
 MARKER = '#'
 CODING = re.compile(r'^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)')
-SELF_READ = re.compile(r'inspect\.(getsource|getsourcelines|getcomments|findsource)|getcomments\(|open\(\s*__file__')
+# a script that opens its own file: open(__file__), open(os.path.realpath(__file__)) (GIMP's Goat Exercise shows its
+# source that way), os.path.abspath, or pathlib's Path(__file__).read_text()
+SELF_READ = re.compile(r'inspect\.(getsource|getsourcelines|getcomments|findsource)|getcomments\(|'
+                       r'open\(\s*(os\.path\.(realpath|abspath)\(\s*)?__file__|'
+                       r'Path\(\s*__file__\s*\)\s*\.\s*(read_text|read_bytes|open)\b')
 
 
 def keep_empty_after(line: str) -> bool:
@@ -92,7 +96,7 @@ def _merge_fstrings(src, spans):
 
 def refuse(src: str) -> str | None:
     if SELF_READ.search(src):
-        return 'reads its own source or comments (inspect.getsource/getcomments, open(__file__))'
+        return 'reads its own source or comments (inspect.getsource/getcomments, open(__file__), Path(__file__).read_text)'
     if '\0' in src:
         return 'carries binary data'
     return None

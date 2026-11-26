@@ -1,0 +1,25 @@
+Source: gimp-stereo-pictures
+Section: graphics
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), gettext
+Standards-Version: 4.7.2
+Homepage: https://github.com/Sparky-OS/PhotoGIMP
+Rules-Requires-Root: no
+
+Package: gimp-stereo-pictures
+Architecture: any
+Depends: gimp (>= 3.2),
+         gir1.2-gimp-3.0,
+         python3,
+         python3-gi,
+         ${misc:Depends}
+Recommends: libstereo-policy1
+Description: stereo pictures for GIMP 3: MPO, JPS, PNS and both-eyes editing
+ Opens MPO (CIPA DC-007), JPS and PNS stereo photographs as "Left eye" and
+ "Right eye" layers, exports the same formats with each format's own stereo
+ mark, and adds a Stereo menu: split, join and swap the eyes, align them
+ vertically, and edit a side-by-side picture one eye at a time or with both
+ eyes alike at a chosen depth. The edition's GIMP shows such images in 3D.
+ .
+ Part of Sparky Stereo OS, an edition of SparkyLinux.

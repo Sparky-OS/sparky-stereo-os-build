@@ -1,0 +1,2548 @@
+Description: the canvas of a stereo image per eye, through a stereo GtkGLArea
+ A stereo image is an image with the top-level layers "Left eye" and "Right
+ eye" (how the stereo pictures plug-in opens MPO, JPS and PNS files), or a
+ picture holding both views side by side or top and bottom that the person
+ put into one of the plug-in's editing modes (the parasites
+ stereo-pictures/edit-mode and stereo-pictures/layout).  While View > Enable
+ 3D is on (it is by default), such an image's canvas is drawn twice, once for
+ each eye, each from that eye's own content at the canvas's own size: the
+ shell's render code renders each eye into a render cache of its own from the
+ eye's sources (the eye's layer, or the eye's view of the packed picture in
+ both halves, so the canvas keeps the image's size and coordinates), and
+ scrolling moves those caches as it moves the shell's own.  The two pictures
+ go to the compositor through a stereo GtkGLArea (the edition's GTK 3, which
+ hands them over side by side, left first, declared once as full side by side
+ stereo content, on a surface of its own below a hole in the window).  The
+ area lies under the canvas items (GimpCanvas's underlay, drawn by the shell
+ between the backdrop and the items), so guides, the selection, paths and the
+ tools' outlines stay over the picture at the screen, the same in both eyes.
+ Each eye's picture carries what lies under the canvas in 2D (the backgrounds
+ of the widgets around it).  When the area cannot show the canvas per eye,
+ the canvas draws the left eye itself, with its items over it, and the person
+ is told why in the status bar (the reason in English on stderr); turning
+ Enable 3D off and on tries again.  On X11 the renderer is first read on a
+ window of its own: with Mesa's zink GTK 3 draws an X11 window that holds an
+ OpenGL area black, so there the image window gets no area.  View >
+ Display Settings... opens the display settings (kcmshell6 kcm_kscreen),
+ where each screen's 3D mode is chosen.  On X11 the image window gets an
+ alpha channel when the screen is composited, so that the stereo child window
+ can lie below it.  A 2D image, and every image with Enable 3D off, is drawn
+ as before.  The feature is built only with a GtkGLArea that has
+ gtk_gl_area_set_stereo() (meson: HAVE_GTK_GL_AREA_STEREO, OpenGL through
+ epoxy).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, the stereo GIMP's milestone 1)
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff --git a/app/actions/view-actions.c b/app/actions/view-actions.c
+index 0886b67..395c582 100644
+--- a/app/actions/view-actions.c
++++ b/app/actions/view-actions.c
+@@ -43,6 +43,7 @@
+ #include "display/gimpdisplayshell.h"
+ #include "display/gimpdisplayshell-appearance.h"
+ #include "display/gimpdisplayshell-scale.h"
++#include "display/gimpdisplayshell-stereo.h"
+ #include "display/gimpimagewindow.h"
+ 
+ #include "actions.h"
+@@ -73,6 +74,12 @@ static const GimpActionEntry view_actions[] =
+     view_new_cmd_callback,
+     GIMP_HELP_VIEW_NEW },
+ 
++  { "view-stereo-display-settings", NULL,
++    NC_("view-action", "Display Settings…"), NULL, { NULL },
++    NC_("view-action", "Open the display settings, where each screen's 3D mode is chosen"),
++    view_stereo_display_settings_cmd_callback,
++    GIMP_HELP_VIEW_STEREO_DISPLAY_SETTINGS },
++
+   { "view-close", GIMP_ICON_WINDOW_CLOSE,
+     NC_("view-action",  "_Close View"), NULL, { "<primary>W", NULL },
+     NC_("view-action", "Close the active image view"),
+@@ -178,6 +185,13 @@ static const GimpToggleActionEntry view_toggle_actions[] =
+     TRUE,
+     GIMP_HELP_VIEW_DOT_FOR_DOT },
+ 
++  { "view-stereo", NULL,
++    NC_("view-action", "Enable 3D"), NULL, { NULL },
++    NC_("view-action", "Show each eye's own picture of a stereo image on a 3D display"),
++    view_stereo_cmd_callback,
++    TRUE,
++    GIMP_HELP_VIEW_STEREO },
++
+   { "view-color-management-enable", NULL,
+     NC_("view-action", "_Color-Manage this View"), NULL, { NULL },
+     NC_("view-action", "Use color management for this view"),
+@@ -845,6 +859,10 @@ view_actions_update (GimpActionGroup *group,
+   SET_SENSITIVE ("view-dot-for-dot", image);
+   SET_ACTIVE    ("view-dot-for-dot", display && shell->dot_for_dot);
+ 
++  SET_SENSITIVE ("view-stereo", image);
++  SET_ACTIVE    ("view-stereo", display && gimp_display_shell_stereo_get_enabled (shell));
++  SET_SENSITIVE ("view-stereo-display-settings", image);
++
+   SET_SENSITIVE ("view-scroll-center", image);
+ 
+   SET_SENSITIVE ("view-zoom-revert", revert_enabled);
+diff --git a/app/actions/view-commands.c b/app/actions/view-commands.c
+index e317340..597cb21 100644
+--- a/app/actions/view-commands.c
++++ b/app/actions/view-commands.c
+@@ -51,6 +51,7 @@
+ #include "display/gimpdisplayshell-rotate.h"
+ #include "display/gimpdisplayshell-rotate-dialog.h"
+ #include "display/gimpdisplayshell-scale.h"
++#include "display/gimpdisplayshell-stereo.h"
+ #include "display/gimpdisplayshell-scale-dialog.h"
+ #include "display/gimpdisplayshell-scroll.h"
+ #include "display/gimpdisplayshell-close.h"
+@@ -320,6 +321,46 @@ view_show_all_cmd_callback (GimpAction *action,
+     }
+ }
+ 
++void
++view_stereo_cmd_callback (GimpAction *action,
++                          GVariant   *value,
++                          gpointer    data)
++{
++  GimpDisplay      *display;
++  GimpDisplayShell *shell;
++  gboolean          active;
++  return_if_no_display (display, data);
++
++  shell = gimp_display_get_shell (display);
++
++  active = g_variant_get_boolean (value);
++
++  if (active != gimp_display_shell_stereo_get_enabled (shell))
++    {
++      GimpImageWindow *window = gimp_display_shell_get_window (shell);
++
++      gimp_display_shell_stereo_set_enabled (shell, active);
++
++      if (window)
++        SET_ACTIVE (menus_get_image_manager_singleton (display->gimp),
++                    "view-stereo", active);
++
++      if (IS_ACTIVE_DISPLAY (display))
++        SET_ACTIVE (shell->popup_manager, "view-stereo", active);
++    }
++}
++
++void
++view_stereo_display_settings_cmd_callback (GimpAction *action,
++                                           GVariant   *value,
++                                           gpointer    data)
++{
++  GimpDisplay *display;
++  return_if_no_display (display, data);
++
++  gimp_display_shell_stereo_open_display_settings (gimp_display_get_shell (display));
++}
++
+ void
+ view_dot_for_dot_cmd_callback (GimpAction *action,
+                                GVariant   *value,
+diff --git a/app/actions/view-commands.h b/app/actions/view-commands.h
+index 3b835f3..03e783f 100644
+--- a/app/actions/view-commands.h
++++ b/app/actions/view-commands.h
+@@ -52,6 +52,12 @@ void   view_show_all_cmd_callback                   (GimpAction *action,
+                                                      GVariant   *value,
+                                                      gpointer    data);
+ 
++void   view_stereo_cmd_callback                     (GimpAction *action,
++                                                     GVariant   *value,
++                                                     gpointer    data);
++void   view_stereo_display_settings_cmd_callback    (GimpAction *action,
++                                                     GVariant   *value,
++                                                     gpointer    data);
+ void   view_dot_for_dot_cmd_callback                (GimpAction *action,
+                                                      GVariant   *value,
+                                                      gpointer    data);
+diff --git a/app/display/display-types.h b/app/display/display-types.h
+index 42dd7ef..574027b 100644
+--- a/app/display/display-types.h
++++ b/app/display/display-types.h
+@@ -27,6 +27,7 @@ typedef struct _GimpCanvasGroup          GimpCanvasGroup;
+ typedef struct _GimpCanvasItem           GimpCanvasItem;
+ 
+ typedef struct _GimpDisplayShell         GimpDisplayShell;
++typedef struct _GimpDisplayShellStereo   GimpDisplayShellStereo;
+ typedef struct _GimpMotionBuffer         GimpMotionBuffer;
+ 
+ typedef struct _GimpImageWindow          GimpImageWindow;
+@@ -38,6 +39,17 @@ typedef struct _GimpNavigationEditor     GimpNavigationEditor;
+ typedef struct _GimpScaleComboBox        GimpScaleComboBox;
+ typedef struct _GimpStatusbar            GimpStatusbar;
+ 
++
++/*  the picture the canvas is drawn for: the screen, or one eye of a
++ *  stereo image
++ */
++typedef enum
++{
++  GIMP_DISPLAY_SHELL_EYE_NONE,
++  GIMP_DISPLAY_SHELL_EYE_LEFT,
++  GIMP_DISPLAY_SHELL_EYE_RIGHT
++} GimpDisplayShellEye;
++
+ typedef struct _GimpToolDialog           GimpToolDialog;
+ typedef struct _GimpToolGui              GimpToolGui;
+ typedef struct _GimpToolWidget           GimpToolWidget;
+diff --git a/app/display/gimpcanvas.c b/app/display/gimpcanvas.c
+index 85312ab..61d5343 100644
+--- a/app/display/gimpcanvas.c
++++ b/app/display/gimpcanvas.c
+@@ -57,6 +57,8 @@ static void       gimp_canvas_get_property    (GObject         *object,
+                                                GParamSpec      *pspec);
+ 
+ static void       gimp_canvas_unrealize       (GtkWidget       *widget);
++static void       gimp_canvas_size_allocate   (GtkWidget       *widget,
++                                               GtkAllocation   *allocation);
+ static void       gimp_canvas_style_updated   (GtkWidget       *widget);
+ static gboolean   gimp_canvas_focus_in_event  (GtkWidget       *widget,
+                                                GdkEventFocus   *event);
+@@ -65,6 +67,13 @@ static gboolean   gimp_canvas_focus_out_event (GtkWidget       *widget,
+ static gboolean   gimp_canvas_focus           (GtkWidget       *widget,
+                                                GtkDirectionType direction);
+ 
++static void       gimp_canvas_remove          (GtkContainer    *container,
++                                               GtkWidget       *widget);
++static void       gimp_canvas_forall          (GtkContainer    *container,
++                                               gboolean         include_internals,
++                                               GtkCallback      callback,
++                                               gpointer         callback_data);
++
+ 
+ G_DEFINE_TYPE (GimpCanvas, gimp_canvas, GIMP_TYPE_OVERLAY_BOX)
+ 
+@@ -74,18 +83,23 @@ G_DEFINE_TYPE (GimpCanvas, gimp_canvas, GIMP_TYPE_OVERLAY_BOX)
+ static void
+ gimp_canvas_class_init (GimpCanvasClass *klass)
+ {
+-  GObjectClass   *object_class = G_OBJECT_CLASS (klass);
+-  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
++  GObjectClass      *object_class    = G_OBJECT_CLASS (klass);
++  GtkWidgetClass    *widget_class    = GTK_WIDGET_CLASS (klass);
++  GtkContainerClass *container_class = GTK_CONTAINER_CLASS (klass);
+ 
+   object_class->set_property    = gimp_canvas_set_property;
+   object_class->get_property    = gimp_canvas_get_property;
+ 
+   widget_class->unrealize       = gimp_canvas_unrealize;
++  widget_class->size_allocate   = gimp_canvas_size_allocate;
+   widget_class->style_updated   = gimp_canvas_style_updated;
+   widget_class->focus_in_event  = gimp_canvas_focus_in_event;
+   widget_class->focus_out_event = gimp_canvas_focus_out_event;
+   widget_class->focus           = gimp_canvas_focus;
+ 
++  container_class->remove       = gimp_canvas_remove;
++  container_class->forall       = gimp_canvas_forall;
++
+   g_object_class_install_property (object_class, PROP_CONFIG,
+                                    g_param_spec_object ("config", NULL, NULL,
+                                                         GIMP_TYPE_DISPLAY_CONFIG,
+@@ -152,6 +166,25 @@ gimp_canvas_unrealize (GtkWidget *widget)
+   GTK_WIDGET_CLASS (parent_class)->unrealize (widget);
+ }
+ 
++static void
++gimp_canvas_size_allocate (GtkWidget     *widget,
++                           GtkAllocation *allocation)
++{
++  GimpCanvas *canvas = GIMP_CANVAS (widget);
++
++  GTK_WIDGET_CLASS (parent_class)->size_allocate (widget, allocation);
++
++  if (canvas->underlay && gtk_widget_get_visible (canvas->underlay))
++    {
++      GtkAllocation  child = { 0, 0, allocation->width, allocation->height };
++      GtkRequisition requisition;
++
++      /*  the underlay covers the canvas's whole window  */
++      gtk_widget_get_preferred_size (canvas->underlay, &requisition, NULL);
++      gtk_widget_size_allocate (canvas->underlay, &child);
++    }
++}
++
+ static void
+ gimp_canvas_style_updated (GtkWidget *widget)
+ {
+@@ -200,6 +233,44 @@ gimp_canvas_focus (GtkWidget        *widget,
+   return GTK_WIDGET_CLASS (parent_class)->focus (widget, direction);
+ }
+ 
++static void
++gimp_canvas_remove (GtkContainer *container,
++                    GtkWidget    *widget)
++{
++  GimpCanvas *canvas = GIMP_CANVAS (container);
++
++  if (widget == canvas->underlay)
++    {
++      gboolean was_visible = gtk_widget_get_visible (widget);
++
++      gtk_widget_unparent (widget);
++      canvas->underlay = NULL;
++
++      if (was_visible)
++        gtk_widget_queue_draw (GTK_WIDGET (container));
++
++      return;
++    }
++
++  GTK_CONTAINER_CLASS (parent_class)->remove (container, widget);
++}
++
++static void
++gimp_canvas_forall (GtkContainer *container,
++                    gboolean      include_internals,
++                    GtkCallback   callback,
++                    gpointer      callback_data)
++{
++  GimpCanvas *canvas   = GIMP_CANVAS (container);
++  GtkWidget  *underlay = canvas->underlay;
++
++  if (underlay)
++    (* callback) (underlay, callback_data);
++
++  GTK_CONTAINER_CLASS (parent_class)->forall (container, include_internals,
++                                              callback, callback_data);
++}
++
+ 
+ /*  public functions  */
+ 
+@@ -265,6 +336,38 @@ gimp_canvas_get_layout (GimpCanvas  *canvas,
+   return canvas->layout;
+ }
+ 
++/**
++ * gimp_canvas_set_underlay:
++ * @canvas:   a #GimpCanvas widget
++ * @underlay: (nullable): a widget, or %NULL
++ *
++ * Sets a widget that covers the canvas's whole window below its
++ * overlays.  The canvas does not draw it: whoever draws the canvas
++ * draws it with gtk_container_propagate_draw() where it belongs, under
++ * the canvas items (the display shell's stereo area).
++ **/
++void
++gimp_canvas_set_underlay (GimpCanvas *canvas,
++                          GtkWidget  *underlay)
++{
++  g_return_if_fail (GIMP_IS_CANVAS (canvas));
++  g_return_if_fail (underlay == NULL || GTK_IS_WIDGET (underlay));
++
++  if (canvas->underlay == underlay)
++    return;
++
++  if (canvas->underlay)
++    gtk_container_remove (GTK_CONTAINER (canvas), canvas->underlay);
++
++  if (underlay)
++    {
++      canvas->underlay = underlay;
++      gtk_widget_set_parent (underlay, GTK_WIDGET (canvas));
++    }
++
++  gtk_widget_queue_resize (GTK_WIDGET (canvas));
++}
++
+ /**
+  * gimp_canvas_set_padding:
+  * @canvas:   a #GimpCanvas widget
+diff --git a/app/display/gimpcanvas.h b/app/display/gimpcanvas.h
+index c607bc0..326cd14 100644
+--- a/app/display/gimpcanvas.h
++++ b/app/display/gimpcanvas.h
+@@ -55,6 +55,8 @@ struct _GimpCanvas
+ 
+   GimpCanvasPaddingMode  padding_mode;
+   GeglColor             *padding_color;
++
++  GtkWidget             *underlay;
+ };
+ 
+ struct _GimpCanvasClass
+@@ -71,6 +73,9 @@ PangoLayout * gimp_canvas_get_layout   (GimpCanvas            *canvas,
+                                         const gchar           *format,
+                                         ...) G_GNUC_PRINTF (2, 3);
+ 
++void          gimp_canvas_set_underlay (GimpCanvas            *canvas,
++                                        GtkWidget             *underlay);
++
+ void          gimp_canvas_set_padding  (GimpCanvas            *canvas,
+                                         GimpCanvasPaddingMode  padding_mode,
+                                         GeglColor             *padding_color);
+diff --git a/app/display/gimpdisplayshell-callbacks.c b/app/display/gimpdisplayshell-callbacks.c
+index 6cbd719..a760c2b 100644
+--- a/app/display/gimpdisplayshell-callbacks.c
++++ b/app/display/gimpdisplayshell-callbacks.c
+@@ -46,6 +46,7 @@
+ #include "gimpdisplayshell-scroll.h"
+ #include "gimpdisplayshell-scrollbars.h"
+ #include "gimpdisplayshell-selection.h"
++#include "gimpdisplayshell-stereo.h"
+ #include "gimpdisplayshell-title.h"
+ #include "gimpdisplayshell-transform.h"
+ #include "gimpimagewindow.h"
+@@ -498,121 +499,11 @@ static void
+ gimp_display_shell_canvas_draw_image (GimpDisplayShell *shell,
+                                       cairo_t          *cr)
+ {
+-  cairo_rectangle_list_t *clip_rectangles;
+-  GeglRectangle           image_rect;
+-  GeglRectangle           rotated_image_rect;
+-  GeglRectangle           canvas_rect;
+-  cairo_matrix_t          matrix;
+-  gdouble                 x1, y1;
+-  gdouble                 x2, y2;
+-
+-  gimp_display_shell_scale_get_image_unrotated_bounding_box (
+-    shell,
+-    &image_rect.x,
+-    &image_rect.y,
+-    &image_rect.width,
+-    &image_rect.height);
+-
+-  gimp_display_shell_scale_get_image_unrotated_bounds (
+-    shell,
+-    &canvas_rect.x,
+-    &canvas_rect.y,
+-    &canvas_rect.width,
+-    &canvas_rect.height);
+-
+-  /*  first, draw the background
+-   */
+-
+-  gimp_display_shell_draw_background (shell, cr);
+-
+-
+-  /*  then, draw the exposed part of the region that is inside the
+-   *  image
++  /*  first, the picture: the stereo area's (it shows each eye of a stereo
++   *  image below a hole in the window) or the canvas's own
+    */
+-
+-  cairo_save (cr);
+-  clip_rectangles = cairo_copy_clip_rectangle_list (cr);
+-  cairo_get_matrix (cr, &matrix);
+-
+-  if (shell->rotate_transform)
+-    cairo_transform (cr, shell->rotate_transform);
+-
+-  if (shell->show_all)
+-    {
+-      cairo_save (cr);
+-
+-      if (gimp_display_shell_get_padding_in_show_all (shell))
+-        {
+-          cairo_rectangle (cr,
+-                           canvas_rect.x,
+-                           canvas_rect.y,
+-                           canvas_rect.width,
+-                           canvas_rect.height);
+-          cairo_clip (cr);
+-        }
+-
+-      gimp_display_shell_draw_checkerboard (shell, cr);
+-
+-      cairo_restore (cr);
+-    }
+-
+-  cairo_rectangle (cr,
+-                   image_rect.x,
+-                   image_rect.y,
+-                   image_rect.width,
+-                   image_rect.height);
+-  cairo_clip (cr);
+-
+-  gimp_display_shell_rotate_bounds (shell,
+-                                    image_rect.x,
+-                                    image_rect.y,
+-                                    image_rect.x + image_rect.width,
+-                                    image_rect.y + image_rect.height,
+-                                    &x1, &y1, &x2, &y2);
+-
+-  rotated_image_rect.x      = floor (x1);
+-  rotated_image_rect.y      = floor (y1);
+-  rotated_image_rect.width  = ceil  (x2) - rotated_image_rect.x;
+-  rotated_image_rect.height = ceil  (y2) - rotated_image_rect.y;
+-
+-  if (gdk_cairo_get_clip_rectangle (cr, NULL))
+-    {
+-      gint i;
+-
+-      if (! shell->show_all)
+-        {
+-          cairo_save (cr);
+-          gimp_display_shell_draw_checkerboard (shell, cr);
+-          cairo_restore (cr);
+-        }
+-
+-      if (shell->show_image)
+-        {
+-          cairo_set_matrix (cr, &matrix);
+-
+-          for (i = 0; i < clip_rectangles->num_rectangles; i++)
+-            {
+-              cairo_rectangle_t clip_rect = clip_rectangles->rectangles[i];
+-              GeglRectangle     rect;
+-
+-              rect.x      = floor (clip_rect.x);
+-              rect.y      = floor (clip_rect.y);
+-              rect.width  = ceil  (clip_rect.x + clip_rect.width)  - rect.x;
+-              rect.height = ceil  (clip_rect.y + clip_rect.height) - rect.y;
+-
+-              if (gegl_rectangle_intersect (&rect, &rect, &rotated_image_rect))
+-                {
+-                  gimp_display_shell_draw_image (shell, cr,
+-                                                 rect.x,     rect.y,
+-                                                 rect.width, rect.height);
+-                }
+-            }
+-        }
+-    }
+-
+-  cairo_rectangle_list_destroy (clip_rectangles);
+-  cairo_restore (cr);
+-
++  if (! gimp_display_shell_stereo_draw (shell, cr))
++    gimp_display_shell_draw_picture (shell, cr, GIMP_DISPLAY_SHELL_EYE_NONE);
+ 
+   /*  finally, draw all the remaining image window stuff on top
+    */
+diff --git a/app/display/gimpdisplayshell-draw.c b/app/display/gimpdisplayshell-draw.c
+index 765c9f1..a68d57d 100644
+--- a/app/display/gimpdisplayshell-draw.c
++++ b/app/display/gimpdisplayshell-draw.c
+@@ -37,6 +37,10 @@
+ #include "gimpdisplayshell.h"
+ #include "gimpdisplayshell-draw.h"
+ #include "gimpdisplayshell-render.h"
++#include "gimpdisplayshell-appearance.h"
++#include "gimpdisplayshell-scale.h"
++#include "gimpdisplayshell-stereo.h"
++#include "gimpdisplayshell-transform.h"
+ 
+ #include "widgets/gimprender.h"
+ 
+@@ -149,6 +153,20 @@ gimp_display_shell_draw_image (GimpDisplayShell *shell,
+                                gint              w,
+                                gint              h)
+ {
++  gimp_display_shell_draw_image_eye (shell, cr, GIMP_DISPLAY_SHELL_EYE_NONE,
++                                     x, y, w, h);
++}
++
++void
++gimp_display_shell_draw_image_eye (GimpDisplayShell    *shell,
++                                   cairo_t             *cr,
++                                   GimpDisplayShellEye  eye,
++                                   gint                 x,
++                                   gint                 y,
++                                   gint                 w,
++                                   gint                 h)
++{
++  cairo_surface_t *cache;
+   gdouble chunk_width;
+   gdouble chunk_height;
+   gdouble scale = 1.0;
+@@ -209,16 +227,16 @@ gimp_display_shell_draw_image (GimpDisplayShell *shell,
+           cairo_rectangle (cr, x1, y1, x2 - x1, y2 - y1);
+           cairo_clip (cr);
+ 
+-          if (! gimp_display_shell_render_is_valid (shell,
+-                                                    x1, y1, x2 - x1, y2 - y1))
++          if (! gimp_display_shell_render_is_valid_eye (shell, eye,
++                                                        x1, y1, x2 - x1, y2 - y1))
+             {
+               /* render image to the render cache */
+-              gimp_display_shell_render (shell, cr,
+-                                         x1, y1, x2 - x1, y2 - y1,
+-                                         scale);
++              gimp_display_shell_render_eye (shell, eye, cr,
++                                             x1, y1, x2 - x1, y2 - y1,
++                                             scale);
+ 
+-              gimp_display_shell_render_validate_area (shell,
+-                                                       x1, y1, x2 - x1, y2 - y1);
++              gimp_display_shell_render_validate_area_eye (shell, eye,
++                                                           x1, y1, x2 - x1, y2 - y1);
+             }
+ 
+           /* divide the cairo scale-factor by the window scale-factor, since
+@@ -229,7 +247,12 @@ gimp_display_shell_draw_image (GimpDisplayShell *shell,
+                        1.0 / shell->render_scale);
+ 
+           /* render from the render cache to screen */
+-          cairo_set_source_surface (cr, shell->render_cache, 0, 0);
++          if (eye == GIMP_DISPLAY_SHELL_EYE_NONE)
++            cache = shell->render_cache;
++          else
++            cache = *gimp_display_shell_stereo_get_render_cache (shell, eye);
++
++          cairo_set_source_surface (cr, cache, 0, 0);
+           cairo_paint (cr);
+ 
+           cairo_restore (cr);
+@@ -253,3 +276,128 @@ gimp_display_shell_draw_image (GimpDisplayShell *shell,
+         }
+     }
+ }
++
++/*  The canvas's picture: its background, the padding, the checkerboard and
++ *  the image, for the screen or for one eye of a stereo image.  The canvas
++ *  items are drawn over it by the canvas's draw handler.
++ */
++void
++gimp_display_shell_draw_picture (GimpDisplayShell    *shell,
++                                 cairo_t             *cr,
++                                 GimpDisplayShellEye  eye)
++{
++  cairo_rectangle_list_t *clip_rectangles;
++  GeglRectangle           image_rect;
++  GeglRectangle           rotated_image_rect;
++  GeglRectangle           canvas_rect;
++  cairo_matrix_t          matrix;
++  gdouble                 x1, y1;
++  gdouble                 x2, y2;
++
++  gimp_display_shell_scale_get_image_unrotated_bounding_box (
++    shell,
++    &image_rect.x,
++    &image_rect.y,
++    &image_rect.width,
++    &image_rect.height);
++
++  gimp_display_shell_scale_get_image_unrotated_bounds (
++    shell,
++    &canvas_rect.x,
++    &canvas_rect.y,
++    &canvas_rect.width,
++    &canvas_rect.height);
++
++  /*  first, draw the background
++   */
++
++  gimp_display_shell_draw_background (shell, cr);
++
++
++  /*  then, draw the exposed part of the region that is inside the
++   *  image
++   */
++
++  cairo_save (cr);
++  clip_rectangles = cairo_copy_clip_rectangle_list (cr);
++  cairo_get_matrix (cr, &matrix);
++
++  if (shell->rotate_transform)
++    cairo_transform (cr, shell->rotate_transform);
++
++  if (shell->show_all)
++    {
++      cairo_save (cr);
++
++      if (gimp_display_shell_get_padding_in_show_all (shell))
++        {
++          cairo_rectangle (cr,
++                           canvas_rect.x,
++                           canvas_rect.y,
++                           canvas_rect.width,
++                           canvas_rect.height);
++          cairo_clip (cr);
++        }
++
++      gimp_display_shell_draw_checkerboard (shell, cr);
++
++      cairo_restore (cr);
++    }
++
++  cairo_rectangle (cr,
++                   image_rect.x,
++                   image_rect.y,
++                   image_rect.width,
++                   image_rect.height);
++  cairo_clip (cr);
++
++  gimp_display_shell_rotate_bounds (shell,
++                                    image_rect.x,
++                                    image_rect.y,
++                                    image_rect.x + image_rect.width,
++                                    image_rect.y + image_rect.height,
++                                    &x1, &y1, &x2, &y2);
++
++  rotated_image_rect.x      = floor (x1);
++  rotated_image_rect.y      = floor (y1);
++  rotated_image_rect.width  = ceil  (x2) - rotated_image_rect.x;
++  rotated_image_rect.height = ceil  (y2) - rotated_image_rect.y;
++
++  if (gdk_cairo_get_clip_rectangle (cr, NULL))
++    {
++      gint i;
++
++      if (! shell->show_all)
++        {
++          cairo_save (cr);
++          gimp_display_shell_draw_checkerboard (shell, cr);
++          cairo_restore (cr);
++        }
++
++      if (shell->show_image)
++        {
++          cairo_set_matrix (cr, &matrix);
++
++          for (i = 0; i < clip_rectangles->num_rectangles; i++)
++            {
++              cairo_rectangle_t clip_rect = clip_rectangles->rectangles[i];
++              GeglRectangle     rect;
++
++              rect.x      = floor (clip_rect.x);
++              rect.y      = floor (clip_rect.y);
++              rect.width  = ceil  (clip_rect.x + clip_rect.width)  - rect.x;
++              rect.height = ceil  (clip_rect.y + clip_rect.height) - rect.y;
++
++              if (gegl_rectangle_intersect (&rect, &rect, &rotated_image_rect))
++                {
++                  gimp_display_shell_draw_image_eye (shell, cr, eye,
++                                                     rect.x,     rect.y,
++                                                     rect.width, rect.height);
++                }
++            }
++        }
++    }
++
++  cairo_rectangle_list_destroy (clip_rectangles);
++  cairo_restore (cr);
++}
+diff --git a/app/display/gimpdisplayshell-draw.h b/app/display/gimpdisplayshell-draw.h
+index a3d4680..323e4e2 100644
+--- a/app/display/gimpdisplayshell-draw.h
++++ b/app/display/gimpdisplayshell-draw.h
+@@ -37,3 +37,13 @@ void   gimp_display_shell_draw_image         (GimpDisplayShell   *shell,
+                                               gint                y,
+                                               gint                w,
+                                               gint                h);
++void   gimp_display_shell_draw_image_eye     (GimpDisplayShell   *shell,
++                                              cairo_t            *cr,
++                                              GimpDisplayShellEye eye,
++                                              gint                x,
++                                              gint                y,
++                                              gint                w,
++                                              gint                h);
++void   gimp_display_shell_draw_picture       (GimpDisplayShell   *shell,
++                                              cairo_t            *cr,
++                                              GimpDisplayShellEye eye);
+diff --git a/app/display/gimpdisplayshell-render.c b/app/display/gimpdisplayshell-render.c
+index db48b9a..bb1e5aa 100644
+--- a/app/display/gimpdisplayshell-render.c
++++ b/app/display/gimpdisplayshell-render.c
+@@ -17,6 +17,8 @@
+ 
+ #include "config.h"
+ 
++#include <string.h>
++
+ #include <gegl.h>
+ #include <gtk/gtk.h>
+ 
+@@ -38,12 +40,24 @@
+ #include "gimpdisplayshell-filter.h"
+ #include "gimpdisplayshell-profile.h"
+ #include "gimpdisplayshell-render.h"
++#include "gimpdisplayshell-stereo.h"
+ 
+ 
+ #define GIMP_DISPLAY_RENDER_ENABLE_SCALING 1
+ #define GIMP_DISPLAY_RENDER_MAX_SCALE      4
+ 
+ 
++static void   gimp_display_shell_render_source (GimpDisplayShell                *shell,
++                                                cairo_t                         *cr,
++                                                cairo_surface_t                **cache,
++                                                const GimpDisplayShellEyeSource *source,
++                                                gint                             tx,
++                                                gint                             ty,
++                                                gint                             twidth,
++                                                gint                             theight,
++                                                gdouble                          scale);
++
++
+ void
+ gimp_display_shell_render_set_scale (GimpDisplayShell *shell,
+                                      gint              scale)
+@@ -71,6 +85,8 @@ gimp_display_shell_render_invalidate_full (GimpDisplayShell *shell)
+   g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
+ 
+   g_clear_pointer (&shell->render_cache_valid, cairo_region_destroy);
++
++  gimp_display_shell_stereo_invalidate_full (shell);
+ }
+ 
+ void
+@@ -93,6 +109,8 @@ gimp_display_shell_render_invalidate_area (GimpDisplayShell *shell,
+ 
+       cairo_region_subtract_rectangle (shell->render_cache_valid, &rect);
+     }
++
++  gimp_display_shell_stereo_invalidate_area (shell, x, y, width, height);
+ }
+ 
+ void
+@@ -102,9 +120,51 @@ gimp_display_shell_render_validate_area (GimpDisplayShell *shell,
+                                          gint              width,
+                                          gint              height)
+ {
++  gimp_display_shell_render_validate_area_eye (shell,
++                                               GIMP_DISPLAY_SHELL_EYE_NONE,
++                                               x, y, width, height);
++}
++
++gboolean
++gimp_display_shell_render_is_valid (GimpDisplayShell *shell,
++                                    gint              x,
++                                    gint              y,
++                                    gint              width,
++                                    gint              height)
++{
++  return gimp_display_shell_render_is_valid_eye (shell,
++                                                 GIMP_DISPLAY_SHELL_EYE_NONE,
++                                                 x, y, width, height);
++}
++
++/*  the render cache's valid region of the screen's picture, or of one
++ *  eye's
++ */
++static cairo_region_t **
++gimp_display_shell_render_valid_region (GimpDisplayShell    *shell,
++                                        GimpDisplayShellEye  eye)
++{
++  if (eye == GIMP_DISPLAY_SHELL_EYE_NONE)
++    return &shell->render_cache_valid;
++
++  return gimp_display_shell_stereo_get_render_cache_valid (shell, eye);
++}
++
++void
++gimp_display_shell_render_validate_area_eye (GimpDisplayShell    *shell,
++                                             GimpDisplayShellEye  eye,
++                                             gint                 x,
++                                             gint                 y,
++                                             gint                 width,
++                                             gint                 height)
++{
++  cairo_region_t **valid;
++
+   g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
+ 
+-  if (shell->render_cache_valid)
++  valid = gimp_display_shell_render_valid_region (shell, eye);
++
++  if (*valid)
+     {
+       cairo_rectangle_int_t rect;
+ 
+@@ -113,18 +173,21 @@ gimp_display_shell_render_validate_area (GimpDisplayShell *shell,
+       rect.width  = width;
+       rect.height = height;
+ 
+-      cairo_region_union_rectangle (shell->render_cache_valid, &rect);
++      cairo_region_union_rectangle (*valid, &rect);
+     }
+ }
+ 
+ gboolean
+-gimp_display_shell_render_is_valid (GimpDisplayShell *shell,
+-                                    gint              x,
+-                                    gint              y,
+-                                    gint              width,
+-                                    gint              height)
++gimp_display_shell_render_is_valid_eye (GimpDisplayShell    *shell,
++                                        GimpDisplayShellEye  eye,
++                                        gint                 x,
++                                        gint                 y,
++                                        gint                 width,
++                                        gint                 height)
+ {
+-  if (shell->render_cache_valid)
++  cairo_region_t **valid = gimp_display_shell_render_valid_region (shell, eye);
++
++  if (*valid)
+     {
+       cairo_rectangle_int_t  rect;
+       cairo_region_overlap_t overlap;
+@@ -134,8 +197,7 @@ gimp_display_shell_render_is_valid (GimpDisplayShell *shell,
+       rect.width  = width;
+       rect.height = height;
+ 
+-      overlap = cairo_region_contains_rectangle (shell->render_cache_valid,
+-                                                 &rect);
++      overlap = cairo_region_contains_rectangle (*valid, &rect);
+ 
+       return (overlap == CAIRO_REGION_OVERLAP_IN);
+     }
+@@ -151,6 +213,77 @@ gimp_display_shell_render (GimpDisplayShell *shell,
+                            gint              twidth,
+                            gint              theight,
+                            gdouble           scale)
++{
++  gimp_display_shell_render_eye (shell, GIMP_DISPLAY_SHELL_EYE_NONE, cr,
++                                 tx, ty, twidth, theight, scale);
++}
++
++/*  Renders a chunk of the screen's picture, or of one eye's, into its
++ *  render cache: from the shell's pickable, or from the eye's sources
++ *  (an eye layer, or the eye's view of a packed picture in each half).
++ */
++void
++gimp_display_shell_render_eye (GimpDisplayShell    *shell,
++                               GimpDisplayShellEye  eye,
++                               cairo_t             *cr,
++                               gint                 tx,
++                               gint                 ty,
++                               gint                 twidth,
++                               gint                 theight,
++                               gdouble              scale)
++{
++  GimpDisplayShellEyeSource   sources[2];
++  cairo_surface_t           **cache;
++  cairo_region_t            **valid;
++  gint                        n_sources;
++  gint                        i;
++
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++  g_return_if_fail (cr != NULL);
++  g_return_if_fail (scale > 0.0);
++
++  if (eye == GIMP_DISPLAY_SHELL_EYE_NONE)
++    {
++      memset (sources, 0, sizeof (sources));
++
++      sources[0].buffer       =
++        g_object_ref (gimp_pickable_get_buffer (
++                        gimp_display_shell_get_pickable (shell)));
++      sources[0].abyss_policy = shell->show_all ? GEGL_ABYSS_NONE :
++                                                  GEGL_ABYSS_CLAMP;
++      n_sources = 1;
++
++      cache = &shell->render_cache;
++    }
++  else
++    {
++      n_sources = gimp_display_shell_stereo_get_sources (shell, eye, sources);
++
++      cache = gimp_display_shell_stereo_get_render_cache (shell, eye);
++    }
++
++  valid = gimp_display_shell_render_valid_region (shell, eye);
++
++  if (! *valid)
++    *valid = cairo_region_create ();
++
++  for (i = 0; i < n_sources; i++)
++    gimp_display_shell_render_source (shell, cr, cache, &sources[i],
++                                      tx, ty, twidth, theight, scale);
++
++  gimp_display_shell_stereo_free_sources (sources, n_sources);
++}
++
++static void
++gimp_display_shell_render_source (GimpDisplayShell                *shell,
++                                  cairo_t                         *cr,
++                                  cairo_surface_t                **cache,
++                                  const GimpDisplayShellEyeSource *source,
++                                  gint                             tx,
++                                  gint                             ty,
++                                  gint                             twidth,
++                                  gint                             theight,
++                                  gdouble                          scale)
+ {
+   GimpDisplayConfig *display_config;
+   GimpImage         *image;
+@@ -197,10 +330,7 @@ gimp_display_shell_render (GimpDisplayShell *shell,
+ 
+   display_config = shell->display->config;
+ 
+-  if (shell->show_all)
+-    abyss_policy = GEGL_ABYSS_NONE;
+-  else
+-    abyss_policy = GEGL_ABYSS_CLAMP;
++  abyss_policy = source->abyss_policy;
+ 
+   if (display_config->zoom_quality != GIMP_ZOOM_QUALITY_HIGH)
+     {
+@@ -217,8 +347,7 @@ gimp_display_shell_render (GimpDisplayShell *shell,
+    */
+   g_return_if_fail (! gimp_image_get_converting (image));
+ 
+-  buffer = gimp_pickable_get_buffer (
+-    gimp_display_shell_get_pickable (shell));
++  buffer = source->buffer;
+ #ifdef USE_NODE_BLIT
+   node   = gimp_projectable_get_graph (GIMP_PROJECTABLE (image));
+ 
+@@ -236,21 +365,16 @@ gimp_display_shell_render (GimpDisplayShell *shell,
+ 
+   cairo_surface_flush (shell->render_surface);
+ 
+-  if (! shell->render_cache)
++  if (! *cache)
+     {
+-      shell->render_cache = cairo_surface_create_similar_image (
++      *cache = cairo_surface_create_similar_image (
+         cairo_get_target (cr),
+         CAIRO_FORMAT_ARGB32,
+         shell->disp_width  * shell->render_scale,
+         shell->disp_height * shell->render_scale);
+     }
+ 
+-  if (! shell->render_cache_valid)
+-    {
+-      shell->render_cache_valid = cairo_region_create ();
+-    }
+-
+-  my_cr = cairo_create (shell->render_cache);
++  my_cr = cairo_create (*cache);
+ 
+   /* clip to chunk bounds, in screen space */
+   cairo_rectangle (my_cr, tx, ty, twidth, theight);
+@@ -263,6 +387,15 @@ gimp_display_shell_render (GimpDisplayShell *shell,
+   cairo_translate (my_cr, -shell->offset_x, -shell->offset_y);
+   cairo_scale (my_cr, shell->scale_x / scale, shell->scale_y / scale);
+ 
++  /* the part of the image this source fills, in scaled image space */
++  if (source->clipped)
++    {
++      cairo_rectangle (my_cr,
++                       source->clip.x * scale,     source->clip.y * scale,
++                       source->clip.width * scale, source->clip.height * scale);
++      cairo_clip (my_cr);
++    }
++
+   cairo_stride = cairo_image_surface_get_stride (shell->render_surface);
+   cairo_data   = cairo_image_surface_get_data (shell->render_surface);
+ 
+diff --git a/app/display/gimpdisplayshell-render.h b/app/display/gimpdisplayshell-render.h
+index 32aacca..049e027 100644
+--- a/app/display/gimpdisplayshell-render.h
++++ b/app/display/gimpdisplayshell-render.h
+@@ -34,6 +34,28 @@ void     gimp_display_shell_render_validate_area   (GimpDisplayShell *shell,
+                                                     gint              width,
+                                                     gint              height);
+ 
++void     gimp_display_shell_render_validate_area_eye
++                                                   (GimpDisplayShell    *shell,
++                                                    GimpDisplayShellEye  eye,
++                                                    gint                 x,
++                                                    gint                 y,
++                                                    gint                 width,
++                                                    gint                 height);
++gboolean gimp_display_shell_render_is_valid_eye    (GimpDisplayShell    *shell,
++                                                    GimpDisplayShellEye  eye,
++                                                    gint                 x,
++                                                    gint                 y,
++                                                    gint                 width,
++                                                    gint                 height);
++void     gimp_display_shell_render_eye             (GimpDisplayShell    *shell,
++                                                    GimpDisplayShellEye  eye,
++                                                    cairo_t             *cr,
++                                                    gint                 x,
++                                                    gint                 y,
++                                                    gint                 width,
++                                                    gint                 height,
++                                                    gdouble              scale);
++
+ gboolean gimp_display_shell_render_is_valid        (GimpDisplayShell *shell,
+                                                     gint              x,
+                                                     gint              y,
+diff --git a/app/display/gimpdisplayshell-scroll.c b/app/display/gimpdisplayshell-scroll.c
+index 0c340d7..ca9bed7 100644
+--- a/app/display/gimpdisplayshell-scroll.c
++++ b/app/display/gimpdisplayshell-scroll.c
+@@ -41,6 +41,7 @@
+ #include "gimpdisplayshell-rulers.h"
+ #include "gimpdisplayshell-scale.h"
+ #include "gimpdisplayshell-scroll.h"
++#include "gimpdisplayshell-stereo.h"
+ #include "gimpdisplayshell-scrollbars.h"
+ #include "gimpdisplayshell-transform.h"
+ 
+@@ -137,6 +138,8 @@ gimp_display_shell_scroll (GimpDisplayShell *shell,
+ 
+           cairo_region_intersect_rectangle (shell->render_cache_valid, &rect);
+         }
++
++      gimp_display_shell_stereo_scroll (shell, x_offset, y_offset);
+     }
+ 
+   /* re-enable the active tool */
+diff --git a/app/display/gimpdisplayshell-stereo.c b/app/display/gimpdisplayshell-stereo.c
+new file mode 100644
+index 0000000..e756fa0
+--- /dev/null
++++ b/app/display/gimpdisplayshell-stereo.c
+@@ -0,0 +1,1223 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpdisplayshell-stereo.c
++ * Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  The canvas of a stereo image, one picture for each eye.
++ *
++ *  A stereo image is one of two kinds: an image with the top-level
++ *  layers "Left eye" and "Right eye" (how the stereo pictures plug-in
++ *  opens MPO, JPS and PNS files), or a picture that holds both views
++ *  side by side or top and bottom and that the person put into one of
++ *  the plug-in's editing modes (the image's "stereo-pictures/edit-mode"
++ *  parasite; its "stereo-pictures/layout" parasite says the packing).
++ *
++ *  While "Enable 3D" is on, such an image's canvas is drawn twice, once
++ *  for each eye, each from that eye's own content and at the canvas's
++ *  own size, and the two pictures go to the compositor through a
++ *  stereo GtkGLArea below the canvas: the area hands them over side by
++ *  side, left first, declared once, and keeps a hole in the window so
++ *  that the guides, the selection and the tools' outlines, which the
++ *  canvas keeps drawing, lie over the picture at the screen in both
++ *  eyes.  The compositor does the one resize.  A packed picture is shown
++ *  with each eye's view in both halves (the left eye sees the left view
++ *  in the left half and in the right half), so the canvas keeps the
++ *  image's size and coordinates and every tool works where it is used.
++ *
++ *  When the canvas cannot be shown per eye, the canvas draws the left
++ *  eye itself, with the guides and outlines over it, and the person is
++ *  told why; "Enable 3D" turned off and on again tries once more.  On
++ *  X11 the renderer is read first, on a window of its own: with Mesa's
++ *  zink, GTK 3 draws an X11 window that holds an OpenGL area black, so
++ *  the canvas's window is never given one there.
++ */
++
++#include "config.h"
++
++#include <string.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#ifdef HAVE_GTK_GL_AREA_STEREO
++#include <epoxy/gl.h>
++#endif
++
++#ifdef GDK_WINDOWING_X11
++#include <gdk/gdkx.h>
++#endif
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpmath/gimpmath.h"
++#include "libgimpwidgets/gimpwidgets.h"
++
++#include "display-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpdrawable.h"
++#include "core/gimpimage.h"
++#include "core/gimpitem.h"
++#include "core/gimplayer.h"
++#include "core/gimppickable.h"
++
++#include "gimpcanvas.h"
++#include "gimpdisplay.h"
++#include "gimpdisplayshell.h"
++#include "gimpdisplayshell-draw.h"
++#include "gimpdisplayshell-stereo.h"
++
++#include "gimp-intl.h"
++
++
++#define LEFT_EYE_LAYER   "Left eye"
++#define RIGHT_EYE_LAYER  "Right eye"
++#define MODE_PARASITE    "stereo-pictures/edit-mode"
++#define LAYOUT_PARASITE  "stereo-pictures/layout"
++
++
++typedef enum
++{
++  STEREO_NONE,
++  STEREO_EYE_LAYERS,
++  STEREO_PACKED
++} StereoKind;
++
++typedef struct
++{
++  StereoKind  kind;
++  GimpLayer  *layers[2];      /*  STEREO_EYE_LAYERS: left, right        */
++  gboolean    top_bottom;     /*  STEREO_PACKED: the views' packing     */
++  gboolean    left_first;
++} StereoModel;
++
++struct _GimpDisplayShellStereo
++{
++  GimpDisplayShell *shell;
++
++  gboolean          enabled;
++  StereoModel       model;
++
++  GtkWidget        *area;
++
++  /*  each eye's render cache, as the shell's own, and its picture of the
++   *  whole canvas in device pixels
++   */
++  cairo_surface_t  *render_cache[2];
++  cairo_region_t   *render_cache_valid[2];
++  cairo_surface_t  *picture[2];
++  cairo_region_t   *dirty[2];
++
++  guint             texture[2];
++  gint              texture_width[2];
++  gint              texture_height[2];
++  guint             framebuffer;
++
++  gboolean          renderer_known;
++  gboolean          on_processor;
++
++  /*  the area said it cannot show the pair: the canvas draws the left eye  */
++  gboolean          failed;
++  /*  why the canvas's window is not given an area at all (X11 and zink)  */
++  gboolean          probed;
++  gchar            *refused;
++
++  guint             apply_idle_id;
++  guint             tell_idle_id;
++  gchar            *told;
++};
++
++
++/*  local function prototypes  */
++
++static gboolean gimp_display_shell_stereo_same_model (const StereoModel      *a,
++                                                      const StereoModel      *b);
++
++static void     gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
++                                                      StereoModel            *model);
++static gboolean gimp_display_shell_stereo_apply      (gpointer                data);
++
++#ifdef HAVE_GTK_GL_AREA_STEREO
++static void     gimp_display_shell_stereo_make_area  (GimpDisplayShellStereo *stereo);
++static gboolean gimp_display_shell_stereo_render     (GtkGLArea              *area,
++                                                      GdkGLContext           *context,
++                                                      GimpDisplayShellStereo *stereo);
++static void     gimp_display_shell_stereo_unrealize  (GtkWidget              *area,
++                                                      GimpDisplayShellStereo *stereo);
++static void     gimp_display_shell_stereo_error      (GtkGLArea              *area,
++                                                      GParamSpec             *pspec,
++                                                      GimpDisplayShellStereo *stereo);
++static gboolean gimp_display_shell_stereo_tell       (gpointer                data);
++static gchar  * gimp_display_shell_stereo_probe      (GtkWidget              *widget);
++#endif
++
++
++/*  public functions  */
++
++GimpDisplayShellStereo *
++gimp_display_shell_stereo_new (GimpDisplayShell *shell)
++{
++  GimpDisplayShellStereo *stereo;
++
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), NULL);
++
++  stereo = g_new0 (GimpDisplayShellStereo, 1);
++
++  stereo->shell   = shell;
++  stereo->enabled = TRUE;
++
++  return stereo;
++}
++
++void
++gimp_display_shell_stereo_free (GimpDisplayShellStereo *stereo)
++{
++  gint i;
++
++  if (! stereo)
++    return;
++
++  g_clear_handle_id (&stereo->apply_idle_id, g_source_remove);
++  g_clear_handle_id (&stereo->tell_idle_id, g_source_remove);
++
++  if (stereo->area)
++    {
++      g_signal_handlers_disconnect_by_data (stereo->area, stereo);
++      g_clear_object (&stereo->area);
++    }
++
++  for (i = 0; i < 2; i++)
++    {
++      g_clear_pointer (&stereo->render_cache[i], cairo_surface_destroy);
++      g_clear_pointer (&stereo->render_cache_valid[i], cairo_region_destroy);
++      g_clear_pointer (&stereo->picture[i], cairo_surface_destroy);
++      g_clear_pointer (&stereo->dirty[i], cairo_region_destroy);
++    }
++
++  g_free (stereo->told);
++  g_free (stereo->refused);
++  g_free (stereo);
++}
++
++void
++gimp_display_shell_stereo_set_enabled (GimpDisplayShell *shell,
++                                       gboolean          enabled)
++{
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  enabled = enabled ? TRUE : FALSE;
++
++  if (shell->stereo && shell->stereo->enabled != enabled)
++    {
++      shell->stereo->enabled = enabled;
++
++      gtk_widget_queue_draw (shell->canvas);
++    }
++}
++
++gboolean
++gimp_display_shell_stereo_get_enabled (GimpDisplayShell *shell)
++{
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), FALSE);
++
++  return shell->stereo ? shell->stereo->enabled : FALSE;
++}
++
++/*  Called by the canvas's draw handler before it draws the image.  Returns
++ *  TRUE when the canvas's picture is the stereo area's (the area drew its
++ *  hole, or its left view after a failure), FALSE when the canvas draws
++ *  the image itself.
++ */
++gboolean
++gimp_display_shell_stereo_draw (GimpDisplayShell *shell,
++                                cairo_t          *cr)
++{
++  GimpDisplayShellStereo *stereo;
++  StereoModel             wanted;
++
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), FALSE);
++  g_return_val_if_fail (cr != NULL, FALSE);
++
++  stereo = shell->stereo;
++
++  if (! stereo)
++    return FALSE;
++
++  gimp_display_shell_stereo_read_model (stereo, &wanted);
++
++  /*  a change of the image's kind is applied outside of drawing; until
++   *  then the canvas draws the image as usual
++   */
++  if (! gimp_display_shell_stereo_same_model (&wanted, &stereo->model))
++    {
++      if (! stereo->apply_idle_id)
++        stereo->apply_idle_id = g_idle_add (gimp_display_shell_stereo_apply,
++                                            stereo);
++      return FALSE;
++    }
++
++  if (stereo->model.kind == STEREO_NONE)
++    return FALSE;
++
++  /*  the canvas cannot be shown per eye: the left eye, drawn by the canvas
++   *  itself so that the guides and outlines lie over it
++   */
++  if (stereo->refused || stereo->failed)
++    {
++      gimp_display_shell_draw_picture (shell, cr, GIMP_DISPLAY_SHELL_EYE_LEFT);
++      return TRUE;
++    }
++
++  if (! stereo->area || ! gtk_widget_get_visible (stereo->area))
++    return FALSE;
++
++#ifdef HAVE_GTK_GL_AREA_STEREO
++  {
++    cairo_rectangle_list_t *clip = cairo_copy_clip_rectangle_list (cr);
++    gint                    i, j;
++
++    /*  what the canvas draws again is what changed in each eye's picture  */
++    for (i = 0; i < 2; i++)
++      {
++        if (! stereo->dirty[i])
++          stereo->dirty[i] = cairo_region_create ();
++
++        if (clip->status != CAIRO_STATUS_SUCCESS)
++          {
++            cairo_rectangle_int_t all = { 0, 0,
++                                          shell->disp_width,
++                                          shell->disp_height };
++
++            cairo_region_union_rectangle (stereo->dirty[i], &all);
++            continue;
++          }
++
++        for (j = 0; j < clip->num_rectangles; j++)
++          {
++            cairo_rectangle_t     *r = &clip->rectangles[j];
++            cairo_rectangle_int_t  rect;
++
++            rect.x      = floor (r->x);
++            rect.y      = floor (r->y);
++            rect.width  = ceil (r->x + r->width)  - rect.x;
++            rect.height = ceil (r->y + r->height) - rect.y;
++
++            cairo_region_union_rectangle (stereo->dirty[i], &rect);
++          }
++      }
++
++    cairo_rectangle_list_destroy (clip);
++
++    gtk_container_propagate_draw (GTK_CONTAINER (shell->canvas),
++                                  stereo->area, cr);
++  }
++
++  return TRUE;
++#else
++  return FALSE;
++#endif
++}
++
++void
++gimp_display_shell_stereo_invalidate_area (GimpDisplayShell *shell,
++                                           gint              x,
++                                           gint              y,
++                                           gint              width,
++                                           gint              height)
++{
++  GimpDisplayShellStereo *stereo;
++  cairo_rectangle_int_t   rect = { x, y, width, height };
++  gint                    i;
++
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  stereo = shell->stereo;
++
++  if (! stereo)
++    return;
++
++  for (i = 0; i < 2; i++)
++    if (stereo->render_cache_valid[i])
++      cairo_region_subtract_rectangle (stereo->render_cache_valid[i], &rect);
++}
++
++void
++gimp_display_shell_stereo_invalidate_full (GimpDisplayShell *shell)
++{
++  GimpDisplayShellStereo *stereo;
++  gint                    i;
++
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  stereo = shell->stereo;
++
++  if (! stereo)
++    return;
++
++  for (i = 0; i < 2; i++)
++    g_clear_pointer (&stereo->render_cache_valid[i], cairo_region_destroy);
++}
++
++/*  Scrolling moves each eye's render cache and its valid region as
++ *  gimp_display_shell_scroll() moves the shell's own.
++ */
++void
++gimp_display_shell_stereo_scroll (GimpDisplayShell *shell,
++                                  gint              x_offset,
++                                  gint              y_offset)
++{
++  GimpDisplayShellStereo *stereo;
++  gint                    i;
++
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  stereo = shell->stereo;
++
++  if (! stereo)
++    return;
++
++  for (i = 0; i < 2; i++)
++    {
++      if (stereo->render_cache[i])
++        {
++          cairo_surface_t *surface;
++          cairo_t         *cr;
++
++          surface = cairo_surface_create_similar_image (
++            stereo->render_cache[i],
++            CAIRO_FORMAT_ARGB32,
++            cairo_image_surface_get_width  (stereo->render_cache[i]),
++            cairo_image_surface_get_height (stereo->render_cache[i]));
++
++          cr = cairo_create (surface);
++          cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
++          cairo_set_source_surface (cr, stereo->render_cache[i], 0, 0);
++          cairo_paint (cr);
++          cairo_destroy (cr);
++
++          cr = cairo_create (stereo->render_cache[i]);
++          cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
++          cairo_set_source_surface (cr, surface,
++                                    -x_offset * shell->render_scale,
++                                    -y_offset * shell->render_scale);
++          cairo_paint (cr);
++          cairo_destroy (cr);
++
++          cairo_surface_destroy (surface);
++        }
++
++      if (stereo->render_cache_valid[i])
++        {
++          cairo_rectangle_int_t rect = { 0, 0,
++                                         shell->disp_width,
++                                         shell->disp_height };
++
++          cairo_region_translate (stereo->render_cache_valid[i],
++                                  -x_offset, -y_offset);
++          cairo_region_intersect_rectangle (stereo->render_cache_valid[i],
++                                            &rect);
++        }
++    }
++}
++
++/*  The render cache of one eye, the size of the shell's own: recreated,
++ *  and so made invalid, when the canvas or its scale changed.
++ */
++cairo_surface_t **
++gimp_display_shell_stereo_get_render_cache (GimpDisplayShell    *shell,
++                                            GimpDisplayShellEye  eye)
++{
++  GimpDisplayShellStereo *stereo;
++  gint                    i;
++
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), NULL);
++  g_return_val_if_fail (eye != GIMP_DISPLAY_SHELL_EYE_NONE, NULL);
++
++  stereo = shell->stereo;
++  i      = (eye == GIMP_DISPLAY_SHELL_EYE_RIGHT);
++
++  if (stereo->render_cache[i] &&
++      (cairo_image_surface_get_width  (stereo->render_cache[i]) !=
++       shell->disp_width  * shell->render_scale ||
++       cairo_image_surface_get_height (stereo->render_cache[i]) !=
++       shell->disp_height * shell->render_scale))
++    {
++      g_clear_pointer (&stereo->render_cache[i], cairo_surface_destroy);
++      g_clear_pointer (&stereo->render_cache_valid[i], cairo_region_destroy);
++    }
++
++  return &stereo->render_cache[i];
++}
++
++cairo_region_t **
++gimp_display_shell_stereo_get_render_cache_valid (GimpDisplayShell    *shell,
++                                                  GimpDisplayShellEye  eye)
++{
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), NULL);
++  g_return_val_if_fail (eye != GIMP_DISPLAY_SHELL_EYE_NONE, NULL);
++
++  return &shell->stereo->render_cache_valid[eye == GIMP_DISPLAY_SHELL_EYE_RIGHT];
++}
++
++/*  The sources of one eye's picture, in image coordinates: the eye's layer,
++ *  or the eye's view of a packed picture put into both halves (two
++ *  sources, each clipped to its half).  Returns their number; free them
++ *  with gimp_display_shell_stereo_free_sources().
++ */
++gint
++gimp_display_shell_stereo_get_sources (GimpDisplayShell          *shell,
++                                       GimpDisplayShellEye        eye,
++                                       GimpDisplayShellEyeSource  sources[2])
++{
++  GimpDisplayShellStereo *stereo;
++  GimpImage              *image;
++  GeglAbyssPolicy         abyss_policy;
++  gint                    e;
++
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), 0);
++  g_return_val_if_fail (eye != GIMP_DISPLAY_SHELL_EYE_NONE, 0);
++
++  stereo = shell->stereo;
++  image  = gimp_display_get_image (shell->display);
++  e      = (eye == GIMP_DISPLAY_SHELL_EYE_RIGHT);
++
++  abyss_policy = shell->show_all ? GEGL_ABYSS_NONE : GEGL_ABYSS_CLAMP;
++
++  memset (sources, 0, 2 * sizeof (GimpDisplayShellEyeSource));
++
++  if (! image)
++    return 0;
++
++  if (stereo->model.kind == STEREO_EYE_LAYERS)
++    {
++      GimpItem *item = GIMP_ITEM (stereo->model.layers[e]);
++      gint      offset_x;
++      gint      offset_y;
++
++      gimp_item_get_offset (item, &offset_x, &offset_y);
++
++      /*  the layer's own buffer, moved to the layer's place in the image  */
++      sources[0].buffer =
++        g_object_new (GEGL_TYPE_BUFFER,
++                      "source",  gimp_drawable_get_buffer (GIMP_DRAWABLE (item)),
++                      "shift-x", -offset_x,
++                      "shift-y", -offset_y,
++                      NULL);
++
++      /*  clamping is the projection's way at the image's edges; a layer
++       *  smaller than the image ends where it ends
++       */
++      if (offset_x != 0 || offset_y != 0 ||
++          gimp_item_get_width  (item) != gimp_image_get_width  (image) ||
++          gimp_item_get_height (item) != gimp_image_get_height (image))
++        sources[0].abyss_policy = GEGL_ABYSS_NONE;
++      else
++        sources[0].abyss_policy = abyss_policy;
++
++      return 1;
++    }
++  else if (stereo->model.kind == STEREO_PACKED)
++    {
++      GeglBuffer *buffer;
++      gint        width  = gimp_image_get_width  (image);
++      gint        height = gimp_image_get_height (image);
++      gint        half;
++      gint        view;
++      gint        h;
++
++      buffer = gimp_pickable_get_buffer (gimp_display_shell_get_pickable (shell));
++
++      half = stereo->model.top_bottom ? height / 2 : width / 2;
++
++      /*  the eye's view is the first half or the second  */
++      view = (e == 0) == stereo->model.left_first ? 0 : 1;
++
++      for (h = 0; h < 2; h++)
++        {
++          gint shift = (view - h) * half;
++
++          sources[h].buffer =
++            g_object_new (GEGL_TYPE_BUFFER,
++                          "source",  buffer,
++                          "shift-x", stereo->model.top_bottom ? 0 : shift,
++                          "shift-y", stereo->model.top_bottom ? shift : 0,
++                          NULL);
++          sources[h].abyss_policy = abyss_policy;
++          sources[h].clipped      = TRUE;
++
++          if (stereo->model.top_bottom)
++            {
++              sources[h].clip.x      = 0;
++              sources[h].clip.y      = h * half;
++              sources[h].clip.width  = width;
++              sources[h].clip.height = h ? height - half : half;
++            }
++          else
++            {
++              sources[h].clip.x      = h * half;
++              sources[h].clip.y      = 0;
++              sources[h].clip.width  = h ? width - half : half;
++              sources[h].clip.height = height;
++            }
++        }
++
++      return 2;
++    }
++
++  return 0;
++}
++
++void
++gimp_display_shell_stereo_free_sources (GimpDisplayShellEyeSource *sources,
++                                        gint                       n_sources)
++{
++  gint i;
++
++  for (i = 0; i < n_sources; i++)
++    g_clear_object (&sources[i].buffer);
++}
++
++void
++gimp_display_shell_stereo_open_display_settings (GimpDisplayShell *shell)
++{
++  const gchar *argv[] = { "kcmshell6", "kcm_kscreen", NULL };
++  GError      *error  = NULL;
++
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  if (! g_spawn_async (NULL, (gchar **) argv, NULL, G_SPAWN_SEARCH_PATH,
++                       NULL, NULL, NULL, &error))
++    {
++      gimp_message (shell->display->gimp, G_OBJECT (shell),
++                    GIMP_MESSAGE_ERROR,
++                    _("Display Settings could not be opened: %s"),
++                    error->message);
++      g_clear_error (&error);
++    }
++}
++
++
++/*  private functions  */
++
++static gboolean
++gimp_display_shell_stereo_same_model (const StereoModel *a,
++                                      const StereoModel *b)
++{
++  return (a->kind       == b->kind       &&
++          a->layers[0]  == b->layers[0]  &&
++          a->layers[1]  == b->layers[1]  &&
++          a->top_bottom == b->top_bottom &&
++          a->left_first == b->left_first);
++}
++
++static gchar *
++gimp_display_shell_stereo_parasite_text (GimpImage   *image,
++                                         const gchar *name)
++{
++  const GimpParasite *parasite = gimp_image_parasite_find (image, name);
++  const gchar        *data;
++  guint32             size;
++  gchar              *text;
++
++  if (! parasite)
++    return NULL;
++
++  data = gimp_parasite_get_data (parasite, &size);
++  text = g_strndup (data, size);
++
++  return text;
++}
++
++static void
++gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
++                                      StereoModel            *model)
++{
++  GimpImage *image;
++  gchar     *mode;
++  gchar     *layout;
++  GList     *list;
++
++  memset (model, 0, sizeof (StereoModel));
++
++  image = gimp_display_get_image (stereo->shell->display);
++
++  if (! stereo->enabled || ! image || gimp_image_get_converting (image))
++    return;
++
++  /*  the layer names are the plug-in's identifiers, the same in every
++   *  language
++   */
++  for (list = gimp_image_get_layer_iter (image); list; list = g_list_next (list))
++    {
++      const gchar *name = gimp_object_get_name (list->data);
++
++      if (! model->layers[0] && ! g_strcmp0 (name, LEFT_EYE_LAYER))
++        model->layers[0] = list->data;
++      else if (! model->layers[1] && ! g_strcmp0 (name, RIGHT_EYE_LAYER))
++        model->layers[1] = list->data;
++    }
++
++  if (model->layers[0] && model->layers[1])
++    {
++      model->kind = STEREO_EYE_LAYERS;
++      return;
++    }
++
++  model->layers[0] = model->layers[1] = NULL;
++
++  mode = gimp_display_shell_stereo_parasite_text (image, MODE_PARASITE);
++
++  if (mode && (! g_strcmp0 (mode, "each-eye") || ! g_strcmp0 (mode, "both-eyes")))
++    {
++      layout = gimp_display_shell_stereo_parasite_text (image, LAYOUT_PARASITE);
++
++      /*  the plug-in's own reading of a picture without a layout: side by
++       *  side, left view first
++       */
++      if (! layout || ! g_strcmp0 (layout, "sideBySideLeftFirst"))
++        {
++          model->kind       = STEREO_PACKED;
++          model->left_first = TRUE;
++        }
++      else if (! g_strcmp0 (layout, "sideBySideRightFirst"))
++        {
++          model->kind = STEREO_PACKED;
++        }
++      else if (! g_strcmp0 (layout, "topBottomLeftFirst"))
++        {
++          model->kind       = STEREO_PACKED;
++          model->top_bottom = TRUE;
++          model->left_first = TRUE;
++        }
++      else if (! g_strcmp0 (layout, "topBottomRightFirst"))
++        {
++          model->kind       = STEREO_PACKED;
++          model->top_bottom = TRUE;
++        }
++
++      g_free (layout);
++    }
++
++  g_free (mode);
++}
++
++static gboolean
++gimp_display_shell_stereo_apply (gpointer data)
++{
++  GimpDisplayShellStereo *stereo = data;
++  GimpDisplayShell       *shell  = stereo->shell;
++  StereoModel             wanted;
++  gint                    i;
++
++  stereo->apply_idle_id = 0;
++
++  gimp_display_shell_stereo_read_model (stereo, &wanted);
++
++  if (gimp_display_shell_stereo_same_model (&wanted, &stereo->model))
++    return G_SOURCE_REMOVE;
++
++  stereo->model = wanted;
++
++  for (i = 0; i < 2; i++)
++    {
++      g_clear_pointer (&stereo->render_cache_valid[i], cairo_region_destroy);
++      g_clear_pointer (&stereo->picture[i], cairo_surface_destroy);
++    }
++
++#ifdef HAVE_GTK_GL_AREA_STEREO
++  /*  a new image kind, or "Enable 3D" turned on again, tries again  */
++  stereo->failed = FALSE;
++
++  if (wanted.kind != STEREO_NONE && ! stereo->probed)
++    {
++      stereo->probed  = TRUE;
++      stereo->refused = gimp_display_shell_stereo_probe (GTK_WIDGET (shell));
++    }
++
++  if (wanted.kind != STEREO_NONE && stereo->refused)
++    {
++      if (! stereo->tell_idle_id)
++        stereo->tell_idle_id = g_idle_add (gimp_display_shell_stereo_tell,
++                                           stereo);
++    }
++  else if (wanted.kind != STEREO_NONE)
++    {
++      if (! stereo->area)
++        gimp_display_shell_stereo_make_area (stereo);
++
++      gtk_gl_area_set_stereo (GTK_GL_AREA (stereo->area), TRUE);
++      gtk_widget_show (stereo->area);
++    }
++  else if (stereo->area)
++    {
++      gtk_widget_hide (stereo->area);
++      gtk_gl_area_set_stereo (GTK_GL_AREA (stereo->area), FALSE);
++    }
++#endif
++
++  gtk_widget_queue_draw (shell->canvas);
++
++  return G_SOURCE_REMOVE;
++}
++
++#ifdef HAVE_GTK_GL_AREA_STEREO
++
++static void
++gimp_display_shell_stereo_make_area (GimpDisplayShellStereo *stereo)
++{
++  stereo->area = g_object_ref_sink (gtk_gl_area_new ());
++
++  gtk_gl_area_set_has_alpha (GTK_GL_AREA (stereo->area), FALSE);
++
++  g_signal_connect (stereo->area, "render",
++                    G_CALLBACK (gimp_display_shell_stereo_render),
++                    stereo);
++  g_signal_connect (stereo->area, "unrealize",
++                    G_CALLBACK (gimp_display_shell_stereo_unrealize),
++                    stereo);
++  g_signal_connect (stereo->area, "notify::stereo-error",
++                    G_CALLBACK (gimp_display_shell_stereo_error),
++                    stereo);
++
++  gimp_canvas_set_underlay (GIMP_CANVAS (stereo->shell->canvas), stereo->area);
++}
++
++/*  What lies under the canvas in its window: the canvas's window has no
++ *  background of its own, so in 2D its padding shows the backgrounds that
++ *  the widgets around it painted (the window's, the dock's).  They are
++ *  painted here in the same order, each at its place relative to the
++ *  canvas.
++ */
++static void
++gimp_display_shell_stereo_paint_backdrop (GimpDisplayShell *shell,
++                                          cairo_t          *cr)
++{
++  GList     *ancestors = NULL;
++  GList     *list;
++  GtkWidget *widget;
++
++  for (widget = shell->canvas; widget; widget = gtk_widget_get_parent (widget))
++    ancestors = g_list_prepend (ancestors, widget);
++
++  for (list = ancestors; list; list = g_list_next (list))
++    {
++      GtkAllocation allocation;
++      gint          x, y;
++
++      widget = list->data;
++
++      if (! gtk_widget_translate_coordinates (widget, shell->canvas,
++                                              0, 0, &x, &y))
++        continue;
++
++      gtk_widget_get_allocation (widget, &allocation);
++
++      gtk_render_background (gtk_widget_get_style_context (widget), cr,
++                             x, y, allocation.width, allocation.height);
++    }
++
++  g_list_free (ancestors);
++}
++
++/*  One eye's picture of the canvas, as the canvas would draw it itself
++ *  (its background, the padding, the checkerboard and the image), in
++ *  device pixels; only what changed since the last frame is drawn again.
++ *  Returns the part drawn, in device pixels.
++ */
++static cairo_rectangle_int_t
++gimp_display_shell_stereo_paint (GimpDisplayShellStereo *stereo,
++                                 gint                    e)
++{
++  GimpDisplayShell      *shell  = stereo->shell;
++  gint                   scale  = shell->render_scale;
++  gint                   width  = shell->disp_width  * scale;
++  gint                   height = shell->disp_height * scale;
++  cairo_rectangle_int_t  extents = { 0, 0, 0, 0 };
++  cairo_rectangle_int_t  whole   = { 0, 0, width, height };
++  cairo_t               *cr;
++  gint                   n, i;
++
++  if (! stereo->picture[e] ||
++      cairo_image_surface_get_width  (stereo->picture[e]) != width ||
++      cairo_image_surface_get_height (stereo->picture[e]) != height)
++    {
++      cairo_rectangle_int_t all = { 0, 0, shell->disp_width, shell->disp_height };
++
++      g_clear_pointer (&stereo->picture[e], cairo_surface_destroy);
++      stereo->picture[e] = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
++                                                       width, height);
++
++      if (! stereo->dirty[e])
++        stereo->dirty[e] = cairo_region_create ();
++      cairo_region_union_rectangle (stereo->dirty[e], &all);
++    }
++
++  if (! stereo->dirty[e] || cairo_region_is_empty (stereo->dirty[e]))
++    return extents;
++
++  cr = cairo_create (stereo->picture[e]);
++  cairo_scale (cr, scale, scale);
++
++  n = cairo_region_num_rectangles (stereo->dirty[e]);
++  for (i = 0; i < n; i++)
++    {
++      cairo_rectangle_int_t rect;
++
++      cairo_region_get_rectangle (stereo->dirty[e], i, &rect);
++      cairo_rectangle (cr, rect.x, rect.y, rect.width, rect.height);
++    }
++  cairo_clip (cr);
++
++  gimp_display_shell_stereo_paint_backdrop (shell, cr);
++
++  gimp_display_shell_draw_picture (shell, cr,
++                                   e ? GIMP_DISPLAY_SHELL_EYE_RIGHT :
++                                       GIMP_DISPLAY_SHELL_EYE_LEFT);
++
++  cairo_destroy (cr);
++  cairo_surface_flush (stereo->picture[e]);
++
++  cairo_region_get_extents (stereo->dirty[e], &extents);
++  cairo_region_destroy (stereo->dirty[e]);
++  stereo->dirty[e] = NULL;
++
++  extents.x      *= scale;
++  extents.y      *= scale;
++  extents.width  *= scale;
++  extents.height *= scale;
++
++  gdk_rectangle_intersect (&extents, &whole, &extents);
++
++  return extents;
++}
++
++/*  The area's render signal, once for each eye: the eye's picture goes up
++ *  into a texture, then into the area's framebuffer, turned over (cairo's
++ *  first row is the top of the picture, OpenGL's the bottom).
++ */
++static gboolean
++gimp_display_shell_stereo_render (GtkGLArea              *area,
++                                  GdkGLContext           *context,
++                                  GimpDisplayShellStereo *stereo)
++{
++  cairo_rectangle_int_t  changed;
++  cairo_surface_t       *picture;
++  GLint                  draw_framebuffer;
++  GLint                  viewport[4];
++  GLboolean              scissor;
++  gboolean               es = gdk_gl_context_get_use_es (context);
++  gint                   e;
++  gint                   width;
++  gint                   height;
++  gint                   stride;
++  guchar                *data;
++
++  e = (gtk_gl_area_get_current_eye (area) == GTK_GL_AREA_EYE_RIGHT);
++
++  if (! stereo->renderer_known)
++    {
++      const gchar *renderer = (const gchar *) glGetString (GL_RENDERER);
++
++      stereo->on_processor = renderer && (strstr (renderer, "llvmpipe") ||
++                                          strstr (renderer, "softpipe"));
++      stereo->renderer_known = TRUE;
++    }
++
++  if (stereo->model.kind == STEREO_NONE)
++    {
++      glClearColor (0.0, 0.0, 0.0, 1.0);
++      glClear (GL_COLOR_BUFFER_BIT);
++      return TRUE;
++    }
++
++  changed = gimp_display_shell_stereo_paint (stereo, e);
++  picture = stereo->picture[e];
++  width   = cairo_image_surface_get_width  (picture);
++  height  = cairo_image_surface_get_height (picture);
++  stride  = cairo_image_surface_get_stride (picture);
++  data    = cairo_image_surface_get_data   (picture);
++
++  glGetIntegerv (GL_DRAW_FRAMEBUFFER_BINDING, &draw_framebuffer);
++  glGetIntegerv (GL_VIEWPORT, viewport);
++
++  if (! stereo->framebuffer)
++    glGenFramebuffers (1, &stereo->framebuffer);
++
++  if (! stereo->texture[e])
++    {
++      glGenTextures (1, &stereo->texture[e]);
++      glBindTexture (GL_TEXTURE_2D, stereo->texture[e]);
++      glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++      glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    }
++  else
++    {
++      glBindTexture (GL_TEXTURE_2D, stereo->texture[e]);
++    }
++
++  if (stereo->texture_width[e]  != width ||
++      stereo->texture_height[e] != height)
++    {
++      glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
++                    GL_RGBA, GL_UNSIGNED_BYTE, NULL);
++
++      stereo->texture_width[e]  = width;
++      stereo->texture_height[e] = height;
++
++      changed.x      = 0;
++      changed.y      = 0;
++      changed.width  = width;
++      changed.height = height;
++    }
++
++  if (changed.width > 0 && changed.height > 0)
++    {
++      const guchar *first = data + changed.y * stride + changed.x * 4;
++
++      if (es)
++        {
++          /*  OpenGL ES takes no BGRA: cairo's samples are turned to RGBA  */
++          guchar *rgba = g_malloc ((gsize) changed.width * changed.height * 4);
++          gint    x, y;
++
++          for (y = 0; y < changed.height; y++)
++            {
++              const guint32 *src = (const guint32 *) (first + y * stride);
++              guchar        *dest = rgba + (gsize) y * changed.width * 4;
++
++              for (x = 0; x < changed.width; x++)
++                {
++                  dest[4 * x + 0] = (src[x] >> 16) & 0xff;
++                  dest[4 * x + 1] = (src[x] >>  8) & 0xff;
++                  dest[4 * x + 2] =  src[x]        & 0xff;
++                  dest[4 * x + 3] = 0xff;
++                }
++            }
++
++          glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
++          glTexSubImage2D (GL_TEXTURE_2D, 0, changed.x, changed.y,
++                           changed.width, changed.height,
++                           GL_RGBA, GL_UNSIGNED_BYTE, rgba);
++          g_free (rgba);
++        }
++      else
++        {
++          /*  cairo's ARGB32 is B, G, R, A in memory on little endian
++           *  machines and A, R, G, B on big endian ones: one 32 bit word
++           */
++          glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
++          glPixelStorei (GL_UNPACK_ROW_LENGTH, stride / 4);
++          glTexSubImage2D (GL_TEXTURE_2D, 0, changed.x, changed.y,
++                           changed.width, changed.height,
++                           GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, first);
++          glPixelStorei (GL_UNPACK_ROW_LENGTH, 0);
++        }
++    }
++
++  glBindFramebuffer (GL_READ_FRAMEBUFFER, stereo->framebuffer);
++  glFramebufferTexture2D (GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++                          GL_TEXTURE_2D, stereo->texture[e], 0);
++  glBindFramebuffer (GL_DRAW_FRAMEBUFFER, draw_framebuffer);
++
++  /*  a blit obeys the scissor test  */
++  scissor = glIsEnabled (GL_SCISSOR_TEST);
++  glDisable (GL_SCISSOR_TEST);
++
++  if (width != viewport[2] || height != viewport[3])
++    g_debug ("gimp_display_shell_stereo_render: the view is %dx%d, "
++             "the canvas's picture %dx%d",
++             viewport[2], viewport[3], width, height);
++
++  glBlitFramebuffer (0, 0, width, height,
++                     0, viewport[3], viewport[2], 0,
++                     GL_COLOR_BUFFER_BIT, GL_NEAREST);
++
++  if (scissor)
++    glEnable (GL_SCISSOR_TEST);
++
++  glBindFramebuffer (GL_FRAMEBUFFER, draw_framebuffer);
++  glBindTexture (GL_TEXTURE_2D, 0);
++
++  return TRUE;
++}
++
++static void
++gimp_display_shell_stereo_unrealize (GtkWidget              *area,
++                                     GimpDisplayShellStereo *stereo)
++{
++  gtk_gl_area_make_current (GTK_GL_AREA (area));
++
++  if (! gtk_gl_area_get_error (GTK_GL_AREA (area)))
++    {
++      if (stereo->texture[0] || stereo->texture[1])
++        glDeleteTextures (2, stereo->texture);
++
++      if (stereo->framebuffer)
++        glDeleteFramebuffers (1, &stereo->framebuffer);
++    }
++
++  stereo->texture[0] = stereo->texture[1] = 0;
++  stereo->texture_width[0] = stereo->texture_width[1] = 0;
++  stereo->texture_height[0] = stereo->texture_height[1] = 0;
++  stereo->framebuffer = 0;
++  stereo->renderer_known = FALSE;
++
++  g_clear_pointer (&stereo->picture[0], cairo_surface_destroy);
++  g_clear_pointer (&stereo->picture[1], cairo_surface_destroy);
++}
++
++static void
++gimp_display_shell_stereo_error (GtkGLArea              *area,
++                                 GParamSpec             *pspec,
++                                 GimpDisplayShellStereo *stereo)
++{
++  /*  the area tells while it draws: the person is told afterwards  */
++  if (! stereo->tell_idle_id)
++    stereo->tell_idle_id = g_idle_add (gimp_display_shell_stereo_tell, stereo);
++}
++
++static gboolean
++gimp_display_shell_stereo_tell (gpointer data)
++{
++  GimpDisplayShellStereo *stereo = data;
++  GtkGLArea              *area   = NULL;
++  const gchar            *reason;
++
++  stereo->tell_idle_id = 0;
++
++  if (stereo->refused)
++    {
++      reason = stereo->refused;
++    }
++  else
++    {
++      const GError *error;
++
++      area  = GTK_GL_AREA (stereo->area);
++      error = gtk_gl_area_get_stereo_error (area);
++
++      if (! error)
++        {
++          g_clear_pointer (&stereo->told, g_free);
++          return G_SOURCE_REMOVE;
++        }
++
++      reason = error->message;
++
++      /*  GTK draws the area's left view with OpenGL, and GTK 3 then keeps
++       *  that rectangle free of what the canvas draws after it: the canvas
++       *  draws the left eye itself instead, with its guides and outlines
++       */
++      stereo->failed = TRUE;
++      gtk_widget_hide (stereo->area);
++      gtk_widget_queue_draw (stereo->shell->canvas);
++    }
++
++  if (! g_strcmp0 (stereo->told, reason))
++    return G_SOURCE_REMOVE;
++
++  g_free (stereo->told);
++  stereo->told = g_strdup (reason);
++
++  if (area && ! stereo->renderer_known && gtk_widget_get_realized (stereo->area))
++    {
++      const gchar *renderer;
++
++      gtk_gl_area_make_current (area);
++
++      renderer = (const gchar *) glGetString (GL_RENDERER);
++
++      stereo->on_processor = renderer && (strstr (renderer, "llvmpipe") ||
++                                          strstr (renderer, "softpipe"));
++      stereo->renderer_known = TRUE;
++    }
++
++  /*  the reason, in English, is in the log  */
++  g_printerr ("GIMP: the canvas is not shown per eye: %s\n", reason);
++
++  if (stereo->on_processor)
++    gimp_message_literal (stereo->shell->display->gimp,
++                          G_OBJECT (stereo->shell), GIMP_MESSAGE_WARNING,
++                          _("This window is drawn by the processor, not by a "
++                            "graphics card, and a picture for each eye needs "
++                            "a graphics card: the left eye is shown."));
++  else
++    gimp_message_literal (stereo->shell->display->gimp,
++                          G_OBJECT (stereo->shell), GIMP_MESSAGE_WARNING,
++                          _("The canvas cannot be shown in 3D here, so the "
++                            "left eye is shown; the reason is in the log."));
++
++  return G_SOURCE_REMOVE;
++}
++
++/*  On X11, the renderer as a window of its own reads it: in GTK 3 a window
++ *  that is given an OpenGL context is drawn with OpenGL from then on, and
++ *  with Mesa's zink under Xwayland such a window shows nothing but black
++ *  (Debian's GTK 3 too).  Returns why the canvas's window must not be given
++ *  an area, or NULL.
++ */
++static gchar *
++gimp_display_shell_stereo_probe (GtkWidget *widget)
++{
++  gchar *refused = NULL;
++
++#ifdef GDK_WINDOWING_X11
++  GdkDisplay    *display = gtk_widget_get_display (widget);
++  GdkWindowAttr  attributes = { 0, };
++  GdkWindow     *window;
++  GdkGLContext  *context;
++  GError        *error = NULL;
++
++  if (! GDK_IS_X11_DISPLAY (display))
++    return NULL;
++
++  attributes.window_type       = GDK_WINDOW_TOPLEVEL;
++  attributes.wclass            = GDK_INPUT_OUTPUT;
++  attributes.width             = 1;
++  attributes.height            = 1;
++  attributes.override_redirect = TRUE;
++
++  window = gdk_window_new (gdk_screen_get_root_window (gtk_widget_get_screen (widget)),
++                           &attributes, GDK_WA_NOREDIR);
++
++  context = gdk_window_create_gl_context (window, &error);
++
++  if (context && gdk_gl_context_realize (context, &error))
++    {
++      const gchar *renderer;
++
++      gdk_gl_context_make_current (context);
++
++      renderer = (const gchar *) glGetString (GL_RENDERER);
++
++      if (renderer && strstr (renderer, "zink"))
++        refused = g_strdup_printf ("GTK 3 draws an X11 window that holds an "
++                                   "OpenGL area black with Mesa's zink (%s)",
++                                   renderer);
++
++      gdk_gl_context_clear_current ();
++    }
++
++  g_clear_error (&error);
++  g_clear_object (&context);
++  gdk_window_destroy (window);
++#endif
++
++  return refused;
++}
++
++#endif /* HAVE_GTK_GL_AREA_STEREO */
+diff --git a/app/display/gimpdisplayshell-stereo.h b/app/display/gimpdisplayshell-stereo.h
+new file mode 100644
+index 0000000..0d2248a
+--- /dev/null
++++ b/app/display/gimpdisplayshell-stereo.h
+@@ -0,0 +1,73 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpdisplayshell-stereo.h
++ * Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#ifndef __GIMP_DISPLAY_SHELL_STEREO_H__
++#define __GIMP_DISPLAY_SHELL_STEREO_H__
++
++
++/*  a source of one eye's picture: a buffer in image coordinates, and
++ *  the part of the image it fills (all of it when not clipped)
++ */
++typedef struct
++{
++  GeglBuffer      *buffer;
++  GeglAbyssPolicy  abyss_policy;
++  gboolean         clipped;
++  GeglRectangle    clip;
++} GimpDisplayShellEyeSource;
++
++
++GimpDisplayShellStereo * gimp_display_shell_stereo_new      (GimpDisplayShell       *shell);
++void                     gimp_display_shell_stereo_free     (GimpDisplayShellStereo *stereo);
++
++void         gimp_display_shell_stereo_set_enabled          (GimpDisplayShell       *shell,
++                                                             gboolean                enabled);
++gboolean     gimp_display_shell_stereo_get_enabled          (GimpDisplayShell       *shell);
++
++gboolean     gimp_display_shell_stereo_draw                 (GimpDisplayShell       *shell,
++                                                             cairo_t                *cr);
++
++void         gimp_display_shell_stereo_invalidate_area      (GimpDisplayShell       *shell,
++                                                             gint                    x,
++                                                             gint                    y,
++                                                             gint                    width,
++                                                             gint                    height);
++void         gimp_display_shell_stereo_invalidate_full      (GimpDisplayShell       *shell);
++void         gimp_display_shell_stereo_scroll               (GimpDisplayShell       *shell,
++                                                             gint                    x_offset,
++                                                             gint                    y_offset);
++
++cairo_surface_t ** gimp_display_shell_stereo_get_render_cache
++                                                            (GimpDisplayShell       *shell,
++                                                             GimpDisplayShellEye     eye);
++cairo_region_t  ** gimp_display_shell_stereo_get_render_cache_valid
++                                                            (GimpDisplayShell       *shell,
++                                                             GimpDisplayShellEye     eye);
++gint         gimp_display_shell_stereo_get_sources          (GimpDisplayShell       *shell,
++                                                             GimpDisplayShellEye     eye,
++                                                             GimpDisplayShellEyeSource sources[2]);
++void         gimp_display_shell_stereo_free_sources         (GimpDisplayShellEyeSource *sources,
++                                                             gint                    n_sources);
++
++void         gimp_display_shell_stereo_open_display_settings
++                                                            (GimpDisplayShell       *shell);
++
++
++#endif  /*  __GIMP_DISPLAY_SHELL_STEREO_H__  */
+diff --git a/app/display/gimpdisplayshell.c b/app/display/gimpdisplayshell.c
+index 51f28da..199077d 100644
+--- a/app/display/gimpdisplayshell.c
++++ b/app/display/gimpdisplayshell.c
+@@ -82,6 +82,7 @@
+ #include "gimpdisplayshell-scroll.h"
+ #include "gimpdisplayshell-scrollbars.h"
+ #include "gimpdisplayshell-selection.h"
++#include "gimpdisplayshell-stereo.h"
+ #include "gimpdisplayshell-title.h"
+ #include "gimpdisplayshell-tool-events.h"
+ #include "gimpdisplayshell-transform.h"
+@@ -559,6 +560,7 @@ gimp_display_shell_constructed (GObject *object)
+ 
+   /*  the canvas  */
+   shell->canvas = gimp_canvas_new (config);
++  shell->stereo = gimp_display_shell_stereo_new (shell);
+   gtk_widget_set_size_request (shell->canvas, shell_width, shell_height);
+   gtk_container_set_border_width (GTK_CONTAINER (shell->canvas), 10);
+ 
+@@ -857,6 +859,7 @@ gimp_display_shell_dispose (GObject *object)
+ 
+   g_clear_pointer (&shell->render_cache,       cairo_surface_destroy);
+   g_clear_pointer (&shell->render_cache_valid, cairo_region_destroy);
++  g_clear_pointer (&shell->stereo, gimp_display_shell_stereo_free);
+ 
+   g_clear_pointer (&shell->render_surface, cairo_surface_destroy);
+   g_clear_pointer (&shell->mask_surface,   cairo_surface_destroy);
+diff --git a/app/display/gimpdisplayshell.h b/app/display/gimpdisplayshell.h
+index 6d36c69..82706c0 100644
+--- a/app/display/gimpdisplayshell.h
++++ b/app/display/gimpdisplayshell.h
+@@ -255,6 +255,8 @@ struct _GimpDisplayShell
+ 
+   gboolean           drawn;
+ 
++  GimpDisplayShellStereo *stereo;  /*  the canvas of a stereo image   */
++
+   GimpDisplayShellPrivate *priv;
+ };
+ 
+diff --git a/app/display/gimpimagewindow.c b/app/display/gimpimagewindow.c
+index 228a067..7a50e54 100644
+--- a/app/display/gimpimagewindow.c
++++ b/app/display/gimpimagewindow.c
+@@ -23,6 +23,10 @@
+ #include <gtk/gtk.h>
+ #include <gdk/gdk.h>
+ 
++#ifdef GDK_WINDOWING_X11
++#include <gdk/gdkx.h>
++#endif
++
+ #ifdef G_OS_WIN32
+ #define COBJMACROS
+ #include <windows.h>
+@@ -369,6 +373,25 @@ gimp_image_window_init (GimpImageWindow *window)
+   g_free (role);
+ 
+   gtk_window_set_resizable (GTK_WINDOW (window), TRUE);
++
++#if defined (HAVE_GTK_GL_AREA_STEREO) && defined (GDK_WINDOWING_X11)
++  /*  a stereo canvas on X11 is a child window placed below the window's
++   *  own picture, which shows it through a hole: that needs a window
++   *  with an alpha channel on a compositing window manager, or the
++   *  canvas's guides and outlines would lie under it
++   */
++  {
++    GdkScreen *screen = gtk_widget_get_screen (GTK_WIDGET (window));
++
++    if (GDK_IS_X11_SCREEN (screen) && gdk_screen_is_composited (screen))
++      {
++        GdkVisual *visual = gdk_screen_get_rgba_visual (screen);
++
++        if (visual)
++          gtk_widget_set_visual (GTK_WIDGET (window), visual);
++      }
++  }
++#endif
+ }
+ 
+ static void
+diff --git a/app/display/meson.build b/app/display/meson.build
+index c8450bf..d20073a 100644
+--- a/app/display/meson.build
++++ b/app/display/meson.build
+@@ -79,6 +79,7 @@ libappdisplay_sources = [
+   'gimpdisplayshell-scroll.c',
+   'gimpdisplayshell-scrollbars.c',
+   'gimpdisplayshell-selection.c',
++  'gimpdisplayshell-stereo.c',
+   'gimpdisplayshell-title.c',
+   'gimpdisplayshell-tool-events.c',
+   'gimpdisplayshell-transform.c',
+@@ -122,6 +123,6 @@ libappdisplay = static_library('appdisplay',
+   include_directories: [ rootInclude, rootAppInclude, ],
+   c_args: '-DG_LOG_DOMAIN="Gimp-Display"',
+   dependencies: [
+-    gegl, gtk3, cairo, gexiv2
++    gegl, gtk3, cairo, gexiv2, epoxy
+   ],
+ )
+diff --git a/app/widgets/gimphelp-ids.h b/app/widgets/gimphelp-ids.h
+index 0164c30..6db683d 100644
+--- a/app/widgets/gimphelp-ids.h
++++ b/app/widgets/gimphelp-ids.h
+@@ -86,6 +86,8 @@
+ #define GIMP_HELP_VIEW_NEW                        "gimp-view-new"
+ #define GIMP_HELP_VIEW_SHOW_ALL                   "gimp-view-show-all"
+ #define GIMP_HELP_VIEW_DOT_FOR_DOT                "gimp-view-dot-for-dot"
++#define GIMP_HELP_VIEW_STEREO                     "gimp-view-stereo"
++#define GIMP_HELP_VIEW_STEREO_DISPLAY_SETTINGS    "gimp-view-stereo-display-settings"
+ #define GIMP_HELP_VIEW_RESET                      "gimp-view-reset"
+ #define GIMP_HELP_VIEW_SCROLL_CENTER              "gimp-view-scroll-center"
+ #define GIMP_HELP_VIEW_ZOOM_REVERT                "gimp-view-zoom-revert"
+diff --git a/menus/image-menu.ui.in.in b/menus/image-menu.ui.in.in
+index 27b8185..3d9ad80 100644
+--- a/menus/image-menu.ui.in.in
++++ b/menus/image-menu.ui.in.in
+@@ -242,6 +242,10 @@
+           <!-- TODO: screen list. -->
+         </submenu>
+       </section>
++      <section>
++        <item><attribute name="action">app.view-stereo</attribute></item>
++        <item><attribute name="action">app.view-stereo-display-settings</attribute></item>
++      </section>
+       <section>
+         <item><attribute name="action">app.view-navigation-window</attribute></item>
+         <item><attribute name="action">app.view-display-filters</attribute></item>
+diff --git a/meson.build b/meson.build
+index 4504777..c87d2d0 100644
+--- a/meson.build
++++ b/meson.build
+@@ -502,6 +502,12 @@ gmodule           = dependency('gmodule-no-export-2.0')
+ 
+ gtk3_minver       = '3.24.0'
+ gtk3              = dependency('gtk+-3.0',           version: '>='+gtk3_minver)
++# a GtkGLArea that shows its picture per eye (the stereo GtkGLArea of
++# Sparky Stereo OS's GTK 3): the canvas of a stereo image in 3D
++have_gtk_gl_area_stereo = cc.has_function('gtk_gl_area_set_stereo',
++                                          dependencies: gtk3)
++conf.set('HAVE_GTK_GL_AREA_STEREO', have_gtk_gl_area_stereo)
++epoxy             = dependency('epoxy', required: have_gtk_gl_area_stereo)
+ gdk_specific_name = platform_osx ? 'gdk-quartz-3.0' : 'gdk-3.0'
+ gdk_specific      = dependency(gdk_specific_name, required: false)
+ gtk_version_split = gtk3_minver.split('.')
+diff --git a/po/POTFILES.in b/po/POTFILES.in
+index ba870f1..bd85500 100644
+--- a/po/POTFILES.in
++++ b/po/POTFILES.in
+@@ -272,6 +272,7 @@ app/display/gimpdisplayshell-handlers.c
+ app/display/gimpdisplayshell-layer-select.c
+ app/display/gimpdisplayshell-rotate-dialog.c
+ app/display/gimpdisplayshell-scale-dialog.c
++app/display/gimpdisplayshell-stereo.c
+ app/display/gimpdisplayshell-title.c
+ app/display/gimpdisplayshell-tool-events.c
+ app/display/gimpdisplayshell-utils.c
