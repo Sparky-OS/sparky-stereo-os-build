@@ -5,8 +5,10 @@
  * without a Bluetooth device: PipeWire's own SPA loader loads the plugin as the Bluetooth monitor's codec loader does
  * (spa/plugins/bluez5/codec-loader.c), and the codec's own encode and decode functions carry a test tone.
  *
- * Build against the matching PipeWire source's private codec header:
- *   cc -O1 -g codec-check.c -I PIPEWIRE_SOURCE/spa/plugins/bluez5 $(pkg-config --cflags --libs libpipewire-0.3) -lm
+ * Build against the matching PipeWire source's private codec header, with the SPA_AUDIO_MAX_CHANNELS of its meson.build
+ * (128 in 1.6; the plugin clears a struct spa_audio_info of that size, so a smaller one overruns the caller's stack):
+ *   cc -O1 -g -DSPA_AUDIO_MAX_CHANNELS=128u codec-check.c -I PIPEWIRE_SOURCE/spa/plugins/bluez5 \
+ *      $(pkg-config --cflags --libs libpipewire-0.3) -lm
  * Modes (exit 0 when the mode's own check passes, 1 when it fails, 2 on a usage or set-up error):
  *   monitor  load PipeWire's Bluetooth monitor (api.bluez5.enum.dbus); it loads every codec plugin before it needs a
  *            system bus, so run with PIPEWIRE_DEBUG=spa.bluez5.codecs:4 and read "loaded media codec aac" on stderr
@@ -27,6 +29,7 @@
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format.h>
 #include <spa/utils/dict.h>
+#include <spa/utils/result.h>
 #include <spa/utils/string.h>
 
 #include "media-codecs.h"
@@ -219,6 +222,11 @@ static int mode_codec(const struct media_codec *codec)
 	}
 	codec->deinit(encoder);
 	codec->deinit(decoder);
+	if (codec->clear_props) {
+		codec->clear_props(eprops);
+		codec->clear_props(dprops);
+	}
+	free(pcm);
 	printf("codec: %s\n", failed ? "FAIL" : "PASS");
 	return failed;
 }
@@ -253,6 +261,14 @@ static int mode_bounds(const struct media_codec *codec)
 	       SMALL_DST, codec->get_block_size(decoder), res, res < 0 ? spa_strerror(res) : "accepted", out, changed);
 	printf("bounds: %s\n", res < 0 && changed == 0 ? "PASS (refused, nothing written past the buffer)" :
 	       "FAIL (the decoder wrote past the buffer it was given)");
+	codec->deinit(encoder);
+	codec->deinit(decoder);
+	if (codec->clear_props) {
+		codec->clear_props(eprops);
+		codec->clear_props(dprops);
+	}
+	free(pcm);
+	free(small);
 	return !(res < 0 && changed == 0);
 }
 
@@ -294,6 +310,8 @@ int main(int argc, char *argv[])
 		} else {
 			res = !strcmp(argv[1], "codec") ? mode_codec(codec) : mode_bounds(codec);
 		}
+		if (handle)
+			pw_unload_spa_handle(handle);
 	}
 	pw_context_destroy(context);
 	pw_main_loop_destroy(loop);

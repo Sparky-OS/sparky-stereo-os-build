@@ -4,7 +4,9 @@
 # survives the codec's encode and decode, and the decoder refuses a buffer smaller than a frame (codec-check.c).
 # With a predecessor .deb as well, apt's answer to it and the same three checks on its plugin are printed beside them.
 # Usage: run.sh OUT NEW.deb [PREDECESSOR.deb]
-# Environment: DOCKER_HOST (the caller's socket), NAME_PREFIX (containers and the image, default aac-codec-check-),
+# Environment: DMO_KEYRING (required: deb-multimedia's public keyring; the codec links deb-multimedia's libfdk-aac2, the
+#   edition's FDK AAC, and only fdk-aac is taken from there, as the recipe does), DOCKER_HOST (the caller's socket),
+#   NAME_PREFIX (containers and the image, default aac-codec-check-),
 #   BASE (default debian:testing), CONTAINER_IDS (a file each container's id is appended to before it is removed).
 # Exit 0 only when every check of NEW passes; the predecessor's rows are facts for the reader, never the verdict.
 set -euo pipefail
@@ -15,6 +17,7 @@ NEW=${2:?usage: run.sh OUT NEW.deb [PREDECESSOR.deb]}
 OLD=${3:-}
 PREFIX=${NAME_PREFIX:-aac-codec-check-}
 BASE=${BASE:-debian:testing}
+DMO_KEYRING=$(realpath "${DMO_KEYRING:?the public keyring of deb-multimedia (deb-multimedia-keyring.pgp)}")
 [[ $PREFIX =~ ^[a-z0-9][a-z0-9_.-]*$ ]] || { echo "NAME_PREFIX must be a plain container name prefix" >&2; exit 2; }
 mkdir -p "$OUT"
 [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 2; }
@@ -31,21 +34,29 @@ date -u +%FT%TZ >"$OUT/started.txt"
 # 1. Debian's PipeWire, the matching source's codec header, the check built, the codec installed by apt (network on)
 docker run --name "$prep" --ulimit core=1 --cpus 4 --platform linux/amd64 \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$tree/tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	-v "$DMO_KEYRING":/run/deb-multimedia-keyring.pgp:ro \
 	-v "$here":/check:ro -v "$OUT":/out -e HOSTID="$(id -u):$(id -g)" "$BASE" bash -c '
 set -euo pipefail
+trap "chown -R \"\$HOSTID\" /out" EXIT
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 sed -i "s/^Types: deb$/Types: deb deb-src/; s/^Components: main$/Components: main contrib non-free non-free-firmware/" \
 	/etc/apt/sources.list.d/debian.sources
+printf "Types: deb\nURIs: https://www.deb-multimedia.org\nSuites: forky\nComponents: main non-free\nSigned-By: /run/deb-multimedia-keyring.pgp\n" \
+	>/etc/apt/sources.list.d/deb-multimedia.sources
+printf "Package: *\nPin: origin www.deb-multimedia.org\nPin-Priority: 100\n\nPackage: fdk-aac libfdk-aac-dev libfdk-aac2\nPin: origin www.deb-multimedia.org\nPin-Priority: 990\n" \
+	>/etc/apt/preferences.d/fdk-aac-from-deb-multimedia
 apt-get -q update >/out/prep-update.log 2>&1
 grep -h -E "^(Date|Valid-Until):" /var/lib/apt/lists/*_dists_testing_InRelease >/out/debian-index.txt || true
 apt-get -y -q --no-install-recommends install pipewire libspa-0.2-bluetooth libpipewire-0.3-dev gcc libc6-dev pkgconf \
-	dpkg-dev >/out/prep-install.log 2>&1
+	dpkg-dev gdb >/out/prep-install.log 2>&1
 version=$(dpkg-query -W -f="\${Version}" libspa-0.2-bluetooth)
 mkdir /opt/src && cd /opt/src
 apt-get source -q --download-only --only-source "pipewire=$version" >/out/prep-source.log 2>&1
 dpkg-source -x pipewire_*.dsc pw >>/out/prep-source.log 2>&1
-cc -O1 -g -Wall /check/codec-check.c -I /opt/src/pw/spa/plugins/bluez5 $(pkg-config --cflags --libs libpipewire-0.3) -lm \
+# the plugin is built with PipeWire'"'"'s own SPA_AUDIO_MAX_CHANNELS (meson.build); struct spa_audio_info must match it
+channels=$(sed -n "s/.*-DSPA_AUDIO_MAX_CHANNELS=\([0-9]*\)u.*/\1/p" /opt/src/pw/meson.build | head -1)
+cc -O1 -g -Wall -DSPA_AUDIO_MAX_CHANNELS="${channels:?}u" /check/codec-check.c -I /opt/src/pw/spa/plugins/bluez5 $(pkg-config --cflags --libs libpipewire-0.3) -lm \
 	-o /opt/codec-check >/out/prep-compile.log 2>&1
 rc=0; apt-get -y -q install /out/debs/new.deb >/out/install-new.log 2>&1 || rc=$?; echo "$rc" >/out/install-new.rc
 if [ -e /out/debs/old.deb ]; then
@@ -56,8 +67,7 @@ if [ -e /out/debs/old.deb ]; then
 fi
 dpkg-query -W pipewire libspa-0.2-bluetooth libpipewire-0.3-0t64 pipewire-bluez5-codec-aac libfdk-aac2 >/out/versions.txt 2>&1 || true
 dpkg-deb -f /out/debs/new.deb Version Depends >/out/new-control.txt
-[ ! -e /out/debs/old.deb ] || dpkg-deb -f /out/debs/old.deb Version Depends >/out/old-control.txt
-chown -R "$HOSTID" /out' >"$OUT/prep.console.log" 2>&1 || { forget "$prep"; echo "prepare failed: $OUT/prep.console.log" >&2; exit 2; }
+[ ! -e /out/debs/old.deb ] || dpkg-deb -f /out/debs/old.deb Version Depends >/out/old-control.txt' >"$OUT/prep.console.log" 2>&1 || { forget "$prep"; echo "prepare failed: $OUT/prep.console.log" >&2; exit 2; }
 docker commit "$prep" "$image" >/dev/null
 forget "$prep"
 # 2. the checks, offline, as the caller's user, each plugin in its own run
@@ -66,8 +76,10 @@ docker run --name "$check" --ulimit core=1 --cpus 4 --network none --pull=never 
 for which in new old; do
 	if [ "$which" = old ]; then [ -d /opt/spa-old ] || continue; export SPA_PLUGIN_DIR=/opt/spa-old; fi
 	PIPEWIRE_DEBUG=spa.bluez5.codecs:4 /opt/codec-check monitor >/out/$which-monitor.txt 2>&1; echo $? >/out/$which-monitor.rc
-	/opt/codec-check codec >/out/$which-codec.txt 2>&1; echo $? >/out/$which-codec.rc
-	/opt/codec-check bounds >/out/$which-bounds.txt 2>&1; echo $? >/out/$which-bounds.rc
+	for mode in codec bounds; do
+		/opt/codec-check $mode >/out/$which-$mode.txt 2>&1; rc=$?; echo $rc >/out/$which-$mode.rc
+		[ "$rc" -lt 128 ] || gdb -q -batch -ex run -ex bt --args /opt/codec-check $mode >/out/$which-$mode.gdb.txt 2>&1
+	done
 done' >"$OUT/run.console.log" 2>&1 || true
 forget "$check"
 docker rmi "$image" >/dev/null
