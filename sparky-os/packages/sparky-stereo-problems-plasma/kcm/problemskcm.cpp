@@ -147,7 +147,8 @@ void ProblemsKcm::refresh()
         e[u"since"_s] = i18nc("@info %1 a date and time", "Since %1", whenText(p[u"first"_s].toString()));
         e[u"canDismiss"_s] = true;
         e[u"canRepair"_s] = !p[u"repair"_s].toArray().isEmpty() && !p[u"over"_s].toBool();
-        e[u"repairFeedback"_s] = p[u"data"_s].toObject()[u"repair_feedback"_s].toObject();
+        const QJsonObject feedback = p[u"data"_s].toObject()[u"repair_feedback"_s].toObject();
+        e[u"repairFeedback"_s] = feedback;
         QStringList labels;
         for (const QJsonValue &l : p[u"labels"_s].toArray()) {
             labels << l.toString();
@@ -156,7 +157,13 @@ void ProblemsKcm::refresh()
         e[u"over"_s] = p[u"over"_s].toBool();
         e[u"dismissed"_s] = p[u"hidden"_s].toBool();
         const QJsonObject last = p[u"last_repair"_s].toObject();
-        e[u"lastRepair"_s] = last.isEmpty() ? QString() : i18nc("@info", "The last repair failed with exit status %1.", last[u"status"_s].toInteger());
+        if (!last.isEmpty()) {
+            const int status = last[u"status"_s].toInteger();
+            const QString message = repairMessage(feedback, status);
+            e[u"lastRepair"_s] = message.isEmpty()
+                ? i18nc("@info", "The last repair failed with exit status %1.", status)
+                : message;
+        }
         if (p[u"hidden"_s].toBool()) {
             dismissed << e;
         } else {
