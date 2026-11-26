@@ -25,10 +25,12 @@ case "$version" in
     ;;
   26.08.1-1+stereo3d15+lc1)
     next=26.08.1-1+stereo3d16
-    patches=(0031-watch-renderer-progress-for-speech-audio.patch 0032-ignore-isolated-impulses-when-aligning-speech.patch)
+    patches=(0031-watch-renderer-progress-for-speech-audio.patch 0032-move-a-cue-edge-only-where-that-takes-quiet-away.patch)
     for patch in "${patches[@]}"; do cp "$recipe/patches/$patch" "$overlay/patches/"; done
-    notes=(--item "Track renderer progress during speech audio export and record its state at a timeout."
-           --item "Ignore isolated clicks when aligning the spoken edges of a cue.")
+    notes=(--item "The speech audio export is ended only when its renderer stops advancing: the editor follows the renderer's own phases and frames, and before its consumer runs the processor time it uses, so a slow start or a long project is never ended. When 20 seconds pass with no progress the export is ended and said, and the editor's log keeps the renderer's state (alive or gone, its phase, its last frame, its threads) (patch 0031)."
+           --item "A cue's edge moves to the edge of its own speech only where that takes quiet away: a cue whose text goes on after a pause, in speech it shares with the next cue, keeps its last word's end, where it was cut at the pause. Isolated clicks between two sentences no longer join their speech (patch 0032)."
+           --item "Kdenlive depends on MLT 7.40.0-1+stereo3d13, whose avformat consumer no longer stops at its start and looks running (upstream's pull request 1366)."
+           --depends "libmlt7 (>= 7.40.0-1+stereo3d12+lc1)" "libmlt7 (>= 7.40.0-1+stereo3d13+lc1)")
     ;;
   *) printf 'Unsupported Kdenlive predecessor %s\n' "$version" >&2; exit 2 ;;
 esac

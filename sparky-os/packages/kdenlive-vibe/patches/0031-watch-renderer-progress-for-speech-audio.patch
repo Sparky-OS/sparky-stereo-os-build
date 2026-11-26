@@ -1,9 +1,15 @@
-Description: Watch the renderer's own progress during speech audio export
- Preserve a diagnostic log with the renderer state at the watchdog deadline.
+Description: End the speech audio export only when its renderer stops advancing
+ The renderer reports its phases and, once its consumer runs, each frame it
+ handled. The editor counts those as progress, and before the consumer runs
+ also the processor time the renderer uses, since a long project loads inside
+ one phase with nothing to report. After 20 seconds without progress the export
+ is ended and said, and the editor's log keeps the renderer's state at that
+ moment: alive or gone, its phase, its last frame, its threads and the
+ processor time it used. A slow start or a slow export is never ended.
 Origin: vendor
 Author: Daniel Campos Ramos
 Forwarded: not-needed
-Last-Update: 2026-11-25
+Last-Update: 2026-11-26
 
 --- a/renderer/kdenlive_render.cpp
 +++ b/renderer/kdenlive_render.cpp
@@ -87,13 +93,57 @@ Last-Update: 2026-11-25
  
 --- a/src/speech/speechaudiojob.cpp
 +++ b/src/speech/speechaudiojob.cpp
-@@ -6,20 +6,24 @@
+@@ -6,24 +6,88 @@
  #include "kdenlivesettings.h"
  
  #include <KLocalizedString>
 +#include <QDebug>
++#include <QFile>
  #include <QFileInfo>
  
++#ifdef Q_OS_LINUX
++#include <unistd.h>
++#endif
++
++namespace
++{
++struct RendererUse
++{
++    qint64 cpuTicks{-1};
++    qint64 cpuMs{-1};
++    int threads{-1};
++};
++
++// The processor time the renderer has used and its number of threads, where the system tells (/proc on Linux).
++RendererUse rendererUse(qint64 pid)
++{
++    RendererUse use;
++#ifdef Q_OS_LINUX
++    QFile stat(QStringLiteral("/proc/%1/stat").arg(pid));
++    if (pid > 0 && stat.open(QIODevice::ReadOnly)) {
++        const QByteArray text = stat.readAll();
++        // The program's name stands in parentheses and may hold spaces: the fields are counted after its last ')'.
++        const QList<QByteArray> fields = text.mid(text.lastIndexOf(')') + 2).split(' ');
++        if (fields.size() > 17) {
++            use.cpuTicks = fields.at(11).toLongLong() + fields.at(12).toLongLong();
++            use.threads = fields.at(17).toInt();
++            const long perSecond = sysconf(_SC_CLK_TCK);
++            use.cpuMs = perSecond > 0 ? use.cpuTicks * 1000 / perSecond : -1;
++        }
++    }
++#else
++    Q_UNUSED(pid)
++#endif
++    return use;
++}
++
++const char *phaseName(int phase)
++{
++    static const char *const names[] = {"not-started", "started", "mlt-ready", "project-loaded", "consumer-made", "consumer-running", "done"};
++    return phase >= 0 && phase <= 6 ? names[phase] : "unknown";
++}
++}
++
  SpeechAudioJob::SpeechAudioJob(QObject *parent)
      : QObject(parent)
  {
@@ -106,25 +156,47 @@ Last-Update: 2026-11-25
 -            m_progress.restart();
 -        } else if (m_progress.hasExpired(idleSeconds * 1000)) {
 -            complete(i18n("Audio export timed out after %1 seconds without audio.", idleSeconds));
++        // A living export is never ended. Progress is what the renderer itself reports: a new phase, or a
++        // further frame once its consumer runs. Before the consumer runs it reports nothing between two
++        // phases, and a long project loads inside one of them: there the processor time it uses shows that
++        // it works. Once the consumer runs only frames count, since a consumer that never delivers leaves
++        // the renderer polling, which uses a little processor time for ever.
 +        readProgress();
++        const auto use = rendererUse(m_renderer.processId());
++        if (use.cpuTicks > m_cpuTicks) {
++            m_cpuTicks = use.cpuTicks;
++            if (m_phase < consumerRunning) {
++                progressed();
++            }
++        }
 +        if (!m_progress.hasExpired(idleSeconds * 1000)) {
 +            return;
          }
 +        const auto state = m_renderer.state();
 +        const char *renderer = state == QProcess::Running ? "alive" : (state == QProcess::Starting ? "starting" : "gone");
-+        qWarning().nospace() << "Speech audio export timeout: renderer=" << renderer << " pid=" << m_renderer.processId() << " phase=" << m_phase
-+                             << " last_frame=" << m_lastFrame << " elapsed_ms=" << m_elapsed.elapsed() << " idle_ms=" << m_progress.elapsed();
++        qWarning().nospace() << "Speech audio export timeout: renderer=" << renderer << " pid=" << m_renderer.processId() << " phase=" << m_phase << ":"
++                             << phaseName(m_phase) << " last_frame=" << m_lastFrame << " threads=" << use.threads << " cpu_ms=" << use.cpuMs
++                             << " elapsed_ms=" << m_elapsed.elapsed() << " idle_ms=" << m_progress.elapsed();
 +        complete(i18n("Audio export timed out after %1 seconds without audio.", idleSeconds));
      });
      connect(&m_renderer, &QProcess::errorOccurred, this, [this]() { complete(i18n("Audio export failed")); });
      connect(&m_renderer, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
-@@ -42,10 +46,11 @@
++        readProgress();
+         const bool success = exitCode == 0 && status == QProcess::NormalExit && QFileInfo(m_output).size() > 44;
++        qDebug().nospace() << "Speech audio export ended: success=" << success << " phase=" << m_phase << ":" << phaseName(m_phase) << " last_frame="
++                           << m_lastFrame << " elapsed_ms=" << m_elapsed.elapsed() << " longest_wait_ms=" << qMax(m_longestWait, m_progress.elapsed());
+         complete(success ? QString() : i18n("Audio export failed"));
+     });
+ }
+@@ -42,10 +106,13 @@
      Q_ASSERT(!m_running);
      m_running = true;
      m_output = output;
 -    m_size = 0;
 +    m_phase = 0;
 +    m_lastFrame = -1;
++    m_cpuTicks = -1;
++    m_longestWait = 0;
 +    m_elapsed.start();
      m_progress.start();
      m_timer.start();
@@ -132,12 +204,10 @@ Last-Update: 2026-11-25
      m_renderer.setStandardErrorFile(QProcess::nullDevice());
      m_renderer.start(KdenliveSettings::kdenliverendererpath(), arguments);
  }
-@@ -58,6 +63,25 @@
- bool SpeechAudioJob::isRunning() const
- {
+@@ -60,6 +127,30 @@
      return m_running;
-+}
-+
+ }
+ 
 +void SpeechAudioJob::readProgress()
 +{
 +    while (m_renderer.canReadLine()) {
@@ -152,21 +222,33 @@ Last-Update: 2026-11-25
 +        if (phaseOk && frameOk && (phase > m_phase || (phase == m_phase && frame > m_lastFrame))) {
 +            m_phase = phase;
 +            m_lastFrame = qMax(m_lastFrame, frame);
-+            m_progress.restart();
++            progressed();
 +        }
 +    }
- }
- 
++}
++
++void SpeechAudioJob::progressed()
++{
++    m_longestWait = qMax(m_longestWait, m_progress.restart());
++}
++
  void SpeechAudioJob::complete(const QString &error)
+ {
+     if (!m_running) {
 --- a/src/speech/speechaudiojob.h
 +++ b/src/speech/speechaudiojob.h
-@@ -23,13 +23,16 @@
+@@ -23,13 +23,23 @@
      void finished(const QString &error);
  
  private:
 +    void readProgress();
++    void progressed();
      void complete(const QString &error);
  
++    // The renderer's "speech-audio PHASE FRAME" lines: 1 started, 2 MLT ready, 3 project loaded,
++    // 4 consumer made, 5 consumer running (FRAME is the last one it handled), 6 done.
++    static constexpr int consumerRunning = 5;
++    // The export is ended only after this long with no progress at all (see the timer in the constructor).
      static constexpr int idleSeconds = 20;
      QProcess m_renderer;
      QTimer m_timer;
@@ -174,6 +256,8 @@ Last-Update: 2026-11-25
      QElapsedTimer m_progress;
      QString m_output;
 -    qint64 m_size{0};
++    qint64 m_cpuTicks{-1};
++    qint64 m_longestWait{0};
 +    int m_phase{0};
 +    int m_lastFrame{-1};
      bool m_running{false};
