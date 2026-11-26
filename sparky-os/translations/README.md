@@ -61,8 +61,11 @@ Six of these patches were made "for the next package" and no build applied them.
 | `dragon-3d-video.po.patch` | dragon | 4:26.04.0-1+stereo3d7 |
 | `plasma-desktop-tablet-mode-panels.po.patch` | plasma-desktop | 4:6.7.4-1+stereo3d4 |
 | `kwin-keyboard-tablet-mode-only.po.patch` | kwin | 4:6.7.4-2+stereo3d57 |
+| `kwin-element-limit.po.patch` | kwin | 4:6.7.4-2+stereo3d70 |
 | `kscreenlocker-edition-l10n.po.patch` | kscreenlocker | 6.7.4-1+stereo3d4 |
 | `kdenlive-order46c-catalogues.patch` | kdenlive | 26.08.1-1+stereo3d8 (ORDER 61e carries the +stereo3d7 recipe of ORDER 46c) |
 | `kdenlive-order61e.po.patch` | kdenlive | 26.08.1-1+stereo3d8 (with the code half in `packages/kdenlive-stereo-61e`) |
 | `freecad-3d-view-stereo.ts.patch` | freecad | 1.1.3+dfsg-3+stereo3d1 (with the code half in `packages/freecad`) |
 - `plasma-keyboard-fcitx.po.patch` (row 71): the ten strings Plasma Keyboard adds as the on-screen keyboard of Fcitx 5 (the bar's input method button, previous and next candidates, the sentences said when Fcitx 5 does not answer or another keyboard holds its place, the fake input request, and the settings page's switch "Show this keyboard when Fcitx 5 is the input method" with its help text), in the nine translated languages, for the `plasma-keyboard` and `kcm_plasmakeyboard` catalogs (creating the Japanese `plasma-keyboard` catalog, which the release lacks); code half is `sparky-os/packages/plasma-keyboard/patches/0001-Plasma-Keyboard-as-the-on-screen-keyboard-of-Fcitx-5.patch`. Every catalog passes `msgfmt -c`. A first draft with AI assistance, pending review by native speakers. Carried last in plasma-keyboard's series by its build.
+
+- `kwin-element-limit.po.patch` (row 121) adds the Element limit label and help to the nine `kcm_kwinstereodepth` catalogs. KWin's +70 source recipe combines the catalogs with the KCM patch.
