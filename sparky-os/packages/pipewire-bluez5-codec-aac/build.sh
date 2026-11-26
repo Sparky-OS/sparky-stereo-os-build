@@ -2,8 +2,10 @@
 # Build the AAC plugin from verified upstream source with native Lean Code.
 # Usage: build.sh [PipeWire upstream version] [matching Debian version]
 # SPARKY_BUILD_CONTAINER names the build container (a lane gives its own prefix).
-# SPARKY_LC_ARCHIVE_DIR (required) is the link gate's folder, mounted at /archive: sources.json naming Debian testing's
-# main and non-free (libfdk-aac2) and the public keyring it names (sparky-os/lean/archive.md). SPARKY_LC_PREVIOUS_DIR
+# SPARKY_LC_ARCHIVE_DIR (required) is the link gate's folder, mounted at /archive: sources.json naming Debian forky's main
+# and non-free and deb-multimedia's forky main and non-free, with the public keyrings it names (sparky-os/lean/archive.md),
+# among them deb-multimedia-keyring.pgp: the plugin links the edition's FDK AAC, deb-multimedia's libfdk-aac2, as the
+# published 1.6.9-2+aac2+lc1 did (Depends libfdk-aac2 (>= 1:3.0.0)), never Debian's libfdk-aac2t64 beside it. SPARKY_LC_PREVIOUS_DIR
 # (optional) holds the predecessor .deb, so the gate checks that the new plugin resolves its libraries as that one did.
 # When Debian has moved PipeWire, the predecessor's exact libspa version is gone from the live archive and the gate
 # cannot solve it here: leave SPARKY_LC_PREVIOUS_DIR unset and compare afterwards with lean.release check-link's dated view
@@ -17,7 +19,9 @@ DEBV=${2:-1.6.11-2}
 OUT=${OUT:-${SPARKY_SCRATCH:?}/bt-aac}
 : "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate (sources.json and its keyrings); see sparky-os/lean/archive.md}"
 ARCHIVE=$(cd "$SPARKY_LC_ARCHIVE_DIR" && pwd)
-[ -f "$ARCHIVE/sources.json" ] || { echo "$ARCHIVE has no sources.json" >&2; exit 2; }
+for need in sources.json deb-multimedia-keyring.pgp; do
+    [ -f "$ARCHIVE/$need" ] || { echo "$ARCHIVE has no $need" >&2; exit 2; }
+done
 PREV_ARGS=()
 if [ -n "${SPARKY_LC_PREVIOUS_DIR:-}" ]; then
     PREV_ARGS=(-v "$(cd "$SPARKY_LC_PREVIOUS_DIR" && pwd)":/prev:ro -e SPARKY_LC_PREVIOUS_DIR=/prev)

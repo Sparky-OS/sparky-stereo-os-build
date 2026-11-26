@@ -13,6 +13,13 @@ sed -i 's/^Types: deb$/Types: deb deb-src/; s/^Components: main$/Components: mai
 apt-get -q update
 apt-get -y --no-install-recommends install build-essential debhelper devscripts \
     debian-keyring gnupg python3
+# the edition's FDK AAC is deb-multimedia's (libfdk-aac2 1:3.0.0-dmo1 on an installed edition): the plugin links that one
+# library, so only fdk-aac comes from deb-multimedia and everything else from Debian
+printf 'Types: deb\nURIs: https://www.deb-multimedia.org\nSuites: forky\nComponents: main non-free\nSigned-By: /archive/deb-multimedia-keyring.pgp\n' \
+    >/etc/apt/sources.list.d/deb-multimedia.sources
+printf 'Package: *\nPin: origin www.deb-multimedia.org\nPin-Priority: 100\n\nPackage: fdk-aac libfdk-aac-dev libfdk-aac2\nPin: origin www.deb-multimedia.org\nPin-Priority: 990\n' \
+    >/etc/apt/preferences.d/fdk-aac-from-deb-multimedia
+apt-get -q update
 # python3 exists only from here on in a bare debian:testing image
 SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
 export SOURCE_DATE_RFC2822
