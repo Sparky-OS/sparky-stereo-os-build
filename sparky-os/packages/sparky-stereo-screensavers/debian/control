@@ -1,0 +1,26 @@
+Source: sparky-stereo-screensavers
+Section: kde
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, gettext, libkf6config-dev, libkf6coreaddons-dev,
+ libkf6i18n-dev, libkf6kcmutils-dev, libstereo-declare-dev (>= 1.12.2), libwayland-dev, ninja-build, pkgconf, python3,
+ qt6-base-dev, qt6-base-private-dev, qt6-declarative-dev, wayland-protocols
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-stereo-screensavers
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, gl-stereo-savers (>= 0.4.6~), gl-stereo-show, libstereo-declare1 (>= 1.12.2),
+ python3, xvfb, xscreensaver-data, xscreensaver-data-extra, systemsettings, qml6-module-org-kde-kcmutils,
+ qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-layouts
+Breaks: gl-stereo-savers (<< 0.4.6~)
+Replaces: gl-stereo-savers (<< 0.4.6~)
+Description: Screensavers page for System Settings
+ The classic screensaver selection page: the list of every screensaver the
+ edition ships (the stereo catalogue's and XScreenSaver's 2D ones), a small
+ live preview of the selected one, a full-screen preview, which savers the
+ stereo show rotates through and its times, with links to Wallpaper, Screen
+ Locking, Display & Monitor and Power Management. The "Stereo Screensavers"
+ launcher opens it.

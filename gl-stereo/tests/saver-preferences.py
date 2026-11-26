@@ -5,12 +5,9 @@ from pathlib import Path
 import shutil
 import sys
 import subprocess
-import tkinter as tk
-from tkinter import ttk
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'savers'))
-from preferences import config_path, disabled_savers, save_disabled, read_config
+from preferences import config_path, disabled_savers, flat_savers, save_disabled, read_config
 from catalogue import load, Rotation
-from settings import main
 root=Path('out/saver-preferences').resolve(); root.mkdir(parents=True,exist_ok=True)
 installed=Path('/usr/share/gl-stereo/catalogue.json')
 source_catalogue=installed if installed.exists() else Path('out/eligibility/catalogue.json')
@@ -27,36 +24,13 @@ rotation=Rotation(entries)
 assert {rotation.next({'gears','molecule'})['id'] for _ in range(3*len(entries))} == {e['id'] for e in entries}-{'gears','molecule'}
 assert rotation.next({e['id'] for e in entries}) is None
 assert {rotation.next()['id'] for _ in range(3*len(entries))}=={e['id'] for e in entries}
-shutil.copy(source_catalogue,root/'catalogue.json')
-if Path('/usr/share/gl-stereo/savers.json').exists():
-    shutil.copy('/usr/share/gl-stereo/savers.json',root/'savers.json')
-else:
-    subprocess.run([sys.executable,str(Path(__file__).resolve().parent.parent/'savers/make-index.py'),str(root/'savers.json')],check=True)
-original=tk.Tk
-errors=[]; seen=[]
-def create():
-    window=original()
-    def verify():
-        try:
-            def walk(parent):
-                for child in parent.winfo_children():
-                    yield child
-                    yield from walk(child)
-            widgets=list(walk(window)); tree=next(w for w in widgets if isinstance(w,ttk.Treeview))
-            ids=set(tree.get_children())
-            assert len(ids)==132 and 'mapscroller.pl' not in ids
-            assert {'rocks','starfield','gears'} <= ids
-            assert tree.item('gears','text').startswith('☐')
-            tree.focus('gears'); tree.focus_force(); tree.event_generate('<space>'); window.update()
-            assert tree.item('gears','text').startswith('☑')
-            next(w for w in widgets if isinstance(w,ttk.Button) and w.cget('text')=='Save selection').invoke()
-            seen.append(True)
-        except Exception as error:
-            errors.append(error); window.destroy()
-    window.after(300,verify)
-    return window
-tk.Tk=create
-main(root)
-assert seen and not errors,errors
+# the list of savers is System Settings' Screensavers page now; the store it writes is the one tested here
+save_disabled({'molecule'})
 assert disabled_savers()=={'molecule'}
-print('PASS: 132 saver choices, helper excluded, credits, persisted selection, disabled rotation and re-enabling; timing settings preserved')
+assert read_config().getint('General','IdleSeconds')==8100 and read_config().get('Other','Keep')=='yes'
+assert flat_savers()==set()
+with config_path().open('a') as out: out.write('')
+text=config_path().read_text().replace('[General]\n','[General]\nFlatSavers=deco, maze\n',1)
+config_path().write_text(text)
+assert flat_savers()=={'deco','maze'} and disabled_savers()=={'molecule'}
+print('PASS: persisted selection, disabled rotation and re-enabling, the ticked 2D savers; timing settings preserved')

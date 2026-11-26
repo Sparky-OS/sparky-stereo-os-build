@@ -19,7 +19,6 @@ here = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(here/'savers'))
 import catalogue
 import pin
-import settings
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
@@ -143,54 +142,5 @@ with tempfile.TemporaryDirectory(prefix='saver-receipts-') as work:
         assert 'no installed package owns' in str(stop)
     print('PASS: the Depends pin is generated from the packages that own the bound files, and an unowned file stops the build')
 
-    # ---- the saver list: the dropped savers, the reason, nine languages -------------------------------------
-    strings = json.loads((here/'savers/strings.json').read_text())
-    assert set(strings) == {'en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW'}
-    import re
-    for language, text in strings.items():
-        assert len(text) == 18 and all(text), language
-        for index in range(12, 16):
-            assert re.findall(r'%[.\d]*s', text[index]) == re.findall(r'%[.\d]*s', strings['en'][index]), (language, index)
-        assert text[11] % dict(dropped=2, shipped=132), language
-    sample = dict(kind='executable-differs', path='/usr/libexec/xscreensaver/gears', expected='a' * 64, found='b' * 64)
-    for language, text in strings.items():
-        said = settings.reason_text(sample, text)
-        assert '/usr/libexec/xscreensaver/gears' in said and 'a' * 12 in said and 'b' * 12 in said and 'a' * 13 not in said, (language, said)
-    if os.environ.get('DISPLAY'):
-        import tkinter as tk
-        from tkinter import ttk
-        share = work/'share'; share.mkdir()
-        (share/'catalogue.json').write_text((root/'usr/share/gl-stereo/catalogue.json').read_text())
-        inventory = json.loads((root/'usr/share/gl-stereo/savers.json').read_text()) + [dict(id='nodata', kind='hack', title='Nodata')]
-        (share/'savers.json').write_text(json.dumps(inventory))
-        # the catalogue's three receipts name files that are not on this machine: all three dropped, the fourth has no receipt
-        os.environ.update(LC_ALL='de_DE.UTF-8', XDG_CONFIG_HOME=str(work/'config'))
-        original, results = tk.Tk, []
-        def create():
-            window = original()
-            def verify():
-                try:
-                    def walk(parent):
-                        for child in parent.winfo_children():
-                            yield child; yield from walk(child)
-                    widgets = list(walk(window))
-                    tree = next(w for w in widgets if isinstance(w, ttk.Treeview))
-                    texts = [w.cget('text') for w in widgets if 'text' in w.keys()]
-                    results.append((tree.item('gears', 'values'), tree.item('nodata', 'values'), texts))
-                except Exception as error:
-                    results.append(error)
-                window.destroy()
-            window.after(300, verify)
-            return window
-        tk.Tk = create
-        settings.main(share)
-        tk.Tk = original
-        assert results and not isinstance(results[0], Exception), results
-        gears, nodata, texts = results[0]
-        assert gears[0] == strings['de'][9] and '/usr/libexec/xscreensaver/gears' in gears[2], gears
-        assert nodata[0] == strings['de'][6] and nodata[2] == '', nodata
-        assert strings['de'][11] % dict(dropped=3, shipped=4) in texts, texts
-        print('PASS: the saver list says "%s" with the reason and a count for each saver the package cannot offer (de), and keeps "pending" for one with no receipt' % strings['de'][9])
-    else:
-        print('SKIP: no DISPLAY, the dialog part needs xvfb-run')
-print('PASS: saver receipts, pin, gate and the list of savers that cannot be offered')
+    # the list of savers and its sentences are System Settings' Screensavers page now (sparky-stereo-screensavers, its own tests)
+print('PASS: saver receipts, pin and gate')

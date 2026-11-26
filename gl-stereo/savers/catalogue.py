@@ -97,12 +97,16 @@ class Rotation:
         self.rng = rng or random.SystemRandom()
         self.bag = []
         self.last = None
+        self.failed = set()
 
     def exclude(self, name):
         self.entries.pop(name, None)
+        self.failed.add(name)
         self.bag = [item for item in self.bag if item != name]
 
-    def next(self, disabled=()):
+    def next(self, disabled=(), flat=()):
+        """The next saver. FLAT names 2D savers the person ticked: each comes back as
+        dict(id=NAME, flat=True) and is shown as one picture in both views."""
         for name, entry in list(self.entries.items()):
             reasons = diagnose(entry)
             if reasons:
@@ -110,6 +114,7 @@ class Rotation:
                     print('gl-stereo-savers: %s is not offered any more: %s' % (name, describe(reason)), file=sys.stderr)
                 self.exclude(name)
         available = {name for name in self.entries if name not in disabled}
+        available |= {name for name in flat if name not in self.entries and name not in self.failed}
         self.bag = [name for name in self.bag if name in available]
         if not available:
             return None
@@ -119,7 +124,7 @@ class Rotation:
             if len(self.bag) > 1 and self.bag[-1] == self.last:
                 self.bag[-1], self.bag[0] = self.bag[0], self.bag[-1]
         self.last = self.bag.pop()
-        return self.entries[self.last]
+        return self.entries.get(self.last) or dict(id=self.last, flat=True)
 
 def active(state):
     return all(state.get(key) is True for key in ('locked','display_on','on_ac'))

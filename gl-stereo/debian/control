@@ -17,7 +17,7 @@ Package: gl-stereo
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, python3, python3-tk, libegl1, libgl1,
  libkf6kcmutils-bin, kscreen
-Recommends: gl-stereo-show
+Recommends: gl-stereo-show, sparky-stereo-screensavers
 Description: camera stereo layer and OpenGL launcher
  Renders a program's camera for both eyes and presents full side by side
  through Stereo KWin. Includes the Enable 3D and render resolution settings.
@@ -27,10 +27,11 @@ Description: camera stereo layer and OpenGL launcher
 Package: gl-stereo-savers
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, gl-stereo (= ${binary:Version}),
- python3, xvfb, x11-utils, ${receipts:Pin}
+ python3, xvfb, x11-utils, libx11-6, xscreensaver-data, ${receipts:Pin}
 Description: qualified stereo savers and classic starfield
  Provides the separate saver processes, bounded frame broker and a random
- rotation catalogue qualified against the packaged binaries.
+ rotation catalogue qualified against the packaged binaries. XScreenSaver's
+ 2D savers join the show when ticked, as one picture in both eyes.
  .
  Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
 

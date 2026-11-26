@@ -1,0 +1,26 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/25
+# Copyright 2026 under the GNU GPL3 License
+# The host side of the build: the facts only the host knows go into the container (build-provenance.sh), and the link gate gets
+# its archive folder (sources.json with the public archives and the edition's published tree as file:/repo, and their keyrings).
+# Usage: OUT=DIR SPARKY_LC_ARCHIVE_DIR=DIR REPO=PUBLISHED_TREE IMAGE=... SCRATCH=DIR SIBLINGS=DIR bash build-in-container.sh
+#   SIBLINGS: the folder of gl-stereo's .deb files at the version the page depends on (0.4.6), not published yet: the link
+#   gate takes them as edition siblings.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+TREE=$(cd "$HERE/../../.." && pwd)
+. "$HERE/../../repo/build-provenance.sh"
+OUT=${OUT:?Set OUT to the workspace output directory}
+: "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate, mounted at /archive: see sparky-os/lean/archive.md}"
+REPO=${REPO:?the published tree of the edition, mounted read-only at /repo}
+IMAGE=${IMAGE:?a builder image with the packages named in debian/control}
+SCRATCH=${SCRATCH:?a folder with room for the link gate}
+SIBLINGS=$(cd "${SIBLINGS:?the folder of the gl-stereo 0.4.6 packages}" && pwd)
+mkdir -p "$OUT" "$SCRATCH"
+sparky_provenance_init "$IMAGE" "$HERE"
+docker run --rm --ulimit core=1 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$SCRATCH/home" -e OUT="$OUT" -e JOBS=4 -e SIBLINGS="$SIBLINGS" -v "$SIBLINGS":"$SIBLINGS":ro \
+	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH="$SCRATCH/link" \
+	-v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$REPO":/repo:ro -v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
+	-v "$TREE":"$TREE" -v "$OUT":"$OUT" -v "$SCRATCH":"$SCRATCH" -v /etc/passwd:/etc/passwd:ro \
+	"$IMAGE" sh -c "mkdir -p $SCRATCH/home $SCRATCH/link; git config --global --add safe.directory '*'; cd '$HERE' && bash ./build.sh"

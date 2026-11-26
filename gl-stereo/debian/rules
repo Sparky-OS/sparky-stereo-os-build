@@ -15,15 +15,15 @@ override_dh_auto_build:
 
 override_dh_auto_test:
 	debian/build/policytest
+	xvfb-run -a -s '-screen 0 2560x1440x24 -ac -nolisten tcp' python3 tests/flat-savers.py
 
 override_dh_auto_install:
 	dh_auto_install
 	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
 	install -Dm755 savers/starfield debian/tmp/usr/lib/gl-stereo/savers/starfield
 	install -Dm755 savers/announce debian/tmp/usr/lib/gl-stereo/savers/announce
-	install -m644 savers/controller.py savers/frames.py savers/catalogue.py savers/preferences.py savers/settings.py savers/strings.json debian/tmp/usr/lib/gl-stereo/savers/
+	install -m644 savers/controller.py savers/frames.py savers/catalogue.py savers/preferences.py savers/flat.py debian/tmp/usr/lib/gl-stereo/savers/
 	python3 savers/make-index.py debian/tmp/usr/share/gl-stereo/savers.json
-	install -Dm644 savers/org.sparky.stereo-savers.desktop debian/tmp/usr/share/applications/org.sparky.stereo-savers.desktop
 
 override_dh_auto_clean:
 	dh_auto_clean
