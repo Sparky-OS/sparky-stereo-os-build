@@ -58,8 +58,10 @@ desk[:y0] = False
 desk[y1:] = False
 desk[:, :x0] = False
 desk[:, x1:] = False
-ys, xs = np.nonzero(desk)
-view = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())] if len(xs) else None
+# the view: the rows and columns that are mostly desk (a toolbar's few pixels of the same grey are not the view)
+rows = np.nonzero(desk.sum(axis=1) > 0.2 * max(1, x1 - x0))[0]
+cols = np.nonzero(desk.sum(axis=0) > 0.2 * max(1, y1 - y0))[0]
+view = [int(cols.min()), int(rows.min()), int(cols.max()), int(rows.max())] if len(rows) and len(cols) else None
 result["desk_box"] = view
 
 # the pages: runs of paper rows inside the view, then runs of paper columns in each band; paper is what is neither the
