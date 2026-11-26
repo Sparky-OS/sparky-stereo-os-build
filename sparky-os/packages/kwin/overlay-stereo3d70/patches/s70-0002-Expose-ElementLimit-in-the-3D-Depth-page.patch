@@ -22,12 +22,10 @@ diff --git a/src/kcms/stereodepth/kwinstereodepthsettings.kcfg b/src/kcms/stereo
 diff --git a/src/kcms/stereodepth/ui/main.qml b/src/kcms/stereodepth/ui/main.qml
 --- a/src/kcms/stereodepth/ui/main.qml
 +++ b/src/kcms/stereodepth/ui/main.qml
-@@ -102,8 +102,39 @@
+@@ -102,8 +102,40 @@
              text: i18n("Menus, dialogs and tooltips of the active window come forward by up to this much. More pop-out: things near the screen's edges and long reading get harder.")
          }
  
--        RowLayout {
--            Kirigami.FormData.label: i18nc("@label:slider", "Popup border:")
 +        QQC2.TextField {
 +            id: elementLimitField
 +            objectName: "elementLimitField"
@@ -60,7 +58,8 @@ diff --git a/src/kcms/stereodepth/ui/main.qml b/src/kcms/stereodepth/ui/main.qml
 +            text: i18n("Sets how far parts inside a window move in depth, for example a page over its desk or a button over its panel. Zero keeps them flat.")
 +        }
 +
-+{marker}
+         RowLayout {
+             Kirigami.FormData.label: i18nc("@label:slider", "Popup border:")
              QQC2.Slider {
                  id: popupBorderSlider
                  from: 0
