@@ -21,7 +21,7 @@ dscverify --keyring /usr/share/keyrings/debian-keyring.gpg "pipewire_$DEBV.dsc"
 mkdir source
 python3 - <<'PY'
 from pathlib import Path
-import os, shutil, tarfile
+import os, re, shutil, tarfile
 root = Path('/work')
 upstream = os.environ['PWV']
 archives = list(root.glob(f'pipewire_{upstream}.orig.tar.*'))
@@ -38,9 +38,11 @@ for entry in entries[0].iterdir():
 shutil.copytree('/recipe/debian', root / 'source/debian')
 control = root / 'source/debian/control'
 text = control.read_text()
-assert text.count('libspa-0.2-bluetooth (= 1.6.9-2)') == 1
-control.write_text(text.replace('libspa-0.2-bluetooth (= 1.6.9-2)',
-                               f"libspa-0.2-bluetooth (= {os.environ['DEBV']})"))
+pins = re.findall(r'libspa-0\.2-bluetooth \(= [^)]+\)', text)
+named = re.findall(r'AAC codec plugin for PipeWire [0-9][0-9.]*,', text)
+assert len(pins) == 1 and len(named) == 1, (pins, named)
+text = text.replace(pins[0], f"libspa-0.2-bluetooth (= {os.environ['DEBV']})")
+control.write_text(text.replace(named[0], f'AAC codec plugin for PipeWire {upstream},'))
 shutil.copy2(archive, root / archive.name.replace('pipewire_', 'pipewire-bluez5-codec-aac_', 1))
 shutil.copy2(root / f"pipewire_{os.environ['DEBV']}.dsc",
              root / 'source/debian/upstream-source.dsc')
@@ -60,5 +62,5 @@ PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
 cp .sparky-lc/source.json /out/native-source.json
 tar -cJf /out/native-authored-evidence.tar.xz .sparky-lc
 cp /work/pipewire-bluez5-codec-aac_*.dsc /work/pipewire-bluez5-codec-aac_*.tar.* \
-    /work/*+lc1_*.deb /work/*+lc1_*.buildinfo /work/*+lc1_*.changes /out/
+    /work/*+lc1_*.deb /work/*+lc1_*.buildinfo /work/*+lc1_*.changes /work/*+lc1_*.sparky-build.json /out/
 chown -R "$HOSTID" /out

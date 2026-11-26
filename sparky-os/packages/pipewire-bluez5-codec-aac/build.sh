@@ -1,12 +1,13 @@
 #!/bin/bash
 # Build the AAC plugin from verified upstream source with native Lean Code.
 # Usage: build.sh [PipeWire upstream version] [matching Debian version]
+# SPARKY_BUILD_CONTAINER names the build container (a lane gives its own prefix).
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../repo/build-provenance.sh"
-PWV=${1:-1.6.9}
-DEBV=${2:-1.6.9-2}
+PWV=${1:-1.6.11}
+DEBV=${2:-1.6.11-2}
 OUT=${OUT:-${SPARKY_SCRATCH:?}/bt-aac}
 [[ $PWV =~ ^[0-9][0-9.]+$ && $DEBV == "$PWV"-* && $DEBV =~ ^[0-9A-Za-z.+~:-]+$ ]] ||
     { echo "Expected matching upstream and Debian versions" >&2; exit 2; }
@@ -15,7 +16,9 @@ OUT=$(realpath "$OUT")
 [ ! -e "$OUT/pipewire-bluez5-codec-aac_${DEBV}+aac2+lc1_amd64.deb" ] ||
     { echo "Use a fresh output directory; this version already exists" >&2; exit 2; }
 sparky_provenance_init debian:testing
-docker run --ulimit core=1 --rm --cpus "${CPUS:-4}" \
+NAME_ARGS=()
+[ -z "${SPARKY_BUILD_CONTAINER:-}" ] || NAME_ARGS=(--name "$SPARKY_BUILD_CONTAINER")
+docker run --ulimit core=1 --rm --cpus "${CPUS:-4}" "${NAME_ARGS[@]}" \
     "${SPARKY_PROV_ARGS[@]}" \
     -v "$OUT:/out" -v "$HERE:/recipe:ro" -v "$HERE/../..:/toolkit:ro" \
     -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
