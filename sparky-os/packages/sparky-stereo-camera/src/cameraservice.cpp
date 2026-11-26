@@ -112,6 +112,7 @@ ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
     bool refused = false;
     bool cleaned = false;
     QList<quint32> stillInactive;
+    QList<quint32> atDefault; // an old entry's value equal to what the camera holds as its default: 0.1.3 never saves one
 
     QSet<quint32> layout;
     for (const Control &c : device.controls()) {
@@ -133,6 +134,9 @@ ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
             case V4l2Camera::SetOutcome::Applied:
                 ++report.applied;
                 clearProblem(key);
+                if (oldEntry && o.control && choice.controls.value(o.id) == effectiveDefault(*o.control)) {
+                    atDefault.append(o.id);
+                }
                 break;
             case V4l2Camera::SetOutcome::Refused: {
                 refused = true;
@@ -199,6 +203,14 @@ ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
             // once every saved governing control has its value was read while that control was not in use: never the person's setting.
             for (quint32 id : std::as_const(stillInactive)) {
                 report.log << QStringLiteral("camera %1: removed the saved value %2 of %3: it was saved while the control was inactive")
+                                  .arg(camera.node.name)
+                                  .arg(choice.controls.value(id))
+                                  .arg(choice.controlNames.value(id, QString::number(id)));
+                choice.controls.remove(id);
+                choice.controlNames.remove(id);
+            }
+            for (quint32 id : std::as_const(atDefault)) {
+                report.log << QStringLiteral("camera %1: removed the saved value %2 of %3: it is what the camera holds as its default")
                                   .arg(camera.node.name)
                                   .arg(choice.controls.value(id))
                                   .arg(choice.controlNames.value(id, QString::number(id)));
