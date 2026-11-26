@@ -1,0 +1,35 @@
+gtk+3.0 (3.24.52-3+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: a stereo GtkGLArea in GTK 3 (queue row 137, milestone 4,
+    stereo3d-gtkglarea-stereo), with the API shape of the edition's GTK 4.
+    A stereo area (property stereo) emits its render signal twice for each
+    frame, the left view first, and gtk_gl_area_get_current_eye() says which
+    view the handler draws. The two views are copied side by side, left
+    first, each at the size it was rendered at (stereo-view-width and
+    stereo-view-height, the area's own size by default), into one opaque
+    picture that goes to the compositor on a surface of its own, declared as
+    full side by side stereo content through libstereo-declare: on Wayland a
+    subsurface below the window, sized with wp_viewporter to one view, its
+    buffer a dma-buf exported from the area's OpenGL context; on X11 a child
+    window drawn with the area's own GLX context, or through memory on a
+    software renderer (GDK_X11_STEREO_READBACK chooses). The window keeps a
+    transparent hole over the area, so its widgets drawn over the area stay
+    over it (on X11 when the window has an alpha channel).
+  * Depth and colour state: properties format (a GdkMemoryFormat: 8 and 10
+    bit, 16 bit, half float, float) and color-state (a GdkColorState). The
+    stereo picture keeps the area's depth (XB30, XB48, XB4H) and its colour
+    state is described with wp_color_management_v1 on the area's own surface,
+    sRGB as gamma 2.2 where the compositor does not list sRGB. GDK gains
+    GdkMemoryFormat, GdkColorState and GdkCicpParams under GTK 4's names
+    (ITU-T H.273 code points).
+  * An area that cannot be shown per eye says so (stereo-shown,
+    stereo-error, one log message with the reason) and renders its left view
+    alone: no stereo declaration, no dma-buf from the renderer, a format or a
+    colour description the compositor does not take, an area partly scrolled
+    out or drawn with an opacity below one. An area without stereo, and every
+    other widget and window, is unchanged.
+  * gtk3-demo: the OpenGL Area demo has a Stereo check button
+    (GTK_DEMO_GLAREA_STEREO starts it on) and draws one camera for each eye.
+  * testsuite/gtk/glarea: the API, the CICP code points and the honest
+    failure on a display without stereo.
+  * libgtk-3-0t64 depends on libstereo-declare1 (>= 1.7.0).

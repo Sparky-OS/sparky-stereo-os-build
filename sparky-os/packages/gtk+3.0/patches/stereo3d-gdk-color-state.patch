@@ -1,0 +1,654 @@
+Description: gdk: GdkMemoryFormat, GdkColorState and GdkCicpParams under GTK 4's names
+ The depth and the colour state of a GtkGLArea's picture. GdkMemoryFormat has
+ the five formats an area renders in, with GTK 4's names and values;
+ GdkColorState and GdkCicpParams carry ITU-T H.273 code points (colour
+ primaries, transfer characteristics, matrix coefficients, range), with GTK 4's
+ four getters (sRGB, linear sRGB, Rec. 2100 PQ and linear) and the builder for
+ any other. A colour state is a description, not a conversion.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff --git a/gdk/gdk.h b/gdk/gdk.h
+index 3878f10..9856af4 100644
+--- a/gdk/gdk.h
++++ b/gdk/gdk.h
+@@ -31,6 +31,7 @@
+ #include <gdk/gdkversionmacros.h>
+ #include <gdk/gdkapplaunchcontext.h>
+ #include <gdk/gdkcairo.h>
++#include <gdk/gdkcolorstate.h>
+ #include <gdk/gdkcursor.h>
+ #include <gdk/gdkdevice.h>
+ #include <gdk/gdkdevicepad.h>
+diff --git a/gdk/gdkcolorstate.c b/gdk/gdkcolorstate.c
+new file mode 100644
+index 0000000..85b6e35
+--- /dev/null
++++ b/gdk/gdkcolorstate.c
+@@ -0,0 +1,445 @@
++/* GDK - The GIMP Drawing Kit
++ *
++ * gdkcolorstate.c: the depth and the colour state of a picture
++ *
++ * Copyright 2026 Daniel Campos Ramos
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include "gdkcolorstate.h"
++
++#include <gio/gio.h>
++
++/**
++ * SECTION:gdkcolorstate
++ * @Short_description: The depth and the colour state of a picture
++ * @Title: Colour states
++ *
++ * A #GdkColorState says how the values of a picture are meant, with the code points of ITU-T H.273 ("Coding-independent
++ * code points for video signal type identification"): its colour primaries, its transfer characteristics, its matrix
++ * coefficients and its range. GTK 3 hands it on with the pictures it gives the compositor on a surface of their own
++ * (a stereo #GtkGLArea), so a program can render deep colour and high dynamic range and say what it rendered.
++ *
++ * The four colour states GTK 4 has a getter for are here under the same names; any other is made with
++ * #GdkCicpParams.
++ */
++
++struct _GdkColorState
++{
++  int ref_count;   /* 0 for the colour states that are never freed */
++  guint color_primaries;
++  guint transfer_function;
++  guint matrix_coefficients;
++  GdkCicpRange range;
++};
++
++static GdkColorState srgb = { 0, 1, 13, 0, GDK_CICP_RANGE_FULL };
++static GdkColorState srgb_linear = { 0, 1, 8, 0, GDK_CICP_RANGE_FULL };
++static GdkColorState rec2100_pq = { 0, 9, 16, 0, GDK_CICP_RANGE_FULL };
++static GdkColorState rec2100_linear = { 0, 9, 8, 0, GDK_CICP_RANGE_FULL };
++
++G_DEFINE_BOXED_TYPE (GdkColorState, gdk_color_state, gdk_color_state_ref, gdk_color_state_unref)
++
++/**
++ * gdk_color_state_ref:
++ * @self: a #GdkColorState
++ *
++ * Takes a reference.
++ *
++ * Returns: (transfer full): @self
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkColorState *
++gdk_color_state_ref (GdkColorState *self)
++{
++  g_return_val_if_fail (self != NULL, NULL);
++
++  if (self->ref_count > 0)
++    self->ref_count++;
++
++  return self;
++}
++
++/**
++ * gdk_color_state_unref:
++ * @self: (transfer full): a #GdkColorState
++ *
++ * Drops a reference.
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++void
++gdk_color_state_unref (GdkColorState *self)
++{
++  g_return_if_fail (self != NULL);
++
++  if (self->ref_count > 0 && --self->ref_count == 0)
++    g_free (self);
++}
++
++/**
++ * gdk_color_state_get_srgb:
++ *
++ * The colour state of sRGB (IEC 61966-2-1): H.273 colour primaries 1, transfer characteristics 13, RGB, full range.
++ * It is what a picture is when nothing else is said.
++ *
++ * Returns: (transfer none): the sRGB colour state
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkColorState *
++gdk_color_state_get_srgb (void)
++{
++  return &srgb;
++}
++
++/**
++ * gdk_color_state_get_srgb_linear:
++ *
++ * sRGB's primaries with linear values: H.273 colour primaries 1, transfer characteristics 8, RGB, full range.
++ *
++ * Returns: (transfer none): the linear sRGB colour state
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkColorState *
++gdk_color_state_get_srgb_linear (void)
++{
++  return &srgb_linear;
++}
++
++/**
++ * gdk_color_state_get_rec2100_pq:
++ *
++ * Rec. ITU-R BT.2100 with the perceptual quantizer (SMPTE ST 2084): H.273 colour primaries 9, transfer
++ * characteristics 16, RGB, full range.
++ *
++ * Returns: (transfer none): the BT.2100 PQ colour state
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkColorState *
++gdk_color_state_get_rec2100_pq (void)
++{
++  return &rec2100_pq;
++}
++
++/**
++ * gdk_color_state_get_rec2100_linear:
++ *
++ * Rec. ITU-R BT.2100's primaries with linear values: H.273 colour primaries 9, transfer characteristics 8, RGB,
++ * full range.
++ *
++ * Returns: (transfer none): the linear BT.2100 colour state
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkColorState *
++gdk_color_state_get_rec2100_linear (void)
++{
++  return &rec2100_linear;
++}
++
++/**
++ * gdk_color_state_equal:
++ * @self: a #GdkColorState
++ * @other: another #GdkColorState
++ *
++ * Whether the two colour states have the same four code points.
++ *
++ * Returns: %TRUE when they are the same
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++gboolean
++gdk_color_state_equal (GdkColorState *self,
++                       GdkColorState *other)
++{
++  if (self == other)
++    return TRUE;
++  if (self == NULL || other == NULL)
++    return FALSE;
++
++  return self->color_primaries == other->color_primaries &&
++         self->transfer_function == other->transfer_function &&
++         self->matrix_coefficients == other->matrix_coefficients &&
++         self->range == other->range;
++}
++
++struct _GdkCicpParams
++{
++  GObject parent_instance;
++
++  guint color_primaries;
++  guint transfer_function;
++  guint matrix_coefficients;
++  GdkCicpRange range;
++};
++
++struct _GdkCicpParamsClass
++{
++  GObjectClass parent_class;
++};
++
++G_DEFINE_TYPE (GdkCicpParams, gdk_cicp_params, G_TYPE_OBJECT)
++
++static void
++gdk_cicp_params_class_init (GdkCicpParamsClass *klass)
++{
++}
++
++static void
++gdk_cicp_params_init (GdkCicpParams *self)
++{
++  /* H.273's "unspecified" for each, as GTK 4 starts */
++  self->color_primaries = 2;
++  self->transfer_function = 2;
++  self->matrix_coefficients = 2;
++  self->range = GDK_CICP_RANGE_NARROW;
++}
++
++/**
++ * gdk_cicp_params_new:
++ *
++ * Makes the four code points, each "unspecified" (2) and the range narrow, as GTK 4 does.
++ *
++ * Returns: (transfer full): a new #GdkCicpParams
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkCicpParams *
++gdk_cicp_params_new (void)
++{
++  return g_object_new (GDK_TYPE_CICP_PARAMS, NULL);
++}
++
++/**
++ * gdk_cicp_params_get_color_primaries:
++ * @self: a #GdkCicpParams
++ *
++ * Returns: the colour primaries, an H.273 ColourPrimaries code point
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++guint
++gdk_cicp_params_get_color_primaries (GdkCicpParams *self)
++{
++  g_return_val_if_fail (GDK_IS_CICP_PARAMS (self), 2);
++  return self->color_primaries;
++}
++
++/**
++ * gdk_cicp_params_set_color_primaries:
++ * @self: a #GdkCicpParams
++ * @color_primaries: an H.273 ColourPrimaries code point
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++void
++gdk_cicp_params_set_color_primaries (GdkCicpParams *self,
++                                     guint          color_primaries)
++{
++  g_return_if_fail (GDK_IS_CICP_PARAMS (self));
++  self->color_primaries = color_primaries;
++}
++
++/**
++ * gdk_cicp_params_get_transfer_function:
++ * @self: a #GdkCicpParams
++ *
++ * Returns: the transfer function, an H.273 TransferCharacteristics code point
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++guint
++gdk_cicp_params_get_transfer_function (GdkCicpParams *self)
++{
++  g_return_val_if_fail (GDK_IS_CICP_PARAMS (self), 2);
++  return self->transfer_function;
++}
++
++/**
++ * gdk_cicp_params_set_transfer_function:
++ * @self: a #GdkCicpParams
++ * @transfer_function: an H.273 TransferCharacteristics code point
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++void
++gdk_cicp_params_set_transfer_function (GdkCicpParams *self,
++                                       guint          transfer_function)
++{
++  g_return_if_fail (GDK_IS_CICP_PARAMS (self));
++  self->transfer_function = transfer_function;
++}
++
++/**
++ * gdk_cicp_params_get_matrix_coefficients:
++ * @self: a #GdkCicpParams
++ *
++ * Returns: the matrix coefficients, an H.273 MatrixCoefficients code point
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++guint
++gdk_cicp_params_get_matrix_coefficients (GdkCicpParams *self)
++{
++  g_return_val_if_fail (GDK_IS_CICP_PARAMS (self), 2);
++  return self->matrix_coefficients;
++}
++
++/**
++ * gdk_cicp_params_set_matrix_coefficients:
++ * @self: a #GdkCicpParams
++ * @matrix_coefficients: an H.273 MatrixCoefficients code point
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++void
++gdk_cicp_params_set_matrix_coefficients (GdkCicpParams *self,
++                                         guint          matrix_coefficients)
++{
++  g_return_if_fail (GDK_IS_CICP_PARAMS (self));
++  self->matrix_coefficients = matrix_coefficients;
++}
++
++/**
++ * gdk_cicp_params_get_range:
++ * @self: a #GdkCicpParams
++ *
++ * Returns: the range (H.273 VideoFullRangeFlag)
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkCicpRange
++gdk_cicp_params_get_range (GdkCicpParams *self)
++{
++  g_return_val_if_fail (GDK_IS_CICP_PARAMS (self), GDK_CICP_RANGE_NARROW);
++  return self->range;
++}
++
++/**
++ * gdk_cicp_params_set_range:
++ * @self: a #GdkCicpParams
++ * @range: the range
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++void
++gdk_cicp_params_set_range (GdkCicpParams *self,
++                           GdkCicpRange   range)
++{
++  g_return_if_fail (GDK_IS_CICP_PARAMS (self));
++  self->range = range;
++}
++
++/* The code points H.273 (V4, 2024) defines for colour primaries and transfer characteristics: 0, 3 and the values
++ * past the table are reserved, 2 is unspecified */
++static gboolean
++primaries_defined (guint v)
++{
++  return v == 1 || (v >= 4 && v <= 12) || v == 22;
++}
++
++static gboolean
++transfer_defined (guint v)
++{
++  return v == 1 || (v >= 4 && v <= 18);
++}
++
++/**
++ * gdk_cicp_params_build_color_state:
++ * @self: a #GdkCicpParams
++ * @error: return location for an error
++ *
++ * Makes the colour state these code points describe. GDK 3's pictures are RGB: the matrix coefficients must be 0
++ * (identity) and the range full. Colour primaries and transfer characteristics may be any that H.273 defines; whether
++ * a compositor can be told them is said where the picture is handed on.
++ *
++ * Returns: (transfer full) (nullable): a new #GdkColorState, or %NULL with @error set
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkColorState *
++gdk_cicp_params_build_color_state (GdkCicpParams  *self,
++                                   GError        **error)
++{
++  GdkColorState *state;
++
++  g_return_val_if_fail (GDK_IS_CICP_PARAMS (self), NULL);
++
++  if (!primaries_defined (self->color_primaries))
++    {
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
++                   "Colour primaries %u are not defined by ITU-T H.273", self->color_primaries);
++      return NULL;
++    }
++  if (!transfer_defined (self->transfer_function))
++    {
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
++                   "Transfer characteristics %u are not defined by ITU-T H.273", self->transfer_function);
++      return NULL;
++    }
++  if (self->matrix_coefficients != 0)
++    {
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
++                   "Matrix coefficients %u: GDK 3's pictures are RGB (matrix coefficients 0)", self->matrix_coefficients);
++      return NULL;
++    }
++  if (self->range != GDK_CICP_RANGE_FULL)
++    {
++      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
++                           "A narrow range: GDK 3's RGB pictures use the full range");
++      return NULL;
++    }
++
++  state = g_new0 (GdkColorState, 1);
++  state->ref_count = 1;
++  state->color_primaries = self->color_primaries;
++  state->transfer_function = self->transfer_function;
++  state->matrix_coefficients = self->matrix_coefficients;
++  state->range = self->range;
++
++  return state;
++}
++
++/**
++ * gdk_color_state_create_cicp_params:
++ * @self: a #GdkColorState
++ *
++ * The four code points of a colour state.
++ *
++ * Returns: (transfer full): a new #GdkCicpParams
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++GdkCicpParams *
++gdk_color_state_create_cicp_params (GdkColorState *self)
++{
++  GdkCicpParams *params;
++
++  g_return_val_if_fail (self != NULL, NULL);
++
++  params = gdk_cicp_params_new ();
++  params->color_primaries = self->color_primaries;
++  params->transfer_function = self->transfer_function;
++  params->matrix_coefficients = self->matrix_coefficients;
++  params->range = self->range;
++
++  return params;
++}
+diff --git a/gdk/gdkcolorstate.h b/gdk/gdkcolorstate.h
+new file mode 100644
+index 0000000..de3b4e8
+--- /dev/null
++++ b/gdk/gdkcolorstate.h
+@@ -0,0 +1,153 @@
++/* GDK - The GIMP Drawing Kit
++ *
++ * gdkcolorstate.h: the depth and the colour state of a picture
++ *
++ * Copyright 2026 Daniel Campos Ramos
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef __GDK_COLOR_STATE_H__
++#define __GDK_COLOR_STATE_H__
++
++#if !defined (__GDK_H_INSIDE__) && !defined (GDK_COMPILATION)
++#error "Only <gdk/gdk.h> can be included directly."
++#endif
++
++#include <gdk/gdkversionmacros.h>
++#include <glib-object.h>
++
++G_BEGIN_DECLS
++
++/**
++ * GdkMemoryFormat:
++ * @GDK_MEMORY_R8G8B8A8_PREMULTIPLIED: 8 bits a channel, red first, alpha premultiplied
++ * @GDK_MEMORY_R16G16B16A16_PREMULTIPLIED: 16 bits a channel, unsigned and normalized, alpha premultiplied
++ * @GDK_MEMORY_R16G16B16A16_FLOAT_PREMULTIPLIED: half float channels, alpha premultiplied
++ * @GDK_MEMORY_R32G32B32A32_FLOAT_PREMULTIPLIED: single float channels, alpha premultiplied
++ * @GDK_MEMORY_ABGR2101010_PREMULTIPLIED: 10 bits for each colour and 2 for alpha in one 32 bit word, red in the
++ *   lowest bits, alpha premultiplied
++ *
++ * The layout of a picture's samples in memory: the depth a #GtkGLArea renders at.
++ *
++ * The names and values are GTK 4's, so a program says the same in both. GDK 3 has only the formats a picture is
++ * rendered in: the depths of the deep colour standard (10, 12 and 16 bits a channel) are held by the 10 bit, the 16
++ * bit and the float formats, 12 bits by a 16 bit or a float one.
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++typedef enum {
++  GDK_MEMORY_R8G8B8A8_PREMULTIPLIED = 2,
++  GDK_MEMORY_R16G16B16A16_PREMULTIPLIED = 10,
++  GDK_MEMORY_R16G16B16A16_FLOAT_PREMULTIPLIED = 13,
++  GDK_MEMORY_R32G32B32A32_FLOAT_PREMULTIPLIED = 16,
++  GDK_MEMORY_ABGR2101010_PREMULTIPLIED = 68
++} GdkMemoryFormat;
++
++/**
++ * GdkCicpRange:
++ * @GDK_CICP_RANGE_NARROW: the values use the range of 16 to 235 (for Y) and 16 to 240 for U and V
++ * @GDK_CICP_RANGE_FULL: the values use the full range
++ *
++ * Whether the samples of a picture use the full range of their values (ITU-T H.273, VideoFullRangeFlag).
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++typedef enum {
++  GDK_CICP_RANGE_NARROW,
++  GDK_CICP_RANGE_FULL
++} GdkCicpRange;
++
++/**
++ * GdkColorState:
++ *
++ * The colour state of a picture: how its values are meant, as the code points of ITU-T H.273 (colour primaries,
++ * transfer characteristics, matrix coefficients, range).
++ *
++ * A colour state is a description, not a conversion: a program writes its values in that state, and GTK hands the
++ * description on with the picture.
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++typedef struct _GdkColorState GdkColorState;
++
++#define GDK_TYPE_COLOR_STATE (gdk_color_state_get_type ())
++
++GDK_AVAILABLE_IN_ALL
++GType           gdk_color_state_get_type                (void) G_GNUC_CONST;
++GDK_AVAILABLE_IN_ALL
++GdkColorState * gdk_color_state_ref                     (GdkColorState  *self);
++GDK_AVAILABLE_IN_ALL
++void            gdk_color_state_unref                   (GdkColorState  *self);
++GDK_AVAILABLE_IN_ALL
++GdkColorState * gdk_color_state_get_srgb                (void);
++GDK_AVAILABLE_IN_ALL
++GdkColorState * gdk_color_state_get_srgb_linear         (void);
++GDK_AVAILABLE_IN_ALL
++GdkColorState * gdk_color_state_get_rec2100_pq          (void);
++GDK_AVAILABLE_IN_ALL
++GdkColorState * gdk_color_state_get_rec2100_linear      (void);
++GDK_AVAILABLE_IN_ALL
++gboolean        gdk_color_state_equal                   (GdkColorState  *self,
++                                                         GdkColorState  *other);
++
++/**
++ * GdkCicpParams:
++ *
++ * The four code points of ITU-T H.273 that make a #GdkColorState.
++ *
++ * Since: 3.24.52+stereo3d1
++ */
++#define GDK_TYPE_CICP_PARAMS (gdk_cicp_params_get_type ())
++#define GDK_CICP_PARAMS(o) (G_TYPE_CHECK_INSTANCE_CAST ((o), GDK_TYPE_CICP_PARAMS, GdkCicpParams))
++#define GDK_IS_CICP_PARAMS(o) (G_TYPE_CHECK_INSTANCE_TYPE ((o), GDK_TYPE_CICP_PARAMS))
++
++typedef struct _GdkCicpParams GdkCicpParams;
++typedef struct _GdkCicpParamsClass GdkCicpParamsClass;
++
++GDK_AVAILABLE_IN_ALL
++GType           gdk_cicp_params_get_type                (void) G_GNUC_CONST;
++GDK_AVAILABLE_IN_ALL
++GdkCicpParams * gdk_cicp_params_new                     (void);
++GDK_AVAILABLE_IN_ALL
++guint           gdk_cicp_params_get_color_primaries     (GdkCicpParams  *self);
++GDK_AVAILABLE_IN_ALL
++void            gdk_cicp_params_set_color_primaries     (GdkCicpParams  *self,
++                                                         guint           color_primaries);
++GDK_AVAILABLE_IN_ALL
++guint           gdk_cicp_params_get_transfer_function   (GdkCicpParams  *self);
++GDK_AVAILABLE_IN_ALL
++void            gdk_cicp_params_set_transfer_function   (GdkCicpParams  *self,
++                                                         guint           transfer_function);
++GDK_AVAILABLE_IN_ALL
++guint           gdk_cicp_params_get_matrix_coefficients (GdkCicpParams  *self);
++GDK_AVAILABLE_IN_ALL
++void            gdk_cicp_params_set_matrix_coefficients (GdkCicpParams  *self,
++                                                         guint           matrix_coefficients);
++GDK_AVAILABLE_IN_ALL
++GdkCicpRange    gdk_cicp_params_get_range               (GdkCicpParams  *self);
++GDK_AVAILABLE_IN_ALL
++void            gdk_cicp_params_set_range               (GdkCicpParams  *self,
++                                                         GdkCicpRange    range);
++GDK_AVAILABLE_IN_ALL
++GdkColorState * gdk_cicp_params_build_color_state       (GdkCicpParams  *self,
++                                                         GError        **error);
++GDK_AVAILABLE_IN_ALL
++GdkCicpParams * gdk_color_state_create_cicp_params      (GdkColorState  *self);
++
++G_DEFINE_AUTOPTR_CLEANUP_FUNC (GdkCicpParams, g_object_unref)
++
++G_END_DECLS
++
++#endif /* __GDK_COLOR_STATE_H__ */
+diff --git a/gdk/meson.build b/gdk/meson.build
+index 297c38c..069eb62 100644
+--- a/gdk/meson.build
++++ b/gdk/meson.build
+@@ -4,6 +4,7 @@ gdk_sources = files(
+   'gdk.c',
+   'gdkapplaunchcontext.c',
+   'gdkcairo.c',
++  'gdkcolorstate.c',
+   'gdkcursor.c',
+   'gdkdeprecated.c',
+   'gdkdevice.c',
+@@ -45,6 +46,7 @@ gdk_gir_public_headers = files(
+   'gdk-autocleanup.h',
+   'gdkapplaunchcontext.h',
+   'gdkcairo.h',
++  'gdkcolorstate.h',
+   'gdkcursor.h',
+   'gdkdevice.h',
+   'gdkdevicetool.h',
