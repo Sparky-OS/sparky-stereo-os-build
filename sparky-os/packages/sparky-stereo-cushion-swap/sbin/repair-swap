@@ -100,7 +100,7 @@ def current_configuration(mode, total):
 def allocate_swap(path, size):
     if output("findmnt", "-n", "-o", "FSTYPE", "-T", str(path.parent)) not in {"ext4", "xfs"}:
         raise ValueError("This repair can prepare a swap file on ext4 or XFS")
-    with path.open("xb", opener=lambda name, flags: os.open(name, flags, 0o600)) as swap:
+    with open(path, "xb", opener=lambda name, flags: os.open(name, flags, 0o600)) as swap:
         os.posix_fallocate(swap.fileno(), 0, size)
         os.fsync(swap.fileno())
     subprocess.run(["mkswap", path], check=True)

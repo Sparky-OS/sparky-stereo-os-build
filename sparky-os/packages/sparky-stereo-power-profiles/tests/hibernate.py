@@ -69,7 +69,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert module.boot_check() == 0 and module.boot_check() == 0
         (problem,) = records(True)
         assert problem['message'] == 'LOCAL7'
-        assert problem['repair'] == [module.REPAIR, 'hibernate'], problem
+        assert problem['repair'] == [[module.REPAIR, 'hibernate']], problem
         assert problem['data']['notify'] is False, problem
         print('PASS one repairable hibernation problem on the Problems page')
         state['capability'] = 's "challenge"\n'
