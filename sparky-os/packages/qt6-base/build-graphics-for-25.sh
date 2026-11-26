@@ -45,6 +45,8 @@ apt-get -y update > /work/apt-update.log 2>&1
 want=()
 for f in /extra/*.deb; do case $f in *-dbgsym_*|*-doc*|*-examples_*|*-lc-hr_*|*libqt6sql6-*) ;; *) want+=("$f") ;; esac; done
 apt-get -y --no-install-recommends install "${want[@]}" > /work/qt-install.log 2>&1
+# the edition pin (1001) would take the published qt6-base back when the next install names qt6-base-dev; hold the new build
+for f in "${want[@]}"; do dpkg-deb -f "$f" Package; done | xargs apt-mark hold >> /work/qt-install.log
 apt-get -y --no-install-recommends install git python3 cmake extra-cmake-modules gettext libkf6auth-dev libkf6config-dev \
     libkf6coreaddons-dev libkf6i18n-dev libkf6kcmutils-dev libkf6service-dev pkgconf qt6-base-dev qt6-declarative-dev \
     sparky-stereo-problems dpkg-dev bubblewrap > /work/build-dep.log 2>&1
