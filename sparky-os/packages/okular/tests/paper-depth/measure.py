@@ -35,8 +35,8 @@ try:
     with open(f"{case_dir}/windows.json") as f:
         for line in f:
             line = line.strip()
-            if line.startswith("["):
-                windows = json.loads(line)
+            if line.startswith("{"):
+                windows = json.loads(line).get("windows") or []
 except (OSError, ValueError):
     pass
 names = ("okular",) if kind == "okular" else ("paper-depth-preview",)
