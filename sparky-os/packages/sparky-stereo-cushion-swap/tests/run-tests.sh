@@ -12,6 +12,8 @@
 # proves the helper in a VM. Writes results to $OUT.
 set -u
 command -v logrotate >/dev/null 2>&1 || { echo 'ERROR: tests require logrotate; install logrotate in the test container' >&2; exit 2; }
+# The fixtures are initramfs-tools systems unless a check says otherwise; the test container's own dpkg is not asked.
+export INITRAMFS_GENERATOR=initramfs-tools
 HERE=$(cd "$(dirname "$0")" && pwd)
 PKG=$(dirname "$HERE")
 OUT=${OUT:-$(mktemp -d "${TMPDIR:-/tmp}/cushion-swap-results.XXXXXX")}
@@ -1255,6 +1257,98 @@ zram_not_claimed() {
 	[[ ! -s $W/actions ]] && grep -q '^STATE=no-area$' "$W/state/status"
 }
 
+# Row 933: the initramfs generator present decides where the resume area is read; dpkg-query answers as on each system.
+generator_detected() {
+	local d=$1 g out ok=0
+	for g in dracut initramfs-tools none; do
+		{
+			echo '#!/bin/sh'
+			case $g in
+			dracut) printf 'echo "initramfs-tools not-installed"\necho "dracut installed"\n' ;;
+			initramfs-tools) printf 'echo "initramfs-tools installed"\necho "no packages found matching dracut" >&2\nexit 1\n' ;;
+			none) printf 'echo "initramfs-tools config-files"\necho "dracut config-files"\n' ;;
+			esac
+		} >"$W/bin/dpkg-query-$g"
+		chmod +x "$W/bin/dpkg-query-$g"
+		out=$(daemon INITRAMFS_GENERATOR= DPKG_QUERY_BIN="$W/bin/dpkg-query-$g" "$d" --resume-target)
+		[[ $out == *$'\n'"GENERATOR=$g"* ]] || { echo "  $g: ${out//$'\n'/ }"; ok=1; }
+	done
+	return $ok
+}
+
+# dracut never reads /etc/initramfs-tools/conf.d/resume: its own file decides, else the kernel command line.
+dracut_resume_source() {
+	local d=$1 out rc ok=0
+	echo 'RESUME=UUID=part' >"$W/resume-it"
+	printf '# a comment\nRESUME=UUID=rootfs\nRESUME_OFFSET=34816\n' >"$W/resume-dracut"
+	out=$(daemon INITRAMFS_GENERATOR=dracut INITRAMFS_RESUME_PATH="$W/resume-it" DRACUT_RESUME_PATH="$W/resume-dracut" "$d" --resume-target)
+	[[ $out == "SOURCE=$W/resume-dracut"$'\nRESUME=UUID=rootfs\nRESUME_OFFSET=34816\n'* ]] || { echo "  dracut file: ${out//$'\n'/ }"; ok=1; }
+	out=$(daemon INITRAMFS_GENERATOR=dracut INITRAMFS_RESUME_PATH="$W/resume-it" DRACUT_RESUME_PATH=/nonexistent "$d" --resume-target)
+	rc=$?
+	[[ $rc == 1 && $out == SOURCE=none* && $out == *'the only place dracut resumes from'* ]] || { echo "  dracut without its file: $rc ${out//$'\n'/ }"; ok=1; }
+	out=$(daemon INITRAMFS_GENERATOR=initramfs-tools INITRAMFS_RESUME_PATH="$W/resume-it" DRACUT_RESUME_PATH="$W/resume-dracut" "$d" --resume-target)
+	[[ $out == "SOURCE=$W/resume-it"$'\nRESUME=UUID=part\n'* ]] || { echo "  initramfs-tools: ${out//$'\n'/ }"; ok=1; }
+	out=$(daemon INITRAMFS_GENERATOR=none INITRAMFS_RESUME_PATH="$W/resume-it" DRACUT_RESUME_PATH="$W/resume-dracut" "$d" --resume-target)
+	rc=$?
+	[[ $rc == 1 && $out == *'neither initramfs-tools nor dracut is installed'* ]] || { echo "  none: $rc ${out//$'\n'/ }"; ok=1; }
+	return $ok
+}
+
+# With dracut the kernel's resume device comes from the kernel command line: the remedy is the boot menu, not update-initramfs.
+dracut_mismatch_says_update_grub() {
+	local d=$1 rc
+	rm -rf "$W/state"
+	swaps "$W/s"
+	echo 8:1 >"$W/sys/power/resume"
+	hibernate_env INITRAMFS_GENERATOR=dracut DRACUT_RESUME_PATH="$W/resume-part" INITRAMFS_RESUME_PATH=/nonexistent "$d" --hibernate-deploy >"$W/log" 2>&1
+	rc=$?
+	echo 0:0 >"$W/sys/power/resume"
+	[[ $rc == 1 ]] && kept_problem hibernate-mismatch 'sudo update-grub' && ! kept_problem hibernate-mismatch 'update-initramfs' ||
+		{ echo "  exit $rc: $(cat "$(problem_file hibernate-mismatch)" 2>/dev/null)"; return 1; }
+}
+
+# The repair's dracut file: grub-mkconfig sources it (more than once), the line gets resume= once, a person's resume= or
+# noresume stays alone, the daemon reads the same file, and its own line is not counted as a person's resume=.
+repair_dracut_line() {
+	local out ok=0
+	python3 -I - "$PKG/sbin/repair-swap" "$W/dropin.cfg" <<'EOF' || return 1
+import importlib.machinery
+import importlib.util
+from pathlib import Path
+import sys
+loader = importlib.machinery.SourceFileLoader("repair_swap", sys.argv[1])
+module = importlib.util.module_from_spec(importlib.util.spec_from_loader("repair_swap", loader))
+loader.exec_module(module)
+Path(sys.argv[2]).write_bytes(module.dracut_config(b"RESUME=UUID=4a1b\nRESUME_OFFSET=34816\n"))
+module.DRACUT_RESUME = Path(sys.argv[2])
+line = ["quiet", "resume=UUID=4a1b", "resume_offset=34816"]
+assert module.explicit_resume(line, "dracut") == [], "own line"
+assert module.explicit_resume(line + ["resume=/dev/sda2"], "dracut") == ["resume=/dev/sda2"], "person's line"
+assert module.explicit_resume(line, "initramfs-tools") == ["resume=UUID=4a1b"], "initramfs-tools"
+assert module.boot_config("none")[2].code == 56 and module.RESULTS[56] == "LOCAL44"
+EOF
+	out=$(GRUB_CMDLINE_LINUX=quiet sh -c '. "$1"; . "$1"; printf "%s|%s|%s" "$GRUB_CMDLINE_LINUX" "${RESUME-unset}" "${RESUME_OFFSET-unset}"' sh "$W/dropin.cfg")
+	[[ $out == 'quiet resume=UUID=4a1b resume_offset=34816|unset|unset' ]] || { echo "  added: $out"; ok=1; }
+	out=$(GRUB_CMDLINE_LINUX= GRUB_CMDLINE_LINUX_DEFAULT='quiet resume=/dev/sda2' sh -c '. "$1"; printf "%s" "$GRUB_CMDLINE_LINUX"' sh "$W/dropin.cfg")
+	[[ -z $out ]] || { echo "  a person's resume=: $out"; ok=1; }
+	out=$(GRUB_CMDLINE_LINUX=noresume sh -c '. "$1"; printf "%s" "$GRUB_CMDLINE_LINUX"' sh "$W/dropin.cfg")
+	[[ $out == noresume ]] || { echo "  noresume: $out"; ok=1; }
+	out=$(daemon INITRAMFS_GENERATOR=dracut DRACUT_RESUME_PATH="$W/dropin.cfg" "$PKG/sbin/cushion-swap" --resume-target)
+	[[ $out == *$'\nRESUME=UUID=4a1b\nRESUME_OFFSET=34816\n'* ]] || { echo "  daemon: ${out//$'\n'/ }"; ok=1; }
+	return $ok
+}
+
+# Every result the repair can give has its sentence in each of the ten languages.
+repair_feedback_complete() {
+	local key code ok=0
+	for key in $(python3 -I "$PKG/sbin/repair-swap" --feedback | python3 -I -c 'import json, sys; print(" ".join(json.load(sys.stdin)["messages"].values()))'); do
+		for code in en pl pt_BR fr de es ja ko zh_CN zh_TW; do
+			grep -q "^$key=\"" "$PKG/lang/$code" || { echo "  $key missing in $code"; ok=1; }
+		done
+	done
+	return $ok
+}
+
 zram_not_resume() {
 	local d=$1 out rc
 	echo 'RESUME=/dev/zram0' >"$W/resume-zram"
@@ -1267,6 +1361,11 @@ suite() {
 	check zram-accounting zram_accounting "$1"
 	check zram-not-claimed zram_not_claimed "$1"
 	check zram-not-resume zram_not_resume "$1"
+	check generator-detected generator_detected "$1"
+	check dracut-resume-source dracut_resume_source "$1"
+	check dracut-mismatch-names-update-grub dracut_mismatch_says_update_grub "$1"
+	check repair-dracut-line repair_dracut_line
+	check repair-feedback-complete repair_feedback_complete
 	local d=$1
 	check thresholds-4-8-16-32-64-96GB threshold_cases "$d"
 	check reference-96GB-is-Daniels reference_unchanged "$d"
@@ -1409,7 +1508,10 @@ mutant logrotate-other-path "log-wiring logrotate-while-writing" 's|^/var/log/cu
 mutant unit-log-elsewhere "log-wiring" 's|^StandardOutput=append:.*|StandardOutput=journal|' unit
 mutant unit-log-namespace "log-wiring" 's|^StandardError=journal$|StandardError=journal\nLogNamespace=cushion-swap|' unit
 # 5. Hibernate from the installer's file
-mutant ignore-the-file "generator-resume-sources hibernate-partition-not-in-fstab" 's/^\tif \[\[ -r \$INITRAMFS_RESUME_PATH \]\]; then$/\tif false; then/'
+mutant ignore-the-file "generator-resume-sources hibernate-partition-not-in-fstab" 's/^\tif \[\[ -n \$config && -r \$config \]\]; then$/\tif false; then/'
+mutant dracut-reads-initramfs-file "dracut-resume-source repair-dracut-line" 's/^\tdracut) config=\$DRACUT_RESUME_PATH ;;$/\tdracut) config=$INITRAMFS_RESUME_PATH ;;/'
+mutant mismatch-names-initramfs "dracut-mismatch-names-update-grub" 's/^\t\tif \[\[ \$INITRAMFS_GENERATOR == initramfs-tools \]\]; then$/\t\tif true; then/'
+mutant generator-not-asked "generator-detected" 's/^\t\t\[\[ \$status == installed \]\] || continue$/\t\t:/'
 mutant hook-drops-offset "initramfs-hook-offset" 's/^echo "resume_offset=\$offset"/: "resume_offset=$offset"/' hook
 # ORDER 346b: nothing fails silently
 mutant problems-never-kept "meminfo-unreadable deploy-failure-kept calibration-problems" 's/^\t((DRY_RUN)) \&\& return 0$/\treturn 0/'

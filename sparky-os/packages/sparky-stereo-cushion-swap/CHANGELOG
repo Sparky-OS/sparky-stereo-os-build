@@ -1,3 +1,12 @@
+Version 0.3.8 (2026-11-26)
+  * Row 933: works with the initramfs generator the system has. Depends on initramfs-tools | dracut (0.3.6 and 0.3.7
+    depended on initramfs-tools alone, so an edition installed with apt, whose kernel brought dracut, kept them back:
+    installing them meant removing dracut). With dracut the hibernation repair writes
+    /etc/default/grub.d/zz-cushion-swap-resume.cfg (RESUME=, RESUME_OFFSET=, put on the kernel command line by
+    update-grub), dracut's resume module is always in the image, and the resume problems name update-grub. With
+    initramfs-tools nothing changes. With neither, or dracut without update-grub, the repair says so.
+
+-------------------------------------------------------------------------------
 Version 0.3.6 (2026-11-26)
   * Release a separate hibernation partition after resume if its pages fit
     in memory with the configured headroom. Report a failed release.

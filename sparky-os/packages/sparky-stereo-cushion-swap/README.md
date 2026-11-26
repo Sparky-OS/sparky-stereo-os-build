@@ -211,6 +211,23 @@ command line still wins. The package triggers update-initramfs. initramfs-tools
 warns "no matching swap device is available" for a swap file (it checks the
 file system, which is not a swap device); that warning is expected.
 
+With dracut instead of initramfs-tools (the edition's kernel depends on
+"dracut | initramfs-tools", and an edition installed with apt gets dracut),
+the image resumes only from resume= and resume_offset= on the kernel command
+line: dracut 112 builds a systemd initramfs, where
+systemd-hibernate-resume-generator(8) reads /proc/cmdline (and, on UEFI, the
+HibernateLocation variable systemd-sleep writes), never dracut's own
+/etc/cmdline.d. So on such a system /etc/initramfs-tools/conf.d/resume is
+never read, and the hibernation repair writes
+/etc/default/grub.d/zz-cushion-swap-resume.cfg instead: the same RESUME= and
+RESUME_OFFSET= lines, put on the kernel command line by update-grub unless a
+resume= or noresume is already there. /usr/lib/dracut/dracut.conf.d/
+50-cushion-swap.conf names the resume module in add_dracutmodules, so a
+host-only image keeps it before the system has ever hibernated. The package
+reads which generator is installed (dpkg) and says it on --resume-target
+(GENERATOR=); with neither, or with dracut and no update-grub, the repair says
+so and changes nothing.
+
 KDE offers Hibernate when logind's CanHibernate answers yes
 (plasma-workspace libkworkspace/sessionmanagementbackend.cpp). logind answers
 yes only with an active swap area that can hold the image

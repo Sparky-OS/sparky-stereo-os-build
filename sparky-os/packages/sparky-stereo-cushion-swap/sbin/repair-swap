@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -16,13 +17,28 @@ import tempfile
 CUSHION = "/usr/sbin/cushion-swap"
 FSTAB = Path("/etc/fstab")
 RESUME = Path("/etc/initramfs-tools/conf.d/resume")
+# dracut's initramfs resumes only from resume= and resume_offset= on the kernel command line
+# (systemd-hibernate-resume-generator(8)); grub-mkconfig reads this file after /etc/default/grub
+DRACUT_RESUME = Path("/etc/default/grub.d/zz-cushion-swap-resume.cfg")
+DRACUT_LINE = b"""\
+case " ${GRUB_CMDLINE_LINUX:-} ${GRUB_CMDLINE_LINUX_DEFAULT:-} " in
+*" resume="* | *" noresume "*) ;;
+*) GRUB_CMDLINE_LINUX="${GRUB_CMDLINE_LINUX:+$GRUB_CMDLINE_LINUX }resume=$RESUME${RESUME_OFFSET:+ resume_offset=$RESUME_OFFSET}" ;;
+esac
+unset RESUME RESUME_OFFSET
+"""
+DRACUT_HEAD = b"""\
+# Written by Cushion Swap's hibernation repair (sparky-stereo-cushion-swap), for dracut:
+# its initramfs resumes only from resume= and resume_offset= on the kernel command line.
+# update-grub reads this file after /etc/default/grub; a resume= or noresume already on the line is kept.
+"""
 SWAP = Path("/swapfile")
 STATE = Path("/run/cushion-swap")
 ADOPTED = Path("/var/lib/cushion-swap/adopted")
 MIB = 1024 ** 2
 PACKAGE = "sparky-stereo-cushion-swap"
 # stable exit statuses for the Problems page; pkexec reserves 126 and 127
-RESULTS = {0: "LOCAL27", **{code: f"LOCAL{code - 12}" for code in range(40, 56)}}
+RESULTS = {0: "LOCAL27", **{code: f"LOCAL{code - 12}" for code in range(40, 58)}}
 
 
 class Refusal(Exception):
@@ -66,6 +82,32 @@ def resume_target():
     return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
 
 
+def boot_config(generator):
+    """Where this system's initramfs generator reads the resume area, what applies it, and why it cannot."""
+    if generator == "initramfs-tools":
+        return RESUME, [["update-initramfs", "-u", "-k", "all"]], None
+    if generator == "dracut":
+        if shutil.which("update-grub") is None:
+            return DRACUT_RESUME, None, Refusal(57, "dracut resumes only from the kernel command line, and update-grub "
+                                                   "is not installed to put resume= there")
+        return DRACUT_RESUME, [["update-grub"]], None
+    return None, None, Refusal(56, "Neither initramfs-tools nor dracut is installed, so no boot image can be told "
+                                   "where to resume from")
+
+
+def dracut_config(resume):
+    return DRACUT_HEAD + resume + DRACUT_LINE
+
+
+def explicit_resume(cmdline, generator):
+    """resume= arguments on the kernel command line other than the one this repair put there for dracut."""
+    ours = None
+    if generator == "dracut" and DRACUT_RESUME.exists():
+        found = re.search(rb"(?m)^RESUME=(\S+)$", DRACUT_RESUME.read_bytes())
+        ours = "resume=" + found[1].decode() if found else None
+    return [arg for arg in cmdline if arg.startswith("resume=") and arg != ours]
+
+
 def memory():
     return {key.rstrip(":"): int(value) for key, value, *_ in
             (line.split() for line in Path("/proc/meminfo").read_text().splitlines())}
@@ -91,6 +133,8 @@ def current_configuration(mode, total, swapfile):
             re.search(r"(?m)^\s*HIBERNATE=[\"']?off(?:[\s\"']|$)", explicit)):
         raise Refusal(42, "Hibernation is explicitly disabled in this system's settings")
     resume = resume_target()
+    generator = resume.get("GENERATOR", "none")
+    explicit = explicit_resume(cmdline, generator)
     partition = None
     if resume.get("STATE") == "found" and resume.get("KIND") == "device":
         device = Path(resume["TARGET"])
@@ -98,7 +142,7 @@ def current_configuration(mode, total, swapfile):
             partition = device
     enough = int(resume.get("SIZE_KIB") or 0) >= total
     if mode == "hibernate" and partition and not enough:
-        if any(arg.startswith("resume=") for arg in cmdline):
+        if explicit:
             raise Refusal(43, "The boot configuration still names a smaller resume area")
     if mode == "cushion" and swaps:
         raise Refusal(44, "There is already a swap entry in /etc/fstab. Review which area to give to Cushion Swap.")
@@ -112,9 +156,9 @@ def current_configuration(mode, total, swapfile):
     if swapfile.is_symlink() or (swapfile.exists() and
                             (not swaps or not swapfile.is_file() or swapfile.stat().st_nlink != 1)):
         raise Refusal(45, f"{swapfile} is outside this repair's managed area")
-    if not partition and mode == "hibernate" and any(arg.startswith("resume=") for arg in cmdline):
+    if not partition and mode == "hibernate" and explicit:
         raise Refusal(43, "The boot configuration has an explicit resume device. Review it before changing the resume area.")
-    return fstab, swaps, partition, enough
+    return fstab, swaps, partition, enough, generator
 
 
 def allocate_swap(path, size, btrfs):
@@ -179,7 +223,11 @@ def repair(mode):
         raise Refusal(47, f"Root filesystem is {filesystem}")
     btrfs = filesystem == "btrfs"
     swapfile = Path("/swap/swapfile") if btrfs else SWAP
-    fstab, swaps, partition, enough = current_configuration(mode, total, swapfile)
+    fstab, swaps, partition, enough, generator = current_configuration(mode, total, swapfile)
+    config, apply, cannot = boot_config(generator)
+    use_file_for_resume = mode == "hibernate" and not (partition and enough)
+    if use_file_for_resume and cannot:
+        raise cannot
     if (STATE / "hibernate-deployed").exists():
         raise Refusal(48, "Wait for the hibernation operation to finish")
     before = active_areas()
@@ -195,7 +243,7 @@ def repair(mode):
         if mode == "hibernate" or free < 512 * MIB:
             raise Refusal(51, "The machine needs enough space for a swap file the size of memory and 20 GiB left free")
         size = 512 * MIB
-    old_resume = RESUME.read_bytes() if RESUME.exists() else None
+    old_resume = config.read_bytes() if config and config.exists() else None
     if mode == "cushion" and not partition and old_resume not in (None, b"RESUME=none\n"):
         raise Refusal(43, "Review the existing resume setting before creating a different swap area")
     with (swap_directory(swapfile.parent, btrfs),
@@ -203,8 +251,9 @@ def repair(mode):
         new = Path(scratch) / "swapfile"
         old = Path(scratch) / "previous"
         allocate_swap(new, size, btrfs)
-        use_file_for_resume = mode == "hibernate" and not (partition and enough)
         file_config = file_resume(new, btrfs) if btrfs or use_file_for_resume else None
+        if file_config and generator == "dracut":
+            file_config = dracut_config(file_config)
         new_resume = file_config if use_file_for_resume else old_resume
         if partition and used is not None:
             subprocess.run(["swapoff", partition], check=True)
@@ -216,8 +265,9 @@ def repair(mode):
                 separator = b"" if fstab.endswith(b"\n") else b"\n"
                 write_config(FSTAB, fstab + separator + f"{swapfile} none swap noauto 0 0\n".encode("ascii"))
             if new_resume != old_resume:
-                write_config(RESUME, new_resume)
-                subprocess.run(["update-initramfs", "-u", "-k", "all"], check=True)
+                write_config(config, new_resume)
+                for command in apply:
+                    subprocess.run(command, check=True)
         except (OSError, subprocess.CalledProcessError):
             if not new.exists():
                 if old.exists():
@@ -227,10 +277,11 @@ def repair(mode):
             write_config(FSTAB, fstab)
             if new_resume != old_resume:
                 if old_resume is None:
-                    RESUME.unlink(missing_ok=True)
+                    config.unlink(missing_ok=True)
                 else:
-                    write_config(RESUME, old_resume)
-                subprocess.run(["update-initramfs", "-u", "-k", "all"], check=True)
+                    write_config(config, old_resume)
+                for command in apply:
+                    subprocess.run(command, check=True)
             if partition and used is not None:
                 subprocess.run(["swapon", partition], check=True)
             raise
