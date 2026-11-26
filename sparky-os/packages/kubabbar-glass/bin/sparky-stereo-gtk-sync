@@ -35,10 +35,31 @@ fi
 dark=false
 case "$scheme" in
 	kubabbar-glass) theme=Kubabbar-Glass ;;
+	kubabbar-glass-9) theme=Kubabbar-Glass-9 ;;
+	kubabbar-glass-9-graphite) theme=Kubabbar-Glass-9-Graphite ;;
+	kubabbar-glass-9-ivy) theme=Kubabbar-Glass-9-Ivy ;;
+	kubabbar-glass-9-rose) theme=Kubabbar-Glass-9-Rose ;;
+	kubabbar-glass-9-gold) theme=Kubabbar-Glass-9-Gold ;;
+	kubabbar-glass-9-teal) theme=Kubabbar-Glass-9-Teal ;;
 	SparkyStereoOxygen|Oxygen) theme=Sparky-Stereo-Oxygen ;;
 	SparkyStereoOxygenDark|OxygenDark) theme=Sparky-Stereo-Oxygen-Dark; dark=true ;;
 	*Dark*) theme=Breeze-Dark; dark=true ;;
 	*) theme=Breeze ;;
+esac
+case "$theme" in
+	Kubabbar-Glass-9*)
+		# The person's choice of scroll arrows for Kubabbar Glass 9 (kubabbar-glass-9-scrolling): at both ends is the
+		# theme's Apart twin; together at the end, the default, is the theme itself.
+		arrows=$config/kubabbar-glass-9rc
+		if [ -e "$arrows" ] && [ ! -r "$arrows" ]; then
+			sparky-stereo-problems keep --person --repair "$repair" "$package" arrows LOCAL3 "$arrows"
+			exit 1
+		fi
+		sparky-stereo-problems clear --person "$package" arrows
+		if [ -e "$arrows" ] && [ "$(kreadconfig6 --file "$arrows" --group Scrolling --key Arrows)" = apart ]; then
+			theme=$theme-Apart
+		fi
+		;;
 esac
 for version in 3.0 4.0; do
 	run "gtk-$version-directory" mkdir -p "$config/gtk-$version"
@@ -46,6 +67,14 @@ for version in 3.0 4.0; do
 	run "gtk-$version-theme" kwriteconfig6 --file "$file" --group Settings --key gtk-theme-name "$theme"
 	run "gtk-$version-dark" kwriteconfig6 --file "$file" --group Settings --key gtk-application-prefer-dark-theme "$dark"
 done
+# GTK 2 programs read the theme from XSETTINGS when xsettingsd runs, otherwise from ~/.gtkrc-2.0 (Plasma's GTK2_RC_FILES),
+# which KDE's GTK module writes with its own theme name: the chosen theme goes there too, every other line kept
+gtk2=$HOME/.gtkrc-2.0
+if [ -f "$gtk2" ] && grep -q '^gtk-theme-name=' "$gtk2"; then
+	run gtk-2.0-theme sed -i "s|^gtk-theme-name=.*|gtk-theme-name=\"$theme\"|" "$gtk2"
+else
+	run gtk-2.0-theme sh -c 'printf "gtk-theme-name=\"%s\"\n" "$1" >> "$2"' sh "$theme" "$gtk2"
+fi
 run gsettings-theme gsettings set org.gnome.desktop.interface gtk-theme "$theme"
 # dconf can report a failed commit while gsettings exits zero. Read from a new
 # process so its in-memory value cannot stand in for the saved setting.

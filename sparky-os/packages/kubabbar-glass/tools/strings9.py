@@ -52,3 +52,52 @@ WALLPAPER_DESCRIPTION = {
     "zh_CN": "原创的浅长春花蓝图案",
     "zh_TW": "原創的淺長春花藍圖案",
 }
+
+# The menu bar layout (milestone 2): the family's menu bar sentence (kubabbar-glass-menubar), and the window list at the
+# bar's right end, Plasma's own applet in the place of the classic Application menu.
+MENUBAR_NAME = {
+    "en": "Kubabbar Glass 9, menu bar and dock", "de": "Kubabbar Glass 9 mit Menüleiste und Dock",
+    "pl": "Kubabbar Glass 9, pasek menu i dok", "pt_BR": "Kubabbar Glass 9, barra de menus e dock",
+    "fr": "Kubabbar Glass 9, barre de menus et dock", "es": "Kubabbar Glass 9, barra de menús y dock",
+    "ja": "Kubabbar Glass 9、メニューバーとドック", "ko": "Kubabbar Glass 9, 메뉴 막대와 독",
+    "zh_CN": "Kubabbar Glass 9，菜单栏和 Dock", "zh_TW": "Kubabbar Glass 9，選單列與 Dock",
+}
+MENUBAR_SENTENCE = {
+    "en": "This variant puts the application menu in a bar at the top and the task manager in a floating dock at the bottom, and minimised windows fly into their dock icon. The window list at the bar's right end switches between programs.",
+    "de": "Diese Variante zeigt das Anwendungsmenü in einer Leiste oben und die Fensterleiste in einem schwebenden Dock unten. Beim Minimieren fliegen Fenster in ihr Dock-Symbol. Die Fensterliste am rechten Ende der Leiste wechselt zwischen Programmen.",
+    "pl": "Ten wariant umieszcza menu aplikacji na pasku u góry, a menedżer zadań na pływającym doku u dołu, a zminimalizowane okna wlatują do swojej ikony w doku. Lista okien na prawym końcu paska przełącza między programami.",
+    "pt_BR": "Esta variante coloca o menu do aplicativo em uma barra no topo e o gerenciador de tarefas em um dock flutuante embaixo, e as janelas minimizadas voam para o ícone no dock. A lista de janelas na ponta direita da barra alterna entre os programas.",
+    "fr": "Cette variante place le menu de l’application dans une barre en haut et le gestionnaire de tâches dans un dock flottant en bas ; les fenêtres réduites s’envolent vers leur icône du dock. La liste des fenêtres, à l’extrémité droite de la barre, passe d’un programme à l’autre.",
+    "es": "Esta variante coloca el menú de la aplicación en una barra superior y el administrador de tareas en un dock flotante en la parte inferior, y las ventanas minimizadas vuelan hacia su icono del dock. La lista de ventanas, en el extremo derecho de la barra, cambia entre programas.",
+    "ja": "このバリエーションは、アプリケーションメニューを上部のバーに、タスクマネージャーを下部のフローティングドックに置き、最小化したウィンドウはドックのアイコンへ飛び込みます。バーの右端にあるウィンドウリストでプログラムを切り替えます。",
+    "ko": "이 변형은 앱 메뉴를 위쪽 막대에, 작업 관리자를 아래쪽 떠 있는 독에 두며, 최소화된 창은 독의 아이콘으로 날아 들어갑니다. 막대 오른쪽 끝의 창 목록으로 프로그램을 전환합니다.",
+    "zh_CN": "此变体将应用程序菜单放在顶部栏，任务管理器放在底部的悬浮 Dock 中，最小化的窗口会飞入其 Dock 图标。栏右端的窗口列表用于在程序之间切换。",
+    "zh_TW": "此變體將應用程式選單放在頂端列，工作管理員放在底部的浮動 Dock 中，最小化的視窗會飛入其 Dock 圖示。列右端的視窗清單用於在程式之間切換。",
+}
+
+# The login screen (an SDDM theme): its description, and the two texts SDDM's own constants do not have. Every other
+# text on it is SDDM's, translated by SDDM (textConstants: welcomeText, userName, password, session, login, loginFailed,
+# capslockWarning, shutdown, reboot).
+SDDM_DESCRIPTION = {
+    "en": "Login screen for the Kubabbar Glass 9 look: a classic window listing the people of this computer, over the look's pattern",
+    "de": "Anmeldebildschirm im Stil Kubabbar Glass 9: ein klassisches Fenster mit den Personen dieses Computers über dem Muster des Stils",
+    "es": "Pantalla de inicio de sesión del estilo Kubabbar Glass 9: una ventana clásica con las personas de este equipo sobre el patrón del estilo",
+    "fr": "Écran de connexion du style Kubabbar Glass 9 : une fenêtre classique qui liste les personnes de cet ordinateur, sur le motif du style",
+    "ja": "Kubabbar Glass 9 のログイン画面：外観の模様の上に、このコンピューターを使う人の一覧を表示するクラシックなウィンドウ",
+    "ko": "Kubabbar Glass 9 로그인 화면: 모양의 무늬 위에 이 컴퓨터를 쓰는 사람들을 보여 주는 클래식 창",
+    "pl": "Ekran logowania stylu Kubabbar Glass 9: klasyczne okno z listą osób korzystających z tego komputera, na wzorze stylu",
+    "pt_BR": "Tela de login do visual Kubabbar Glass 9: uma janela clássica com a lista das pessoas deste computador sobre o padrão do visual",
+    "zh_CN": "Kubabbar Glass 9 外观的登录界面：在该外观的图案上显示列出本计算机用户的经典窗口",
+    "zh_TW": "Kubabbar Glass 9 外觀的登入畫面：在該外觀的圖案上顯示列出本電腦使用者的經典視窗",
+}
+LOGIN_PROMPT = {
+    "en": "Choose your name in the list, or type it.", "de": "Wählen Sie Ihren Namen in der Liste oder geben Sie ihn ein.",
+    "es": "Elija su nombre en la lista o escríbalo.", "fr": "Choisissez votre nom dans la liste, ou saisissez-le.",
+    "ja": "一覧から名前を選ぶか、名前を入力してください。", "ko": "목록에서 이름을 고르거나 직접 입력하세요.",
+    "pl": "Wybierz swoją nazwę z listy lub ją wpisz.", "pt_BR": "Escolha o seu nome na lista ou digite-o.",
+    "zh_CN": "请在列表中选择您的名字，或直接输入。", "zh_TW": "請在清單中選擇您的名稱，或直接輸入。",
+}
+LOGIN_CANCEL = {
+    "en": "Cancel", "de": "Abbrechen", "es": "Cancelar", "fr": "Annuler", "ja": "キャンセル", "ko": "취소",
+    "pl": "Anuluj", "pt_BR": "Cancelar", "zh_CN": "取消", "zh_TW": "取消",
+}

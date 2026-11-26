@@ -4,7 +4,8 @@
 # Copyright 2026 under the GNU GPL3 License
 # Choose where Kubabbar Glass 9 puts the scroll arrows: together at the end of the scrollbar (the default, as the classic
 # Appearance panel could set them) or at both ends. The choice is the person's own (~/.config/kubabbar-glass-9rc);
-# kubabbar-glass-9-sync turns it into the Kvantum theme. A choice that cannot be saved is said and kept.
+# kubabbar-glass-9-sync turns it into the Kvantum theme, sparky-stereo-gtk-sync into the GTK theme. A choice that
+# cannot be saved is said and kept.
 set -eu
 package=sparky-stereo-look-kubabbar-glass-9
 dir=/usr/share/sparky/kubabbar-glass-9-scrolling
@@ -44,4 +45,6 @@ if [ "$saved" != "$1" ]; then
 fi
 sparky-stereo-problems clear --person "$package" scrolling || true
 kubabbar-glass-9-sync
+# GTK programs follow too: the GTK theme's Apart twin has the arrows at both ends (sparky-stereo-gtk)
+sparky-stereo-gtk-sync
 printf "$LOCAL4\n" "$label"

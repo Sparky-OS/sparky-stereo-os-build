@@ -92,6 +92,13 @@ schemes = {
     'Oxygen': ('Sparky-Stereo-Oxygen', 'false'),
     'OxygenDark': ('Sparky-Stereo-Oxygen-Dark', 'true'),
     'kubabbar-glass': ('Kubabbar-Glass', 'false'),
+    'kubabbar-glass-9': ('Kubabbar-Glass-9', 'false'),
+    'kubabbar-glass-9-graphite': ('Kubabbar-Glass-9-Graphite', 'false'),
+    'kubabbar-glass-9-ivy': ('Kubabbar-Glass-9-Ivy', 'false'),
+    'kubabbar-glass-9-rose': ('Kubabbar-Glass-9-Rose', 'false'),
+    'kubabbar-glass-9-gold': ('Kubabbar-Glass-9-Gold', 'false'),
+    'kubabbar-glass-9-teal': ('Kubabbar-Glass-9-Teal', 'false'),
+    'kubabbar-glass-9-unknown': ('Breeze', 'false'),
     'BreezeDark': ('Breeze-Dark', 'true'),
     'BreezeLight': ('Breeze', 'false'),
     'CustomDark': ('Breeze-Dark', 'true'),
@@ -99,6 +106,15 @@ schemes = {
     '': ('Breeze', 'false'),
 }
 cases += [('scheme-' + scheme, 'works', True, None, None) for scheme in schemes]
+# Kubabbar Glass 9's arrow choice (kubabbar-glass-9rc): apart is the Apart theme, together or no choice the theme itself
+arrow_cases = {'arrows-apart': ('kubabbar-glass-9-rose', 'apart', 'Kubabbar-Glass-9-Rose-Apart'),
+               'arrows-apart-default': ('kubabbar-glass-9', 'apart', 'Kubabbar-Glass-9-Apart'),
+               'arrows-together': ('kubabbar-glass-9-teal', 'together', 'Kubabbar-Glass-9-Teal'),
+               'arrows-other-look': ('kubabbar-glass', 'apart', 'Kubabbar-Glass'),
+               'arrows-unreadable': ('kubabbar-glass-9', 'apart', None)}
+cases += [('gtk2-file-absent', 'works', True, None, None)]
+cases += [(name, 'works', True, 'arrows' if name == 'arrows-unreadable' else None,
+           'Cannot read' if name == 'arrows-unreadable' else None) for name in arrow_cases]
 with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
     root = Path(temporary)
     stubs = root / 'bin'
@@ -113,8 +129,20 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
         config.mkdir(parents=True)
         source = config / 'kdeglobals'
         scheme = name.removeprefix('scheme-') if name.startswith('scheme-') else 'OxygenDark'
+        arrows_file = None
+        if name in arrow_cases:
+            scheme, arrows, theme_9 = arrow_cases[name]
+            arrows_file = config / 'kubabbar-glass-9rc'
+            arrows_file.write_text('[Scrolling]\nArrows=' + arrows + '\n')
+            if name == 'arrows-unreadable':
+                arrows_file.chmod(0)
         expected_theme, expected_dark = schemes[scheme]
+        if arrows_file and theme_9:
+            expected_theme = theme_9
         source.write_text('[General]\nColorScheme=' + scheme + '\n')
+        # KDE's GTK module's GTK 2 file, with its own theme name and a line of the person's that must stay
+        if name != 'gtk2-file-absent':
+            (work / '.gtkrc-2.0').write_text('gtk-theme-name="Breeze"\ngtk-cursor-blink=1\n')
         if name == 'unreadable':
             source.chmod(0)
         if xsettings:
@@ -141,6 +169,10 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
                           kept=any(r['key'] == key for r in records),
                           no_success='GTK synchronization completed' not in run.stdout and 'sparky-stereo-gtk-sync: scheme=' not in run.stdout)
         else:
+            gtk2 = (work / '.gtkrc-2.0').read_text() if (work / '.gtkrc-2.0').exists() else ''
+            checks['gtk2_theme'] = 'gtk-theme-name="' + expected_theme + '"\n' in gtk2 and gtk2.count('gtk-theme-name=') == 1
+            if name != 'gtk2-file-absent':
+                checks['gtk2_other_lines_kept'] = 'gtk-cursor-blink=1\n' in gtk2
             checks.update(exit_zero=run.returncode == 0, no_problem=not records,
                           theme=all('gtk-theme-name=' + expected_theme + '\n' in (config/('gtk-'+v)/'settings.ini').read_text() for v in ('3.0', '4.0')),
                           dark=all('gtk-application-prefer-dark-theme=' + expected_dark + '\n' in (config/('gtk-'+v)/'settings.ini').read_text() for v in ('3.0', '4.0')))
@@ -153,11 +185,13 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
                 checks['signal_received'] = (args.output/'daemon-signals').exists()
             else:
                 checks['skip_said'] = ('not running' if xsettings else 'No xsettingsd configuration') in run.stdout+run.stderr
-        if key == 'scheme':
+        if key in ('scheme', 'arrows'):
             checks['no_settings_written'] = not (config/'gtk-3.0/settings.ini').exists()
         if key:
             # A successful retry must remove that exact failed step from the real engine.
             source.chmod(0o600)
+            if arrows_file:
+                arrows_file.chmod(0o600)
             env['TEST_MODE'] = 'works'
             if key == 'xsettings-reload':
                 env['TEST_MODE'] = 'live-daemon'
