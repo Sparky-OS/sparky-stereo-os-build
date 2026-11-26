@@ -1,0 +1,853 @@
+Description: Choose the edition swap layout in native Calamares partitioning
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-26
+
+--- a/src/modules/partition/Config.h
++++ b/src/modules/partition/Config.h
+@@ -64,7 +64,8 @@
+         ReuseSwap,  // don't create, but do use existing
+         SmallSwap,  // up to 8GiB of swap
+         FullSwap,  // ensureSuspendToDisk -- at least RAM size
+-        SwapFile  // use a file (if supported)
++        SwapFile,  // use a file (if supported)
++        AutomaticSwap  // choose separate or shared areas for the selected disk
+     };
+     Q_ENUM( SwapChoice )
+     static const NamedEnumTable< SwapChoice >& swapChoiceNames();
+--- a/src/modules/partition/Config.cpp
++++ b/src/modules/partition/Config.cpp
+@@ -52,6 +52,7 @@
+         { QStringLiteral( "suspend" ), SwapChoice::FullSwap },
+         { QStringLiteral( "reuse" ), SwapChoice::ReuseSwap },
+         { QStringLiteral( "file" ), SwapChoice::SwapFile },
++        { QStringLiteral( "automatic" ), SwapChoice::AutomaticSwap },
+     };
+     // clang-format on
+     // *INDENT-ON*
+@@ -219,7 +220,7 @@
+ void
+ Config::setSwapChoice( int c )
+ {
+-    if ( ( c < SwapChoice::NoSwap ) || ( c > SwapChoice::SwapFile ) )
++    if ( ( c < SwapChoice::NoSwap ) || ( c > SwapChoice::AutomaticSwap ) )
+     {
+         cWarning() << "Invalid swap choice (int)" << c;
+         c = SwapChoice::NoSwap;
+@@ -457,6 +458,7 @@
+     m_essentialMounts= Calamares::getStringList( configurationMap, "essentialMounts" );
+
+     Calamares::GlobalStorage* gs = Calamares::JobQueue::instance()->globalStorage();
++    gs->insert( "sparkySwapPolicy", m_swapChoices.contains( SwapChoice::AutomaticSwap ) );
+     gs->insert( "armInstall", Calamares::getBool( configurationMap, "armInstall", false ) );
+     fillGSConfigurationEFI( gs, configurationMap );
+     fillConfigurationFSTypes( configurationMap );
+--- a/src/modules/partition/partition.schema.yaml
++++ b/src/modules/partition/partition.schema.yaml
+@@ -26,7 +26,7 @@
+             enable: { type: boolean, default: true }
+         additionalProperties: false
+
+-    userSwapChoices: { type: array, items: { type: string, enum: [ none, reuse, small, suspend, file ] } }
++    userSwapChoices: { type: array, items: { type: string, enum: [ none, reuse, small, suspend, file, automatic ] } }
+     # ensureSuspendToDisk: { type: boolean, default: true }  # Legacy
+     # neverCreateSwap: { type: boolean, default: false }  # Legacy
+     armInstall: { type: boolean, default: false }
+@@ -48,7 +48,7 @@
+     showNotEncryptedBootMessage: { type: boolean, default: true }
+     partitionLayout: { type: array }  # TODO: specify items
+     initialPartitioningChoice: { type: string, enum: [ none, erase, replace, alongside, manual ] }
+-    initialSwapChoice: { type: string, enum: [ none, small, suspend, reuse, file ] }
++    initialSwapChoice: { type: string, enum: [ none, small, suspend, reuse, file, automatic ] }
+
+     requiredStorage: { type: number }
+ required:
+--- a/src/modules/partition/core/PartitionActions.h
++++ b/src/modules/partition/core/PartitionActions.h
+@@ -69,6 +69,15 @@
+
+ }  // namespace Choices
+
++struct AutomaticSwapPlan
++{
++    quint64 partitionBytes = 0;
++    quint64 fileBytes = 0;
++    bool hibernate = false;
++};
++
++AutomaticSwapPlan automaticSwapPlan( const Device& device, const Choices::AutoPartitionOptions& options );
++
+ /**
+  * @brief doAutopartition sets up an autopartitioning operation on the given Device.
+  * @param core a pointer to the PartitionCoreModule instance.
+--- a/src/modules/partition/core/PartitionActions.cpp
++++ b/src/modules/partition/core/PartitionActions.cpp
+@@ -84,6 +84,37 @@
+ namespace PartitionActions
+ {
+
++AutomaticSwapPlan
++automaticSwapPlan( const Device& device, const Choices::AutoPartitionOptions& options )
++{
++    const quint64 ram = Calamares::System::instance()->getTotalMemoryB().first;
++    // Round up and leave room for the swap header itself.
++    const quint64 area = ( ram / 1_MiB + 1 ) * 1_MiB;
++    const quint64 disk = device.capacity();
++    const auto* gs = Calamares::JobQueue::instance()->globalStorage();
++    const bool needsEsp = PartUtils::isEfiSystem() || gs->value( "createHybridBootloaderLayout" ).toBool();
++    const quint64 boot = 16_MiB + ( needsEsp ? PartUtils::efiFilesystemRecommendedSize() : 0 );
++    const bool ext = options.defaultFsType.startsWith( "ext" );
++    const bool supportsFile = ext || options.defaultFsType == "btrfs" || options.defaultFsType == "xfs";
++    // ext filesystems reserve space for root; keep the 20 GiB usable by the person.
++    const quint64 base = options.requiredSpaceB + boot + ( ext ? disk / 20 : 0 );
++    if ( ram && disk > base + 20_GiB )
++    {
++        const auto available = disk - base - 20_GiB;
++        if ( supportsFile && disk > 256'000'000'000ULL && available >= 2 * area )
++        {
++            return { area, area, true };
++        }
++        if ( available >= area && ( disk <= 256'000'000'000ULL || !supportsFile ) )
++        {
++            return supportsFile ? AutomaticSwapPlan { 0, area, true }
++                                : AutomaticSwapPlan { area, 0, true };
++        }
++    }
++    return supportsFile ? AutomaticSwapPlan { 0, 512_MiB, false }
++                        : AutomaticSwapPlan { 512_MiB, 0, false };
++}
++
+ void
+ doAutopartition( PartitionCoreModule* core, Device* dev, Choices::AutoPartitionOptions o )
+ {
+@@ -178,8 +209,13 @@
+         }
+     }
+
+-    const bool mayCreateSwap
+-        = ( o.swap == Config::SwapChoice::SmallSwap ) || ( o.swap == Config::SwapChoice::FullSwap );
++    const bool automaticSwap = o.swap == Config::SwapChoice::AutomaticSwap;
++    const auto swapPlan = automaticSwap ? automaticSwapPlan( *dev, o ) : AutomaticSwapPlan {};
++    gs->insert( "sparkySwapPlan", QVariantMap { { "fileBytes", swapPlan.fileBytes },
++                                                { "partitionBytes", swapPlan.partitionBytes },
++                                                { "hibernate", swapPlan.hibernate } } );
++    const bool mayCreateSwap = swapPlan.partitionBytes || o.swap == Config::SwapChoice::SmallSwap
++        || o.swap == Config::SwapChoice::FullSwap;
+     bool shouldCreateSwap = false;
+     quint64 suggestedSwapSizeB = 0;
+
+@@ -187,7 +223,7 @@
+     if ( mayCreateSwap )
+     {
+         quint64 availableSpaceB = quint64( lastUsableSector - firstFreeSector + 1 ) * sectorSize;
+-        suggestedSwapSizeB = swapSuggestion( availableSpaceB, o.swap );
++        suggestedSwapSizeB = automaticSwap ? swapPlan.partitionBytes : swapSuggestion( availableSpaceB, o.swap );
+         // Space required by this installation is what the distro claims is needed
+         // (via global configuration) plus the swap size plus a fudge factor of
+         // 0.6GiB (this was 2.1GiB up to Calamares 3.2.2).
+--- a/src/modules/partition/gui/ChoicePage.h
++++ b/src/modules/partition/gui/ChoicePage.h
+@@ -18,6 +18,7 @@
+
+ #include "Config.h"
+ #include "core/OsproberEntry.h"
++#include "core/PartitionActions.h"
+
+ #include <QMutex>
+ #include <QPointer>
+@@ -84,6 +85,7 @@
+      * @param choice the partitioning action choice.
+      */
+     void applyActionChoice( Config::InstallChoice choice );
++    QString automaticSwapDescription() const;
+
+     int lastSelectedDeviceIndex();
+     void setLastSelectedDeviceIndex( int index );
+@@ -118,7 +120,8 @@
+      * to the panel's widget.
+      */
+     QWidget* createBootloaderPanel();
+-    Device* selectedDevice();
++    Device* selectedDevice() const;
++    PartitionActions::Choices::AutoPartitionOptions autoPartitionOptions() const;
+
+     /* Change the UI depending on the device selected. */
+     void hideButtons();  // Hide everything when no device
+--- a/src/modules/partition/gui/ChoicePage.cpp
++++ b/src/modules/partition/gui/ChoicePage.cpp
+@@ -208,7 +208,8 @@
+                            SwapChoice::SmallSwap,
+                            SwapChoice::FullSwap,
+                            SwapChoice::ReuseSwap,
+-                           SwapChoice::SwapFile } )
++                           SwapChoice::SwapFile,
++                           SwapChoice::AutomaticSwap } )
+     {
+         if ( s.contains( c ) )
+         {
+@@ -362,7 +363,7 @@
+  *      something goes wrong.
+  */
+ Device*
+-ChoicePage::selectedDevice()
++ChoicePage::selectedDevice() const
+ {
+     Device* const currentDevice
+         = m_core->deviceModel()->deviceForIndex( m_core->deviceModel()->index( m_drivesCombo->currentIndex() ) );
+@@ -443,6 +444,7 @@
+
+     // Preview setup done. Now we show/hide choices as needed.
+     setupActions();
++    updateSwapChoicesTr();
+
+     cDebug() << "Previous device" << m_lastSelectedDeviceIndex << "new device" << m_drivesCombo->currentIndex();
+     if ( m_lastSelectedDeviceIndex != m_drivesCombo->currentIndex() )
+@@ -459,6 +461,7 @@
+ void
+ ChoicePage::onActionChanged()
+ {
++    updateSwapChoicesTr();
+     if ( m_enableEncryptionWidget )
+     {
+         if ( m_config->installChoice() == InstallChoice::Erase && m_eraseFsTypesChoiceComboBox )
+@@ -503,15 +506,7 @@
+     {
+     case InstallChoice::Erase:
+     {
+-        auto gs = Calamares::JobQueue::instance()->globalStorage();
+-        PartitionActions::Choices::AutoPartitionOptions options { gs->value( "defaultPartitionTableType" ).toString(),
+-                                                                  m_config->eraseFsType(),
+-                                                                  m_config->luksFileSystemType(),
+-                                                                  m_encryptWidget->passphrase(),
+-                                                                  gs->value( "efiSystemPartition" ).toString(),
+-                                                                  Calamares::GiBtoBytes(
+-                                                                      gs->value( "requiredStorageGiB" ).toDouble() ),
+-                                                                  m_config->swapChoice() };
++        const auto options = autoPartitionOptions();
+
+         if ( m_core->isDirty() )
+         {
+@@ -1569,6 +1564,46 @@
+     }
+ }
+
++PartitionActions::Choices::AutoPartitionOptions
++ChoicePage::autoPartitionOptions() const
++{
++    const auto* gs = Calamares::JobQueue::instance()->globalStorage();
++    return { gs->value( "defaultPartitionTableType" ).toString(),
++             m_config->eraseFsType(),
++             m_config->luksFileSystemType(),
++             m_encryptWidget->passphrase(),
++             gs->value( "efiSystemPartition" ).toString(),
++             Calamares::GiBtoBytes( gs->value( "requiredStorageGiB" ).toDouble() ),
++             m_config->swapChoice() };
++}
++
++QString
++ChoicePage::automaticSwapDescription() const
++{
++    const auto* device = m_core ? selectedDevice() : nullptr;
++    if ( !device )
++    {
++        return tr( "Automatic swap", "@label" );
++    }
++    const auto plan = PartitionActions::automaticSwapPlan( *device, autoPartitionOptions() );
++    const auto fileSize = Calamares::BytesToMiB( plan.fileBytes );
++    const auto partSize = Calamares::BytesToMiB( plan.partitionBytes );
++    if ( plan.fileBytes && plan.partitionBytes )
++    {
++        return tr( "%1 MiB hibernation partition and %2 MiB Cushion Swap file", "@label" )
++            .arg( partSize ).arg( fileSize );
++    }
++    if ( plan.hibernate )
++    {
++        return plan.fileBytes
++            ? tr( "%1 MiB file shared by hibernation and Cushion Swap", "@label" ).arg( fileSize )
++            : tr( "%1 MiB partition shared by hibernation and Cushion Swap", "@label" ).arg( partSize );
++    }
++    return plan.fileBytes
++        ? tr( "%1 MiB swap file. Hibernation needs more disk space.", "@label" ).arg( fileSize )
++        : tr( "%1 MiB swap partition. Hibernation needs more disk space.", "@label" ).arg( partSize );
++}
++
+ void
+ ChoicePage::updateSwapChoicesTr()
+ {
+@@ -1610,6 +1645,9 @@
+         case SwapChoice::SwapFile:
+             m_eraseSwapChoiceComboBox->setItemText( index, tr( "Swap to file", "@label" ) );
+             break;
++        case SwapChoice::AutomaticSwap:
++            m_eraseSwapChoiceComboBox->setItemText( index, automaticSwapDescription() );
++            break;
+         default:
+             cWarning() << "Box item" << index << m_eraseSwapChoiceComboBox->itemText( index ) << "has role" << value;
+         }
+--- a/src/modules/partition/PartitionViewStep.cpp
++++ b/src/modules/partition/PartitionViewStep.cpp
+@@ -248,7 +248,11 @@
+         return s.join( QString() );
+     }();
+     QStringList jobsLabels = jobDescriptions( jobs() );
+-    if ( m_config->swapChoice() == Config::SwapChoice::SwapFile )
++    if ( choice == Config::Erase && m_config->swapChoice() == Config::SwapChoice::AutomaticSwap )
++    {
++        jobsLabels.append( m_choicePage->automaticSwapDescription() );
++    }
++    else if ( m_config->swapChoice() == Config::SwapChoice::SwapFile )
+     {
+         jobsLabels.append( tr( "Create a swap file." ) );
+     }
+@@ -345,7 +349,11 @@
+         field->addWidget( previewLabels );
+         formLayout->addRow( tr( "After:", "@label" ), field );
+     }
+-    const QStringList jobsLines = jobDescriptions( jobs() );
++    QStringList jobsLines = jobDescriptions( jobs() );
++    if ( choice == Config::Erase && m_config->swapChoice() == Config::SwapChoice::AutomaticSwap )
++    {
++        jobsLines.append( m_choicePage->automaticSwapDescription() );
++    }
+     if ( !jobsLines.isEmpty() )
+     {
+         QLabel* jobsLabel = new QLabel( widget );
+--- a/src/modules/fstab/main.py
++++ b/src/modules/fstab/main.py
+@@ -15,6 +15,7 @@
+ import os
+ import re
+ import copy
++import subprocess
+
+ import libcalamares
+
+@@ -101,12 +102,13 @@
+
+ class FstabGenerator(object):
+     def __init__(self, partitions, root_mount_point, mount_options_list,
+-                 crypttab_options, tmp_options):
++                 crypttab_options, tmp_options, omit_from_fstab=None):
+         self.partitions = partitions
+         self.root_mount_point = root_mount_point
+         self.mount_options_list = mount_options_list
+         self.crypttab_options = crypttab_options
+         self.tmp_options = tmp_options
++        self.omit_from_fstab = omit_from_fstab
+         self.ssd_disks = set()
+         self.root_is_ssd = False
+
+@@ -199,6 +201,8 @@
+             print(FSTAB_HEADER, file=fstab_file)
+
+             for partition in self.partitions:
++                if partition is self.omit_from_fstab:
++                    continue
+                 # Special treatment for a btrfs subvolumes
+                 if (partition["fs"] == "btrfs"
+                    and partition["mountPoint"] == "/"):
+@@ -366,6 +370,77 @@
+     libcalamares.job.setprogress(0.5)
+
+
++def create_managed_swapfile(path, size, btrfs):
++    if btrfs:
++        subprocess.run(["btrfs", "filesystem", "mkswapfile", "--size", str(size), path], check=True)
++        os.chmod(path, 0o600)
++        return
++    with open(path, "xb", opener=lambda name, flags: os.open(name, flags, 0o600)) as swap:
++        os.posix_fallocate(swap.fileno(), 0, size)
++        os.fsync(swap.fileno())
++    subprocess.run(["mkswap", path], check=True)
++
++
++def resume_offset(path, btrfs):
++    if btrfs:
++        offset = subprocess.check_output(["btrfs", "inspect-internal", "map-swapfile", "-r", path],
++                                         text=True).strip()
++    else:
++        page_size = os.sysconf("SC_PAGE_SIZE")
++        extents = subprocess.check_output(["filefrag", "-v", "-b" + str(page_size), path], text=True,
++                                          env=dict(os.environ, LC_ALL="C"))
++        first = re.search(r"^\s*0:\s+0\.\.\s*\d+:\s+(\d+)\.\.", extents, re.MULTILINE)
++        offset = first[1] if first else ""
++    if not offset.isdecimal() or int(offset) == 0:
++        raise ValueError("Could not read the resume offset of " + path)
++    return offset
++
++
++def configure_edition_swap(partitions, target, choices, plan):
++    """Return the fstab entries after allocating the selected swap area."""
++    partitions = list(partitions)
++    root = next(p for p in partitions if p["mountPoint"] == "/")
++    btrfs = root["fs"].lower() == "btrfs"
++    swap = next((p for p in partitions if p["fs"] == "linuxswap" and p.get("claimed")), None)
++    automatic = choices.get("swap") == "automatic"
++    file_size = plan.get("fileBytes", 0) if automatic else 0
++    if choices.get("swap") == "file":
++        file_size = 512 * 1024 ** 2
++    hibernate = plan.get("hibernate", False) if automatic else choices.get("swap") == "suspend"
++    if automatic and plan.get("partitionBytes") and not swap:
++        raise ValueError("The planned swap partition was not created")
++    path = "/swap/swapfile" if btrfs else "/swapfile"
++    if file_size:
++        available = os.statvfs(target)
++        reserve = 20 * 1024 ** 3 if hibernate else 0
++        if available.f_bavail * available.f_frsize < file_size + reserve:
++            raise ValueError("The planned swap file does not fit in the space remaining after installation")
++        create_managed_swapfile(target + path, file_size, btrfs)
++        partitions.append(dict(fs="swap", mountPoint=None, claimed=True, device=path, uuid=None))
++
++    resume = "RESUME=none\n"
++    omit_from_fstab = None
++    if swap and hibernate:
++        if swap.get("luksMapperName"):
++            resume = "RESUME=/dev/mapper/" + swap["luksMapperName"] + "\n"
++        elif swap.get("uuid"):
++            resume = "RESUME=UUID=" + swap["uuid"] + "\n"
++        else:
++            raise ValueError("The hibernation partition has no swap UUID")
++        if file_size:
++            omit_from_fstab = swap  # the file entry prevents GPT auto-activation of this partition
++    elif file_size and hibernate:
++        if not root.get("uuid"):
++            raise ValueError("The hibernation file's filesystem has no UUID")
++        resume = "RESUME=UUID=" + root["uuid"] + "\nRESUME_OFFSET=" + resume_offset(target + path, btrfs) + "\n"
++
++    directory = os.path.join(target, "etc/initramfs-tools/conf.d")
++    os.makedirs(directory, exist_ok=True)
++    with open(os.path.join(directory, "resume"), "w", encoding="ascii") as config:
++        config.write(resume)
++    return partitions, omit_from_fstab
++
++
+ def run():
+     """ Configures fstab.
+
+@@ -390,7 +465,18 @@
+                 .format("fstab"))
+
+     # This follows the GS settings from the partition module's Config object
+-    swap_choice = global_storage.value( "partitionChoices" )
++    choices = global_storage.value("partitionChoices") or {}
++    edition_policy = global_storage.value("sparkySwapPolicy")
++    managed = edition_policy and choices.get("install") == "erase"
++    omit_from_fstab = None
++    if managed:
++        try:
++            partitions, omit_from_fstab = configure_edition_swap(
++                partitions, root_mount_point, choices, global_storage.value("sparkySwapPlan") or {})
++        except (OSError, ValueError, subprocess.CalledProcessError) as error:
++            return (_("Configuration Error"), str(error))
++        global_storage.insert("sparkyResumeConfigured", True)
++    swap_choice = choices if not edition_policy else None
+     if swap_choice:
+         swap_choice = swap_choice.get( "swap", None )
+         if swap_choice and swap_choice == "file":
+@@ -421,7 +507,8 @@
+                                root_mount_point,
+                                mount_options_list,
+                                crypttab_options,
+-                               tmp_options)
++                               tmp_options,
++                               omit_from_fstab)
+
+     if swap_choice is not None:
+         libcalamares.job.setprogress(0.2)
+--- a/src/modules/mount/main.py
++++ b/src/modules/mount/main.py
+@@ -148,8 +148,13 @@
+     btrfs_subvolumes = list(filter(lambda s: s["mountPoint"] not in non_root_partition_mounts, btrfs_subvolumes))
+
+     # If we have a swap **file**, give it a separate subvolume.
+-    swap_choice = libcalamares.globalstorage.value("partitionChoices")
+-    if swap_choice and swap_choice.get("swap", None) == "file":
++    gs = libcalamares.globalstorage
++    swap_choice = gs.value("partitionChoices") or {}
++    needs_file = swap_choice.get("swap") == "file"
++    if gs.value("sparkySwapPolicy"):
++        plan = gs.value("sparkySwapPlan") or {}
++        needs_file = swap_choice.get("install") == "erase" and (needs_file or plan.get("fileBytes", 0))
++    if needs_file:
+         swap_subvol = libcalamares.job.configuration.get("btrfsSwapSubvol", "/@swap")
+         btrfs_subvolumes.append({'mountPoint': '/swap', 'subvolume': swap_subvol})
+         libcalamares.globalstorage.insert("btrfsSwapSubvol", swap_subvol)
+@@ -350,7 +355,9 @@
+     luks_swap = [p for p in claimed_swap_partitions if p["fsName"] == "luks" or p["fsName"] == "luks2"]
+     swap_devices = [p["device"] for p in plain_swap] + ["/dev/mapper/" + p["luksMapperName"] for p in luks_swap]
+
+-    enable_swap_partition(swap_devices)
++    choices = libcalamares.globalstorage.value("partitionChoices") or {}
++    if not (libcalamares.globalstorage.value("sparkySwapPolicy") and choices.get("install") == "erase"):
++        enable_swap_partition(swap_devices)
+
+     root_mount_point = tempfile.mkdtemp(prefix="calamares-root-")
+
+--- a/src/modules/grubcfg/main.py
++++ b/src/modules/grubcfg/main.py
+@@ -225,12 +225,12 @@
+     if use_splash:
+         kernel_params.append(use_splash)
+
+-    if swap_uuid:
++    if swap_uuid and not libcalamares.globalstorage.value("sparkyResumeConfigured"):
+         kernel_params.append(f"resume=UUID={swap_uuid}")
+
+     if use_systemd_naming and swap_outer_uuid:
+         kernel_params.append(f"rd.luks.uuid={swap_outer_uuid}")
+-    if swap_outer_mappername:
++    if swap_outer_mappername and not libcalamares.globalstorage.value("sparkyResumeConfigured"):
+         kernel_params.append(f"resume=/dev/mapper/{swap_outer_mappername}")
+
+     overwrite = libcalamares.job.configuration.get("overwrite", False)
+--- a/lang/calamares_de.ts
++++ b/lang/calamares_de.ts
+@@ -683,6 +683,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>Automatischer Auslagerungsspeicher</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>Ruhezustandspartition mit %1 MiB und Cushion-Swap-Datei mit %2 MiB</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Datei mit %1 MiB für Ruhezustand und Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Partition mit %1 MiB für Ruhezustand und Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Auslagerungsdatei mit %1 MiB. Der Ruhezustand benötigt mehr Speicherplatz.</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Auslagerungspartition mit %1 MiB. Der Ruhezustand benötigt mehr Speicherplatz.</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
+--- a/lang/calamares_es.ts
++++ b/lang/calamares_es.ts
+@@ -685,6 +685,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>Intercambio automático</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>Partición de %1 MiB para hibernar y archivo de %2 MiB para Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Archivo de %1 MiB para hibernar y para Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Partición de %1 MiB para hibernar y para Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Archivo de intercambio de %1 MiB. La hibernación necesita más espacio en disco.</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Partición de intercambio de %1 MiB. La hibernación necesita más espacio en disco.</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
+--- a/lang/calamares_fr.ts
++++ b/lang/calamares_fr.ts
+@@ -685,6 +685,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>Espace d’échange automatique</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>Partition d’hibernation de %1 Mio et fichier Cushion Swap de %2 Mio</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Fichier de %1 Mio utilisé pour l’hibernation et Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Partition de %1 Mio utilisée pour l’hibernation et Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Fichier d’échange de %1 Mio. L’hibernation nécessite plus d’espace disque.</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Partition d’échange de %1 Mio. L’hibernation nécessite plus d’espace disque.</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
+--- a/lang/calamares_ja.ts
++++ b/lang/calamares_ja.ts
+@@ -681,6 +681,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>自動スワップ</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>休止状態用の %1 MiB のパーティションと Cushion Swap 用の %2 MiB のファイル</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>休止状態と Cushion Swap で共有する %1 MiB のファイル</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>休止状態と Cushion Swap で共有する %1 MiB のパーティション</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>%1 MiB のスワップファイル。休止状態にはさらにディスクの空き容量が必要です。</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>%1 MiB のスワップパーティション。休止状態にはさらにディスクの空き容量が必要です。</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
+--- a/lang/calamares_ko.ts
++++ b/lang/calamares_ko.ts
+@@ -681,6 +681,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>자동 스왑</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>최대 절전 모드용 %1 MiB 파티션과 Cushion Swap용 %2 MiB 파일</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>최대 절전 모드와 Cushion Swap이 공유하는 %1 MiB 파일</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>최대 절전 모드와 Cushion Swap이 공유하는 %1 MiB 파티션</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>%1 MiB 스왑 파일. 최대 절전 모드에 디스크 공간이 더 필요합니다.</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>%1 MiB 스왑 파티션. 최대 절전 모드에 디스크 공간이 더 필요합니다.</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
+--- a/lang/calamares_pl.ts
++++ b/lang/calamares_pl.ts
+@@ -687,6 +687,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>Automatyczna przestrzeń wymiany</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>Partycja do hibernacji %1 MiB i plik Cushion Swap %2 MiB</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Plik %1 MiB wspólny dla hibernacji i Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Partycja %1 MiB wspólna dla hibernacji i Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Plik wymiany %1 MiB. Hibernacja wymaga więcej miejsca na dysku.</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Partycja wymiany %1 MiB. Hibernacja wymaga więcej miejsca na dysku.</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
+--- a/lang/calamares_pt_BR.ts
++++ b/lang/calamares_pt_BR.ts
+@@ -685,6 +685,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>Swap automática</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>Partição de %1 MiB para hibernação e arquivo de %2 MiB para Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Arquivo de %1 MiB para hibernação e Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>Partição de %1 MiB para hibernação e Cushion Swap</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Arquivo de swap de %1 MiB. A hibernação precisa de mais espaço no disco.</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>Partição de swap de %1 MiB. A hibernação precisa de mais espaço no disco.</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
+--- a/lang/calamares_zh_CN.ts
++++ b/lang/calamares_zh_CN.ts
+@@ -682,6 +682,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>自动交换空间</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>%1 MiB 休眠分区和 %2 MiB Cushion Swap 文件</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>休眠与 Cushion Swap 共用的 %1 MiB 文件</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>休眠与 Cushion Swap 共用的 %1 MiB 分区</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>%1 MiB 交换文件。休眠需要更多磁盘空间。</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>%1 MiB 交换分区。休眠需要更多磁盘空间。</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
+--- a/lang/calamares_zh_TW.ts
++++ b/lang/calamares_zh_TW.ts
+@@ -681,6 +681,36 @@
+   <context>
+     <name>ChoicePage</name>
+     <message>
++      <source>Automatic swap</source>
++      <comment>@label</comment>
++      <translation>自動交換空間</translation>
++    </message>
++    <message>
++      <source>%1 MiB hibernation partition and %2 MiB Cushion Swap file</source>
++      <comment>@label</comment>
++      <translation>%1 MiB 休眠分割區與 %2 MiB Cushion Swap 檔案</translation>
++    </message>
++    <message>
++      <source>%1 MiB file shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>休眠與 Cushion Swap 共用的 %1 MiB 檔案</translation>
++    </message>
++    <message>
++      <source>%1 MiB partition shared by hibernation and Cushion Swap</source>
++      <comment>@label</comment>
++      <translation>休眠與 Cushion Swap 共用的 %1 MiB 分割區</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap file. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>%1 MiB 交換檔案。休眠需要更多磁碟空間。</translation>
++    </message>
++    <message>
++      <source>%1 MiB swap partition. Hibernation needs more disk space.</source>
++      <comment>@label</comment>
++      <translation>%1 MiB 交換分割區。休眠需要更多磁碟空間。</translation>
++    </message>
++    <message>
+       <location filename="../src/modules/partition/gui/ChoicePage.cpp" line="137"/>
+       <source>Select storage de&amp;vice:</source>
+       <comment>@label</comment>
