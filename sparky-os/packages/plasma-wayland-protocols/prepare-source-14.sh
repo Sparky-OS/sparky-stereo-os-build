@@ -14,3 +14,9 @@ python3 "$toolkit/repo/lc-successor.py" --in-place --reapply-patches --next 1.21
     --source-date-epoch "$SOURCE_DATE_EPOCH" --overlay "$here/overlay-stereo3d14" \
     --item 'Send separate behind and in-front element steps for the selected display in protocol version 7 (row 121).' \
     "$input/plasma-wayland-protocols_1.21.0-1+stereo3d13+lc1.dsc" "$out"
+# Keep the orig inputs beside the new .dsc so the result can be built directly.
+for name in plasma-wayland-protocols_1.21.0.orig.tar.xz plasma-wayland-protocols_1.21.0.orig.tar.xz.asc; do
+    if [ ! -e "$out/$name" ]; then
+        cp "$input/$name" "$out/"
+    fi
+done
