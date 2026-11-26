@@ -1,0 +1,3506 @@
+Description: Apply the Flat Headset optics, guide, and waiting scenes in Catch
+Origin: other, KRDC order124e 4b201072038acbb5a151ca86a9fee80957fb5f45
+Forwarded: not-needed
+Last-Update: 2026-11-26
+
+diff --git a/rdp/catch/CMakeLists.txt b/rdp/catch/CMakeLists.txt
+index 8b946eff..d749c1fd 100644
+--- a/rdp/catch/CMakeLists.txt
++++ b/rdp/catch/CMakeLists.txt
+@@ -3,8 +3,21 @@
+ find_package(Qt6 REQUIRED COMPONENTS Quick Qml Network DBus)
+ find_package(KF6Kirigami REQUIRED)
+ find_package(KF6Screen REQUIRED)
+-add_executable(krdc-catch main.cpp catchcontroller.cpp catchcontroller.h catchview.cpp catchview.h)
+-target_link_libraries(krdc-catch PRIVATE krdc_rdpsession Qt::Quick Qt::Qml Qt::Network Qt::DBus KF6::I18n KF6::I18nQml)
++find_package(ZLIB REQUIRED)
++pkg_check_modules(CatchFFmpeg REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
++add_executable(krdc-catch main.cpp catchcontroller.cpp catchcontroller.h catchview.cpp catchview.h
++    presentation.cpp presentation.h waitingscenes.cpp waitingscenes.h optics/Viewer/Viewer.cpp
++    optics/ThirdParty/Cardboard/lens_distortion.cc
++    optics/ThirdParty/Cardboard/distortion_mesh.cc
++    optics/ThirdParty/Cardboard/polynomial_radial_distortion.cc
++    optics/ThirdParty/Cardboard/util/matrix_4x4.cc
++    optics/ThirdParty/Cardboard/qrcode/cardboard_v1/cardboard_v1.cc)
++kde_source_files_enable_exceptions(catchview.cpp presentation.cpp optics/Viewer/Viewer.cpp
++    optics/ThirdParty/Cardboard/polynomial_radial_distortion.cc)
++target_include_directories(krdc-catch PRIVATE optics/ThirdParty/Cardboard)
++target_link_libraries(krdc-catch PRIVATE krdc_rdpsession Qt::Quick Qt::Qml Qt::Network Qt::DBus KF6::I18n KF6::I18nQml
++    PkgConfig::CatchFFmpeg ZLIB::ZLIB)
++target_compile_definitions(krdc-catch PRIVATE CATCH_SCENES_DIR="${KDE_INSTALL_FULL_DATADIR}/krdc/catch/headset-waiting")
+ if(KF6Screen_FOUND)
+     target_link_libraries(krdc-catch PRIVATE KF6::Screen)
+     target_compile_definitions(krdc-catch PRIVATE HAVE_KSCREEN)
+@@ -12,6 +25,8 @@ endif()
+ qt_add_resources(krdc-catch catchqml PREFIX / FILES Main.qml)
+ install(TARGETS krdc-catch ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+ install(FILES org.kde.krdc.catch.desktop DESTINATION ${KDE_INSTALL_APPDIR})
++install(FILES optics/ThirdParty/Cardboard/LICENSE DESTINATION ${KDE_INSTALL_DATADIR}/krdc/catch RENAME Cardboard-LICENSE)
++install(DIRECTORY headset-waiting DESTINATION ${KDE_INSTALL_DATADIR}/krdc/catch)
+ option(CATCH_PROOF "Enable isolated receiver fixture controls" OFF)
+ if(CATCH_PROOF)
+     target_compile_definitions(krdc-catch PRIVATE CATCH_PROOF)
+diff --git a/rdp/catch/Main.qml b/rdp/catch/Main.qml
+index afa4af7b..14462f95 100644
+--- a/rdp/catch/Main.qml
++++ b/rdp/catch/Main.qml
+@@ -17,10 +17,10 @@ Kirigami.ApplicationWindow {
+         title: i18n("Catch")
+         padding: 0
+         header: null
+-        CatchView { objectName: "catchView"; anchors.fill: parent; visible: catcher.receiving }
++        CatchView { id: view; objectName: "catchView"; anchors.fill: parent; visible: catcher.receiving || catcher.showingScene }
+         ColumnLayout {
+             anchors.centerIn: parent
+-            visible: !catcher.receiving
++            visible: !catcher.receiving && !catcher.showingScene
+             Kirigami.Heading { text: i18n("Catch a desktop") }
+             Controls.Label { text: catcher.status }
+             Controls.ComboBox {
+@@ -36,7 +36,53 @@ Kirigami.ApplicationWindow {
+                     { format: "tb-720", label: i18n("Full TB 720p · full detail, tall frame (1280×1440)") }
+                 ]
+             }
+-            Controls.Button { text: i18n("Catch"); onClicked: catcher.listen(link.currentValue) }
++            Controls.ComboBox {
++                Accessible.name: i18n("Lens correction")
++                enabled: !catcher.listening
++                model: [i18n("Uncorrected"), i18n("Shinecon fitted (D)"), i18n("Viewer QR profile")]
++                currentIndex: view.lensMode
++                onActivated: index => view.lensMode = index
++            }
++            Controls.TextField {
++                id: viewerQr
++                Layout.fillWidth: true
++                visible: view.lensMode === 2
++                enabled: !catcher.listening
++                placeholderText: i18n("Import viewer QR link")
++                Accessible.name: placeholderText
++                text: view.viewerQr
++                maximumLength: 24000
++            }
++            Controls.CheckBox {
++                text: i18n("Show centre alignment line and down arrow")
++                checked: view.alignmentGuide
++                onToggled: view.alignmentGuide = checked
++            }
++            Controls.CheckBox {
++                text: i18n("Equal eye margins for camera cutouts")
++                checked: view.equalMargins
++                onToggled: view.equalMargins = checked
++            }
++            Controls.ComboBox {
++                Accessible.name: i18n("Waiting scenes")
++                visible: catcher.sceneIds.length > 0
++                model: [i18n("Choose automatically")].concat(catcher.sceneIds)
++                currentIndex: catcher.sceneIds.indexOf(catcher.selectedScene) + 1
++                onActivated: index => catcher.selectScene(index ? catcher.sceneIds[index - 1] : "")
++            }
++            Controls.CheckBox {
++                text: i18n("Reduce motion while waiting")
++                visible: catcher.sceneIds.length > 0
++                checked: catcher.reduceMotion
++                onToggled: catcher.reduceMotion = checked
++            }
++            Controls.Button {
++                text: i18n("Catch")
++                onClicked: {
++                    view.viewerQr = viewerQr.text
++                    catcher.listen(link.currentValue)
++                }
++            }
+             Controls.Button { text: i18n("Stop"); onClicked: catcher.stop() }
+         }
+         Keys.onEscapePressed: catcher.stop()
+diff --git a/rdp/catch/catchcontroller.cpp b/rdp/catch/catchcontroller.cpp
+index 412b529a..e8c5bf57 100644
+--- a/rdp/catch/catchcontroller.cpp
++++ b/rdp/catch/catchcontroller.cpp
+@@ -14,6 +14,7 @@
+ #include <QJsonDocument>
+ #include <QNetworkDatagram>
+ #include <QNetworkInterface>
++#include <QRandomGenerator>
+ #include <QRegularExpression>
+ #include <QScreen>
+ #include <QSettings>
+@@ -21,6 +22,7 @@
+ #include <QSslKey>
+ #include <QStandardPaths>
+ #include <QUuid>
++#include <algorithm>
+ #ifdef HAVE_KSCREEN
+ #include <KScreen/Config>
+ #include <KScreen/GetConfigOperation>
+@@ -80,6 +82,12 @@ CatchController::CatchController(QObject *parent)
+     , m_config(QString(), KConfig::SimpleConfig)
+     , m_preferences(m_config.group(QStringLiteral("Catch")))
+ {
++    m_sceneDirectory = QStringLiteral(CATCH_SCENES_DIR);
++#ifdef CATCH_PROOF
++    m_sceneDirectory = qEnvironmentVariable("CATCH_WAITING_SCENES", m_sceneDirectory);
++#endif
++    m_scenes = CatchPresentation::readScenes(QDir(m_sceneDirectory).filePath(QStringLiteral("catalog.json")));
++    m_reduceMotion = QSettings().value(QStringLiteral("headset-fit/waiting-reduce-motion"), false).toBool();
+     setStatus(i18n("Ready to catch a desktop"));
+     m_pairingCheck.setInterval(1000);
+     connect(&m_pairingCheck, &QTimer::timeout, this, [this] {
+@@ -150,6 +158,8 @@ CatchController::CatchController(QObject *parent)
+                     m_session->stop();
+                 m_receiving = false;
+                 setStatus(i18n("Waiting for a desktop"));
++                if (listening())
++                    startWaitingScene(true);
+             }
+             socket->deleteLater();
+         });
+@@ -204,6 +214,11 @@ CatchController::~CatchController()
+ {
+     stop();
+ }
++void CatchController::setView(CatchView *view)
++{
++    m_view = view;
++}
++
+ void CatchController::setStatus(const QString &status)
+ {
+     m_status = status;
+@@ -213,6 +228,114 @@ void CatchController::setStatus(const QString &status)
+ #endif
+ }
+ 
++QStringList CatchController::sceneIds() const
++{
++    QStringList ids;
++    for (const auto &scene : m_scenes)
++        ids.append(scene.id);
++    return ids;
++}
++
++QString CatchController::selectedScene() const
++{
++    return QSettings().value(QStringLiteral("headset-fit/waiting-explicit-scene")).toString();
++}
++
++void CatchController::selectScene(const QString &id)
++{
++    QSettings().setValue(QStringLiteral("headset-fit/waiting-explicit-scene"), id);
++    if (listening() && !m_receiving)
++        startWaitingScene(m_reconnecting);
++    Q_EMIT changed();
++}
++
++void CatchController::setReduceMotion(bool enabled)
++{
++    if (m_reduceMotion == enabled)
++        return;
++    m_reduceMotion = enabled;
++    QSettings().setValue(QStringLiteral("headset-fit/waiting-reduce-motion"), enabled);
++    if (listening() && !m_receiving)
++        startWaitingScene(m_reconnecting);
++    Q_EMIT changed();
++}
++
++void CatchController::stopWaitingScene()
++{
++    if (m_scene) {
++        m_scene->requestInterruption();
++        m_scene->wait();
++        m_scene.reset();
++    }
++    if (m_showingScene && m_view)
++        m_view->setWaitingFrame({});
++    m_showingScene = false;
++}
++
++void CatchController::startWaitingScene(bool reconnect)
++{
++    stopWaitingScene();
++    m_reconnecting = reconnect;
++    if (!m_view || m_scenes.isEmpty())
++        return;
++    QSettings settings;
++    settings.beginGroup(QStringLiteral("headset-fit"));
++    const auto explicitId = settings.value(QStringLiteral("waiting-explicit-scene")).toString();
++    const auto previous = settings.value(QStringLiteral("last-waiting-scene")).toString();
++    const auto selection = std::find_if(m_scenes.cbegin(), m_scenes.cend(), [&explicitId](const auto &scene) { return scene.id == explicitId; });
++    QList<qsizetype> available;
++    for (qsizetype index = 0; index < m_scenes.size(); ++index)
++        if (m_scenes.size() == 1 || m_scenes.at(index).id != previous)
++            available.append(index);
++    const auto scene = selection != m_scenes.cend()
++        ? *selection
++        : m_scenes.at(available.at(QRandomGenerator::global()->bounded(int(available.size()))));
++    settings.setValue(QStringLiteral("last-waiting-scene"), scene.id);
++    const auto caption = reconnect ? i18n("Waiting for the next Throw…") : i18n("Waiting for Throw…");
++    const auto fail = [this, id = scene.id](CatchPresentation::ScenePlayback::Failure reason) {
++        stopWaitingScene();
++        const auto description = reason == CatchPresentation::ScenePlayback::Failure::DecoderUnavailable
++            ? i18n("No hardware video decoder is available.")
++            : i18n("The media must declare left-first side-by-side stereo.");
++        const auto message = i18n("Waiting scene “%1” could not be shown:\n%2", id, description);
++        if (m_view && listening()) {
++            m_showingScene = true;
++            m_view->setWaitingFrame({}, message);
++        }
++        setStatus(message);
++    };
++    const auto directory = QDir(m_sceneDirectory);
++    using Failure = CatchPresentation::ScenePlayback::Failure;
++    const auto show = [this, caption](const QImage &image) {
++        if (!m_view || m_receiving || !listening())
++            return;
++        m_view->setWaitingFrame(image, caption);
++        if (!m_showingScene) {
++            m_showingScene = true;
++            Q_EMIT changed();
++        }
++    };
++    if (m_reduceMotion) {
++        const auto still = CatchPresentation::readMarkedStill(directory.filePath(scene.still));
++        if (still.isNull())
++            fail(Failure::InvalidMedia);
++        else
++            show(still);
++        return;
++    }
++    m_scene = std::make_unique<CatchPresentation::ScenePlayback>(directory.filePath(reconnect ? scene.reconnect : scene.connect));
++    const QPointer<CatchPresentation::ScenePlayback> active(m_scene.get());
++    connect(m_scene.get(), &CatchPresentation::ScenePlayback::frameReady, this, [active, show](const QImage &image) {
++        if (active)
++            show(image);
++    });
++    connect(m_scene.get(), &CatchPresentation::ScenePlayback::failed, this, [active, fail](Failure reason) {
++        if (active)
++            fail(reason);
++    });
++    m_scene->start();
++}
++
+ void CatchController::listen(const QString &layout)
+ {
+     if (m_control.isListening())
+@@ -260,6 +383,10 @@ void CatchController::listen(const QString &layout)
+         setStatus(i18n("Could not read the panel mode"));
+         return;
+     }
++    if (!m_view || !m_view->preparePanel(pixels, millimeters)) {
++        setStatus(i18n("The viewer profile or this phone’s physical screen dimensions could not be verified. Select a valid profile."));
++        return;
++    }
+     m_layout = layout;
+     m_panel = {{QStringLiteral("version"), layout == QLatin1StringView("native") ? 1 : 2},
+                {QStringLiteral("identity"), QString::fromLatin1(m_certificate.digest(QCryptographicHash::Sha256).toHex())},
+@@ -271,7 +398,7 @@ void CatchController::listen(const QString &layout)
+                {QStringLiteral("widthMm"), millimeters.width()},
+                {QStringLiteral("heightMm"), millimeters.height()},
+                {QStringLiteral("splitEye"), true},
+-               {QStringLiteral("lensProfile"), QString()}};
++               {QStringLiteral("lensProfile"), m_view->lensProfileId()}};
+     if (layout != QLatin1StringView("native"))
+         m_panel.insert(QStringLiteral("linkFormat"), layout);
+     if (!m_control.listen(QHostAddress::AnyIPv4, 0) || !m_http.listen(QHostAddress::AnyIPv4, 0)) {
+@@ -297,6 +424,7 @@ void CatchController::listen(const QString &layout)
+ #endif
+     m_pairingCheck.start();
+     setStatus(i18n("Waiting for a desktop"));
++    startWaitingScene(false);
+ }
+ 
+ void CatchController::announce(const QHostAddress &destination, quint16 port)
+@@ -392,6 +520,7 @@ void CatchController::connectRdp(const QJsonObject &message, const QHostAddress
+             m_view->setFrame(std::move(frame), m_layout);
+             if (!m_receiving) {
+                 m_firstPicture.stop();
++                stopWaitingScene();
+                 m_receiving = true;
+                 Q_EMIT changed();
+             }
+@@ -419,6 +548,7 @@ void CatchController::stop()
+ 
+ void CatchController::finishListening(const QString &status)
+ {
++    stopWaitingScene();
+     m_pairingCheck.stop();
+     m_firstPicture.stop();
+     m_control.close();
+diff --git a/rdp/catch/catchcontroller.h b/rdp/catch/catchcontroller.h
+index 367f08df..9c5f4f47 100644
+--- a/rdp/catch/catchcontroller.h
++++ b/rdp/catch/catchcontroller.h
+@@ -3,6 +3,7 @@
+ #pragma once
+ #include "rdphostpreferences.h"
+ #include "rdpsession.h"
++#include "waitingscenes.h"
+ #include <KConfig>
+ #include <QJsonObject>
+ #include <QPointer>
+@@ -31,6 +32,10 @@ class CatchController : public QObject
+     Q_PROPERTY(QString status READ status NOTIFY changed)
+     Q_PROPERTY(bool receiving READ receiving NOTIFY changed)
+     Q_PROPERTY(bool listening READ listening NOTIFY changed)
++    Q_PROPERTY(bool showingScene READ showingScene NOTIFY changed)
++    Q_PROPERTY(QStringList sceneIds READ sceneIds CONSTANT)
++    Q_PROPERTY(QString selectedScene READ selectedScene NOTIFY changed)
++    Q_PROPERTY(bool reduceMotion READ reduceMotion WRITE setReduceMotion NOTIFY changed)
+ public:
+     explicit CatchController(QObject *parent = nullptr);
+     ~CatchController() override;
+@@ -46,12 +51,15 @@ public:
+     {
+         return m_control.isListening();
+     }
+-    void setView(CatchView *view)
+-    {
+-        m_view = view;
+-    }
++    bool showingScene() const { return m_showingScene; }
++    QStringList sceneIds() const;
++    QString selectedScene() const;
++    bool reduceMotion() const { return m_reduceMotion; }
++    void setReduceMotion(bool enabled);
++    void setView(CatchView *view);
+     Q_INVOKABLE void listen(const QString &layout);
+     Q_INVOKABLE void stop();
++    Q_INVOKABLE void selectScene(const QString &id);
+     Q_SIGNAL void changed();
+ 
+ private:
+@@ -60,7 +68,9 @@ private:
+     void connectRdp(const QJsonObject &message, const QHostAddress &peer);
+     void announce(const QHostAddress &destination, quint16 port);
+     void setStatus(const QString &status);
+-    CatchView *m_view = nullptr;
++    void startWaitingScene(bool reconnect);
++    void stopWaitingScene();
++    QPointer<CatchView> m_view;
+     ControlListener m_control;
+     QTcpServer m_http;
+     QUdpSocket m_ssdp;
+@@ -76,5 +86,11 @@ private:
+     KConfig m_config;
+     RdpHostPreferences m_preferences;
+     std::unique_ptr<RdpSession> m_session;
++    QString m_sceneDirectory;
++    QList<CatchPresentation::Scene> m_scenes;
++    std::unique_ptr<CatchPresentation::ScenePlayback> m_scene;
++    bool m_showingScene = false;
++    bool m_reconnecting = false;
++    bool m_reduceMotion = false;
+     bool m_receiving = false;
+ };
+diff --git a/rdp/catch/catchview.cpp b/rdp/catch/catchview.cpp
+index 1de3f715..eba0d7a0 100644
+--- a/rdp/catch/catchview.cpp
++++ b/rdp/catch/catchview.cpp
+@@ -2,12 +2,88 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ #include "catchview.h"
+ #include <QPainter>
++#include <QQuickWindow>
++#include <QSettings>
++#include <QtMath>
++#include <exception>
+ #include <chrono>
+ 
++using namespace CatchPresentation;
++
+ CatchView::CatchView(QQuickItem *parent)
+     : QQuickPaintedItem(parent)
+ {
+     setFillColor(Qt::black);
++    QSettings settings;
++    settings.beginGroup(QStringLiteral("headset-fit"));
++    const int mode = settings.value(QStringLiteral("lens-mode"), 0).toInt();
++    if (mode >= 0 && mode <= int(LensMode::Cardboard))
++        m_mode = LensMode(mode);
++    m_viewerQr = settings.value(QStringLiteral("viewer-qr")).toString();
++    m_alignment = settings.value(QStringLiteral("alignment"), true).toBool();
++    m_equalMargins = settings.value(QStringLiteral("symmetric-notch"), true).toBool();
++}
++
++void CatchView::setLensMode(int mode)
++{
++    if (mode < 0 || mode > int(LensMode::Cardboard) || mode == lensMode())
++        return;
++    m_mode = LensMode(mode);
++    QSettings().setValue(QStringLiteral("headset-fit/lens-mode"), mode);
++    Q_EMIT settingsChanged();
++}
++
++void CatchView::setViewerQr(const QString &qr)
++{
++    if (m_viewerQr == qr || qr.size() > 24000)
++        return;
++    m_viewerQr = qr.trimmed();
++    Q_EMIT settingsChanged();
++}
++
++void CatchView::setAlignmentGuide(bool enabled)
++{
++    if (m_alignment == enabled)
++        return;
++    m_alignment = enabled;
++    QSettings().setValue(QStringLiteral("headset-fit/alignment"), enabled);
++    Q_EMIT settingsChanged();
++    update();
++}
++
++void CatchView::setEqualMargins(bool enabled)
++{
++    if (m_equalMargins == enabled)
++        return;
++    m_equalMargins = enabled;
++    QSettings().setValue(QStringLiteral("headset-fit/symmetric-notch"), enabled);
++    Q_EMIT settingsChanged();
++    update();
++}
++
++bool CatchView::preparePanel(QSize pixels, QSize millimeters)
++{
++    try {
++        m_projection = Projection(pixels, millimeters, m_mode, m_viewerQr);
++    } catch (const std::exception &) {
++        return false;
++    }
++    if (m_mode == LensMode::Cardboard)
++        QSettings().setValue(QStringLiteral("headset-fit/viewer-qr"), m_viewerQr);
++    return true;
++}
++
++QString CatchView::lensProfileId() const
++{
++    switch (m_mode) {
++    case LensMode::None:
++        return QStringLiteral("none");
++    case LensMode::ShineconFitD:
++        return QStringLiteral("shinecon-fit-d");
++    case LensMode::Cardboard:
++        return QStringLiteral("cardboard-default");
++    }
++    return {};
+ }
+ 
+ void CatchView::setFrame(RdpSession::VideoFrame frame, const QString &layout)
+@@ -21,33 +97,72 @@ void CatchView::setFrame(RdpSession::VideoFrame frame, const QString &layout)
+     update();
+ }
+ 
++void CatchView::setWaitingFrame(const QImage &image, const QString &status)
++{
++    m_waitingFrame = image;
++    m_waitingStatus = status;
++    update();
++}
++
+ void CatchView::paint(QPainter *painter)
+ {
+-    if (m_frame.image.isNull())
++    const bool waiting = !m_waitingStatus.isEmpty();
++    const auto &image = waiting ? m_waitingFrame : m_frame.image;
++    if (!waiting && image.isNull())
+         return;
+-    const auto &image = m_frame.image;
+-    const bool topBottom = m_layout == QLatin1StringView("tb-720") || m_layout == QLatin1StringView("tb-half-720");
+-    const bool half = m_layout == QLatin1StringView("tb-half-720") || m_layout == QLatin1StringView("sbs-half-720");
+-    const QSize encodedEye = topBottom ? QSize(image.width(), image.height() / 2) : QSize(image.width() / 2, image.height());
+-    QSize logicalEye = encodedEye;
+-    if (half) {
+-        if (topBottom)
+-            logicalEye.setHeight(logicalEye.height() * 2);
+-        else
+-            logicalEye.setWidth(logicalEye.width() * 2);
++    const auto layout = waiting ? QStringLiteral("native") : m_layout;
++    const QSize panel = m_projection.size();
++    if (panel.isEmpty())
++        return;
++    const qreal horizontalScale = width() / panel.width();
++    const qreal verticalScale = height() / panel.height();
++    int margin = 0;
++#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
++    if (m_equalMargins && window() && horizontalScale > 0) {
++        const auto insets = window()->safeAreaMargins();
++        margin = symmetricMargin(panel.width(), qCeil(insets.left() / horizontalScale), qCeil(insets.right() / horizontalScale));
+     }
+-    for (int eye = 0; eye != 2; ++eye) {
+-        int sourceEye = eye;
++#endif
++    bool swap = false;
+ #ifdef CATCH_PROOF
+-        if (qEnvironmentVariableIsSet("CATCH_SWAP_EYES"))
+-            sourceEye = 1 - eye;
++    swap = qEnvironmentVariableIsSet("CATCH_SWAP_EYES");
+ #endif
+-        const QRect source(topBottom ? QPoint(0, sourceEye * encodedEye.height()) : QPoint(sourceEye * encodedEye.width(), 0), encodedEye);
+-        const QRectF cell(eye * width() / 2, 0, width() / 2, height());
+-        const auto fitted = QSizeF(logicalEye).scaled(cell.size(), Qt::KeepAspectRatio);
+-        const QRectF destination(cell.center() - QPointF(fitted.width() / 2, fitted.height() / 2), fitted);
+-        painter->drawImage(destination, image, source);
++    painter->save();
++    painter->scale(horizontalScale, verticalScale);
++    if (image.isNull()) {
++        painter->fillRect(QRect(QPoint(), panel), Qt::black);
++    } else if (m_mode == LensMode::None) {
++        drawPair(*painter, image, layout, panel, 0, swap);
++    } else {
++        QImage fitted(panel, QImage::Format_RGB32);
++        fitted.fill(Qt::black);
++        QPainter fitting(&fitted);
++        drawPair(fitting, image, layout, panel, 0, swap);
++        fitting.end();
++        painter->drawImage(QPoint(), m_projection.apply(fitted));
++    }
++    // Like the Android overlay, mask safely after optics, then draw the physical alignment guide.
++    for (int eye = 0; margin > 0 && eye < 2; ++eye) {
++        const int left = eye * panel.width() / 2;
++        painter->fillRect(QRect(left, 0, margin, panel.height()), Qt::black);
++        painter->fillRect(QRect(left + panel.width() / 2 - margin, 0, margin, panel.height()), Qt::black);
++    }
++    painter->restore();
++    if (waiting) {
++        painter->save();
++        auto font = painter->font();
++        font.setPixelSize(qMax(1, qRound(height() * 0.045)));
++        painter->setFont(font);
++        painter->setPen(Qt::white);
++        const auto top = image.isNull() ? height() * 0.35 : height() * 0.73;
++        for (int eye = 0; eye < 2; ++eye) {
++            const QRectF bounds(width() * (eye * 0.5 + 0.035), top, width() * 0.43, height() * 0.24);
++            painter->drawText(bounds, Qt::AlignCenter | Qt::TextWordWrap, m_waitingStatus);
++        }
++        painter->restore();
+     }
++    if (m_alignment)
++        drawGuide(*painter, QSizeF(width(), height()), 1);
+ #ifdef CATCH_PROOF
+     const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+     qInfo("CatchFrame sequence=%llu decodeNs=%lld paintNs=%lld width=%d height=%d",
+diff --git a/rdp/catch/catchview.h b/rdp/catch/catchview.h
+index 105ab928..f5d8b19e 100644
+--- a/rdp/catch/catchview.h
++++ b/rdp/catch/catchview.h
+@@ -1,16 +1,33 @@
+ // SPDX-FileCopyrightText: 2026 Daniel Ramos
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ #pragma once
++#include "presentation.h"
+ #include "rdpsession.h"
+ #include <QQuickPaintedItem>
+ 
+ class CatchView : public QQuickPaintedItem
+ {
+     Q_OBJECT
++    Q_PROPERTY(int lensMode READ lensMode WRITE setLensMode NOTIFY settingsChanged)
++    Q_PROPERTY(QString viewerQr READ viewerQr WRITE setViewerQr NOTIFY settingsChanged)
++    Q_PROPERTY(bool alignmentGuide READ alignmentGuide WRITE setAlignmentGuide NOTIFY settingsChanged)
++    Q_PROPERTY(bool equalMargins READ equalMargins WRITE setEqualMargins NOTIFY settingsChanged)
+ public:
+     explicit CatchView(QQuickItem *parent = nullptr);
+     void setFrame(RdpSession::VideoFrame frame, const QString &layout);
++    void setWaitingFrame(const QImage &image, const QString &status = {});
+     void paint(QPainter *painter) override;
++    bool preparePanel(QSize pixels, QSize millimeters);
++    QString lensProfileId() const;
++    int lensMode() const { return int(m_mode); }
++    void setLensMode(int mode);
++    QString viewerQr() const { return m_viewerQr; }
++    void setViewerQr(const QString &qr);
++    bool alignmentGuide() const { return m_alignment; }
++    void setAlignmentGuide(bool enabled);
++    bool equalMargins() const { return m_equalMargins; }
++    void setEqualMargins(bool enabled);
++    Q_SIGNAL void settingsChanged();
+     QImage frame() const
+     {
+         return m_frame.image;
+@@ -22,5 +39,12 @@ public:
+ 
+ private:
+     RdpSession::VideoFrame m_frame;
++    QImage m_waitingFrame;
++    QString m_waitingStatus;
+     QString m_layout;
++    CatchPresentation::Projection m_projection;
++    CatchPresentation::LensMode m_mode = CatchPresentation::LensMode::None;
++    QString m_viewerQr;
++    bool m_alignment = true;
++    bool m_equalMargins = true;
+ };
+diff --git a/rdp/catch/headset-waiting/README.md b/rdp/catch/headset-waiting/README.md
+new file mode 100644
+index 00000000..24070039
+--- /dev/null
++++ b/rdp/catch/headset-waiting/README.md
+@@ -0,0 +1,44 @@
++# Throw waiting scenes
++
++This hook uses AndroidX Media3, KDE's Flat Headset renderer and Google's Cardboard SDK.
++The catalog is empty until the artwork pipeline supplies approved sports scenes.
++No final artwork is included here.
++
++`catalog.json` is a JSON array with at most 32 entries:
++
++```json
++[{"id":"basketball","connect":"basketball-throw.mp4","reconnect":"basketball-drop.mp4","still":"basketball-still.png"}]
++```
++
++Place each file beside the catalog.
++Names are local basenames; URLs and directory traversal are rejected.
++A new wait chooses a different scene from the last one when there is a choice.
++The connecting clip shows the throw and catch; the reconnect clip drops the ball and throws it again.
++Keep the camera fixed and the loop short.
++
++Video is full side by side, left first, with a standard stereo mark recognized as Media3 `STEREO_MODE_LEFT_RIGHT`.
++MP4 `st3d` or Matroska `StereoMode` are suitable containers for the existing marked-video path.
++The [IANA Matroska registry](https://www.iana.org/assignments/matroska) assigned StereoMode 15 through 20 for packed picture-and-depth layouts on 26 October 2026, after Track Plane Types 3 through 5 for separate depth tracks on 20 October.
++That allocation does not add depth synthesis to this marked-video receiver; check decoder and rendering support separately.
++Use a hardware-decodable H.264 clip and include no audio.
++The player disables audio, loops while waiting, and selects hardware decoders only.
++The existing movie renderer applies the chosen lens profile.
++
++The still is a PNG with `sTER` mode 1, left first, with identical full-size eye rectangles.
++Use a total width divisible by 16 so neither eye needs PNG stereo padding.
++Keep the PNG below 16 MiB and 16 megapixels.
++The existing panel renderer applies the lens profile.
++Reduce motion selects the still directly.
++A selected scene that cannot play shows its name and the decoder or asset error in both eyes.
++Back returns to the controls, where the person can choose its still or another scene.
++A failed still shows its error and offers another scene.
++Reduce motion remains a separate preference.
++
++Arrival of the first submitted desktop frame, pause, stop and destruction release waiting media.
++The standalone receiver keeps discovery active after an unexpected disconnect and shows the reconnect wait.
++Back stops discovery; it does not change the computer's outputs.
++
++Before adding artwork, verify both connection phases, both eye images, reduce motion, decoder rejection, first-frame cleanup and pause/resume in the disposable Android rig.
++The debug build contains synthetic marked fixtures for these checks in a separate catalog.
++Software decoding is injected only by the debug proof activity; it never replaces the production hardware-only selection.
++Unsupported video tracks can be reported without a player error; both paths must explain the failure without selecting a still automatically.
+diff --git a/rdp/catch/headset-waiting/catalog.json b/rdp/catch/headset-waiting/catalog.json
+new file mode 100644
+index 00000000..fe51488c
+--- /dev/null
++++ b/rdp/catch/headset-waiting/catalog.json
+@@ -0,0 +1 @@
++[]
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/LICENSE b/rdp/catch/optics/ThirdParty/Cardboard/LICENSE
+new file mode 100644
+index 00000000..06aaae31
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/LICENSE
+@@ -0,0 +1,247 @@
++===============================================================================
++
++All files in the following folders:
++- third_party/unity_plugin_api/
++
++are licensed as follows:
++
++Unity Companion License ("License")
++v1.3
++https://unity3d.com/legal/licenses/Unity_Companion_License
++
++Unity Technologies ApS (“Unity”) grants to you a worldwide, non-exclusive, no-charge, and royalty-free copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, and distribute the work of authorship that accompanies this License (“Work”), subject to the following terms and conditions:
++
++1. Unity Companion Use. Exercise of the license granted herein is permitted as long as it is in connection with the  authoring and/or distribution of applications, software, or other content under a valid Unity content authoring and rendering engine software license (“Engine License”). That means, for example, as long as you authored content using the Work under an Engine License, you may distribute the Work in connection with that content as you see fit under this License. No other exercise of the license granted herein is permitted, and in no event may the Work be used for competitive analysis or to develop a competing product or service.
++
++2. No Modification of Engine License. Neither this License nor any exercise of the license granted herein modifies the Engine License in any way.
++
++3. Ownership; Derivative Works.
++
++3.1 You own your content. In this License, “derivative works” means derivatives of the Work itself--works derived only from the Work by you under this License (for example, modifying the code of the Work itself to improve its efficacy); “derivative works” of the Work do not include, for example, games, apps, or content that you create with the Work. You keep all right, title, and interest in your own content.
++
++3.2 Unity owns its content. While you keep all right, title, and interest to your own content per the above, as between Unity and you, Unity will own all right, title, and interest to all intellectual property rights (including patent, trademark, and copyright) in the Work and derivative works of the Work, and you hereby assign and agree to assign all such rights in those derivative works to Unity. Should assignment be invalid for any reason, you grant to Unity an irrevocable, perpetual, worldwide, non-exclusive, no-charge, and royalty-free license (with the right to grant sublicenses) under those intellectual property rights to those derivative works. You also agree to waive or refrain from asserting any author’s right, moral rights, or like rights to the extent necessary to permit exploitation as contemplated under this License.
++
++3.3 Your right to use derivative works. You will always have the right to use derivative works of the Work you create, consonant with this License.
++
++4. Trademarks. You are not granted any right or license under this License to use any trademarks, service marks, trade names, products names, or branding of Unity or its affiliates (“Trademarks”). Descriptive uses of Trademarks are permitted; see, for example, Unity’s Trademark Guidelines at https://unity3d.com/legal/branding_trademarks.
++
++5. Notices & Third-Party Rights. This License, including the copyright notice associated with the Work, must be provided in all substantial portions of the Work and derivative works thereof (or, if that is impracticable, in any other location where such notices are customarily placed). Further, if the Work is accompanied by a Unity “third-party notices” or similar file, you acknowledge and agree that software or content identified in that file is governed by those separate license terms.
++
++6. DISCLAIMER, LIMITATION OF LIABILITY. THE Work AND ANY DERIVATIVE WORKS THEREOF IS PROVIDED ON AN "AS IS" BASIS, AND IS PROVIDED WITHOUT WARRANTY OF ANY KIND, WHETHER EXPRESS OR IMPLIED, INCLUDING ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND/OR NON-INFRINGEMENT. IN NO EVENT SHALL ANY COPYRIGHT HOLDER OR AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES (WHETHER DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL, INCLUDING PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES, LOSS OF USE, DATA, OR PROFITS, AND BUSINESS INTERRUPTION), OR OTHER LIABILITY WHATSOEVER, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM OR OUT OF, OR IN CONNECTION WITH, THE Work OR ANY DERIVATIVE WORKS THEREOF OR THE USE OF OR OTHER DEALINGS IN SAME, EVEN WHERE ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++7. USE IS ACCEPTANCE and License Versions. Your access to and use of the Work constitutes your acceptance of this License and its terms and conditions. This License may be modified or updated; upon any such modification or update, you will comply with the terms of the updated License for any use of any of the Work under the updated License.
++
++8. Use in Compliance with Law and Termination. Your exercise of the license granted herein will at all times be in compliance with applicable law and will not infringe any proprietary rights (including intellectual property rights); this License will terminate immediately (i) on any breach by you of this License; and (ii) if you commence any form of patent litigation, including a cross-claim or counterclaim, against anyone wherein you allege that the Work constitutes direct or secondary/indirect patent infringement.
++
++9. Severability. If any provision of this License is held to be unenforceable or invalid, that provision will be enforced to the maximum extent possible and the other provisions will remain in full force and effect.
++
++10. Governing Law and Venue. This License is governed by and construed in accordance with the laws of Denmark, except for its conflict of laws rules; the United Nations Convention on Contracts for the International Sale of Goods will not apply. If you reside (or your principal place of business is) within the United States, you and Unity agree to submit to the personal and exclusive jurisdiction of and venue in the state and federal courts located in San Francisco County, California concerning any dispute arising out of this License (“Dispute”). If you reside (or your principal place of business is) outside the United States, you and Unity agree to submit to the personal and exclusive jurisdiction of and venue in the courts located in Copenhagen, Denmark concerning any Dispute.
++
++(10.05.2020)
++
++===============================================================================
++
++Except as indicated above in this LICENSE file
++files in this SDK are licensed as follows:
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright [yyyy] [name of copyright owner]
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/README.md b/rdp/catch/optics/ThirdParty/Cardboard/README.md
+new file mode 100644
+index 00000000..6f409ae5
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/README.md
+@@ -0,0 +1,27 @@
++# Cardboard viewer geometry
++
++Source: Google Cardboard v1.36.0, commit `8bd424da7f1e399255a1b6e7c02be8e281ecc974`, [upstream](https://github.com/googlevr/cardboard/tree/8bd424da7f1e399255a1b6e7c02be8e281ecc974).
++`sources.json` records original paths and SHA-256 hashes; `LICENSE` and original copyright notices are retained.
++This source subset is carried from Flat Headset commit `159bc572`. Catch installs its Apache-2.0 license with the program.
++Credits: Google LLC and the Google Cardboard contributors.
++
++The portable subset is the lens distortion, polynomial distortion, mesh and matrix implementation, public types, exact Cardboard v1 profile bytes, and device-parameter schema.
++No Apple SDK file, platform renderer, sensor, tracking code or prebuilt Cardboard library is included.
++
++Local adaptations:
++
++- `lens_distortion.h` includes our `Viewer/ProfileParams.hpp` instead of generated/platform-specific protobuf headers. Its constructor takes validated parameters and physical screen width/height.
++- `lens_distortion.cc` takes those inputs instead of parsing bytes and querying platform screen dimensions. The FOV, viewport and mesh calculations below the constructor are unchanged.
++- `polynomial_radial_distortion.cc` refuses a nonfinite secant result or an inverse that has not converged after 64 iterations, rather than looping without a bound. Valid profiles retain the original tolerance and arithmetic.
++
++`Viewer/Viewer.cpp` parses the fields consumed by this subset according to `proto/cardboard_device.proto`, with bounded input, finite values and required distortion fields.
++It accepts the exact default bytes or full base64url profile link and never invents coefficients.
++Catch supplies the active panel’s measured physical width and height from its existing KScreen descriptor. QR mode reports a profile error when either dimension is unavailable.
++The 0.003-metre screen-border value remains the upstream geometry's constant.
++The carried mesh retains the V convention from the reference iOS viewport in `sdk/rendering/ios/metal_distortion_renderer.mm`; vertex positions and indices are unchanged.
++Each eye uses 1600 vertices and 3158 strip indices.
++Catch scissors and samples each mesh in its own eye and applies it to the fitted panel.
++
++The Shinecon fitted D path is separate: it follows this repository's Android `FittedLensCorrection.kt`, `headset_fitted.frag` and `FITTED-LENS-CORRECTION.md`.
++Its existing 0.13 fit is not a Cardboard radial coefficient and must never be inserted into a QR profile.
++Credits for that fitted convention: Richard Spindler and Daniel Oberhoff (FFmpeg lenscorrection), with the Android Flat Headset implementation in this repository.
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/distortion_mesh.cc b/rdp/catch/optics/ThirdParty/Cardboard/distortion_mesh.cc
+new file mode 100644
+index 00000000..3db58f1b
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/distortion_mesh.cc
+@@ -0,0 +1,125 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#include "distortion_mesh.h"
++
++#include <vector>
++
++#include "include/cardboard.h"
++
++namespace cardboard {
++
++DistortionMesh::DistortionMesh(
++    const PolynomialRadialDistortion& distortion,
++    // Units of the following parameters are tan-angle units.
++    float screen_width, float screen_height, float x_eye_offset_screen,
++    float y_eye_offset_screen, float texture_width, float texture_height,
++    float x_eye_offset_texture, float y_eye_offset_texture) {
++  vertex_data_.resize(kResolution * kResolution *
++                      2);                           // 2 components per vertex
++  uvs_data_.resize(kResolution * kResolution * 2);  // 2 components per uv
++  float u_screen, v_screen, u_texture, v_texture;
++  std::array<float, 2> p_texture;
++  std::array<float, 2> p_screen;
++  for (int row = 0; row < kResolution; row++) {
++    for (int col = 0; col < kResolution; col++) {
++      // Note that we warp the mesh vertices using the inverse of
++      // the distortion function instead of warping the texture
++      // coordinates by the distortion function so that the mesh
++      // exactly covers the screen area that gets rendered to.
++      // Helps avoid visible aliasing in the vignette.
++      u_texture = (static_cast<float>(col) / (kResolution - 1));
++      v_texture = (static_cast<float>(row) / (kResolution - 1));
++
++      // texture position & radius relative to eye center in meters - I believe
++      // this is tanangle
++      p_texture[0] = u_texture * texture_width - x_eye_offset_texture;
++      p_texture[1] = v_texture * texture_height - y_eye_offset_texture;
++
++      p_screen = distortion.DistortInverse(p_texture);
++
++      u_screen = (p_screen[0] + x_eye_offset_screen) / screen_width;
++      v_screen = (p_screen[1] + y_eye_offset_screen) / screen_height;
++
++      const int index = (row * kResolution + col) * 2;
++
++      vertex_data_[index + 0] = 2 * u_screen - 1;
++      vertex_data_[index + 1] = 2 * v_screen - 1;
++      uvs_data_[index + 0] = u_texture;
++      uvs_data_[index + 1] = v_texture;
++    }
++  }
++
++  // Strip method described at:
++  // http://dan.lecocq.us/wordpress/2009/12/25/triangle-strip-for-grids-a-construction/
++  //
++  // For a grid with 4 rows and 4 columns of vertices, the strip would
++  // look like:
++  //
++  //     0  -  1  -  2  -  3
++  //     ↓  ↗  ↓  ↗  ↓  ↗  ↓
++  //     4  -  5  -  6  -  7 ↺
++  //     ↓  ↖  ↓  ↖  ↓  ↖  ↓
++  //   ↻ 8  -  9  - 10  - 11
++  //     ↓  ↗  ↓  ↗  ↓  ↗  ↓
++  //    12  - 13  - 14  - 15
++  //
++  // Note the little circular arrows next to 7 and 8 that indicate
++  // repeating that vertex once so as to produce degenerate triangles.
++
++  // Number of indices:
++  //   1 vertex per triangle
++  //   2 triangles per quad
++  //   (rows - 1) * (cols - 1) quads
++  //   2 vertices at the start of each row for the first triangle
++  //   1 extra vertex per row (except first and last) for a
++  //     degenerate triangle
++  const int n_indices = 2 * (kResolution - 1) * kResolution + (kResolution - 2);
++  index_data_.resize(n_indices);
++  int index_offset = 0;
++  int vertex_offset = 0;
++  for (int row = 0; row < kResolution - 1; row++) {
++    if (row > 0) {
++      index_data_[index_offset] = index_data_[index_offset - 1];
++      index_offset++;
++    }
++    for (int col = 0; col < kResolution; col++) {
++      if (col > 0) {
++        if (row % 2 == 0) {
++          // Move right on even rows.
++          vertex_offset++;
++        } else {
++          // Move left on odd rows.
++          vertex_offset--;
++        }
++      }
++      index_data_[index_offset++] = vertex_offset;
++      index_data_[index_offset++] = vertex_offset + kResolution;
++    }
++    vertex_offset = vertex_offset + kResolution;
++  }
++}
++
++CardboardMesh DistortionMesh::GetMesh() const {
++  CardboardMesh mesh;
++  mesh.indices = const_cast<int*>(index_data_.data());
++  mesh.vertices = const_cast<float*>(vertex_data_.data());
++  mesh.uvs = const_cast<float*>(uvs_data_.data());
++  mesh.n_indices = static_cast<int>(index_data_.size());
++  mesh.n_vertices = static_cast<int>(vertex_data_.size() / 2);
++  return mesh;
++}
++
++}  // namespace cardboard
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/distortion_mesh.h b/rdp/catch/optics/ThirdParty/Cardboard/distortion_mesh.h
+new file mode 100644
+index 00000000..afe1c7d6
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/distortion_mesh.h
+@@ -0,0 +1,46 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#ifndef CARDBOARD_SDK_DISTORTION_MESH_H_
++#define CARDBOARD_SDK_DISTORTION_MESH_H_
++
++#include <vector>
++
++#include "include/cardboard.h"
++#include "polynomial_radial_distortion.h"
++
++namespace cardboard {
++
++class DistortionMesh {
++ public:
++  DistortionMesh(const PolynomialRadialDistortion& distortion,
++                 // Units of the following parameters are tan-angle units.
++                 float screen_width, float screen_height,
++                 float x_eye_offset_screen, float y_eye_offset_screen,
++                 float texture_width, float texture_height,
++                 float x_eye_offset_texture, float y_eye_offset_texture);
++  virtual ~DistortionMesh() = default;
++  CardboardMesh GetMesh() const;
++
++ private:
++  static constexpr int kResolution = 40;
++  std::vector<int> index_data_;
++  std::vector<float> vertex_data_;
++  std::vector<float> uvs_data_;
++};
++
++}  // namespace cardboard
++
++#endif  // CARDBOARD_SDK_DISTORTION_MESH_H_
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/include/cardboard.h b/rdp/catch/optics/ThirdParty/Cardboard/include/cardboard.h
+new file mode 100644
+index 00000000..39009fe4
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/include/cardboard.h
+@@ -0,0 +1,743 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#ifndef CARDBOARD_SDK_INCLUDE_CARDBOARD_H_
++#define CARDBOARD_SDK_INCLUDE_CARDBOARD_H_
++
++#ifdef __ANDROID__
++#include <jni.h>
++#endif
++
++#include <stdint.h>
++
++/// @defgroup types Cardboard SDK types
++/// @brief Various types used in the Cardboard SDK.
++/// @{
++
++/// Struct to hold UV coordinates.
++typedef struct CardboardUv {
++  /// u coordinate.
++  float u;
++  /// v coordinate.
++  float v;
++} CardboardUv;
++
++/// Enum to distinguish left and right eyes.
++typedef enum CardboardEye {
++  /// Left eye.
++  kLeft = 0,
++  /// Right eye.
++  kRight = 1,
++} CardboardEye;
++
++/// Enum to describe the possible orientations of the viewport.
++typedef enum CardboardViewportOrientation {
++  /// Landscape left orientation, which maps to:
++  /// - Android: landscape.
++  /// - IOS: UIDeviceOrientationLandscapeLeft.
++  /// - Unity: ScreenOrientation.LandscapeLeft.
++  kLandscapeLeft = 0,
++  /// Landscape right orientation, which maps to:
++  /// - Android: reverseLandscape.
++  /// - IOS: UIDeviceOrientationLandscapeRight.
++  /// - Unity: ScreenOrientation.LandscapeRight.
++  kLandscapeRight = 1,
++  /// Portrait orientation, which maps to:
++  /// - Android: portrait.
++  /// - IOS: UIDeviceOrientationPortrait.
++  /// - Unity: ScreenOrientation.Portrait.
++  kPortrait = 2,
++  /// Portrait upside down orientation, which maps to:
++  /// - Android: reversePortrait.
++  /// - IOS: UIDeviceOrientationPortraitUpsideDown.
++  /// - Unity: ScreenOrientation.PortraitUpsideDown.
++  kPortraitUpsideDown = 3,
++} CardboardViewportOrientation;
++
++/// Enum with the supported OpenGL ES textures to be used for the eyes
++/// rendering.
++typedef enum CardboardSupportedOpenGlEsTextureType {
++  /// Maps to GL_TEXTURE_2D.
++  kGlTexture2D = 0,
++  /// Maps to GL_TEXTURE_EXTERNAL_OES (only supported on Android).
++  kGlTextureExternalOes = 1,
++} CardboardSupportedOpenGlEsTextureType;
++
++/// Struct representing a 3D mesh with 3D vertices and corresponding UV
++/// coordinates.
++typedef struct CardboardMesh {
++  /// Indices buffer.
++  int* indices;
++  /// Number of indices.
++  int n_indices;
++  /// Vertices buffer. 2 floats per vertex: x, y.
++  float* vertices;
++  /// UV coordinates buffer. 2 floats per uv: u, v.
++  float* uvs;
++  /// Number of vertices.
++  int n_vertices;
++} CardboardMesh;
++
++/// Struct to hold information about an eye texture.
++typedef struct CardboardEyeTextureDescription {
++  /// The texture with eye pixels.
++  ///
++  /// When using OpenGL ES 2.x and OpenGL ES 3.x, this field corresponds to a
++  /// GLuint variable.
++  ///
++  /// When using Vulkan, this field corresponds to an uint64_t address pointing
++  /// to a @c VkImage variable.The SDK client is expected to manage the
++  /// object ownership and to guarantee the pointer validity during the
++  /// @c ::CardboardDistortionRenderer_renderEyeToDisplay function execution
++  /// to ensure it is properly retained. Usage example:
++  ///
++  /// @code{.cc}
++  /// VkImage image;
++  /// // Initialize and set up the image...
++  /// CardboardEyeTextureDescription leftEye;
++  /// leftEye.texture = reinterpret_cast<uint64_t>(image)
++  /// // Fill remaining fields in leftEye...
++  /// CardboardDistortionRenderer_renderEyeToDisplay(..., &leftEye, ...);
++  /// // Clear previous image if it is needed.
++  /// @endcode
++  ///
++  /// When using Metal, this field corresponds to a @c CFTypeRef
++  /// variable pointing to a @c MTLTexture object. The SDK client is expected
++  /// to manage the object ownership and to guarantee the pointer validity
++  /// during the @c ::CardboardDistortionRenderer_renderEyeToDisplay function
++  /// execution to ensure it is properly retained. Usage example:
++  ///
++  /// @code{.m}
++  /// CardboardEyeTextureDescription leftEye;
++  /// leftEye.texture = CFBridgingRetain(_texture);
++  /// // Fill remaining fields in leftEye...
++  /// CardboardDistortionRenderer_renderEyeToDisplay(..., &leftEye, ...);
++  /// CFBridgingRelease(leftEye.texture);
++  /// @endcode
++  uint64_t texture;
++  /// u coordinate of the left side of the eye.
++  float left_u;
++  /// u coordinate of the right side of the eye.
++  float right_u;
++  /// v coordinate of the top side of the eye.
++  float top_v;
++  /// v coordinate of the bottom side of the eye.
++  float bottom_v;
++} CardboardEyeTextureDescription;
++
++/// Struct to set OpenGL ES distortion renderer configuration.
++typedef struct CardboardOpenGlEsDistortionRendererConfig {
++  /// Texture type.
++  CardboardSupportedOpenGlEsTextureType texture_type;
++} CardboardOpenGlEsDistortionRendererConfig;
++
++/// Struct to set Metal distortion renderer configuration.
++typedef struct CardboardMetalDistortionRendererConfig {
++  /// MTLDevice id.
++  /// This field holds a CFTypeRef variable pointing to a MTLDevice object.
++  /// The SDK client is expected to manage the object ownership and to guarantee
++  /// the pointer validity during the CardboardMetalDistortionRenderer_create
++  /// function execution to ensure it is properly retained. Usage example:
++  ///
++  /// @code{.m}
++  /// CardboardMetalDistortionRendererConfig config;
++  /// config.mtl_device = CFBridgingRetain(mtlDevice);
++  /// CardboardDistortionRenderer *distortionRenderer =
++  ///     CardboardMetalDistortionRenderer_create(&config);
++  /// CFBridgingRelease(config.mtl_device);
++  /// @endcode
++  uint64_t mtl_device;
++  /// Color attachment pixel format.
++  /// This field holds a [MTLPixelFormat enum
++  /// value](https://developer.apple.com/documentation/metalkit/mtkview/1535940-colorpixelformat?language=objc).
++  uint64_t color_attachment_pixel_format;
++  /// Depth attachment pixel format.
++  /// This field holds a [MTLPixelFormat enum
++  /// value](https://developer.apple.com/documentation/metalkit/mtkview/1535940-colorpixelformat?language=objc).
++  uint64_t depth_attachment_pixel_format;
++  /// Stencil attachment pixel format.
++  /// This field holds a [MTLPixelFormat enum
++  /// value](https://developer.apple.com/documentation/metalkit/mtkview/1535940-colorpixelformat?language=objc).
++  uint64_t stencil_attachment_pixel_format;
++} CardboardMetalDistortionRendererConfig;
++
++/// Struct to set Vulkan distortion renderer configuration.
++typedef struct CardboardVulkanDistortionRendererConfig {
++  /// The physical device available for the rendering.
++  /// This field holds a [VkPhysicalDevice
++  /// value](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkPhysicalDevice.html).
++  /// Maintained by the user.
++  uint64_t physical_device;
++  /// The logical device available for the rendering.
++  /// This field holds a [VkDevice
++  /// value](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkDevice.html).
++  /// Maintained by the user.
++  uint64_t logical_device;
++  /// The swapchain that owns the buffers into which the scene is rendered.
++  /// This field holds a [VkSwapchainKHR
++  /// value](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkSwapchainKHR.html).
++  /// Maintained by the user.
++  uint64_t vk_swapchain;
++} CardboardVulkanDistortionRendererConfig;
++
++/// Struct to set Metal distortion renderer target configuration.
++typedef struct CardboardMetalDistortionRendererTargetConfig {
++  /// MTLRenderCommandEncoder id.
++  /// This field holds a CFTypeRef variable pointing to a
++  /// @c MTLRenderCommandEncoder object. The SDK client is expected to manage
++  /// the object ownership and to guarantee the pointer validity during the
++  /// @c ::CardboardDistortionRenderer_renderEyeToDisplay function execution to
++  /// ensure it is properly retained. Usage example:
++  ///
++  /// @code{.m}
++  /// CardboardMetalDistortionRendererTargetConfig target_config;
++  /// target_config.render_command_encoder =
++  ///     CFBridgingRetain(renderCommandEncoder);
++  /// CardboardDistortionRenderer_renderEyeToDisplay(..., &target_config, ...);
++  /// CFBridgingRelease(target_config.render_command_encoder);
++  /// @endcode
++  uint64_t render_command_encoder;
++  /// Full width of the screen in pixels.
++  int screen_width;
++  /// Full height of the screen in pixels.
++  int screen_height;
++} CardboardMetalDistortionRendererTargetConfig;
++
++/// Struct to set Vulkan distortion renderer target.
++typedef struct CardboardVulkanDistortionRendererTarget {
++  /// The render pass object that will be used to bind vertex, indices and
++  /// descriptor set.
++  /// This field holds a [VkRenderPass
++  /// value](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkRenderPass.html).
++  /// Maintained by the user.
++  uint64_t vk_render_pass;
++  /// The command buffer object.
++  /// This field holds a[VkCommandBuffer
++  /// value](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkCommandBuffer.html).
++  /// Maintained by the user and this command buffer should be started before
++  /// calling the rendering function.
++  uint64_t vk_command_buffer;
++  /// The index of the image in the swapchain.
++  /// This number should NOT exceed the number of images in swapchain.
++  /// If this number is above the swapchain length, the distortion renderer
++  /// will stop and return directly.
++  uint32_t swapchain_image_index;
++} CardboardVulkanDistortionRendererTarget;
++
++/// An opaque Lens Distortion object.
++typedef struct CardboardLensDistortion CardboardLensDistortion;
++
++/// An opaque Distortion Renderer object.
++typedef struct CardboardDistortionRenderer CardboardDistortionRenderer;
++
++/// An opaque Head Tracker object.
++typedef struct CardboardHeadTracker CardboardHeadTracker;
++
++/// @}
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/////////////////////////////////////////////////////////////////////////////
++// Initialization (Android only)
++/////////////////////////////////////////////////////////////////////////////
++/// @defgroup initialization Initialization (Android only)
++/// @brief This module initializes the JavaVM and Android context.
++///
++/// Important: This function is only used by Android and it's mandatory to call
++///     this function before using any other Cardboard APIs.
++/// @{
++
++#ifdef __ANDROID__
++/// Initializes the JavaVM and Android context.
++///
++/// @details The following methods are required to work for the parameter
++///   @p context:
++///
++/// -
++/// <a
++/// href="https://developer.android.com/reference/android/content/Context#getFilesDir()">Context.getFilesDir()</a>
++/// -
++/// <a
++/// href="https://developer.android.com/reference/android/content/Context#getResources()">Context.getResources()</a>
++/// -
++/// <a
++/// href="https://developer.android.com/reference/android/content/Context#getSystemService(java.lang.String)">Context.getSystemService(Context.WINDOW_SERVICE)</a>
++/// -
++/// <a
++/// href="https://developer.android.com/reference/android/content/Context#startActivity(android.content.Intent)">Context.startActivity(Intent)</a>
++/// -
++/// <a
++/// href="https://developer.android.com/reference/android/content/Context#getDisplay()">Context.getDisplay()</a>
++///
++/// @pre @p vm Must not be null.
++/// @pre @p context Must not be null.
++/// When it is unmet a call to this function results in a no-op.
++///
++/// @param[in]      vm                      JavaVM pointer
++/// @param[in]      context                 The current Android Context. It is
++///                                         generally an Activity instance or
++///                                         wraps one.
++void Cardboard_initializeAndroid(JavaVM* vm, jobject context);
++#endif
++
++/// @}
++
++/////////////////////////////////////////////////////////////////////////////
++// Lens Distortion
++/////////////////////////////////////////////////////////////////////////////
++/// @defgroup lens-distortion Lens Distortion
++/// @brief This module calculates the projection and eyes distortion matrices,
++///     based on the device (Cardboard viewer) and screen parameters. It also
++///     includes functions to calculate the distortion for a single point.
++/// @{
++
++/// Creates a new lens distortion object and initializes it with the values from
++/// @c encoded_device_params.
++///
++/// @pre @p encoded_device_params Must not be null.
++/// When it is unmet, a call to this function results in a no-op and returns a
++/// @c nullptr.
++///
++/// @param[in]      encoded_device_params   The device parameters serialized
++///     using cardboard_device.proto.
++/// @param[in]      size                    Size in bytes of
++///     @c encoded_device_params.
++/// @param[in]      display_width           Size in pixels of display width.
++/// @param[in]      display_height          Size in pixels of display height.
++/// @return         Lens distortion object pointer.
++CardboardLensDistortion* CardboardLensDistortion_create(
++    const uint8_t* encoded_device_params, int size, int display_width,
++    int display_height);
++
++/// Destroys and releases memory used by the provided lens distortion object.
++///
++/// @pre @p lens_distortion Must not be null.
++/// When it is unmet, a call to this function results in a no-op.
++///
++/// @param[in]      lens_distortion         Lens distortion object pointer.
++void CardboardLensDistortion_destroy(CardboardLensDistortion* lens_distortion);
++
++/// Gets the eye_from_head matrix for a particular eye.
++///
++/// @pre @p lens_distortion Must not be null.
++/// @pre @p eye_from_head_matrix Must not be null.
++/// When it is unmet, a call to this function results in a no-op and a default
++/// value is returned (identity matrix).
++///
++/// @param[in]      lens_distortion         Lens distortion object pointer.
++/// @param[in]      eye                     Desired eye.
++/// @param[out]     eye_from_head_matrix    4x4 float eye from head matrix.
++void CardboardLensDistortion_getEyeFromHeadMatrix(
++    CardboardLensDistortion* lens_distortion, CardboardEye eye,
++    float* eye_from_head_matrix);
++
++/// Gets the ideal projection matrix for a particular eye.
++///
++/// @pre @p lens_distortion Must not be null.
++/// @pre @p projection_matrix Must not be null.
++/// When it is unmet, a call to this function results in a no-op and a default
++/// value is returned (identity matrix).
++///
++/// @param[in]      lens_distortion         Lens distortion object pointer.
++/// @param[in]      eye                     Desired eye.
++/// @param[in]      z_near                  Near clip plane z-axis coordinate.
++/// @param[in]      z_far                   Far clip plane z-axis coordinate.
++/// @param[out]     projection_matrix       4x4 float ideal projection matrix.
++void CardboardLensDistortion_getProjectionMatrix(
++    CardboardLensDistortion* lens_distortion, CardboardEye eye, float z_near,
++    float z_far, float* projection_matrix);
++
++/// Gets the field of view half angles for a particular eye.
++///
++/// @pre @p lens_distortion Must not be null.
++/// @pre @p field_of_view Must not be null.
++/// When it is unmet, a call to this function results in a no-op and a default
++/// value is returned (all angles equal to 45 degrees).
++///
++/// @param[in]      lens_distortion         Lens distortion object pointer.
++/// @param[in]      eye                     Desired eye.
++/// @param[out]     field_of_view           4x1 float half angles in radians,
++///                                         angles are disposed [left, right,
++///                                         bottom, top].
++void CardboardLensDistortion_getFieldOfView(
++    CardboardLensDistortion* lens_distortion, CardboardEye eye,
++    float* field_of_view);
++
++/// Gets the distortion mesh for a particular eye.
++///
++/// @pre @p lens_distortion Must not be null.
++/// @pre @p mesh Must not be null.
++/// When it is unmet, a call to this function results in a no-op and a default
++/// value is returned (empty values).
++///
++/// Important: The distorsion mesh that is returned by this function becomes
++/// invalid if CardboardLensDistortion is destroyed.
++///
++/// @param[in]      lens_distortion         Lens distortion object pointer.
++/// @param[in]      eye                     Desired eye.
++/// @param[out]     mesh                    Distortion mesh.
++void CardboardLensDistortion_getDistortionMesh(
++    CardboardLensDistortion* lens_distortion, CardboardEye eye,
++    CardboardMesh* mesh);
++
++/// Applies lens inverse distortion function to a point normalized [0,1] in
++/// pre-distortion (eye texture) space.
++///
++/// @pre @p lens_distortion Must not be null.
++/// @pre @p distorted_uv Must not be null.
++/// When it is unmet, a call to this function results in a no-op and returns an
++/// invalid struct (in other words, both UV coordinates are equal to -1).
++///
++/// @param[in]      lens_distortion         Lens distortion object pointer.
++/// @param[in]      distorted_uv            Distorted UV point.
++/// @param[in]      eye                     Desired eye.
++/// @return         Point normalized [0,1] in the screen post distort space.
++CardboardUv CardboardLensDistortion_undistortedUvForDistortedUv(
++    CardboardLensDistortion* lens_distortion, const CardboardUv* distorted_uv,
++    CardboardEye eye);
++
++/// Applies lens distortion function to a point normalized [0,1] in the screen
++/// post-distortion space.
++///
++/// @pre @p lens_distortion Must not be null.
++/// @pre @p undistorted_uv Must not be null.
++/// When it is unmet, a call to this function results in a no-op and returns an
++/// invalid struct (in other words, both UV coordinates are equal to -1).
++///
++/// @param[in]      lens_distortion         Lens distortion object pointer.
++/// @param[in]      undistorted_uv          Undistorted UV point.
++/// @param[in]      eye                     Desired eye.
++/// @return         Point normalized [0,1] in pre distort space (eye texture
++///     space).
++CardboardUv CardboardLensDistortion_distortedUvForUndistortedUv(
++    CardboardLensDistortion* lens_distortion, const CardboardUv* undistorted_uv,
++    CardboardEye eye);
++/// @}
++
++/////////////////////////////////////////////////////////////////////////////
++// Distortion Renderer
++/////////////////////////////////////////////////////////////////////////////
++/// @defgroup distortion-renderer Distortion Renderer
++/// @brief This module renders the eyes textures into the display.
++///
++/// Important: This module functions must be called from the render thread.
++/// @{
++
++/// Creates a new distortion renderer object. It uses OpenGL ES 2.0 as the
++/// rendering API. Must be called from the render thread.
++///
++/// @param[in]      config                  Distortion renderer configuration.
++/// @return         Distortion renderer object pointer
++CardboardDistortionRenderer* CardboardOpenGlEs2DistortionRenderer_create(
++    const CardboardOpenGlEsDistortionRendererConfig* config);
++
++/// Creates a new distortion renderer object. It uses OpenGL ES 3.0 as the
++/// rendering API. Must be called from the render thread.
++///
++/// @param[in]      config                  Distortion renderer configuration.
++/// @return         Distortion renderer object pointer
++CardboardDistortionRenderer* CardboardOpenGlEs3DistortionRenderer_create(
++    const CardboardOpenGlEsDistortionRendererConfig* config);
++
++/// Creates a new distortion renderer object. It uses Metal as the rendering
++/// API. Must be called from the render thread.
++///
++/// @param[in]      config                  Distortion renderer configuration.
++/// @return         Distortion renderer object pointer
++CardboardDistortionRenderer* CardboardMetalDistortionRenderer_create(
++    const CardboardMetalDistortionRendererConfig* config);
++
++/// Creates a new distortion renderer object. It uses Vulkan as the rendering
++/// API. Must be called from the render thread.
++///
++/// @param[in]      config                  Distortion renderer configuration.
++/// @return         Distortion renderer object pointer
++CardboardDistortionRenderer* CardboardVulkanDistortionRenderer_create(
++    const CardboardVulkanDistortionRendererConfig* config);
++
++/// Destroys and releases memory used by the provided distortion renderer
++/// object. Must be called from render thread.
++///
++/// @pre @p renderer Must not be null.
++/// When it is unmet, a call to this function results in a no-op.
++///
++/// @param[in]      renderer                Distortion renderer object pointer.
++void CardboardDistortionRenderer_destroy(CardboardDistortionRenderer* renderer);
++
++/// Sets the distortion Mesh for a particular eye. Must be called from render
++/// thread.
++///
++/// @pre @p renderer Must not be null.
++/// @pre @p mesh Must not be null.
++/// When it is unmet, a call to this function results in a no-op.
++///
++/// @param[in]      renderer                Distortion renderer object pointer.
++/// @param[in]      mesh                    Distortion mesh.
++/// @param[in]      eye                     Desired eye.
++void CardboardDistortionRenderer_setMesh(CardboardDistortionRenderer* renderer,
++                                         const CardboardMesh* mesh,
++                                         CardboardEye eye);
++
++/// Renders eye textures to a rectangle in the display. Must be called from
++/// render thread.
++///
++/// @pre @p renderer Must not be null.
++/// @pre @p left_eye Must not be null.
++/// @pre @p right_eye Must not be null.
++/// @pre @p renderer.command_buffer Must be started.
++/// When it is unmet, a call to this function results in a no-op.
++///
++/// @param[in]      renderer                Distortion renderer object pointer.
++/// @param[in]      target                  Target configuration.
++///     This parameter is some other type transformed via `reinterpret_cast`
++///     to a `uint64_t`. The original type of this parameter depends on the
++///     underlying API used as follows:
++///
++///     * OpenGL ES 2.x or 3.x: @c GLuint.
++///     * Metal: @c CardboardMetalDistortionRendererTargetConfig*.
++///     * Vulkan: @c CardboardVulkanDistortionRendererTarget*.
++/// @param[in]      x                       x coordinate of the rectangle's
++///                                         lower left corner in pixels.
++/// @param[in]      y                       y coordinate of the rectangle's
++///                                         lower left corner in pixels.
++/// @param[in]      width                   Size in pixels of the rectangle's
++///                                         width.
++/// @param[in]      height                  Size in pixels of the rectangle's
++///                                         height.
++/// @param[in]      left_eye                Left eye texture description.
++/// @param[in]      right_eye               Right eye texture description.
++void CardboardDistortionRenderer_renderEyeToDisplay(
++    CardboardDistortionRenderer* renderer, uint64_t target, int x, int y,
++    int width, int height, const CardboardEyeTextureDescription* left_eye,
++    const CardboardEyeTextureDescription* right_eye);
++
++/// @}
++
++/////////////////////////////////////////////////////////////////////////////
++// Head Tracker
++/////////////////////////////////////////////////////////////////////////////
++/// @defgroup head-tracker Head Tracker
++/// @brief This module calculates the predicted head's pose for a given
++///     timestamp. It takes data from accelerometer and gyroscope sensors and
++///     uses a Kalman filter to generate the output value. The head's pose is
++///     returned as a quaternion. To have control of the usage of the sensors,
++///     this module also includes pause and resume functions.
++///
++/// @details Let the World frame be an arbitrary 3D Cartesian right handed frame
++///          whose basis is defined by a triplet of unit vectors
++///          (x, y, z) which point in the same
++///          direction as OpenGL. That is: x points to the right,
++///          y points up and z points backwards.
++///
++///          The head pose is always returned in the World frame. It is the
++///          average of the left and right eye position. By default, the head
++///          pose is near the origin, looking roughly forwards (down the
++///          -z axis).
++///
++///          Implementation and application code could refer to another three
++///          poses:
++///          - Raw sensor pose: no position, only orientation of device, derived
++///            directly from sensors.
++///          - Recentered sensor pose: like "Raw sensor pose", but with
++///            recentering applied.
++///          - Head pose: Recentered sensor pose, with neck model applied. The
++///            neck model only adjusts position, it does not adjust orientation.
++///            This is usually used directly as the camera pose, though it may
++///            be further adjusted via a scene graph. This is the only pose
++///            exposed through the API.
++/// @{
++
++/// Creates a new head tracker object.
++///
++/// @return         head tracker object pointer
++CardboardHeadTracker* CardboardHeadTracker_create();
++
++/// Destroys and releases memory used by the provided head tracker object.
++///
++/// @pre @p head_tracker Must not be null.
++/// When it is unmet, a call to this function results in a no-op.
++///
++/// @param[in]      head_tracker            Head tracker object pointer.
++void CardboardHeadTracker_destroy(CardboardHeadTracker* head_tracker);
++
++/// Pauses head tracker and underlying device sensors.
++///
++/// @pre @p head_tracker Must not be null.
++/// When it is unmet, a call to this function results in a no-op.
++///
++/// @param[in]      head_tracker            Head tracker object pointer.
++void CardboardHeadTracker_pause(CardboardHeadTracker* head_tracker);
++
++/// Resumes head tracker and underlying device sensors.
++///
++/// @pre @p head_tracker Must not be null.
++/// When it is unmet, a call to this function results in a no-op.
++///
++/// @param[in]      head_tracker            Head tracker object pointer.
++void CardboardHeadTracker_resume(CardboardHeadTracker* head_tracker);
++
++/// Gets the predicted head pose for a given timestamp.
++///
++/// @details On Android devices, @p timestamp_ns must be in system boot time
++///          (see [CLOCK_BOOTTIME](https://linux.die.net/man/2/clock_gettime))
++///          clock (see [Android
++///          Timestamp](https://developer.android.com/reference/android/hardware/SensorEvent#timestamp)).
++///          On iOS devices, @p timestamp_ns must be in system uptime raw
++///          (see
++///          [CLOCK_UPTIME_RAW](http://www.manpagez.com/man/3/clock_gettime/))
++///          clock (see [Apple
++///          Timestamp](https://developer.apple.com/documentation/coremotion/cmlogitem/1615939-timestamp?language=objc)).
++///
++/// @pre @p head_tracker Must not be null.
++/// @pre @p position Must not be null.
++/// @pre @p orientation Must not be null.
++/// When it is unmet, a call to this function results in a no-op and default
++/// values are returned (zero values and identity quaternion, respectively).
++///
++/// @param[in]      head_tracker            Head tracker object pointer.
++/// @param[in]      timestamp_ns            The timestamp for the pose in
++///                                         nanoseconds.
++/// @param[in]      viewport_orientation    The viewport orientation.
++/// @param[out]     position                3 floats for (x, y, z).
++/// @param[out]     orientation             4 floats for quaternion
++void CardboardHeadTracker_getPose(
++    CardboardHeadTracker* head_tracker, int64_t timestamp_ns,
++    CardboardViewportOrientation viewport_orientation, float* position,
++    float* orientation);
++
++/// Recenters the head tracker.
++///
++/// @details        By recentering, the @p head_tracker orientation gets aligned
++///                 with a zero yaw angle.
++///
++/// @pre @p head_tracker Must not be null.
++///
++/// @param[in]      head_tracker            Head tracker object pointer.
++void CardboardHeadTracker_recenter(CardboardHeadTracker* head_tracker);
++
++/// Sets a low pass filter on the head tracker with the given cut-off frequency
++/// to filter out high-frequency noise that is not representative of head
++/// movements.
++/// Using the low-pass filter is optional, but it will provide a more stable
++/// pose prediction.
++
++/// @param[in]      head_tracker      Head tracker object pointer
++/// @param[in]      cutoff_frequency  Cutoff frequency for the low-pass filter
++/// of the head tracker.
++void CardboardHeadTracker_setLowPassFilter(CardboardHeadTracker* head_tracker,
++                                           int cutoff_frequency);
++
++/// @}
++
++/////////////////////////////////////////////////////////////////////////////
++// QR Code Scanner
++/////////////////////////////////////////////////////////////////////////////
++/// @defgroup qrcode-scanner QR Code Scanner
++/// @brief This module manages the entire process of capturing, decoding and
++///     getting the device parameters from a QR code. It also saves and loads
++///     the device parameters to and from the external storage.
++/// @{
++
++/// Gets currently saved devices parameters. This function allocates memory for
++/// the parameters, so it must be released using @c ::CardboardQrCode_destroy.
++///
++/// @pre @p encoded_device_params Must not be null.
++/// @pre @p size Must not be null.
++/// When it is unmet, a call to this function results in a no-op and default
++/// values are returned (empty values).
++///
++/// @param[out]     encoded_device_params   Reference to the device parameters
++///     serialized using cardboard_device.proto.
++/// @param[out]     size                    Size in bytes of
++///     encoded_device_params.
++void CardboardQrCode_getSavedDeviceParams(uint8_t** encoded_device_params,
++                                          int* size);
++
++/// Releases memory used by the provided encoded_device_params array.
++///
++/// @pre @p encoded_device_params Must not be null.
++/// When it is unmet, a call to this function results in a no-op.
++///
++/// @param[in]      encoded_device_params   The device parameters serialized
++///     using cardboard_device.proto.
++void CardboardQrCode_destroy(const uint8_t* encoded_device_params);
++
++/// Saves the encoded device parameters provided by an URI.
++///
++/// @details This function obtains the encoded device parameters by parsing a
++///          URI string and then saves them.
++///
++///          Expected URI format for:
++///          - Cardboard Viewer v1: https://g.co/cardboard
++///          - Cardboard Viewer v2:
++///          https://google.com/cardboard/cfd?p=deviceParams (for example,
++///          https://google.com/cardboard/cfg?p=CgZHb29nbGUSEkNhcmRib2FyZCBJL08gMjAxNR0rGBU9JQHegj0qEAAASEIAAEhCAABIQgAASEJYADUpXA89OggeZnc-Ej6aPlAAYAM).
++///          Redirection is also supported up to a maximum of 5 possible
++///          redirects before reaching the proper pattern.
++///          This function only supports HTTPS connections. In case a URI
++///          containing an HTTP scheme is provided, it will be replaced by an
++///          HTTPS one.
++///          Upon termination, it will increment a counter that can be queried
++///          via @see CardboardQrCode_getDeviceParamsChangedCount() when new
++///          device parameters were successfully saved.
++///
++/// @pre @p uri Must not be null.
++/// @pre @p size Must be higher than 0.
++///
++/// @param[in]      uri                     UTF-8 URI string. See above for
++///                                         supported formats.
++/// @param[in]      size                    Size in bytes of @p uri
++void CardboardQrCode_saveDeviceParams(const uint8_t* uri, int size);
++
++/// Scans a QR code and saves the encoded device parameters.
++///
++/// @details Upon termination, it will increment a counter that can be queried
++///          via @c ::CardboardQrCode_getDeviceParamsChangedCount when new
++///          device parameters where successfully saved.
++void CardboardQrCode_scanQrCodeAndSaveDeviceParams();
++
++/// Gets the count of successful device parameters read and save operations.
++///
++/// @return The count of successful device parameters read and save operations.
++int CardboardQrCode_getDeviceParamsChangedCount();
++
++/// Gets Cardboard V1 device parameters.
++///
++/// @details This function does not use external storage, and stores into @p
++///          encoded_device_params the value of a pointer storing proto buffer.
++///          Users of this API should not free memory.
++///
++/// @pre @p encoded_device_params Must not be null.
++/// @pre @p size Must not be null.
++/// When it is unmet, a call to this function results in a no-op and default
++/// values are returned (empty values).
++/// Does not require a prior call to @c ::Cardboard_initializeAndroid in
++///       Android devices.
++///
++/// @param[out]     encoded_device_params   Reference to the device parameters.
++/// @param[out]     size                    Size in bytes of
++///                                         @p encoded_device_params.
++void CardboardQrCode_getCardboardV1DeviceParams(uint8_t** encoded_device_params,
++                                                int* size);
++
++/// @}
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif  // CARDBOARD_SDK_INCLUDE_CARDBOARD_H_
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/lens_distortion.cc b/rdp/catch/optics/ThirdParty/Cardboard/lens_distortion.cc
+new file mode 100644
+index 00000000..8c0ffe5c
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/lens_distortion.cc
+@@ -0,0 +1,258 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#include "lens_distortion.h"
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstring>
++#include <memory>
++#include <vector>
++
++#include "include/cardboard.h"
++
++
++namespace cardboard {
++
++constexpr float kDefaultBorderSizeMeters = 0.003f;
++
++// All values in tanangle units.
++struct LensDistortion::ViewportParams {
++  float width;
++  float height;
++  float x_eye_offset;
++  float y_eye_offset;
++};
++
++// Platform adapter: validated profile and measured physical screen dimensions.
++LensDistortion::LensDistortion(const DeviceParams& params, float screen_width,
++                               float screen_height) : device_params_(params) {
++  eye_from_head_matrix_[kLeft] = cardboard::Matrix4x4::Translation(
++      device_params_.inter_lens_distance() * 0.5f, 0.f, 0.f);
++  eye_from_head_matrix_[kRight] = cardboard::Matrix4x4::Translation(
++      -device_params_.inter_lens_distance() * 0.5f, 0.f, 0.f);
++
++  std::vector<float> distortion_coefficients(
++      device_params_.distortion_coefficients_size(), 0.0f);
++  for (int i = 0; i < device_params_.distortion_coefficients_size(); i++) {
++    distortion_coefficients.at(i) = device_params_.distortion_coefficients(i);
++  }
++
++  distortion_ = std::unique_ptr<PolynomialRadialDistortion>(
++      new PolynomialRadialDistortion(distortion_coefficients));
++
++  screen_width_meters_ = screen_width;
++  screen_height_meters_ = screen_height;
++  UpdateParams();
++}
++
++LensDistortion::~LensDistortion() {}
++
++void LensDistortion::GetEyeFromHeadMatrix(
++    CardboardEye eye, float* eye_from_head_matrix) const {
++  this->eye_from_head_matrix_[eye].ToArray(eye_from_head_matrix);
++}
++
++void LensDistortion::GetEyeProjectionMatrix(
++    CardboardEye eye, float z_near, float z_far,
++    float* projection_matrix) const {
++  Matrix4x4::Perspective(fov_[eye], z_near, z_far).ToArray(projection_matrix);
++}
++
++void LensDistortion::GetEyeFieldOfView(CardboardEye eye,
++                                       float* field_of_view) const {
++  std::memcpy(field_of_view, fov_[eye].data(), sizeof(float) * 4);
++}
++
++CardboardMesh LensDistortion::GetDistortionMesh(CardboardEye eye) const {
++  return eye == kLeft ? left_mesh_->GetMesh() : right_mesh_->GetMesh();
++}
++
++void LensDistortion::UpdateParams() {
++  fov_[kLeft] = CalculateFov(device_params_, *distortion_, screen_width_meters_,
++                             screen_height_meters_);
++  // Mirror fov for right eye.
++  fov_[kRight] = fov_[kLeft];
++  fov_[kRight][0] = fov_[kLeft][1];
++  fov_[kRight][1] = fov_[kLeft][0];
++
++  left_mesh_ = std::unique_ptr<DistortionMesh>(
++      CreateDistortionMesh(kLeft, device_params_, *distortion_, fov_[kLeft],
++                           screen_width_meters_, screen_height_meters_));
++  right_mesh_ = std::unique_ptr<DistortionMesh>(
++      CreateDistortionMesh(kRight, device_params_, *distortion_, fov_[kRight],
++                           screen_width_meters_, screen_height_meters_));
++}
++
++std::array<float, 2> LensDistortion::DistortedUvForUndistortedUv(
++    const std::array<float, 2>& in, CardboardEye eye) const {
++  if (screen_width_meters_ == 0 || screen_height_meters_ == 0) {
++    return {0, 0};
++  }
++
++  ViewportParams screen_params, texture_params;
++
++  CalculateViewportParameters(eye, device_params_, fov_[eye],
++                              screen_width_meters_, screen_height_meters_,
++                              &screen_params, &texture_params);
++
++  // Convert input from normalized [0, 1] screen coordinates to eye-centered
++  // tanangle units.
++  std::array<float, 2> undistorted_uv_tanangle = {
++      in[0] * screen_params.width - screen_params.x_eye_offset,
++      in[1] * screen_params.height - screen_params.y_eye_offset};
++
++  std::array<float, 2> distorted_uv_tanangle =
++      distortion_->Distort(undistorted_uv_tanangle);
++
++  // Convert output from tanangle units to normalized [0, 1] pre distort texture
++  // space.
++  return {(distorted_uv_tanangle[0] + texture_params.x_eye_offset) /
++              texture_params.width,
++          (distorted_uv_tanangle[1] + texture_params.y_eye_offset) /
++              texture_params.height};
++}
++
++std::array<float, 2> LensDistortion::UndistortedUvForDistortedUv(
++    const std::array<float, 2>& in, CardboardEye eye) const {
++  if (screen_width_meters_ == 0 || screen_height_meters_ == 0) {
++    return {0, 0};
++  }
++
++  ViewportParams screen_params, texture_params;
++
++  CalculateViewportParameters(eye, device_params_, fov_[eye],
++                              screen_width_meters_, screen_height_meters_,
++                              &screen_params, &texture_params);
++
++  // Convert input from normalized [0, 1] pre distort texture space to
++  // eye-centered tanangle units.
++  std::array<float, 2> distorted_uv_tanangle = {
++      in[0] * texture_params.width - texture_params.x_eye_offset,
++      in[1] * texture_params.height - texture_params.y_eye_offset};
++
++  std::array<float, 2> undistorted_uv_tanangle =
++      distortion_->DistortInverse(distorted_uv_tanangle);
++
++  // Convert output from tanangle units to normalized [0, 1] screen coordinates.
++  return {(undistorted_uv_tanangle[0] + screen_params.x_eye_offset) /
++              screen_params.width,
++          (undistorted_uv_tanangle[1] + screen_params.y_eye_offset) /
++              screen_params.height};
++}
++
++std::array<float, 4> LensDistortion::CalculateFov(
++    const DeviceParams& device_params,
++    const PolynomialRadialDistortion& distortion, float screen_width_meters,
++    float screen_height_meters) {
++  // FOV angles in device parameters are in degrees so they are converted
++  // to radians for posterior use.
++  std::array<float, 4> device_fov = {
++      DegreesToRadians(device_params.left_eye_field_of_view_angles(0)),
++      DegreesToRadians(device_params.left_eye_field_of_view_angles(1)),
++      DegreesToRadians(device_params.left_eye_field_of_view_angles(2)),
++      DegreesToRadians(device_params.left_eye_field_of_view_angles(3)),
++  };
++
++  const float eye_to_screen_distance = device_params.screen_to_lens_distance();
++  const float outer_distance =
++      (screen_width_meters - device_params.inter_lens_distance()) / 2.0f;
++  const float inner_distance = device_params.inter_lens_distance() / 2.0f;
++  const float bottom_distance =
++      GetYEyeOffsetMeters(device_params, screen_height_meters);
++  const float top_distance = screen_height_meters - bottom_distance;
++
++  const float outer_angle =
++      atan(distortion.Distort({outer_distance / eye_to_screen_distance, 0})[0]);
++  const float inner_angle =
++      atan(distortion.Distort({inner_distance / eye_to_screen_distance, 0})[0]);
++  const float bottom_angle = atan(
++      distortion.Distort({0, bottom_distance / eye_to_screen_distance})[1]);
++  const float top_angle =
++      atan(distortion.Distort({0, top_distance / eye_to_screen_distance})[1]);
++
++  return {
++      std::min(outer_angle, device_fov[0]),
++      std::min(inner_angle, device_fov[1]),
++      std::min(bottom_angle, device_fov[2]),
++      std::min(top_angle, device_fov[3]),
++  };
++}
++
++float LensDistortion::GetYEyeOffsetMeters(const DeviceParams& device_params,
++                                          float screen_height_meters) {
++  switch (device_params.vertical_alignment()) {
++    case DeviceParams::CENTER:
++    default:
++      return screen_height_meters / 2.0f;
++    case DeviceParams::BOTTOM:
++      return device_params.tray_to_lens_distance() - kDefaultBorderSizeMeters;
++    case DeviceParams::TOP:
++      return screen_height_meters - device_params.tray_to_lens_distance() -
++             kDefaultBorderSizeMeters;
++  }
++}
++
++DistortionMesh* LensDistortion::CreateDistortionMesh(
++    CardboardEye eye, const DeviceParams& device_params,
++    const PolynomialRadialDistortion& distortion,
++    const std::array<float, 4>& fov, float screen_width_meters,
++    float screen_height_meters) {
++  ViewportParams screen_params, texture_params;
++
++  CalculateViewportParameters(eye, device_params, fov, screen_width_meters,
++                              screen_height_meters, &screen_params,
++                              &texture_params);
++
++  return new DistortionMesh(distortion, screen_params.width,
++                            screen_params.height, screen_params.x_eye_offset,
++                            screen_params.y_eye_offset, texture_params.width,
++                            texture_params.height, texture_params.x_eye_offset,
++                            texture_params.y_eye_offset);
++}
++
++void LensDistortion::CalculateViewportParameters(
++    CardboardEye eye, const DeviceParams& device_params,
++    const std::array<float, 4>& fov, float screen_width_meters,
++    float screen_height_meters, ViewportParams* screen_params,
++    ViewportParams* texture_params) {
++  screen_params->width =
++      screen_width_meters / device_params.screen_to_lens_distance();
++  screen_params->height =
++      screen_height_meters / device_params.screen_to_lens_distance();
++
++  screen_params->x_eye_offset =
++      eye == kLeft
++          ? ((screen_width_meters - device_params.inter_lens_distance()) / 2) /
++                device_params.screen_to_lens_distance()
++          : ((screen_width_meters + device_params.inter_lens_distance()) / 2) /
++                device_params.screen_to_lens_distance();
++  screen_params->y_eye_offset =
++      GetYEyeOffsetMeters(device_params, screen_height_meters) /
++      device_params.screen_to_lens_distance();
++
++  texture_params->width = tan(fov[0]) + tan(fov[1]);
++  texture_params->height = tan(fov[2]) + tan(fov[3]);
++
++  texture_params->x_eye_offset = tan(fov[0]);
++  texture_params->y_eye_offset = tan(fov[2]);
++}
++
++constexpr float LensDistortion::DegreesToRadians(float angle) {
++  return angle * M_PI / 180.0f;
++}
++
++}  // namespace cardboard
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/lens_distortion.h b/rdp/catch/optics/ThirdParty/Cardboard/lens_distortion.h
+new file mode 100644
+index 00000000..6ad358d9
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/lens_distortion.h
+@@ -0,0 +1,85 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#ifndef CARDBOARD_SDK_LENSDISTORTION_H_
++#define CARDBOARD_SDK_LENSDISTORTION_H_
++
++#include <array>
++#include <memory>
++
++#include "../../Viewer/ProfileParams.hpp"
++
++#include "distortion_mesh.h"
++#include "include/cardboard.h"
++#include "polynomial_radial_distortion.h"
++#include "util/matrix_4x4.h"
++
++namespace cardboard {
++
++class LensDistortion {
++ public:
++  LensDistortion(const DeviceParams& params, float screen_width, float screen_height);
++  virtual ~LensDistortion();
++  // Tan angle units. "DistortedUvForUndistoredUv" goes through the forward
++  // distort function. I.e. the lens. UndistortedUvForDistortedUv uses the
++  // inverse distort function.
++  std::array<float, 2> DistortedUvForUndistortedUv(
++      const std::array<float, 2>& in, CardboardEye eye) const;
++  std::array<float, 2> UndistortedUvForDistortedUv(
++      const std::array<float, 2>& in, CardboardEye eye) const;
++  void GetEyeFromHeadMatrix(CardboardEye eye,
++                            float* eye_from_head_matrix) const;
++  void GetEyeProjectionMatrix(CardboardEye eye, float z_near, float z_far,
++                              float* projection_matrix) const;
++  void GetEyeFieldOfView(CardboardEye eye, float* field_of_view) const;
++  CardboardMesh GetDistortionMesh(CardboardEye eye) const;
++ private:
++  struct ViewportParams;
++
++  void UpdateParams();
++  static float GetYEyeOffsetMeters(const DeviceParams& device_params,
++                                   float screen_height_meters);
++  static DistortionMesh* CreateDistortionMesh(
++      CardboardEye eye, const cardboard::DeviceParams& device_params,
++      const cardboard::PolynomialRadialDistortion& distortion,
++      const std::array<float, 4>& fov, float screen_width_meters,
++      float screen_height_meters);
++  static std::array<float, 4> CalculateFov(
++      const cardboard::DeviceParams& device_params,
++      const cardboard::PolynomialRadialDistortion& distortion,
++      float screen_width_meters, float screen_height_meters);
++  static void CalculateViewportParameters(CardboardEye eye,
++                                          const DeviceParams& device_params,
++                                          const std::array<float, 4>& fov,
++                                          float screen_width_meters,
++                                          float screen_height_meters,
++                                          ViewportParams* screen_params,
++                                          ViewportParams* texture_params);
++  static constexpr float DegreesToRadians(float angle);
++
++  DeviceParams device_params_;
++
++  float screen_width_meters_;
++  float screen_height_meters_;
++  std::array<std::array<float, 4>, 2> fov_;  // L, R, B, T
++  std::array<Matrix4x4, 2> eye_from_head_matrix_;
++  std::unique_ptr<DistortionMesh> left_mesh_;
++  std::unique_ptr<DistortionMesh> right_mesh_;
++  std::unique_ptr<PolynomialRadialDistortion> distortion_;
++};
++
++}  // namespace cardboard
++
++#endif  // CARDBOARD_SDK_LENSDISTORTION_H_
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/polynomial_radial_distortion.cc b/rdp/catch/optics/ThirdParty/Cardboard/polynomial_radial_distortion.cc
+new file mode 100644
+index 00000000..f707798c
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/polynomial_radial_distortion.cc
+@@ -0,0 +1,80 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#include "polynomial_radial_distortion.h"
++
++#include <cmath>
++#include <limits>
++#include <stdexcept>
++
++namespace cardboard {
++
++PolynomialRadialDistortion::PolynomialRadialDistortion(
++    const std::vector<float>& coefficients)
++    : coefficients_(coefficients) {}
++
++float PolynomialRadialDistortion::DistortionFactor(float r_squared) const {
++  float r_factor = 1.0f;
++  float distortion_factor = 1.0f;
++
++  for (float ki : coefficients_) {
++    r_factor *= r_squared;
++    distortion_factor += ki * r_factor;
++  }
++
++  return distortion_factor;
++}
++
++float PolynomialRadialDistortion::DistortRadius(float r) const {
++  return r * DistortionFactor(r * r);
++}
++
++std::array<float, 2> PolynomialRadialDistortion::Distort(
++    const std::array<float, 2>& p) const {
++  float distortion_factor = DistortionFactor(p[0] * p[0] + p[1] * p[1]);
++  return std::array<float, 2>{distortion_factor * p[0],
++                              distortion_factor * p[1]};
++}
++
++std::array<float, 2> PolynomialRadialDistortion::DistortInverse(
++    const std::array<float, 2>& p) const {
++  const float radius = std::sqrt(p[0] * p[0] + p[1] * p[1]);
++  if (std::fabs(radius - 0.0f) < std::numeric_limits<float>::epsilon()) {
++    return std::array<float, 2>();
++  }
++
++  // Based on the shape of typical distortion curves, |radius| / 2 and
++  // |radius| / 3 are good initial guesses for the Secant method that will
++  // remain within the intended range of the polynomial.
++  float r0 = radius / 2.0f;
++  float r1 = radius / 3.0f;
++  float r2;
++  float dr0 = radius - DistortRadius(r0);
++  float dr1;
++  int iterations = 0;
++  while (std::fabs(r1 - r0) > 0.0001f /** 0.1mm */) {
++    if (++iterations > 64) throw std::runtime_error("Non-convergent viewer profile");
++    dr1 = radius - DistortRadius(r1);
++    r2 = r1 - dr1 * ((r1 - r0) / (dr1 - dr0));
++    if (!std::isfinite(r2)) throw std::runtime_error("Invalid viewer inverse");
++    r0 = r1;
++    r1 = r2;
++    dr0 = dr1;
++  }
++
++  return std::array<float, 2>{(r1 / radius) * p[0], (r1 / radius) * p[1]};
++}
++
++}  // namespace cardboard
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/polynomial_radial_distortion.h b/rdp/catch/optics/ThirdParty/Cardboard/polynomial_radial_distortion.h
+new file mode 100644
+index 00000000..42b16274
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/polynomial_radial_distortion.h
+@@ -0,0 +1,73 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#ifndef CARDBOARD_SDK_POLYNOMIAL_RADIAL_DISTORTION_H_
++#define CARDBOARD_SDK_POLYNOMIAL_RADIAL_DISTORTION_H_
++
++#include <array>
++#include <vector>
++
++namespace cardboard {
++
++// PolynomialRadialDistortion implements a radial distortion based using
++// a set of coefficients describing a polynomial function.
++// See http://en.wikipedia.org/wiki/Distortion_(optics).
++//
++// Unless otherwise stated, the units used in this class are tan-angle units
++// which can be computed as distance on the screen divided by distance from the
++// virtual eye to the screen.
++class PolynomialRadialDistortion {
++ public:
++  // Construct a PolynomialRadialDistortion with coefficients for
++  // the radial distortion equation:
++  //
++  //   p' = p (1 + K1 r^2 + K2 r^4 + ... + Kn r^(2n))
++  //
++  // where r is the distance in tan-angle units from the optical center,
++  // p the input point and p' the output point.
++  // The provided vector contains the coefficients for the even monomials
++  // in the distortion equation: coefficients[0] is K1, coefficients[1] is K2,
++  // etc.  Thus the polynomial used for distortion has degree
++  // (2 * coefficients.size()).
++  explicit PolynomialRadialDistortion(const std::vector<float>& coefficients);
++
++  // Given a 2d point p, returns the corresponding distorted point.
++  // The units of both the input and output points are tan-angle units,
++  // which can be computed as the distance on the screen divided by
++  // distance from the virtual eye to the screen. For both the input
++  // and output points, the intersection of the optical axis of the lens
++  // with the screen defines the origin, the x axis points right, and
++  // the y axis points up.
++  std::array<float, 2> Distort(const std::array<float, 2>& p) const;
++
++  // Given a 2d point p, returns the point that would need to be passed to
++  // Distort to get point p (approximately).
++  std::array<float, 2> DistortInverse(const std::array<float, 2>& p) const;
++
++ private:
++  // Given a radius (measuring distance from the optical axis of the lens),
++  // returns the distortion factor for that radius.
++  float DistortionFactor(float r_squared) const;
++
++  // Given a radius (measuring distance from the optical axis of the lens),
++  // returns the corresponding distorted radius.
++  float DistortRadius(float r) const;
++
++  std::vector<float> coefficients_;
++};
++
++}  // namespace cardboard
++
++#endif  // CARDBOARD_SDK_POLYNOMIAL_RADIAL_DISTORTION_H_
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/proto/cardboard_device.proto b/rdp/catch/optics/ThirdParty/Cardboard/proto/cardboard_device.proto
+new file mode 100644
+index 00000000..d553ed27
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/proto/cardboard_device.proto
+@@ -0,0 +1,123 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++syntax = "proto2";
++
++package cardboard;
++
++option java_package = "com.google.cardboard.proto";
++option java_outer_classname = "CardboardDevice";
++option optimize_for = LITE_RUNTIME;
++
++/**
++ * Message describing properties of a VR head mount device (HMD) which uses an
++ * interchangeable smartphone as a display (e.g. Google Cardboard).
++ *
++ * While some properties are certain (e.g. inter_lens_distance), others
++ * represent nominal values which may be refined depending on context (e.g.
++ * viewport_angles).
++ *
++ * Lengths are in meters unless noted otherwise.  Fields are _required_
++ * unless noted otherwise.
++ *
++ * Some context on why this set of parameters are deemed necessary and
++ * sufficient:
++ *    * FOV scale can be reasonably approximated from lens-to-screen distance
++ *      and display size (i.e. knowing lens focal length isn't crucial).
++ *    * Lenses are assumed to be horizontally centered with respect to
++ *      display.
++ *    * The display is not necessarily vertically centered.  For interchangeable
++ *      phones where the device rests against a tray, we can derive
++ *      the vertical offset from tray-to-lens height along with phone-specific
++ *      bezel and screen sizes (supplied separately).
++ */
++message DeviceParams {
++  // String identifying the device's vendor (e.g. "Google, Inc.").
++  // A device's [vendor, model] pair is expected to be globally unique.
++  optional string vendor = 1;
++
++  // String identifying the device's model, including revision info if
++  // needed (e.g. "Cardboard v1").  A device's [vendor, model] pair is
++  // expected to be globally unique.
++  optional string model = 2;
++
++  // Distance from the display screen to the optical center of lenses.
++  // This is a required field for distortion rendering, and must be positive.
++  optional float screen_to_lens_distance = 3;
++
++  // Horizontal distance between optical center of the lenses.
++  // This is a required field for distortion rendering, and must be positive.
++  optional float inter_lens_distance = 4;
++
++  // Four-element tuple (left, right, bottom, top) of left eye's view extent
++  // angles relative to center, assuming the following:
++  //     * eye is aligned with optical center of lens
++  //     * display screen is equal or larger than extents viewable through lens
++  //     * nominal eye-to-lens distance
++  //     * mirrored field of view will be applied to the right eye
++  // These values are essentially used as an optimization to avoid rendering
++  // pixels which can't be seen.
++  // This is a required field for distortion rendering, and angles must be
++  // positive.
++  repeated float left_eye_field_of_view_angles = 5 [packed = true];
++
++  enum VerticalAlignmentType {
++    BOTTOM = 0;  // phone rests against a fixed bottom tray
++    CENTER = 1;  // phone screen assumed to be centered w.r.t. lenses
++    TOP = 2;     // phone rests against a fixed top tray
++  }
++
++  // Set according to vertical alignment strategy-- see enum comments above.
++  // NOTE: If you set this to CENTER, see special instructions for the
++  // tray_to_lens_distance field below.
++  optional VerticalAlignmentType vertical_alignment = 11 [default = BOTTOM];
++
++  // If the phone is aligned vertically within the device by resting against
++  // a fixed top or bottom tray, this is the distance from the tray to
++  // optical center of the lenses.
++  // This is a required field for distortion rendering, and must be positive.
++  // NOTE: Due to a bug in initial versions of the SDK's, this field
++  // must be set explicitly to .035 when vertical_alignment = CENTER.
++  optional float tray_to_lens_distance = 6;
++
++  // Coefficients Ki for pincushion distortion function which maps
++  // from position on real screen to virtual screen (i.e. texture) relative
++  // to optical center:
++  //
++  //    p' = p (1 + K1 r^2 + K2 r^4 + ... + Kn r^(2n))
++  //
++  // where r is the distance in tan-angle units from the optical center,
++  // p the input point, and p' the output point.  Tan-angle units can be
++  // computed as distance on the screen divided by distance from the
++  // virtual eye to the screen.
++  repeated float distortion_coefficients = 7 [packed = true];
++
++  enum ButtonType {
++    // No physical button, and touch screen is not easily accessible.
++    NONE = 0;
++    // HMD has integrated magnet switch similar to original Cardboard.
++    MAGNET = 1;
++    // At least a portion of touch screen is easily accessible to user for taps.
++    TOUCH = 2;
++    // Touch screen is triggered indirectly via integrated button on the HMD.
++    INDIRECT_TOUCH = 3;
++  }
++
++  // Specify primary input mechanism of the HMD.  Intended for advisory
++  // purposes only, to address simple questions such as "can HMD
++  // be used with apps requiring a physical button event?" or "what icon
++  // should be used to represent button action to the user?".
++  optional ButtonType primary_button = 12 [default = MAGNET];
++}
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/qrcode/cardboard_v1/cardboard_v1.cc b/rdp/catch/optics/ThirdParty/Cardboard/qrcode/cardboard_v1/cardboard_v1.cc
+new file mode 100644
+index 00000000..ed33dcc0
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/qrcode/cardboard_v1/cardboard_v1.cc
+@@ -0,0 +1,32 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#include "qrcode/cardboard_v1/cardboard_v1.h"
++
++namespace cardboard::qrcode {
++
++std::vector<uint8_t> getCardboardV1DeviceParams() {
++  return {
++      0xa,  0xc,  0x47, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2c, 0x20, 0x49,
++      0x6e, 0x63, 0x2e, 0x12, 0xc,  0x43, 0x61, 0x72, 0x64, 0x62, 0x6f,
++      0x61, 0x72, 0x64, 0x20, 0x76, 0x31, 0x1d, 0x31, 0x8,  0x2c, 0x3d,
++      0x25, 0x8f, 0xc2, 0x75, 0x3d, 0x2a, 0x10, 0x0,  0x0,  0x20, 0x42,
++      0x0,  0x0,  0x20, 0x42, 0x0,  0x0,  0x20, 0x42, 0x0,  0x0,  0x20,
++      0x42, 0x35, 0x29, 0x5c, 0xf,  0x3d, 0x3a, 0x8,  0xc1, 0xca, 0xe1,
++      0x3e, 0x77, 0xbe, 0x1f, 0x3e, 0x58, 0x0,  0x60, 0x1,
++  };
++}
++
++}  // namespace cardboard::qrcode
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/qrcode/cardboard_v1/cardboard_v1.h b/rdp/catch/optics/ThirdParty/Cardboard/qrcode/cardboard_v1/cardboard_v1.h
+new file mode 100644
+index 00000000..a0a0c63b
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/qrcode/cardboard_v1/cardboard_v1.h
+@@ -0,0 +1,41 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#ifndef CARDBOARD_SDK_QRCODE_CARDBOARD_V1_CARDBOARD_V1_H_
++#define CARDBOARD_SDK_QRCODE_CARDBOARD_V1_CARDBOARD_V1_H_
++
++#include <stdint.h>
++
++#include <vector>
++
++namespace cardboard::qrcode {
++
++/// Device params for Cardboard V1 released at Google I/O 2014.
++/// {@
++constexpr float kCardboardV1InterLensDistance = 0.06f;
++constexpr float kCardboardV1TrayToLensDistance = 0.035f;
++constexpr float kCardboardV1ScreenToLensDistance = 0.042f;
++constexpr float kCardboardV1FovHalfDegrees[] = {40.0f, 40.0f, 40.0f, 40.0f};
++constexpr float kCardboardV1DistortionCoeffs[] = {0.441f, 0.156f};
++constexpr int kCardboardV1DistortionCoeffsSize = 2;
++constexpr int kCardboardV1VerticalAlignmentType = 0;
++constexpr char kCardboardV1Vendor[] = "Google, Inc.";
++constexpr char kCardboardV1Model[] = "Cardboard v1";
++/// @}
++
++std::vector<uint8_t> getCardboardV1DeviceParams();
++}  // namespace cardboard::qrcode
++
++#endif  // CARDBOARD_SDK_QRCODE_CARDBOARD_V1_CARDBOARD_V1_H_
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/sources.json b/rdp/catch/optics/ThirdParty/Cardboard/sources.json
+new file mode 100644
+index 00000000..3c138377
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/sources.json
+@@ -0,0 +1,19 @@
++{
++  "repository": "https://github.com/googlevr/cardboard",
++  "commit": "8bd424da7f1e399255a1b6e7c02be8e281ecc974",
++  "original_sha256": {
++    "sdk/lens_distortion.cc": "5d185c7eaac1744cb09b78355b9ae527068ba53aaba27becc6b78b8a52a504f7",
++    "sdk/lens_distortion.h": "775360621ed729f0dd78ec10b97588e0a4bf8484ba5e10ed49a5b6e808153f10",
++    "sdk/distortion_mesh.cc": "630378edc9ad9bf43f7217770a97a1d67ccf146a02d1111b610ee48d1333a1b1",
++    "sdk/distortion_mesh.h": "9a44104ed315236a359cfdf8f6cb904840b6696031e7430671685c2a0fc3855b",
++    "sdk/polynomial_radial_distortion.cc": "c8c2945337e3f7627720097832cca362e108a0cf90bde4a15e0e9122074ffacd",
++    "sdk/polynomial_radial_distortion.h": "f78f61b41dbe223da344f810977ee854d54e47deb0e7a0e6a2b3dba56abfb19c",
++    "sdk/util/matrix_4x4.cc": "5dc8d34c42aa1ef1aa67b63deb3dc6af085bf4c1d44c5c0724b9c603f19a9423",
++    "sdk/util/matrix_4x4.h": "ac978d82e95ef852635c5b4aa473c97d5940bc36a8ce2114cc408182c07ad3be",
++    "sdk/include/cardboard.h": "0b8cce32859b014062fbf7d975716201ea3eb9652a38e89e2477718d30ca56a3",
++    "sdk/qrcode/cardboard_v1/cardboard_v1.cc": "b5cff8ab600e982ed9a8fb5730fb3f32f0c60b80478f5e458ce0f2e21fdbfc7f",
++    "sdk/qrcode/cardboard_v1/cardboard_v1.h": "ec4cc549fbefb3fce6fde72ec106319913db65f5ef5c7dae5254749e8e438ce4",
++    "proto/cardboard_device.proto": "161bc6259302506c89586029902703ea7da5dcb25e6cf79cd5a9c2170eebdea9",
++    "LICENSE": "fd47b8b87f5f105a2602652e946c02205a6bd0d37afbd624e2d539dd86a6c2ab"
++  }
++}
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/util/matrix_4x4.cc b/rdp/catch/optics/ThirdParty/Cardboard/util/matrix_4x4.cc
+new file mode 100644
+index 00000000..71c1d293
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/util/matrix_4x4.cc
+@@ -0,0 +1,86 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#include "util/matrix_4x4.h"
++
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++
++namespace cardboard {
++
++Matrix4x4 Matrix4x4::Identity() {
++  Matrix4x4 ret;
++  for (int j = 0; j < 4; ++j) {
++    for (int i = 0; i < 4; ++i) {
++      ret.m[j][i] = (i == j) ? 1 : 0;
++    }
++  }
++
++  return ret;
++}
++
++Matrix4x4 Matrix4x4::Zeros() {
++  Matrix4x4 ret;
++  for (int j = 0; j < 4; ++j) {
++    for (int i = 0; i < 4; ++i) {
++      ret.m[j][i] = 0;
++    }
++  }
++
++  return ret;
++}
++
++Matrix4x4 Matrix4x4::Translation(float x, float y, float z) {
++  Matrix4x4 ret = Matrix4x4::Identity();
++  ret.m[3][0] = x;
++  ret.m[3][1] = y;
++  ret.m[3][2] = z;
++
++  return ret;
++}
++
++Matrix4x4 Matrix4x4::Perspective(const std::array<float, 4>& fov, float zNear,
++                                 float zFar) {
++  Matrix4x4 ret = Matrix4x4::Zeros();
++
++  const float xLeft = -std::tan(fov[0]) * zNear;
++  const float xRight = std::tan(fov[1]) * zNear;
++  const float yBottom = -std::tan(fov[2]) * zNear;
++  const float yTop = std::tan(fov[3]) * zNear;
++
++  const float X = (2 * zNear) / (xRight - xLeft);
++  const float Y = (2 * zNear) / (yTop - yBottom);
++  const float A = (xRight + xLeft) / (xRight - xLeft);
++  const float B = (yTop + yBottom) / (yTop - yBottom);
++  const float C = (zNear + zFar) / (zNear - zFar);
++  const float D = (2 * zNear * zFar) / (zNear - zFar);
++
++  ret.m[0][0] = X;
++  ret.m[2][0] = A;
++  ret.m[1][1] = Y;
++  ret.m[2][1] = B;
++  ret.m[2][2] = C;
++  ret.m[3][2] = D;
++  ret.m[2][3] = -1;
++
++  return ret;
++}
++
++void Matrix4x4::ToArray(float* array) const {
++  std::memcpy(array, &m[0][0], 16 * sizeof(float));
++}
++
++}  // namespace cardboard
+diff --git a/rdp/catch/optics/ThirdParty/Cardboard/util/matrix_4x4.h b/rdp/catch/optics/ThirdParty/Cardboard/util/matrix_4x4.h
+new file mode 100644
+index 00000000..a6f37a66
+--- /dev/null
++++ b/rdp/catch/optics/ThirdParty/Cardboard/util/matrix_4x4.h
+@@ -0,0 +1,61 @@
++/*
++ * Copyright 2019 Google LLC
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++#ifndef CARDBOARD_SDK_UTIL_MATRIX_4X4_H_
++#define CARDBOARD_SDK_UTIL_MATRIX_4X4_H_
++
++#include <array>
++
++namespace cardboard {
++
++// The Matrix4x4 class defines a square 4-dimensional matrix. Elements are
++// stored in row-major order.
++class Matrix4x4 {
++ public:
++  // @brief Constructs an identity matrix.
++  // @returns An identity matrix.
++  static Matrix4x4 Identity();
++
++  // @brief Constructs an all zeros matrix.
++  // @returns A zero matrix.
++  static Matrix4x4 Zeros();
++
++  // @brief Constructs a translation matrix from [@p x, @p y, @p z] position.
++  // @param x The x position coordinate.
++  // @param y The y position coordinate.
++  // @param z The z position coordinate.
++  // @returns A translation matrix.
++  static Matrix4x4 Translation(float x, float y, float z);
++
++  // @brief Constructs a projection matrix from the field of view half angles
++  //        and the z-coordinate of the near and far clipping planes.
++  // @param fov An array with the half angles of the field of view.
++  // @param zNear The z coordinate of the near clipping plane.
++  // @param zFar The z coordinate of the far clipping plane.
++  // @return A projection matrix.
++  static Matrix4x4 Perspective(const std::array<float, 4>& fov, float zNear,
++                               float zFar);
++
++  // @brief Copies into @p array the contents of `this` matrix.
++  // @param[out] array A pointer to a float array of size 16.
++  void ToArray(float* array) const;
++
++ private:
++  std::array<std::array<float, 4>, 4> m;
++};
++
++}  // namespace cardboard
++
++#endif  // CARDBOARD_SDK_UTIL_MATRIX4X4_H_
+diff --git a/rdp/catch/optics/Viewer/ProfileParams.hpp b/rdp/catch/optics/Viewer/ProfileParams.hpp
+new file mode 100644
+index 00000000..30f23a22
+--- /dev/null
++++ b/rdp/catch/optics/Viewer/ProfileParams.hpp
+@@ -0,0 +1,22 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <array>
++#include <string>
++#include <vector>
++// Bounded protobuf adapter for Cardboard's DeviceParams schema, not generated code.
++namespace cardboard {
++struct DeviceParams {
++    enum { BOTTOM=0, CENTER=1, TOP=2 };
++    std::string vendor, model;
++    float distance=0, separation=0, tray=0;
++    int alignment=BOTTOM;
++    std::vector<float> coefficients, fov;
++    float screen_to_lens_distance() const {return distance;}
++    float inter_lens_distance() const {return separation;}
++    float tray_to_lens_distance() const {return tray;}
++    int vertical_alignment() const {return alignment;}
++    int distortion_coefficients_size() const {return static_cast<int>(coefficients.size());}
++    float distortion_coefficients(int i) const {return coefficients.at(i);}
++    float left_eye_field_of_view_angles(int i) const {return fov.at(i);}
++};
++}
+diff --git a/rdp/catch/optics/Viewer/Sampling.h b/rdp/catch/optics/Viewer/Sampling.h
+new file mode 100644
+index 00000000..b9528ed6
+--- /dev/null
++++ b/rdp/catch/optics/Viewer/Sampling.h
+@@ -0,0 +1,25 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++// Same pixel mapping in the portable proof and Metal; Android headset_fitted.frag.
++#pragma once
++#ifdef __METAL_VERSION__
++#define FH_FLOOR floor
++#else
++#include <cmath>
++#define FH_FLOOR std::floor
++#endif
++struct FHSample { float x,y; unsigned eye; bool visible; };
++inline FHSample fittedSample(float x,float y,float width,float height) {
++    const float ew=width*0.5f;
++    const unsigned eye=x>=ew?1u:0u;
++    const float px=FH_FLOOR(x)-eye*ew,py=FH_FLOOR(y);
++    const float cx=FH_FLOOR(ew*0.5f),cy=FH_FLOOR(height*0.5f);
++    const float dx=px-cx,dy=py-cy;
++    const float radius2=4.0f*(dx*dx+dy*dy)/(ew*ew+height*height);
++    const float scale=1.0f+0.13f*radius2; // Existing shinecon-fit-d, not a QR coefficient.
++    float sx=cx+dx*scale+0.5f,sy=cy+dy*scale+0.5f;
++    const bool visible=sx>=0 && sy>=0 && sx<ew && sy<height;
++    if(sx>ew-1)sx=ew-1;
++    if(sy>height-1)sy=height-1;
++    return {sx+eye*ew,sy,eye,visible};
++}
++#undef FH_FLOOR
+diff --git a/rdp/catch/optics/Viewer/Viewer.cpp b/rdp/catch/optics/Viewer/Viewer.cpp
+new file mode 100644
+index 00000000..93b49871
+--- /dev/null
++++ b/rdp/catch/optics/Viewer/Viewer.cpp
+@@ -0,0 +1,79 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#include "Viewer.hpp"
++#include "../ThirdParty/Cardboard/lens_distortion.h"
++#include "../ThirdParty/Cardboard/qrcode/cardboard_v1/cardboard_v1.h"
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++#include <stdexcept>
++
++namespace flatheadset {
++namespace {
++[[noreturn]] void invalid(){throw std::runtime_error("Invalid viewer profile");}
++struct Reader {
++    const std::vector<uint8_t>& data; size_t pos=0;
++    uint64_t varint(){uint64_t n=0;for(int i=0;i<10;++i){if(pos==data.size())invalid();auto b=data[pos++];if(i==9 && b>1)invalid();n|=uint64_t(b&127)<<(7*i);if(!(b&128))return n;}invalid();}
++    size_t length(){auto n=varint();if(n>data.size()-pos)invalid();return static_cast<size_t>(n);}
++    float number(){if(data.size()-pos<4)invalid();uint32_t n=0;for(int i=0;i<4;++i)n|=uint32_t(data[pos++])<<(8*i);float f;std::memcpy(&f,&n,4);if(!std::isfinite(f))invalid();return f;}
++};
++}
++const char* Viewer::profileId() const {
++    switch(mode){case LensMode::None:return "none";case LensMode::ShineconFitD:return "shinecon-fit-d";case LensMode::Cardboard:return "cardboard-default";}
++    invalid();
++}
++cardboard::DeviceParams parseViewer(const std::vector<uint8_t>& bytes){
++    if(bytes.empty() || bytes.size()>16384)invalid();
++    cardboard::DeviceParams p;Reader r{bytes};unsigned seen=0;
++    while(r.pos<bytes.size()){
++        auto tag=r.varint();auto field=tag>>3,wire=tag&7;if(!field || field>0x1fffffff)invalid();
++        if(field==1 || field==2){if(wire!=2)invalid();auto n=r.length();if(n>256)invalid();auto s=std::string(reinterpret_cast<const char*>(bytes.data()+r.pos),n);r.pos+=n;if(field==1)p.vendor=s;else p.model=s;}
++        else if(field==3 || field==4 || field==6){if(wire!=5)invalid();float f=r.number();if(f<=0 || f>1)invalid();if(field==3){p.distance=f;seen|=1;}else if(field==4){p.separation=f;seen|=2;}else {p.tray=f;seen|=4;}}
++        else if(field==5 || field==7){auto& values=field==5?p.fov:p.coefficients;
++            if(wire==5)values.push_back(r.number());
++            else if(wire==2){auto n=r.length();if(n%4 || n>64)invalid();auto end=r.pos+n;while(r.pos<end)values.push_back(r.number());}
++            else invalid();
++            if(values.size()>16)invalid();
++        }else if(field==11){if(wire!=0)invalid();auto n=r.varint();if(n>2)invalid();p.alignment=static_cast<int>(n);}
++        else {switch(wire){case 0:r.varint();break;case 1:if(bytes.size()-r.pos<8)invalid();r.pos+=8;break;case 2:{auto n=r.length();r.pos+=n;break;}case 5:if(bytes.size()-r.pos<4)invalid();r.pos+=4;break;default:invalid();}}
++    }
++    if(seen!=7 || p.fov.size()!=4)invalid();
++    for(float angle:p.fov)if(angle<=0 || angle>=90)invalid();
++    for(float k:p.coefficients)if(std::fabs(k)>1000000)invalid();
++    return p;
++}
++std::vector<uint8_t> viewerBytes(const std::string& url){
++    if(url.empty())return cardboard::qrcode::getCardboardV1DeviceParams();
++    const std::string https="https://google.com/cardboard/cfg?p=",http="http://google.com/cardboard/cfg?p=";
++    size_t start=url.rfind(https,0)==0?https.size():url.rfind(http,0)==0?http.size():0;
++    if(!start || url.size()>24000)invalid();
++    std::vector<uint8_t> out;uint32_t acc=0;int bits=0;bool padded=false;size_t pads=0,count=0;
++    for(size_t i=start;i<url.size();++i){char c=url[i];if(c=='='){padded=true;++pads;continue;}if(padded)invalid();
++        int v=c>='A'&&c<='Z'?c-'A':c>='a'&&c<='z'?c-'a'+26:c>='0'&&c<='9'?c-'0'+52:c=='-'?62:c=='_'?63:-1;
++        if(v<0)invalid();
++        ++count;acc=(acc<<6)|static_cast<unsigned>(v);bits+=6;if(bits>=8){bits-=8;out.push_back(static_cast<uint8_t>(acc>>bits));}
++    }
++    if(count%4==1 || pads>2 || (pads && (count+pads)%4) || (bits && (acc&((1u<<bits)-1))))invalid();
++    parseViewer(out);return out;
++}
++std::shared_ptr<const Viewer> makeViewer(LensMode mode,const std::string& qr,int width,int height,float widthMm,float heightMm){
++    if(width<2 || width%2 || height<1 || width>16384 || height>16384)invalid();
++    if(mode!=LensMode::None && mode!=LensMode::ShineconFitD && mode!=LensMode::Cardboard)invalid();
++    auto result=std::make_shared<Viewer>();result->mode=mode;result->width=width;result->height=height;
++    if(mode!=LensMode::Cardboard)return result;
++    if(!std::isfinite(widthMm) || !std::isfinite(heightMm) || widthMm<=0 || heightMm<=0)throw std::runtime_error("Unknown phone screen dimensions");
++    const auto p=parseViewer(viewerBytes(qr));
++    const float w=widthMm/1000.0f,h=heightMm/1000.0f;
++    const float y=p.alignment==1?h/2:p.alignment==0?p.tray-0.003f:h-p.tray-0.003f;
++    if(p.separation>=w || y<=0 || y>=h)invalid();
++    cardboard::LensDistortion lens(p,w,h);
++    for(int eye=0;eye<2;++eye){auto mesh=lens.GetDistortionMesh(static_cast<CardboardEye>(eye));auto& dst=result->eyes[eye];
++        for(int i=0;i<mesh.n_vertices;++i){
++            LensVertex v{mesh.vertices[2*i],mesh.vertices[2*i+1],mesh.uvs[2*i],1-mesh.uvs[2*i+1]};
++            if(!std::isfinite(v.u) || !std::isfinite(v.v) || !std::isfinite(v.x) || !std::isfinite(v.y) || std::fabs(v.x)>100 || std::fabs(v.y)>100)invalid();
++            dst.vertices.push_back(v);
++        }
++        for(int i=0;i<mesh.n_indices;++i){if(mesh.indices[i]<0 || mesh.indices[i]>=mesh.n_vertices)invalid();dst.indices.push_back(static_cast<uint32_t>(mesh.indices[i]));}
++    }
++    return result;
++}
++}
+diff --git a/rdp/catch/optics/Viewer/Viewer.hpp b/rdp/catch/optics/Viewer/Viewer.hpp
+new file mode 100644
+index 00000000..03e0f77e
+--- /dev/null
++++ b/rdp/catch/optics/Viewer/Viewer.hpp
+@@ -0,0 +1,20 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include "ProfileParams.hpp"
++#include <cstdint>
++#include <memory>
++namespace flatheadset {
++enum class LensMode { None=0, ShineconFitD=1, Cardboard=2 };
++struct LensVertex { float x,y,u,v; };
++struct EyeMesh { std::vector<LensVertex> vertices; std::vector<uint32_t> indices; };
++struct Viewer {
++    LensMode mode;
++    int width, height;
++    std::array<EyeMesh,2> eyes;
++    const char* profileId() const;
++};
++cardboard::DeviceParams parseViewer(const std::vector<uint8_t>& bytes);
++std::vector<uint8_t> viewerBytes(const std::string& fullQrUrl);
++std::shared_ptr<const Viewer> makeViewer(LensMode mode,const std::string& fullQrUrl,
++                                       int width,int height,float widthMm,float heightMm);
++}
+diff --git a/rdp/catch/presentation.cpp b/rdp/catch/presentation.cpp
+new file mode 100644
+index 00000000..d803fe8b
+--- /dev/null
++++ b/rdp/catch/presentation.cpp
+@@ -0,0 +1,162 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-or-later
++#include "presentation.h"
++#include "optics/Viewer/Sampling.h"
++
++#include <QPainter>
++
++#include <algorithm>
++#include <cmath>
++#include <stdexcept>
++
++namespace CatchPresentation
++{
++QRect eyeFit(QSize eye, QSize cell)
++{
++    if (eye.isEmpty() || cell.isEmpty())
++        return {};
++    const QSize fit = eye.scaled(cell, Qt::KeepAspectRatio);
++    return QRect(QPoint((cell.width() - fit.width()) / 2, (cell.height() - fit.height()) / 2), fit);
++}
++
++int symmetricMargin(int panelWidth, int leftInset, int rightInset)
++{
++    return std::clamp(std::max(leftInset, rightInset), 0, std::max(0, panelWidth / 4 - 1));
++}
++
++void drawPair(QPainter &painter, const QImage &image, const QString &layout, QSize panel, int margin, bool swap)
++{
++    const bool topBottom = layout == QLatin1StringView("tb-720") || layout == QLatin1StringView("tb-half-720");
++    const QSize encodedEye = topBottom ? QSize(image.width(), image.height() / 2) : QSize(image.width() / 2, image.height());
++    QSize eye = encodedEye;
++    if (layout == QLatin1StringView("tb-half-720"))
++        eye.rheight() *= 2;
++    if (layout == QLatin1StringView("sbs-half-720"))
++        eye.rwidth() *= 2;
++    const int eyeWidth = panel.width() / 2;
++    const QRect fit = eyeFit(eye, QSize(eyeWidth, panel.height()));
++    const QRect leftMask(margin, 0, eyeWidth - 2 * margin, panel.height());
++    for (int index = 0; index < 2; ++index) {
++        const int sourceEye = swap ? 1 - index : index;
++        const QPoint start = topBottom ? QPoint(0, sourceEye * encodedEye.height()) : QPoint(sourceEye * encodedEye.width(), 0);
++        painter.save();
++        painter.setClipRect(leftMask.translated(index * eyeWidth, 0), Qt::IntersectClip);
++        painter.drawImage(fit.translated(index * eyeWidth, 0), image, QRect(start, encodedEye));
++        painter.restore();
++    }
++}
++
++void drawGuide(QPainter &painter, QSizeF panel, qreal density)
++{
++    const qreal centre = panel.width() / 2;
++    const qreal tip = panel.height() - 8 * density;
++    const qreal arrow = 12 * density;
++    painter.save();
++    painter.setRenderHint(QPainter::Antialiasing);
++    painter.setPen(QPen(Qt::white, 2 * density));
++    painter.drawLine(QPointF(centre, panel.height() / 2), QPointF(centre, tip));
++    painter.drawLine(QPointF(centre - arrow, tip - arrow), QPointF(centre, tip));
++    painter.drawLine(QPointF(centre + arrow, tip - arrow), QPointF(centre, tip));
++    painter.restore();
++}
++
++Projection::Projection(QSize panel, QSizeF millimeters, LensMode mode, const QString &viewer)
++    : m_panel(panel)
++{
++    if (mode == LensMode::None)
++        return;
++    if (panel.width() < 2 || panel.width() % 2 || panel.height() < 1 || qint64(panel.width()) * panel.height() > 16 * 1024 * 1024)
++        throw std::invalid_argument("Invalid lens panel size");
++    m_samples.resize(size_t(panel.width()) * panel.height());
++    if (mode == LensMode::Cardboard) {
++        if (viewer.isEmpty())
++            throw std::invalid_argument("Missing viewer QR");
++        const auto profile = flatheadset::makeViewer(mode, viewer.toStdString(), panel.width(), panel.height(), millimeters.width(), millimeters.height());
++        for (int eye = 0; eye < 2; ++eye)
++            projectMesh(profile->eyes[eye], eye);
++        return;
++    }
++    for (int y = 0; y < panel.height(); ++y) {
++        for (int x = 0; x < panel.width(); ++x) {
++            const auto source = fittedSample(x, y, panel.width(), panel.height());
++            if (source.visible)
++                m_samples[y * panel.width() + x] = {source.x, source.y};
++        }
++    }
++}
++
++void Projection::projectMesh(const flatheadset::EyeMesh &mesh, int eye)
++{
++    const int width = m_panel.width(), height = m_panel.height();
++    const int eyeWidth = width / 2;
++    const int start = eye * eyeWidth;
++    auto vertices = mesh.vertices;
++    for (auto &v : vertices) {
++        // Cardboard vertices are on the whole panel. The scissor and source sampling stay per eye.
++        v.x = (v.x + 1) * width / 2;
++        v.y = (1 - v.y) * height / 2;
++    }
++    for (std::size_t index = 2; index < mesh.indices.size(); ++index) {
++        const auto &a = vertices[mesh.indices[index - 2]];
++        const auto &b = vertices[mesh.indices[index - 1]];
++        const auto &c = vertices[mesh.indices[index]];
++        const float determinant = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
++        if (determinant == 0)
++            continue;
++        const int left = std::max(start, int(std::floor(std::min({a.x, b.x, c.x}))));
++        const int right = std::min(start + eyeWidth, int(std::ceil(std::max({a.x, b.x, c.x}))));
++        const int top = std::max(0, int(std::floor(std::min({a.y, b.y, c.y}))));
++        const int bottom = std::min(height, int(std::ceil(std::max({a.y, b.y, c.y}))));
++        for (int y = top; y < bottom; ++y) {
++            for (int x = left; x < right; ++x) {
++                const float dx = x + 0.5f - a.x;
++                const float dy = y + 0.5f - a.y;
++                const float wb = (dx * (c.y - a.y) - dy * (c.x - a.x)) / determinant;
++                const float wc = ((b.x - a.x) * dy - (b.y - a.y) * dx) / determinant;
++                const float wa = 1 - wb - wc;
++                if (std::min({wa, wb, wc}) < -1e-6f)
++                    continue;
++                const float u = wa * a.u + wb * b.u + wc * c.u;
++                const float v = wa * a.v + wb * b.v + wc * c.v;
++                m_samples[y * width + x] = {std::clamp(start + u * eyeWidth - 0.5f, float(start), float(start + eyeWidth - 1)),
++                                             std::clamp(v * height - 0.5f, 0.0f, float(height - 1))};
++            }
++        }
++    }
++}
++
++QImage Projection::apply(const QImage &panel) const
++{
++    if (m_samples.empty())
++        return panel;
++    if (panel.size() != m_panel || panel.format() != QImage::Format_RGB32)
++        return {};
++    QImage output(m_panel, QImage::Format_RGB32);
++    if (output.isNull())
++        return {};
++    const int width = panel.width();
++    const int eyeWidth = width / 2;
++    for (int y = 0; y < panel.height(); ++y) {
++        auto *target = reinterpret_cast<QRgb *>(output.scanLine(y));
++        for (int x = 0; x < width; ++x) {
++            const auto &sample = m_samples[y * width + x];
++            if (sample.x < 0) {
++                target[x] = qRgb(0, 0, 0);
++                continue;
++            }
++            const int sx = int(sample.x);
++            const int sy = int(sample.y);
++            const int right = std::min(sx + 1, x < eyeWidth ? eyeWidth - 1 : width - 1);
++            const auto *above = reinterpret_cast<const QRgb *>(panel.constScanLine(sy));
++            const auto *below = reinterpret_cast<const QRgb *>(panel.constScanLine(std::min(sy + 1, panel.height() - 1)));
++            const float fx = sample.x - sx, fy = sample.y - sy;
++            const auto mix = [&](auto channel) {
++                return qRound(std::lerp(std::lerp(float(channel(above[sx])), float(channel(above[right])), fx),
++                                        std::lerp(float(channel(below[sx])), float(channel(below[right])), fx), fy));
++            };
++            target[x] = qRgb(mix([](QRgb color) { return qRed(color); }), mix([](QRgb color) { return qGreen(color); }), mix([](QRgb color) { return qBlue(color); }));
++        }
++    }
++    return output;
++}
++}
+diff --git a/rdp/catch/presentation.h b/rdp/catch/presentation.h
+new file mode 100644
+index 00000000..b7f6f2ab
+--- /dev/null
++++ b/rdp/catch/presentation.h
+@@ -0,0 +1,39 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include "optics/Viewer/Viewer.hpp"
++
++#include <QImage>
++#include <QRect>
++#include <QString>
++
++class QPainter;
++
++namespace CatchPresentation
++{
++using flatheadset::LensMode;
++
++QRect eyeFit(QSize eye, QSize cell);
++int symmetricMargin(int panelWidth, int leftInset, int rightInset);
++void drawPair(QPainter &painter, const QImage &image, const QString &layout, QSize panel, int margin, bool swap = false);
++void drawGuide(QPainter &painter, QSizeF panel, qreal density);
++
++class Projection
++{
++public:
++    Projection() = default;
++    Projection(QSize panel, QSizeF millimeters, LensMode mode, const QString &viewer);
++    QImage apply(const QImage &panel) const;
++    QSize size() const { return m_panel; }
++
++private:
++    struct Sample {
++        float x = -1;
++        float y = -1;
++    };
++    void projectMesh(const flatheadset::EyeMesh &mesh, int eye);
++    QSize m_panel;
++    std::vector<Sample> m_samples;
++};
++}
+diff --git a/rdp/catch/waitingscenes.cpp b/rdp/catch/waitingscenes.cpp
+new file mode 100644
+index 00000000..a9a42a50
+--- /dev/null
++++ b/rdp/catch/waitingscenes.cpp
+@@ -0,0 +1,253 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-or-later
++#include "waitingscenes.h"
++
++#include <QFile>
++#include <QImageReader>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QRegularExpression>
++#include <QSet>
++#include <QtEndian>
++#include <algorithm>
++#include <memory>
++#include <zlib.h>
++
++extern "C" {
++#include <libavcodec/avcodec.h>
++#include <libavformat/avformat.h>
++#include <libavutil/hwcontext.h>
++#include <libavutil/stereo3d.h>
++#include <libswscale/swscale.h>
++}
++
++namespace CatchPresentation
++{
++QList<Scene> readScenes(const QString &catalogue)
++{
++    QFile file(catalogue);
++    if (!file.open(QIODevice::ReadOnly) || file.size() > 65536)
++        return {};
++    const auto document = QJsonDocument::fromJson(file.readAll());
++    if (!document.isArray() || document.array().size() > 32)
++        return {};
++    const QRegularExpression id(QStringLiteral("^[a-zA-Z0-9_-]{1,64}$"));
++    const QRegularExpression clip(QStringLiteral("^[a-zA-Z0-9_-]+\\.(mp4|mkv)$"));
++    const QRegularExpression still(QStringLiteral("^[a-zA-Z0-9_-]+\\.png$"));
++    QSet<QString> ids;
++    QList<Scene> scenes;
++    for (const auto &item : document.array()) {
++        const auto entry = item.toObject();
++        const Scene scene{entry[QStringLiteral("id")].toString(),
++                          entry[QStringLiteral("connect")].toString(),
++                          entry[QStringLiteral("reconnect")].toString(),
++                          entry[QStringLiteral("still")].toString()};
++        if (!id.match(scene.id).hasMatch() || ids.contains(scene.id) || !clip.match(scene.connect).hasMatch()
++            || !clip.match(scene.reconnect).hasMatch() || !still.match(scene.still).hasMatch())
++            return {};
++        ids.insert(scene.id);
++        scenes.append(scene);
++    }
++    return scenes;
++}
++
++QImage readMarkedStill(const QString &path)
++{
++    QFile file(path);
++    if (!file.open(QIODevice::ReadOnly) || file.size() > 16 * 1024 * 1024)
++        return {};
++    const auto bytes = file.readAll();
++    if (!bytes.startsWith("\x89PNG\x0d\x0a\x1a\x0a"))
++        return {};
++    bool marked = false, ended = false, imageData = false;
++    for (qsizetype offset = 8; offset + 12 <= bytes.size();) {
++        const auto size = qFromBigEndian<quint32>(bytes.constData() + offset);
++        const char *type = bytes.constData() + offset + 4;
++        if (size > bytes.size() - offset - 12)
++            return {};
++        const QByteArrayView tag(type, 4);
++        if (tag == "IDAT")
++            imageData = true;
++        if (tag == "sTER") {
++            if (marked || imageData || size != 1 || type[4] != 1
++                || qFromBigEndian<quint32>(type + 5) != crc32(0, reinterpret_cast<const Bytef *>(type), 5))
++                return {};
++            marked = true;
++        }
++        offset += 12 + size;
++        if (tag == "IEND") {
++            ended = size == 0 && offset == bytes.size();
++            break;
++        }
++    }
++    if (!ended || !marked || !imageData)
++        return {};
++    QImageReader reader(path, "png");
++    const auto size = reader.size();
++    if (size.isEmpty() || size.width() % 16 || qint64(size.width()) * size.height() > 16 * 1024 * 1024)
++        return {};
++    return reader.read();
++}
++
++namespace
++{
++using Codec = std::unique_ptr<AVCodecContext, void (*)(AVCodecContext *)>;
++
++Codec openCodec(const AVCodec *codec, const AVCodecParameters *parameters, AVPixelFormat &hardwareFormat, bool vaapi)
++{
++    Codec context(codec ? avcodec_alloc_context3(codec) : nullptr, [](AVCodecContext *c) { avcodec_free_context(&c); });
++    if (!context || avcodec_parameters_to_context(context.get(), parameters) < 0)
++        return {nullptr, context.get_deleter()};
++    if (vaapi) {
++        const AVCodecHWConfig *configuration = nullptr;
++        for (int index = 0; (configuration = avcodec_get_hw_config(codec, index)); ++index) {
++            if (configuration->device_type == AV_HWDEVICE_TYPE_VAAPI && (configuration->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX))
++                break;
++        }
++        if (!configuration || av_hwdevice_ctx_create(&context->hw_device_ctx, AV_HWDEVICE_TYPE_VAAPI, nullptr, nullptr, 0) < 0)
++            return {nullptr, context.get_deleter()};
++        hardwareFormat = configuration->pix_fmt;
++        context->opaque = &hardwareFormat;
++        context->get_format = [](AVCodecContext *c, const AVPixelFormat *formats) {
++            const auto format = *static_cast<const AVPixelFormat *>(c->opaque);
++            for (; *formats != AV_PIX_FMT_NONE; ++formats)
++                if (*formats == format)
++                    return format;
++            return AV_PIX_FMT_NONE;
++        };
++    }
++    if (avcodec_open2(context.get(), codec, nullptr) < 0)
++        return {nullptr, context.get_deleter()};
++    return context;
++}
++
++const AVCodec *v4l2Decoder(AVCodecID codec)
++{
++    switch (codec) {
++    case AV_CODEC_ID_H264:
++        return avcodec_find_decoder_by_name("h264_v4l2m2m");
++    case AV_CODEC_ID_HEVC:
++        return avcodec_find_decoder_by_name("hevc_v4l2m2m");
++    default:
++        return nullptr;
++    }
++}
++}
++
++ScenePlayback::ScenePlayback(QString path, QObject *parent)
++    : QThread(parent)
++    , m_path(std::move(path))
++{
++}
++
++void ScenePlayback::run()
++{
++    AVFormatContext *source = avformat_alloc_context();
++    if (!source) {
++        Q_EMIT failed(Failure::InvalidMedia);
++        return;
++    }
++    source->interrupt_callback = {[](void *object) { return int(static_cast<ScenePlayback *>(object)->isInterruptionRequested()); }, this};
++    AVDictionary *options = nullptr;
++    av_dict_set(&options, "protocol_whitelist", "file", 0);
++    const int opened = avformat_open_input(&source, QFile::encodeName(m_path).constData(), nullptr, &options);
++    av_dict_free(&options);
++    std::unique_ptr<AVFormatContext, void (*)(AVFormatContext *)> media(source, [](AVFormatContext *c) { avformat_close_input(&c); });
++    const int video = opened >= 0 && avformat_find_stream_info(source, nullptr) >= 0
++        ? av_find_best_stream(source, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0)
++        : -1;
++    if (video < 0) {
++        Q_EMIT failed(Failure::InvalidMedia);
++        return;
++    }
++    const auto *parameters = source->streams[video]->codecpar;
++    const auto *sideData = av_packet_side_data_get(parameters->coded_side_data, parameters->nb_coded_side_data, AV_PKT_DATA_STEREO3D);
++    const auto *stereo = sideData && sideData->size >= sizeof(AVStereo3D) ? reinterpret_cast<const AVStereo3D *>(sideData->data) : nullptr;
++    if (!stereo || stereo->type != AV_STEREO3D_SIDEBYSIDE || (stereo->flags & AV_STEREO3D_FLAG_INVERT)
++        || parameters->width < 2 || parameters->width % 2 || parameters->height < 1
++        || qint64(parameters->width) * parameters->height > 16 * 1024 * 1024) {
++        Q_EMIT failed(Failure::InvalidMedia);
++        return;
++    }
++    AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;
++    auto decoder = openCodec(avcodec_find_decoder(parameters->codec_id), parameters, hardwareFormat, true);
++    const bool useVaapi = bool(decoder);
++    if (!decoder)
++        decoder = openCodec(v4l2Decoder(parameters->codec_id), parameters, hardwareFormat, false);
++    if (!decoder) {
++        Q_EMIT failed(Failure::DecoderUnavailable);
++        return;
++    }
++    std::unique_ptr<AVFrame, void (*)(AVFrame *)> frame(av_frame_alloc(), [](AVFrame *f) { av_frame_free(&f); });
++    std::unique_ptr<AVFrame, void (*)(AVFrame *)> mapped(av_frame_alloc(), [](AVFrame *f) { av_frame_free(&f); });
++    std::unique_ptr<AVPacket, void (*)(AVPacket *)> packet(av_packet_alloc(), [](AVPacket *p) { av_packet_free(&p); });
++    std::unique_ptr<SwsContext, decltype(&sws_freeContext)> scale(nullptr, sws_freeContext);
++    if (!frame || !mapped || !packet) {
++        Q_EMIT failed(Failure::DecoderUnavailable);
++        return;
++    }
++    const double fps = av_q2d(av_guess_frame_rate(source, source->streams[video], nullptr));
++    const unsigned interval = fps > 0 ? std::clamp(qRound(1000.0 / fps), 5, 1000) : 40;
++    bool displayed = false;
++    while (!isInterruptionRequested()) {
++        const int read = av_read_frame(source, packet.get());
++        const bool end = read == AVERROR_EOF;
++        if (read < 0 && !end)
++            break;
++        if (!end && packet->stream_index != video) {
++            av_packet_unref(packet.get());
++            continue;
++        }
++        const int status = avcodec_send_packet(decoder.get(), end ? nullptr : packet.get());
++        av_packet_unref(packet.get());
++        if (status < 0)
++            break;
++        int received = AVERROR(EAGAIN);
++        while (!isInterruptionRequested() && (received = avcodec_receive_frame(decoder.get(), frame.get())) == 0) {
++            const AVFrame *input = frame.get();
++            if (useVaapi) {
++                av_frame_unref(mapped.get());
++                if (frame->format != hardwareFormat || av_hwframe_transfer_data(mapped.get(), frame.get(), 0) < 0) {
++                    Q_EMIT failed(Failure::DecoderUnavailable);
++                    return;
++                }
++                input = mapped.get();
++            }
++            if (input->width != parameters->width || input->height != parameters->height) {
++                Q_EMIT failed(Failure::InvalidMedia);
++                return;
++            }
++            QImage output(input->width, input->height, QImage::Format_RGB32);
++            auto *converter = sws_getCachedContext(scale.release(), input->width, input->height, AVPixelFormat(input->format),
++                                                   input->width, input->height, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
++            scale.reset(converter);
++            if (output.isNull() || !converter) {
++                Q_EMIT failed(Failure::DecoderUnavailable);
++                return;
++            }
++            uint8_t *pixels[] = {output.bits()};
++            int stride[] = {int(output.bytesPerLine())};
++            sws_scale(converter, input->data, input->linesize, 0, input->height, pixels, stride);
++            Q_EMIT frameReady(output);
++            av_frame_unref(frame.get());
++            displayed = true;
++            for (unsigned left = interval; left && !isInterruptionRequested();) {
++                const auto pause = std::min(left, 50u);
++                msleep(pause);
++                left -= pause;
++            }
++        }
++        if (received != AVERROR(EAGAIN) && received != AVERROR_EOF)
++            break;
++        if (end) {
++            if (!displayed || av_seek_frame(source, video, 0, AVSEEK_FLAG_BACKWARD) < 0)
++                break;
++            avcodec_flush_buffers(decoder.get());
++            displayed = false;
++        }
++    }
++    if (!isInterruptionRequested())
++        Q_EMIT failed(Failure::DecoderUnavailable);
++}
++}
+diff --git a/rdp/catch/waitingscenes.h b/rdp/catch/waitingscenes.h
+new file mode 100644
+index 00000000..9fc0485e
+--- /dev/null
++++ b/rdp/catch/waitingscenes.h
+@@ -0,0 +1,35 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <QImage>
++#include <QList>
++#include <QThread>
++
++namespace CatchPresentation
++{
++struct Scene {
++    QString id;
++    QString connect;
++    QString reconnect;
++    QString still;
++};
++
++QList<Scene> readScenes(const QString &catalogue);
++QImage readMarkedStill(const QString &path);
++
++class ScenePlayback : public QThread
++{
++    Q_OBJECT
++public:
++    enum class Failure { InvalidMedia, DecoderUnavailable };
++    Q_ENUM(Failure)
++    explicit ScenePlayback(QString path, QObject *parent = nullptr);
++    void run() override;
++    Q_SIGNAL void frameReady(const QImage &frame);
++    Q_SIGNAL void failed(CatchPresentation::ScenePlayback::Failure reason);
++
++private:
++    QString m_path;
++};
++}
