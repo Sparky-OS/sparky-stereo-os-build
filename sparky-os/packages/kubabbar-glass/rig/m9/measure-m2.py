@@ -231,6 +231,12 @@ if g2 and g3:
                     f"vertical {v.get('vertical_observed')})")
     mark(p3w, "greeter-3d-window.pns")
     mark(p3s, "greeter-3d-password.pns")
+gl = case("greeter-3d-look")
+if gl:
+    # the same login with the look's own pattern, for looking (not measured: the pattern has nothing to match)
+    mark(os.path.join(gl, "greeter-window.png"), "login-3d-look.pns")
+    mark(os.path.join(gl, "greeter-sheet.png"), "login-password-3d-look.pns")
+    row(os.path.exists(os.path.join(OUT, "login-password-3d-look.pns")), "greeter-3d-look: the login screen over its own pattern, a marked pair")
 
 # ---------------------------------------------------------------- Qt 5 with and without the carry; GTK in the session
 d = case("qt5-carry")

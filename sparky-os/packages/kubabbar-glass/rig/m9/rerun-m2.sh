@@ -9,7 +9,8 @@
 #   keep          an account with its own panels: the menu bar look applied without and with the layout
 #   splash-2d/3d  the loading screen, plain and per eye
 #   splash-black/white  the loading screen over a black and a white background: its box's glass read back
-#   greeter-2d/3d the login screen (SDDM's greeter in test mode, a Wayland window): the window, then the password box
+#   greeter-2d/3d the login screen (SDDM's greeter in test mode, a Wayland window): the window, then the password box;
+#                 measured over a noise picture in the pattern's place (greeter-3d-look: the real pattern, for looking)
 #   qt5-carry     a Qt 5 program with the edition's Qt 5 platform theme (row 59's carry), and the GTK themes the session loads
 #   qt5-nocarry   the same with the platform theme hidden (red: Qt 5 alone does not take the look)
 # Env: DOCKER_HOST (your socket), NAME_PREFIX, RENDER_GROUP (default 125), BIN (a folder with fakeinput and gallery-gtk2
@@ -22,7 +23,7 @@ LT=${LT:-$(cd "$RIG/../../stereo-artwork/scripts/look-translucency" && pwd)}
 BIN=${BIN:-/var/lib/sparky-lanes/kubabbar-glass-9/work/bin}
 RC=$RIG/login-splash/run-case.sh
 export NAME_PREFIX=${NAME_PREFIX:-kg9-m2} CARD=nvidia RENDER_GROUP=${RENDER_GROUP:-125}
-CASES=("$@"); [ ${#CASES[@]} -gt 0 ] || CASES=(gtk menubar-2d menubar-3d keep splash-2d splash-3d splash-black splash-white greeter-2d greeter-3d qt5-carry qt5-nocarry)
+CASES=("$@"); [ ${#CASES[@]} -gt 0 ] || CASES=(gtk menubar-2d menubar-3d keep splash-2d splash-3d splash-black splash-white greeter-2d greeter-3d greeter-3d-look qt5-carry qt5-nocarry)
 fix=$OUT/fixtures; mkdir -p "$fix/empty"
 python3 - "$fix" <<'PY'
 import sys
@@ -58,6 +59,7 @@ for c in "${CASES[@]}"; do
 			LOOK=kubabbar-glass-9 MODES=2d HOLD=8 SHOTS="3" STEPS="panels:panels" ;;
 		greeter-2d|greeter-3d) RUN_MOUNTS="$base_mounts $fix/noise.png:$wall:ro" bash "$RC" "$IMG" "$o" "${common[@]}" \
 			LOOK=kubabbar-glass-9 MODES=${c#greeter-} STEPS="greeter" ;;
+		greeter-3d-look) RUN_MOUNTS="$base_mounts" bash "$RC" "$IMG" "$o" "${common[@]}" LOOK=kubabbar-glass-9 MODES=3d STEPS="greeter" ;;
 		qt5-carry) RUN_MOUNTS="$base_mounts" bash "$RC" "$IMG" "$o" "${common[@]}" LOOK=kubabbar-glass-9 MODES=2d STEPS="qt5 gtk" ;;
 		qt5-nocarry) RUN_MOUNTS="$base_mounts $fix/empty:/usr/lib/x86_64-linux-gnu/qt5/plugins/platformthemes:ro" bash "$RC" "$IMG" "$o" \
 			"${common[@]}" LOOK=kubabbar-glass-9 MODES=2d STEPS="qt5" ;;
