@@ -30,7 +30,7 @@ python3 -I /tests/make-pdf.py "$pdf" 300 200
 if [ "$CASE" = okular-scrolled ]; then
 	# the document opens scrolled: the top of the view a third of the way down the first page
 	size=$(stat -c %s "$pdf")
-	printf '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE documentInfo>\n<documentInfo url="%s">\n <generalInfo>\n  <history>\n   <current viewport="0;C2:0.5:0.35:2"/>\n  </history>\n </generalInfo>\n</documentInfo>\n' \
+	printf '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE documentInfo>\n<documentInfo url="%s">\n <generalInfo>\n  <history>\n   <current viewport="0;C2:0:0.35:2"/>\n  </history>\n </generalInfo>\n</documentInfo>\n' \
 		"$pdf" > "$XDG_DATA_HOME/okular/docdata/$size.two-pages.pdf.xml"
 fi
 cat > /tmp/session.sh <<'SESSION'
