@@ -42,7 +42,8 @@ if [ "${SPARKY_PWP_RESUME:-0}" = 1 ]; then
     (cd "$job/lc/source" && for p in $(dh_listpackages); do rm -rf "debian/$p" "debian/$p.debhelper.log" "debian/$p.substvars"; done && rm -rf debian/.debhelper debian/tmp debian/files)
 fi
 mkdir -p "$SPARKY_LC_SCRATCH"
-build_user=$(getent passwd 1000 | cut -d: -f1)
+# an image without a user of uid 1000 makes getent fail, which set -e and pipefail would take as the end of the build
+build_user=$(getent passwd 1000 | cut -d: -f1 || true)
 if [ -z "$build_user" ]; then
     useradd --create-home --uid 1000 builder
     build_user=builder
