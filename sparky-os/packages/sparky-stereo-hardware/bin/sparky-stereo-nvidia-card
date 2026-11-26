@@ -21,8 +21,9 @@
 # What is removed: the driver's own packages by name (the driver, its kernel modules, the video decoding libraries, the
 # 32-bit libraries, both driver locks and the CUDA repository package, which are the driver's apt configuration and come
 # back first when a card is found), then what is left of it: NVIDIA's by name, installed automatically, removable alone.
-# apt's plan is read first: if it would take anything that is not NVIDIA's, or an NVIDIA package the person installed by
-# name, nothing is removed and that is said and kept. Never an autoremove.
+# apt's plan is read first, every kind of line: if it would take anything that is not NVIDIA's, or an NVIDIA package the
+# person installed by name, or would install anything at all, nothing is removed and that is said and kept. Never an
+# autoremove. The notice counts what left by name.
 # Purged, not removed: a removed package's configuration files stay active (the module blacklist among them).
 # firmware-nvidia-graphics (nouveau's firmware) stays, so a card that appears has a picture at once.
 set -uo pipefail
@@ -78,6 +79,13 @@ driver_installed() {
 		nvidia-legacy-580xx-kernel-dkms 2>/dev/null | grep '^ii') ]]
 }
 planned() { sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' | sort -u; }
+# what a plan would install, each with its architecture: apt names a package of a foreign architecture NAME:ARCH and gives
+# every Inst line its architecture last, "(VERSION ORIGIN [ARCH])". A purge plan with an Inst line is not a removal: on a
+# machine with i386 enabled, purging nvidia-installer-cleanup installs its i386 copy in its place, because glx-diversions
+# (Debian's, of an NVIDIA driver once installed) pre-depends on it and it is Multi-Arch: foreign (found on an A10, ORDER 675)
+installs() { awk '$1 == "Inst" {n = $2; a = $NF; gsub(/[][()]/, "", a); if (n !~ /:/) n = n ":" a; print n}' | sort -u; }
+# the installed packages, as dpkg names them (NAME, or NAME:ARCH for a foreign or Multi-Arch: same one)
+installed_list() { dpkg-query -W -f '${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null | awk -F '\t' '$2 ~ /^ii/ {print $1}' | sort -u; }
 # a package may leave with the driver when it is NVIDIA's by name and either one of the driver's own packages (ROOTS) or
 # installed automatically; an NVIDIA package the person installed by name (a CUDA or container toolkit) is theirs
 AUTO=
@@ -94,14 +102,28 @@ clear_problem() {
 	[[ -e $STORE/${PKG}_$KEY.json ]] || return 0
 	sparky-stereo-problems clear "$PKG" "$KEY" >/dev/null 2>&1 || true
 }
-# purge_checked PACKAGE...: apt's plan first; only NVIDIA's packages may leave
+# purge_checked [--leftovers] PACKAGE...: apt's plan first, read by every kind of line: only NVIDIA's packages may leave,
+# and nothing may come in. The driver's own packages: a plan that would install anything is refused, said and kept, as a
+# plan that would take more. What is left of the driver (--leftovers): each was planned alone and brings nothing in, so a
+# plan of them together that would install something leaves them all in place, with a line in the journal only
 purge_checked() {
-	local plan extra
+	local plan extra came leftovers=0
+	[[ $1 == --leftovers ]] && { leftovers=1; shift; }
 	plan=$(apt-get -s -q -o Debug::NoLocking=true purge "$@" 2>&1) || {
 		sparky-stereo-problems keep --repair "$REPAIR_REMOVE" --output "$(tail -n 40 <<<"$plan")" "$PKG" "$KEY" LOCAL122 'apt-get --simulate purge' 100 >/dev/null 2>&1 || true
 		say "apt cannot plan the removal of NVIDIA's driver; nothing was removed"
 		return 1
 	}
+	came=$(installs <<<"$plan" | paste -sd' ' -)
+	if [[ -n $came ]]; then
+		if ((leftovers)); then
+			say "left in place: $*; removing them together would install $came"
+			return 0
+		fi
+		sparky-stereo-problems keep --repair "$REPAIR_REMOVE" --output "$(grep -E '^(Inst|Remv|Purg) ' <<<"$plan")" "$PKG" "$KEY" LOCAL127 "$came" >/dev/null 2>&1 || true
+		say "NVIDIA's driver was not removed: the removal would install $came, which this computer does not have now"
+		return 1
+	fi
 	extra=$(planned <<<"$plan" | while read -r p; do may_leave "$p" || printf '%s ' "$p"; done)
 	if [[ -n $extra ]]; then
 		sparky-stereo-problems keep --repair "$REPAIR_REMOVE" "$PKG" "$KEY" LOCAL121 "${extra% }" >/dev/null 2>&1 || true
@@ -114,7 +136,7 @@ purge_checked() {
 }
 remove() {
 	local -a r left
-	local before after p q plan alone
+	local before after gone came p q plan alone
 	wait_for_dpkg
 	mapfile -t r < <(roots)
 	if ((${#r[@]} == 0)); then
@@ -122,27 +144,34 @@ remove() {
 		return 0
 	fi
 	AUTO=$(apt-mark showauto 2>/dev/null | sort -u)
-	before=$(dpkg-query -W -f '${db:Status-Abbrev}\n' 2>/dev/null | grep -c '^ii')
+	before=$(installed_list)
 	purge_checked "${r[@]}" || return 1
 	# what is left of the driver: installed, NVIDIA's by name, installed automatically, and removable alone without
 	# taking anything that may not leave. apt's own list of packages nothing needs does not hold them (nvidia-vulkan-icd
 	# provides vulkan-icd, which other packages' alternatives name), so the list is by name, as the removal done by hand
 	# on two machines was
-	mapfile -t left < <(dpkg-query -W -f '${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null | awk -F '\t' '$2 ~ /^ii/ {print $1}' |
+	# (a package whose removal alone would install something, as nvidia-installer-cleanup on a machine with glx-diversions
+	# and i386, is not removable alone: it stays, and nothing is said)
+	mapfile -t left < <(installed_list |
 		while read -r p; do
 			may_leave "$p" || continue
-			plan=$(apt-get -s -q -o Debug::NoLocking=true purge "$p" 2>/dev/null | planned) || continue
+			plan=$(apt-get -s -q -o Debug::NoLocking=true purge "$p" 2>/dev/null) || continue
+			[[ -z $(installs <<<"$plan") ]] || continue
 			alone=1
-			while read -r q; do [[ -z $q ]] || may_leave "$q" || alone=0; done <<<"$plan"
+			while read -r q; do [[ -z $q ]] || may_leave "$q" || alone=0; done < <(planned <<<"$plan")
 			((alone)) && printf '%s\n' "$p"
 		done)
 	if ((${#left[@]})); then
-		purge_checked "${left[@]}" || return 1
+		purge_checked --leftovers "${left[@]}" || return 1
 	fi
-	after=$(dpkg-query -W -f '${db:Status-Abbrev}\n' 2>/dev/null | grep -c '^ii')
+	# what left is counted by name, not by the number of packages: a package that left and another that came would cancel out
+	after=$(installed_list)
+	gone=$(comm -23 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep -c .)
+	came=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | paste -sd' ' -)
+	[[ -z $came ]] || say "installed while NVIDIA's driver was removed, by no plan this step accepted: $came"
 	clear_problem
-	say "NVIDIA's driver was removed ($((before - after)) packages): this computer has no NVIDIA graphics card. Hardware Setup installs it again by itself when one is found"
-	notice LOCAL120 "$((before - after))"
+	say "NVIDIA's driver was removed ($gone packages): this computer has no NVIDIA graphics card. Hardware Setup installs it again by itself when one is found"
+	notice LOCAL120 "$gone"
 	return 0
 }
 metered() {

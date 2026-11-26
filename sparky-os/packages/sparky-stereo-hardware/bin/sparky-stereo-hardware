@@ -199,7 +199,8 @@ if [[ -n "$rig_driver" ]]; then
 	fi
 	printf 'package\t%s\n' "$rig_driver" >>"$WORK/plan"
 fi
-cat "$WORK/plan"
+# the plan in the log as the planner wrote it, without the sentence keys the window uses
+grep -v $'^say\t' "$WORK/plan" || true
 log 'nvidia-detect report:'
 cat "$FACTS/nvidia-detect"
 if $dry; then
@@ -340,7 +341,9 @@ if ! $auto; then
 	wl_choice=
 	# --wrap: a note is a whole sentence (a known machine's correction, the Wi-Fi driver's choice); without it the plan's
 	# window cut each long line at its right edge
-	yad --text-info --wrap --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${explain[@]}" "${buttons[@]}" || answer=$?
+	# the window shows the plan in the person's language (plan_for_person); the plan file stays as the planner wrote it
+	plan_for_person "$WORK/plan" >"$WORK/plan-shown"
+	yad --text-info --wrap --title="$LOCAL1" --filename="$WORK/plan-shown" --width=760 --height=500 "${explain[@]}" "${buttons[@]}" || answer=$?
 	case $(plan_answer "$answer") in
 		edition) ;;
 		wl-again) wl_reset ;;

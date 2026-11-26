@@ -239,9 +239,18 @@ auto() {
 		rm -f "$out"
 		return "$status"
 	fi
+	# the plan is read by every kind of line, not by its exit status alone: installing libraries removes nothing
+	local taken
+	taken=$(removals "$out")
+	if [[ -n $taken ]]; then
+		sparky-stereo-problems keep --repair "$REPAIR" --output "$(grep -E '^(Inst|Remv|Purg) ' "$out" | tail -n 40)" \
+			"$PKG" "$KEY" LOCAL128 "$list" "$version" "$taken" >/dev/null 2>&1 || true
+		rm -f "$out"
+		return 1
+	fi
 	rm -f "$out"
 	sparky-stereo-problems run --repair "$REPAIR" "$PKG" "$KEY" LOCAL10 -- \
-		apt-get -y -q --no-install-suggests -o DPkg::Lock::Timeout=-1 install "${pkgs[@]}"
+		apt-get -y -q --no-install-suggests --no-remove -o DPkg::Lock::Timeout=-1 install "${pkgs[@]}"
 	status=$?
 	((status == 0)) || return "$status"
 	read_versions
@@ -253,8 +262,12 @@ auto() {
 	sparky-stereo-problems keep --boot --severity notice --quiet "$PKG" "$NOTICE" LOCAL11 "$list" "$version" || true
 	return 0
 }
+# removals PLAN_FILE: what an apt plan (apt-get --simulate) would remove or purge, space separated; installing the 32-bit
+# libraries removes nothing, so anything here stops it (apt-get -y would remove without asking; --no-remove on the real
+# installation is the second guard: apt-get(8), "If any packages are to be removed apt-get immediately aborts")
+removals() { sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' "$1" | sort -u | paste -sd' ' -; }
 install() {
-	local version need status out step
+	local version need status out step taken
 	if ((EUID != 0)); then
 		echo 'Run as root: sudo sparky-stereo-hardware --nvidia-i386' >&2
 		return 1
@@ -283,9 +296,20 @@ install() {
 		DEBIAN_FRONTEND=noninteractive apt-get -y update 2>&1 | tee "$out"
 		status=${PIPESTATUS[0]}
 		if ((status == 0)); then
+			# the plan first, read by every kind of line: a removal stops it, kept and said
+			# shellcheck disable=SC2046,SC2086 # the package names, one word each
+			apt-get -s -q -o Debug::NoLocking=true --no-install-suggests install $(printf '%s\n' $need | sed "s/\$/=$version/") >"$out" 2>&1
+			taken=$(removals "$out")
+			if [[ -n $taken ]]; then
+				sparky-stereo-problems keep --repair "$REPAIR" --output "$(grep -E '^(Inst|Remv|Purg) ' "$out" | tail -n 40)" \
+					"$PKG" "$KEY" LOCAL128 "$(listed "$need")" "$version" "$taken" >/dev/null 2>&1 || true
+				sparky-stereo-problems say "$PKG" LOCAL128 "$(listed "$need")" "$version" "$taken" >&2 || true
+				rm -f "$out"
+				return 1
+			fi
 			sparky-stereo-problems say "$PKG" LOCAL16 >&2 || true
 			# shellcheck disable=SC2046,SC2086 # the package names, one word each
-			SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests -o DPkg::Lock::Timeout=-1 install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
+			SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --no-remove -o DPkg::Lock::Timeout=-1 install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
 			status=${PIPESTATUS[0]}
 			step='apt-get install'
 		else

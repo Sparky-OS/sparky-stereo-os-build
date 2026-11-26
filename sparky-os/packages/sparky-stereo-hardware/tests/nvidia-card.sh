@@ -48,10 +48,13 @@ for a in "\$@"; do case \$a in -s|--simulate) sim=1 ;; purge) seen=1 ;; -*) ;; *
 if ((sim)); then
 	# the plan: the packages named, what depends on each of them (needs: PACKAGE DEPENDENT), and "also"
 	for p in "\${pk[@]}" \$(cat $T/also 2>/dev/null); do echo "Purg \$p [1]"; awk -v p="\$p" '\$1 == p {print "Purg " \$2 " [1]"}' $T/needs 2>/dev/null; done
+	# a package of another architecture that apt would put in place of one purged (swaps: PURGED NAME ARCH), as a
+	# Multi-Arch: foreign package another installed package still needs
+	for p in "\${pk[@]}"; do awk -v p="\$p" '\$1 == p {print "Inst " \$2 " (1 Debian:testing [" \$3 "])"}' $T/swaps 2>/dev/null; done
 	exit 0
 fi
 [ -e $T/purge.fail ] && { echo "E: dpkg was interrupted"; exit 100; }
-for p in "\${pk[@]}"; do grep -v -P "^\Q\$p\E\t" $T/installed > $T/installed.new; mv $T/installed.new $T/installed; done
+for p in "\${pk[@]}"; do grep -v -P "^\Q\$p\E\t" $T/installed > $T/installed.new; mv $T/installed.new $T/installed; awk -v p="\$p" '\$1 == p {print \$2 "\t1"}' $T/swaps 2>/dev/null >> $T/installed; done
 exit 0
 FAKE
 printf '#!/bin/sh\ncat %s\n' "$T/auto" > "$T/bin/apt-mark"
@@ -84,7 +87,7 @@ image() { # the image's NVIDIA packages, with some that are not NVIDIA's driver
 	# the image's metapackage still depends on nvidia-detect, and the person installed a CUDA toolkit by name
 	printf 'nvidia-detect sparky-stereo-desktop\n' > "$T/needs"
 	printf 'nvidia-cuda-toolkit\t13\n' >> "$T/installed"
-	rm -f "$T/also" "$T/purge.fail" "$T/setup.fail" "$T/metered" "$T/foreign"; : > "$T/apt.calls"; : > "$T/setup.calls"
+	rm -f "$T/also" "$T/swaps" "$T/purge.fail" "$T/setup.fail" "$T/metered" "$T/foreign"; : > "$T/apt.calls"; : > "$T/setup.calls"
 	rm -rf "${T:?}/root"; mkdir -p "$T/root"
 }
 run() { PATH=$T/bin:$PATH SPARKY_STEREO_SYSFS=$T/sys SPARKY_STEREO_HARDWARE_SETUP=$T/bin/setup /usr/lib/sparky-stereo-hardware/nvidia-card "$@"; }
@@ -121,6 +124,28 @@ check "the cause gone: removed, and the kept problem is cleared" "$(have | wc -w
 image; card intel; touch "$T/purge.fail"
 run auto >/dev/null 2>&1; rc=$?
 check "apt fails: exit status 1, kept with the removal as its repair" "$rc:$(kept | cut -d' ' -f1)" "1:LOCAL122"
+
+# a purge plan that would install something is not a removal (ORDER 675, found on an A10): the machine's state there, no
+# card and no driver, i386 enabled, Debian's glx-diversions (of an NVIDIA driver once installed) pre-depending on
+# nvidia-installer-cleanup, which is Multi-Arch: foreign, so purging it puts its i386 copy in its place
+a10() {
+	image
+	printf '%s\t1\n' firmware-nvidia-graphics nvidia-detect nvidia-installer-cleanup sparky-stereo-cuda-repo sparky-stereo-nvidia-driver-lock glx-diversions sparky-stereo-desktop > "$T/installed"
+	printf '%s\n' nvidia-installer-cleanup > "$T/auto"
+	: > "$T/needs"; echo i386 > "$T/foreign"
+	printf 'nvidia-installer-cleanup nvidia-installer-cleanup:i386 i386\n' > "$T/swaps"
+}
+a10; card intel
+run auto >/dev/null 2>&1; rc=$?
+check "A10: exit status 0, settled" "$rc:$([ -e "$S/nvidia-card-settled" ] && echo settled)" "0:settled"
+check "A10: the locks leave, nvidia-installer-cleanup stays as it was (amd64), no i386 copy comes in" "$(have)" "firmware-nvidia-graphics glx-diversions nvidia-detect nvidia-installer-cleanup sparky-stereo-desktop "
+check "A10: one removal only (nvidia-installer-cleanup is not removable alone: its removal would install)" "$(grep -c -- '^apt-get -y -q purge' "$T/apt.calls")" 1
+check "A10: the session is told what really left" "$(told)" "LOCAL120 ['2']"
+check "A10: nothing kept" "$(kept)" none
+image; card intel; printf 'sparky-stereo-nvidia-driver-lock sparky-stereo-nvidia-legacy-580xx-driver-lock all\n' > "$T/swaps"
+run auto >/dev/null 2>&1; rc=$?
+check "the driver's removal would install a package: nothing removed, exit status 1, not settled" "$rc:$(have | wc -w):$([ -e "$S/nvidia-card-settled" ] && echo settled || echo open)" "1:16:open"
+check "kept by the engine, naming the package it would install" "$(kept)" "LOCAL127 ['sparky-stereo-nvidia-legacy-580xx-driver-lock:all']"
 
 image; card nvidia 2504
 run auto >/dev/null 2>&1
@@ -163,5 +188,12 @@ i386 check >/dev/null 2>&1
 check "nvidia-i386, the card gone: the kept problem is cleared" "$(i386kept)" 0
 out=$(i386 install 2>&1); rc=$?
 check "nvidia-i386 install by hand, no card: says so and installs nothing" "$rc:$(echo "$out" | grep -c 'has no NVIDIA graphics card'):$(grep -c ' install ' "$T/apt.calls")" "0:1:0"
+# nvidia-i386 reads its plan by every kind of line, not by its exit status alone: installing the 32-bit libraries removes
+# nothing, so a plan that would remove a package installs nothing and says which (continuation 3)
+i386record() { record "$T/root/var/lib/sparky-stereo-problems/sparky-stereo-hardware_nvidia-i386.json" | cut -d' ' -f1; }
+image; echo i386 > "$T/foreign"; card nvidia 2504; echo glx-alternative-mesa > "$T/also"
+i386 install >/dev/null 2>&1; rc=$?
+check "nvidia-i386: a plan for the 32-bit libraries that would remove a package: nothing installed, kept naming it" "$rc:$(i386record):$(grep -c -E '^apt-get -y .*install nvidia-driver-libs' "$T/apt.calls")" "1:LOCAL128:0"
+rm -f "$T/also"
 echo "== $( [ $fails = 0 ] && echo "ALL PASS" || echo "$fails FAILED")"
 [ $fails = 0 ]
