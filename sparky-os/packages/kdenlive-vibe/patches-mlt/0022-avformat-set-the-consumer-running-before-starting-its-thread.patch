@@ -1,0 +1,27 @@
+Description: Set the avformat consumer running before starting its thread
+ The encoding thread loops while the running property is set, but the property was only set after creating the thread. If the thread got to its loop first, it skipped encoding and marked the consumer stopped, and the start function then set running again, so the consumer looked like it was running forever. A thread failing early had the same effect. Set the property before creating the thread.
+Origin: upstream, https://github.com/mltframework/mlt/commit/75941cb426f3236c75a64f25e8a4c51e95680ac8
+Author: Erich Seifert
+Bug: https://github.com/mltframework/mlt/issues/1333
+Applied-Upstream: master after v7.42.0, https://github.com/mltframework/mlt/pull/1366 (merged 2026-11-22 as be583ee302a26ea24d0a5ddb1ec01c5191063ec3)
+Last-Update: 2026-11-26
+
+diff --git a/src/modules/avformat/consumer_avformat.c b/src/modules/avformat/consumer_avformat.c
+index 030b0b798..5122769c2 100644
+--- a/src/modules/avformat/consumer_avformat.c
++++ b/src/modules/avformat/consumer_avformat.c
+@@ -576,11 +576,11 @@ static int consumer_start(mlt_consumer consumer)
+         // Assign the thread to properties
+         mlt_properties_set_data(properties, "thread", thread, sizeof(pthread_t), free, NULL);
+ 
++        // Set the running state before the thread checks it
++        mlt_properties_set_int(properties, "running", 1);
++
+         // Create the thread
+         pthread_create(thread, NULL, consumer_thread, consumer);
+-
+-        // Set the running state
+-        mlt_properties_set_int(properties, "running", 1);
+     }
+     return error;
+ }
