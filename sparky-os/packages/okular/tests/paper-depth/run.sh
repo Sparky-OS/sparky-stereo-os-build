@@ -23,6 +23,10 @@ M2=${M2:-0}
 CASES=${CASES:-okular-3d okular-scale12 okular-limit0 okular-scrolled okular-presentation okular-background okular-2d
 	preview-3d preview-scale12 preview-limit0 preview-scrolled preview-background preview-2d}
 echo "load at start $(date -u +%FT%TZ): $(cut -d' ' -f1-3 /proc/loadavg)" | tee "$RESULTS/load.txt"
+end_load() {
+    echo "load at end $(date -u +%FT%TZ): $(cut -d' ' -f1-3 /proc/loadavg)" | tee -a "$RESULTS/load.txt"
+}
+trap end_load EXIT
 docker image inspect "$IMAGE" --format '{{.Id}}' > "$RESULTS/image.txt"
 gpu=()
 [ "${GPU:-nvidia}" = nvidia ] && gpu=(--device nvidia.com/gpu=0 --device "${RENDER_NODE:-/dev/dri/renderD129}:/dev/dri/renderD128"
@@ -74,7 +78,6 @@ for case in $CASES; do
 			python3 -I /tests/compare.py "/baseline/$case/shot.png" "/out/$case/shot.png" > "$RESULTS/$case/baseline.json"
 	fi
 done
-echo "load at end $(date -u +%FT%TZ): $(cut -d' ' -f1-3 /proc/loadavg)" | tee -a "$RESULTS/load.txt"
 if [ "$ROLE" != capture ]; then
     python3 -I "$HERE/verdicts.py" "$RESULTS" "$ROLE" ${BASELINE:+--baseline "$BASELINE"} | tee "$RESULTS/verdicts.txt"
 fi

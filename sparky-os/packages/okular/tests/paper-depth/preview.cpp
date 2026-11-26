@@ -15,6 +15,7 @@
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
+#include <QVariant>
 #include <cstdio>
 
 class ElementProbe : public QWidget
