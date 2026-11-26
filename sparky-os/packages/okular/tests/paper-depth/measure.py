@@ -3,16 +3,20 @@
 # Copyright 2026 Daniel Campos Ramos
 """measure.py CASE_DIR KIND -- the paper depth proof's measurements of one case, as one JSON object on stdout.
 
-KIND is okular (Okular's page view, its desk set to a custom background) or preview (Qt's print preview). The desk's
-colour is the most common colour inside the program's window that is not white. The capture (shot.png) holds both eyes side by side, left first, each 1920 wide; a 2D capture is one picture.
+KIND is okular (Okular's page view, its desk set to the custom background 255,0,255) or preview (Qt's print preview, its
+desk Qt::gray, 160,160,164). The capture (shot.png) holds both eyes side by side, left first, each 1920 wide; a 2D capture
+is one picture.
 
-- pages: the white pages inside the program's window (KWin's frame from windows.json), found in the left eye.
+- pages: inside the program's window (KWin's frame from windows.json), in the left eye, the bands of rows and runs of
+  columns of paper: white, or one of the marks' pure colours (red, green, blue), so a toolbar's light grey is never paper.
 - disparity of a region: the horizontal shift s that best maps the left eye's region onto the right eye's along the same
   rows (left(x) = right(x - s)), searched from -20 to 20 whole pixels; s is the left eye's position minus the right eye's,
-  negative behind the window's plane. The residual (mean absolute difference at s) says whether the match is real.
-  Regions: each page's interior (the paper); a strip of desk just below each page holding the start of the page's bottom
-  shadow (the desk); the window's title bar (the window's plane). For a page run under the toolbar (no bottom in view):
-  the page's interior just under the view's top edge, and the page's right edge column of outline in each eye.
+  negative behind the window's plane. The residual (mean absolute difference at s) says whether the match is real; a
+  region whose best shift is not the only one (a uniform or striped region) gives no shift.
+  Regions: each page's interior (the paper); the rows of the page's bottom shadow under it, from left of the page to
+  past its left edge, where the shadow starts (the desk; the outline row, which is the paper's, is left out); the
+  window's title bar (the window's plane). A page whose top is cut by something that is neither its outline nor the desk
+  runs under the toolbar: its interior right under the cut, and the first column right of it that is not paper, in each eye.
 - differing: how many pixels differ between the eyes, and the box they lie in.
 """
 import json
@@ -47,56 +51,68 @@ x0, y0, fw, fh = (int(round(v)) for v in frame)
 x1, y1 = min(x0 + fw, left.shape[1]), min(y0 + fh, left.shape[0])
 x0, y0 = max(x0, 0), max(y0, 0)
 
-# the desk inside the window: its most common colour that is not white, and where it is
-inside = left[y0:y1, x0:x1].reshape(-1, 3)
-inside = inside[(inside < 245).any(axis=1)]
-colours, counts = np.unique(inside, axis=0, return_counts=True)
-desk_colour = colours[counts.argmax()]
+desk_colour = np.array((255, 0, 255) if kind == "okular" else (160, 160, 164))
 result["desk_colour"] = [int(v) for v in desk_colour]
-desk = (np.abs(left - desk_colour).max(axis=2) <= 3)
-desk[:y0] = False
-desk[y1:] = False
-desk[:, :x0] = False
-desk[:, x1:] = False
-# the view: the rows and columns that are mostly desk (a toolbar's few pixels of the same grey are not the view)
-rows = np.nonzero(desk.sum(axis=1) > 0.2 * max(1, x1 - x0))[0]
-cols = np.nonzero(desk.sum(axis=0) > 0.2 * max(1, y1 - y0))[0]
-view = [int(cols.min()), int(rows.min()), int(cols.max()), int(rows.max())] if len(rows) and len(cols) else None
-result["desk_box"] = view
 
-# the pages: runs of paper rows inside the view, then runs of paper columns in each band; paper is what is neither the
-# desk nor dark (an outline, a shadow): white and the marks on it
+
+def is_desk(pixels):
+    return np.abs(pixels - desk_colour).max(axis=-1) <= 3
+
+
+def is_paper(pixels):
+    white = (pixels >= 250).all(axis=-1)
+    pure = (pixels.max(axis=-1) >= 200) & (pixels.min(axis=-1) <= 60) & ~is_desk(pixels)
+    return white | pure
+
+
 pages = []
-if view:
-    vx0, vy0, vx1, vy1 = view
-    area = left[vy0:vy1 + 1, vx0:vx1 + 1]
-    white = (np.abs(area - desk_colour).max(axis=2) > 30) & (area.max(axis=2) > 200)
-    rows = white.sum(axis=1) > 40
-    y = 0
-    while y < len(rows):
-        if rows[y]:
-            start = y
-            while y < len(rows) and rows[y]:
-                y += 1
-            band = white[start:y]
-            cols = band.sum(axis=0) > max(3, (y - start) // 2)
-            x = 0
-            while x < len(cols):
-                if cols[x]:
-                    cstart = x
-                    while x < len(cols) and cols[x]:
-                        x += 1
-                    if x - cstart > 40 and y - start > 20:
-                        pages.append([vx0 + cstart, vy0 + start, vx0 + x - 1, vy0 + y - 1])
-                else:
-                    x += 1
-        else:
+area = left[y0:y1, x0:x1]
+paper = is_paper(area)
+rows = paper.sum(axis=1) > 40
+y = 0
+while y < len(rows):
+    if rows[y]:
+        start = y
+        while y < len(rows) and rows[y]:
             y += 1
+        band = paper[start:y]
+        cols = band.sum(axis=0) > max(3, (y - start) // 2)
+        x = 0
+        while x < len(cols):
+            if cols[x]:
+                cstart = x
+                while x < len(cols) and cols[x]:
+                    x += 1
+                # the page's own rows: a band is shared by everything side by side in it
+                own = np.nonzero(band[:, cstart:x].sum(axis=1) > (x - cstart) // 2)[0]
+                if x - cstart > 150 and len(own):
+                    # one page per run of its own rows (pages one under the other in one band)
+                    for run in np.split(own, np.nonzero(np.diff(own) > 1)[0] + 1):
+                        if run[-1] - run[0] > 60:
+                            pages.append([x0 + cstart, y0 + start + int(run[0]), x0 + x - 1, y0 + start + int(run[-1])])
+            else:
+                x += 1
+    else:
+        y += 1
+# a page under a window stacked above the program's is not the program's
+if program:
+    above = windows[windows.index(program[0]) + 1:]
+    def covered(box):
+        bx0, by0, bx1, by1 = box
+        for w in above:
+            if w.get("deleted") or w.get("hidden"):
+                continue
+            wx, wy, ww, wh = w["fg"]
+            if bx0 < wx + ww and wx < bx1 and by0 < wy + wh and wy < by1:
+                return True
+        return False
+    pages = [box for box in pages if not covered(box)]
 result["pages"] = pages
 
 
 def disparity(box):
-    """The shift s with left(x) = right(x - s) over box (left eye coordinates), and its residual."""
+    """The shift s with left(x) = right(x - s) over box (left eye coordinates), its residual, and whether it is the
+    only best shift."""
     bx0, by0, bx1, by1 = box
     bx0, by0 = max(bx0, 21), max(by0, 0)
     bx1, by1 = min(bx1, left.shape[1] - 22), min(by1, left.shape[0] - 1)
@@ -105,32 +121,56 @@ def disparity(box):
     patch = left[by0:by1 + 1, bx0:bx1 + 1]
     if patch.std() < 1:
         return {"box": [bx0, by0, bx1, by1], "shift": None, "why": "uniform: nothing to match"}
-    best = None
+    errors = []
     for s in range(-20, 21):
         other = right[by0:by1 + 1, bx0 - s:bx1 + 1 - s]
-        err = float(np.abs(patch - other).mean())
-        if best is None or err < best[1]:
-            best = (s, err)
-    return {"box": [bx0, by0, bx1, by1], "shift": best[0], "residual": round(best[1], 3)}
+        errors.append((float(np.abs(patch - other).mean()), s))
+    errors.sort()
+    best_err, best = errors[0]
+    ties = [s for err, s in errors if err <= best_err + 0.01]
+    if len(ties) > 1:
+        return {"box": [bx0, by0, bx1, by1], "shift": None, "why": f"ambiguous: shifts {sorted(ties)} match alike",
+                "residual": round(best_err, 3)}
+    return {"box": [bx0, by0, bx1, by1], "shift": best, "residual": round(best_err, 3)}
+
+
+def shadow_rows(px0, px1, py1):
+    """The rows under a page that hold its bottom shadow: below its last row of paper, at the page's middle, the rows
+    that are neither the desk nor paper nor near black (an outline, or a shadow's darkest row, which has no left end)."""
+    xm = (px0 + px1) // 2
+    found = []
+    for y in range(py1 + 1, min(py1 + 30, y1, left.shape[0])):
+        pixel = left[y, xm]
+        if is_desk(pixel) and found:
+            break
+        if not is_desk(pixel) and not is_paper(pixel) and pixel.max() >= 40:
+            found.append(y)
+    return found
+
+
+def cut_at_top(px0, px1, py0):
+    """Whether the page's top is cut by something above it that is neither its outline (near black), its desk nor paper."""
+    xm = (px0 + px1) // 2
+    above = left[max(py0 - 2, 0):py0, xm]
+    return len(above) > 0 and all(not is_desk(p) and not is_paper(p) and p.max() >= 60 for p in above)
 
 
 measures = []
 for i, (px0, py0, px1, py1) in enumerate(pages):
     entry = {"page": i, "box": [px0, py0, px1, py1]}
     entry["paper"] = disparity([px0 + 8, py0 + 8, px1 - 8, py1 - 8])
-    if view and py1 + 6 <= view[3]:
-        # the desk just below the page (under its bottom outline, which is the paper's): the page's bottom shadow starts
-        # near the page's left edge
-        entry["desk"] = disparity([px0 - 40, py1 + 2, px0 + 60, py1 + 6])
-    if view and py0 <= view[1] + 1:
-        # the page runs under the top of the view: its interior right under the cut, and its right edge of outline
+    rows_below = shadow_rows(px0, px1, py1)
+    if rows_below:
+        entry["shadow_rows"] = [rows_below[0], rows_below[-1]]
+        entry["desk"] = disparity([px0 - 40, rows_below[0], px0 + 60, rows_below[-1]])
+    if cut_at_top(px0, px1, py0):
         entry["paper_at_cut"] = disparity([px0 + 8, py0, px1 - 8, py0 + 20])
         edges = []
         for eye in (left, right):
             row = eye[py0 + 10, px1 - 5: px1 + 30]
-            dark = np.nonzero(row.max(axis=1) < 60)[0]
-            edges.append(int(px1 - 5 + dark[0]) if len(dark) else None)
-        entry["outline_right_at_cut"] = edges
+            beyond = np.nonzero(~is_paper(row))[0]
+            edges.append(int(px1 - 5 + beyond[0]) if len(beyond) else None)
+        entry["right_edge_at_cut"] = edges
     measures.append(entry)
 result["measures"] = measures
 if program and stereo:

@@ -24,7 +24,9 @@ printf '[Daemon]\nAutolock=false\nLockOnResume=false\nTimeout=0\n' > "$XDG_CONFI
 zoom=0; [ "$CASE" = okular-scrolled ] && zoom=1
 printf '[General]\nShowOSD=false\n[PageView]\nUseCustomBackgroundColor=true\nBackgroundColor=255,0,255\n[Zoom]\nZoomMode=%s\n[Core General]\nContinueFromLastViewedPage=true\n' \
     "$zoom" > "$XDG_CONFIG_HOME/okularpartrc"
-printf '[General]\nShowSidebar=false\nShowBottomBar=false\n' > "$XDG_CONFIG_HOME/okularrc"
+# no notice over presentation mode (KMessageBox's "do not show again"), no wallet started by Okular
+printf '[Notification Messages]\npresentationInfo=false\n' > "$XDG_CONFIG_HOME/okularrc"
+printf '[Wallet]\nEnabled=false\n' > "$XDG_CONFIG_HOME/kwalletrc"
 pdf=/tmp/two-pages.pdf
 python3 -I /tests/make-pdf.py "$pdf" 300 200
 if [ "$CASE" = okular-scrolled ]; then

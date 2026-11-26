@@ -59,7 +59,7 @@ for kind in ("okular", "preview"):
         for e in cut:
             row(f"{kind}-scrolled page {e['page']} at the cut at the window's plane", e["paper_at_cut"]["shift"] == 0,
                 e["paper_at_cut"]["shift"], 0)
-            edges = e.get("outline_right_at_cut") or [None, None]
+            edges = e.get("right_edge_at_cut") or [None, None]
             row(f"{kind}-scrolled page {e['page']} right edge at the cut, both eyes", edges[0] is not None and edges[0] == edges[1],
                 edges, "equal columns")
     else:
