@@ -1,16 +1,42 @@
 #!/usr/bin/python3
 # Created by Daniel Ramos (Capitain Jack) 2026/11/18
 # Copyright 2026 under the GNU GPL3 License
-"""Build a pinned, source-verified Sparky display tool with its one edition change."""
+"""Build a pinned, source-verified Sparky display tool with its edition changes (the OSCODE line; recommendsFirst)."""
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+
+
+def recommends_first(text, names):
+    """Put the edition's own providers first in the upstream Recommends; every upstream alternative stays after them."""
+    if (not isinstance(names, list) or not names or len(set(names)) != len(names)
+            or not all(isinstance(name, str) and re.fullmatch(r'[a-z0-9][a-z0-9+.-]+', name) for name in names)):
+        raise SystemExit('recommendsFirst must be a list of distinct package names')
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.lower().startswith('recommends:')]
+    if not starts:
+        raise SystemExit(f'recommendsFirst: the pinned control has no Recommends line to put {", ".join(names)} first in')
+    start = end = starts[0]
+    while end + 1 < len(lines) and lines[end + 1][:1] in (' ', '\t'):
+        end += 1
+    value = ' '.join(' '.join([lines[start].split(':', 1)[1]] + lines[start + 1:end + 1]).split())
+    groups = [group.strip() for group in value.split(',') if group.strip()]
+    if len(groups) != 1:
+        raise SystemExit(f'recommendsFirst: the pinned Recommends has {len(groups)} groups; it can only lead one list of alternatives')
+    present = {re.split(r'[\s(:\[]', alternative.strip(), maxsplit=1)[0] for alternative in groups[0].split('|')}
+    for name in names:
+        if name in present:
+            raise SystemExit(f'recommendsFirst: {name} is already in the pinned Recommends; nothing to put first')
+    lines[start:end + 1] = ['Recommends: ' + ' | '.join(names + [groups[0]])]
+    return '\n'.join(lines) + '\n'
+
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('recipe', type=Path)
@@ -61,6 +87,8 @@ with tempfile.TemporaryDirectory(prefix='sparky-display-', dir=output) as tempor
     text = control.read_text()
     text = '\n'.join('Version: ' + spec['version'] if line.startswith('Version: ') else line
                      for line in text.splitlines()) + '\n'
+    if 'recommendsFirst' in spec:
+        text = recommends_first(text, spec['recommendsFirst'])
     control.write_text(text)
     # The payload sources stay byte-identical apart from OSCODE; Lean Code and provenance run in the normal pipeline.
     shutil.copy2(recipe / 'ATTRIBUTIONS.md', tree / 'usr/share/doc' / name / 'ATTRIBUTIONS.md')
