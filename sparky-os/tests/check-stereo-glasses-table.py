@@ -61,7 +61,8 @@ def decode_edid(data):
     name = None
     timings = []
     # the base block's four descriptors, then the detailed timings of every CTA-861 extension the base block declares
-    # (byte 126; CTA-861 7.5: byte 2 gives the offset of the first detailed timing, 0 or 4 when there is none)
+    # (byte 126; byte 2 of a CTA-861 block is the offset d of the first detailed timing, read when 4 <= d <= 127, as the
+    # kernel's cea_for_each_detailed_block() reads it, drivers/gpu/drm/drm_edid.c of v7.3)
     places = [(0, range(54, 126, 18))]
     for block in range(1, 1 + data[126]):
         start = 128 * block
@@ -69,7 +70,7 @@ def decode_edid(data):
             raise ValueError("EDID declares %d extensions, has %d" % (data[126], len(data) // 128 - 1))
         if sum(data[start:start + 128]) % 256 != 0:
             raise ValueError("bad checksum in block %d" % block)
-        if data[start] == 0x02 and data[start + 2] > 4:
+        if data[start] == 0x02 and 4 <= data[start + 2] <= 127:
             places.append((block, range(start + data[start + 2], start + 127 - 17, 18)))
     for block, offsets in places:
         for off in offsets:
