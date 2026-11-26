@@ -1,0 +1,60 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/03c21732883720975ef2d6f7b394e862f1142cc3
+From 03c21732883720975ef2d6f7b394e862f1142cc3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:40:22 -0300
+Subject: [PATCH 23/48] fftools/ffprobe: print the 3D reference displays
+ information
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the context moved in FFmpeg 9.1; the lines this patch adds and removes are unchanged
+
+diff --git a/fftools/ffprobe.c b/fftools/ffprobe.c
+index 17c396f648fd39a8788db08a4c1c06498aa59c70..775034878639ac02183f0b7c91310ec872ebc71c 100644
+--- a/fftools/ffprobe.c
++++ b/fftools/ffprobe.c
+@@ -54,6 +54,7 @@
+ #include "libavutil/pixdesc.h"
+ #include "libavutil/spherical.h"
+ #include "libavutil/stereo3d.h"
++#include "libavutil/tdrdi.h"
+ #include "libavutil/dict.h"
+ #include "libavutil/intreadwrite.h"
+ #include "libavutil/mathematics.h"
+@@ -779,6 +780,26 @@ static void print_alternative_depth_info(AVTextFormatContext *tfc, const AVAlter
+     }
+ }
+ 
++static void print_tdrdi(AVTextFormatContext *tfc, const AV3DReferenceDisplaysInfo *tdrdi)
++{
++    print_int("nb_ref_displays", tdrdi->num_ref_displays);
++    for (unsigned i = 0; i < tdrdi->num_ref_displays; i++) {
++        const AV3DReferenceDisplay *d = av_tdrdi_get_display((AV3DReferenceDisplaysInfo *)tdrdi, i);
++
++        if (tdrdi->ref_baseline_present) {
++            print_multiview_real_fmt("display%u_ref_baseline", &d->ref_baseline, i);
++        } else {
++            print_int_key_fmt("display%u_left_view_id", d->left_view_id, i);
++            print_int_key_fmt("display%u_right_view_id", d->right_view_id, i);
++        }
++        print_multiview_real_fmt("display%u_ref_display_width", &d->ref_display_width, i);
++        if (tdrdi->ref_viewing_distance_flag)
++            print_multiview_real_fmt("display%u_ref_viewing_distance", &d->ref_viewing_distance, i);
++        if (d->additional_shift_present_flag)
++            print_int_key_fmt("display%u_num_sample_shift", d->num_sample_shift, i);
++    }
++}
++
+ /* the multiview and depth information types of frame and packet side data */
+ static int print_multiview_side_data(AVTextFormatContext *tfc, int is_frame, int type, const void *data)
+ {
+@@ -801,6 +822,8 @@ static int print_multiview_side_data(AVTextFormatContext *tfc, int is_frame, int
+         print_int("max_dps_id_diff", id->max_dps_id_diff);
+     } else if (type == TYPE(ALTERNATIVE_DEPTH_INFO))
+         print_alternative_depth_info(tfc, data);
++    else if (type == TYPE(3D_REFERENCE_DISPLAYS))
++        print_tdrdi(tfc, data);
+     else
+         return 0;
+ #undef TYPE

@@ -1,0 +1,27 @@
+Description: avcodec/h2645_sei_multiview: populate the appended mantissa fields
+ .
+ The edition already decodes reference displays through its common H.264/HEVC metadata path. Populate the ORDER 174 full-width fields there as well as in the original HEVC context path, preserving the existing AVMultiviewReal representation.
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/d96fc9165669539389699d55d91f7180e4c6c4bc
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/libavcodec/h2645_sei_multiview.c b/libavcodec/h2645_sei_multiview.c
+index 2406e719414..2106a259914 100644
+--- a/libavcodec/h2645_sei_multiview.c
++++ b/libavcodec/h2645_sei_multiview.c
+@@ -632,10 +632,12 @@ static int decode_3d_reference_displays_info(H2645SEIMultiview *m, GetBitContext
+         read_camera_real(gb, &d->ref_display_width, prec_width);
+         d->exponent_ref_display_width = d->ref_display_width.exponent;
+         d->mantissa_ref_display_width = d->ref_display_width.mantissa;
++        d->whole_mantissa_ref_display_width = d->ref_display_width.mantissa;
+         if (dist_flag) {
+             read_camera_real(gb, &d->ref_viewing_distance, prec_dist);
+             d->exponent_ref_viewing_distance = d->ref_viewing_distance.exponent;
+             d->mantissa_ref_viewing_distance = d->ref_viewing_distance.mantissa;
++            d->whole_mantissa_ref_viewing_distance = d->ref_viewing_distance.mantissa;
+         }
+         d->additional_shift_present_flag = get_bits1(gb);
+         if (d->additional_shift_present_flag)

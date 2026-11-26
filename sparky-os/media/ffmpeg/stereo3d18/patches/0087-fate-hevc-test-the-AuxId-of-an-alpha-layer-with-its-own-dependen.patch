@@ -1,0 +1,51 @@
+Description: fate/hevc: test the AuxId of an alpha layer with its own dependency id
+ .
+ Decode with -err_detect compliant an x265 alpha stream whose VPS
+ extension has spatial or quality scalability with dependency id 0 and
+ an auxiliary layer with AuxId 1, the alpha layer. The frames must be
+ yuva420p with the alpha plane.
+ .
+ The sample is a stream made by x265 --alpha with one bit of the VPS
+ changed by the script attached to the pull request.
+ .
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/416220416b6f1f9dd69166b6a45a4a2901615191
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/tests/fate/hevc.mak b/tests/fate/hevc.mak
+index 31862783f7e..2112d901b9c 100644
+--- a/tests/fate/hevc.mak
++++ b/tests/fate/hevc.mak
+@@ -352,6 +352,9 @@ FATE_HEVC-$(call FRAMECRC, MOV, HEVC) += fate-hevc-mv-ltr
+ fate-hevc-alpha: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/alpha.mp4
+ FATE_HEVC-$(call FRAMECRC, MOV, HEVC) += fate-hevc-alpha
+ 
++fate-hevc-alpha-dimension-id: CMD = framecrc -err_detect compliant -f hevc -i $(TARGET_SAMPLES)/hevc/x265-alpha-dependency-id-0.hevc
++FATE_HEVC-$(call FRAMECRC, HEVC, HEVC) += fate-hevc-alpha-dimension-id
++
+ fate-hevc-color-reserved: CMD = framecrc -bsf:v hevc_metadata=colour_primaries=0:transfer_characteristics=0:matrix_coefficients=3 -i $(TARGET_SAMPLES)/hevc-conformance/AMP_A_Samsung_4.bit -vf scale,format=nv12 -frames:v 1
+ FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_METADATA_BSF SCALE_FILTER) += fate-hevc-color-reserved
+ 
+diff --git a/tests/ref/fate/hevc-alpha-dimension-id b/tests/ref/fate/hevc-alpha-dimension-id
+new file mode 100644
+index 00000000000..0a7ee950e4f
+--- /dev/null
++++ b/tests/ref/fate/hevc-alpha-dimension-id
+@@ -0,0 +1,13 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 64x64
++#sar 0: 0/1
++0,          0,          0,        1,    10240, 0x922cfe67
++0,          1,          1,        1,    10240, 0x921dece6
++0,          2,          2,        1,    10240, 0xd9b9dad1
++0,          3,          3,        1,    10240, 0xe020cad6
++0,          4,          4,        1,    10240, 0x9862bbde
++0,          5,          5,        1,    10240, 0xe752a97f
++0,          6,          6,        1,    10240, 0x06c798e0
++0,          7,          7,        1,    10240, 0xc52486f1

@@ -1,0 +1,693 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/8925fd7b8239d5a7e7e5a26f8af306e006ab121a
+From 8925fd7b8239d5a7e7e5a26f8af306e006ab121a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 05:26:27 -0300
+Subject: [PATCH 47/48] avfilter: add the dibr filter
+
+Depth-image-based rendering: a picture and its depth map become full
+side by side, both views at the picture's size, the left eye first,
+marked with Stereo 3D side data. libstereo-dibr does the work, the core
+Sparky Stereo OS shares between FFmpeg, players and the desktop, and
+every path of it is an option: the picture as the left eye or the
+middle; forward, backward or layered warping; background extension,
+depth-aided, Telea or no hole filling; an asymmetric Gaussian on the
+depth or none.
+
+What a depth sample means comes from the depth frame's side data: the
+depth representation information of H.264 and H.265 (from the SEI
+messages or an HEIF depth image), or the supplemental information of an
+ISO/IEC 23002-3 auxiliary video stream, which is not freely available
+and read as open implementations read it. Without either, larger
+samples are nearer (2D-plus-depth), with a range and a screen plane as
+options.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ configure                |   4 +
+ doc/filters.texi         | 120 ++++++++++
+ libavfilter/Makefile     |   1 +
+ libavfilter/allfilters.c |   1 +
+ libavfilter/vf_dibr.c    | 459 +++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 585 insertions(+)
+ create mode 100644 libavfilter/vf_dibr.c
+
+diff --git a/configure b/configure
+index 374bd5c1..c2506db1 100755
+--- a/configure
++++ b/configure
+@@ -280,6 +280,7 @@ External library support:
+   --enable-libspeex        enable Speex de/encoding via libspeex [no]
+   --enable-libsrt          enable Haivision SRT protocol via libsrt [no]
+   --enable-libssh          enable SFTP protocol via libssh [no]
++  --enable-libstereodibr   enable depth-image-based rendering via libstereo-dibr [no]
+   --enable-libsvtav1       enable AV1 encoding via SVT [no]
+   --enable-libsvtjpegxs    enable JPEGXS encoding/decoding via SVT [no]
+   --enable-libtensorflow   enable TensorFlow as a DNN module backend
+@@ -2034,6 +2035,7 @@ EXTERNAL_LIBRARY_GPL_LIST="
+     libdvdnav
+     libdvdread
+     librubberband
++    libstereodibr
+     libvidstab
+     libx264
+     libx265
+@@ -4176,6 +4178,7 @@ denoise_vaapi_filter_deps="vaapi"
+ derain_filter_select="dnn"
+ deshake_filter_select="pixelutils"
+ deshake_opencl_filter_deps="opencl"
++dibr_filter_deps="libstereodibr"
+ dilation_opencl_filter_deps="opencl"
+ dnn_classify_filter_select="dnn"
+ dnn_detect_filter_select="dnn"
+@@ -7438,6 +7441,7 @@ enabled libsmbclient      && { check_pkg_config libsmbclient smbclient libsmbcli
+ enabled libsnappy         && require libsnappy snappy-c.h snappy_compress -lsnappy -lstdc++
+ enabled libsoxr           && require libsoxr soxr.h soxr_create -lsoxr
+ enabled libssh            && require_pkg_config libssh "libssh >= 0.6.0" libssh/sftp.h sftp_init
++enabled libstereodibr     && require_pkg_config libstereodibr stereo-dibr stereo-dibr.h stereo_dibr_render
+ enabled libspeex          && require_pkg_config libspeex speex speex/speex.h speex_decoder_init
+ enabled libsrt            && require_pkg_config libsrt "srt >= 1.3.0" srt/srt.h srt_socket
+ enabled libsvtav1         && require_pkg_config libsvtav1 "SvtAv1Enc >= 0.9.0" EbSvtAv1Enc.h svt_av1_enc_init_handle
+diff --git a/doc/filters.texi b/doc/filters.texi
+index 3534c87c..f687423b 100644
+--- a/doc/filters.texi
++++ b/doc/filters.texi
+@@ -12026,6 +12026,126 @@ pattern. This is to be used if the stream is cut. The default value is @code{0}.
+ @end table
+ 
+ @anchor{dilation}
++@section dibr
++
++Render stereo from a picture and its depth map (depth-image-based
++rendering): the output is full side by side, both views at the picture's
++size, the left eye first, marked as side by side stereo.
++
++It accepts two inputs: the picture, and the depth map, whose first plane is
++read at any size and bit depth. libstereo-dibr does the work, the same core
++the other programs of Sparky Stereo OS use, so FFmpeg is configured with
++@code{--enable-libstereodibr}.
++
++What a depth sample means comes from the depth frame's side data when
++@option{depth} is @code{auto}: the depth representation information of H.264
++(H.13.2.3) and H.265 (G.14.3.4), from their SEI messages or an HEIF depth
++image, with its ZNear and ZFar, or DMin and DMax, and the non-linear
++disparity's DepthLUT; or the supplemental information of an ISO/IEC 23002-3
++auxiliary video stream, a depth map with its kfar and knear, or a parallax
++map with its parallax_zero, parallax_scale and wref. ISO/IEC 23002-3 is not
++freely available: those two are read as open implementations read them, and
++are unverified. Without side data, larger samples are nearer
++(2D-plus-depth).
++
++This filter accepts the following options:
++
++@table @option
++@item view
++What the picture is.
++@table @samp
++@item left
++The left eye: only the right eye is drawn. This is the default.
++@item center
++The middle: both eyes are drawn, half the parallax each way.
++@end table
++
++@item warp
++How the picture is warped into a view.
++@table @samp
++@item forward
++Each pixel is splatted to where it goes, the nearest kept. This is the
++default.
++@item backward
++The depth is warped first, then each pixel of the view sampled from the
++picture.
++@item layered
++The foreground's edges are drawn as a layer of their own over the
++background, which continues under them.
++@end table
++
++@item fill
++How the places the picture does not show (disocclusions) are filled.
++@table @samp
++@item background
++The background beside each hole is extended across it. This is the default.
++@item depth
++Only background pixels feed the fill, nearest first.
++@item telea
++Telea's fast marching inpainting, from the background side.
++@item none
++Holes are left black.
++@end table
++
++@item smooth
++Whether the depth is smoothed before warping.
++@table @samp
++@item off
++No smoothing. This is the default.
++@item gaussian
++An asymmetric Gaussian, stronger vertically, which shrinks the holes.
++@end table
++
++@item sigma_h
++@item sigma_v
++The horizontal and vertical standard deviations of the smoothing, in pixels
++of a picture 1920 wide. Default are 10 and 30.
++
++@item radius
++The neighbourhood of the depth and telea fills, in pixels. Default is 5.
++
++@item depth
++What a depth sample means: @samp{auto} (the default), @samp{nearness}
++(larger samples nearer), @samp{farness} (larger samples farther),
++@samp{inverse_z}, @samp{disparity}, @samp{z} and @samp{nonlinear} (the
++depth representation types 0 to 3), or @samp{parallax} (an ISO/IEC 23002-3
++parallax map).
++
++@item range
++For depth without absolute values, the largest parallax either side of the
++screen, in pixels of a picture 1920 wide. Default is 58, about one degree of
++visual angle for a viewer three picture heights away.
++
++@item zero
++For depth without absolute values, where the screen is, from 0 (the farthest
++samples) to 1 (the nearest). Default is 0.5.
++
++@item shift
++A parallax added to every point, in pixels of a picture 1920 wide, which
++moves the whole scene behind (positive) or in front of the screen. Default
++is 0.
++
++@item z_near
++@item z_far
++ZNear and ZFar for depth of type @samp{z} that carries none.
++@end table
++
++@subsection Examples
++@itemize
++@item
++Draw the right eye of a picture and its 2D-plus-depth map:
++@example
++ffmpeg -i picture.png -i depth.png -lavfi dibr stereo.png
++@end example
++
++@item
++Draw both eyes of an MPEG-2 transport stream's texture and its auxiliary
++depth stream, with the depth-aided fill:
++@example
++ffmpeg -i video.ts -lavfi "[0:v:0][0:v:1]dibr=view=center:fill=depth" stereo.mkv
++@end example
++@end itemize
++
+ @section dilation
+ 
+ Apply dilation effect to the video.
+diff --git a/libavfilter/Makefile b/libavfilter/Makefile
+index ce40cf3e..f55860bc 100644
+--- a/libavfilter/Makefile
++++ b/libavfilter/Makefile
+@@ -287,6 +287,7 @@ OBJS-$(CONFIG_DESHAKE_OPENCL_FILTER)        += vf_deshake_opencl.o opencl.o \
+ OBJS-$(CONFIG_DESHAKE_FILTER)                += vf_deshake.o transform.o
+ OBJS-$(CONFIG_DESPILL_FILTER)                += vf_despill.o
+ OBJS-$(CONFIG_DETELECINE_FILTER)             += vf_detelecine.o
++OBJS-$(CONFIG_DIBR_FILTER)                   += vf_dibr.o framesync.o
+ OBJS-$(CONFIG_DILATION_FILTER)               += vf_neighbor.o
+ OBJS-$(CONFIG_DILATION_OPENCL_FILTER)        += vf_neighbor_opencl.o opencl.o \
+                                                 opencl/neighbor.o
+diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
+index 402b8436..3dd6f88d 100644
+--- a/libavfilter/allfilters.c
++++ b/libavfilter/allfilters.c
+@@ -262,6 +262,7 @@ extern const FFFilter ff_vf_deshake;
+ extern const FFFilter ff_vf_deshake_opencl;
+ extern const FFFilter ff_vf_despill;
+ extern const FFFilter ff_vf_detelecine;
++extern const FFFilter ff_vf_dibr;
+ extern const FFFilter ff_vf_dilation;
+ extern const FFFilter ff_vf_dilation_opencl;
+ extern const FFFilter ff_vf_displace;
+diff --git a/libavfilter/vf_dibr.c b/libavfilter/vf_dibr.c
+new file mode 100644
+index 00000000..6460ae44
+--- /dev/null
++++ b/libavfilter/vf_dibr.c
+@@ -0,0 +1,459 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with FFmpeg; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++/**
++ * @file
++ * Depth-image-based rendering: a picture and its depth map to full side by
++ * side, through libstereo-dibr.
++ */
++
++#include <float.h>
++#include <limits.h>
++#include <stereo-dibr.h>
++
++#include "config.h"
++#include "libavutil/mem.h"
++#include "libavutil/multiview.h"
++#include "libavutil/opt.h"
++#include "libavutil/pixdesc.h"
++#include "libavutil/stereo3d.h"
++#include "avfilter.h"
++#include "filters.h"
++#include "formats.h"
++#include "framesync.h"
++#include "video.h"
++
++enum DibrDepth {
++    DEPTH_AUTO = -1,
++};
++
++typedef struct DibrContext {
++    const AVClass *class;
++    FFFrameSync fs;
++
++    int view, warp, fill, smooth;
++    double sigma_h, sigma_v;
++    int radius;
++    int depth;
++    double range, zero, shift;
++    double z_near, z_far;
++
++    stereo_dibr *dibr;
++    float *table;
++    uint16_t *lut;
++    int table_size;
++    int last_kind;
++} DibrContext;
++
++/* Planar formats of one component per plane, 1 to 16 bits in native-endian
++ * bytes or words; for the depth, not RGB (its first plane is luma). */
++static int is_usable(const AVPixFmtDescriptor *desc, int depth_input)
++{
++    unsigned planes = 0;
++
++    if (desc->flags & (AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BITSTREAM | AV_PIX_FMT_FLAG_PAL |
++                       AV_PIX_FMT_FLAG_FLOAT | AV_PIX_FMT_FLAG_BAYER | AV_PIX_FMT_FLAG_XYZ))
++        return 0;
++    if (!(desc->flags & AV_PIX_FMT_FLAG_PLANAR) && desc->nb_components > 1)
++        return 0;
++    if (!!(desc->flags & AV_PIX_FMT_FLAG_BE) != HAVE_BIGENDIAN && desc->comp[0].depth > 8)
++        return 0;
++    if (depth_input && (desc->flags & AV_PIX_FMT_FLAG_RGB))
++        return 0;
++    for (int i = 0; i < desc->nb_components; i++) {
++        const AVComponentDescriptor *c = &desc->comp[i];
++        if (c->offset || c->shift || c->depth > 16 || c->step != (c->depth > 8 ? 2 : 1) ||
++            (planes & (1u << c->plane)))
++            return 0;
++        planes |= 1u << c->plane;
++    }
++    return planes == (1u << desc->nb_components) - 1;
++}
++
++static int query_formats(const AVFilterContext *ctx,
++                         AVFilterFormatsConfig **cfg_in,
++                         AVFilterFormatsConfig **cfg_out)
++{
++    AVFilterFormats *pictures = NULL, *depths = NULL;
++    const AVPixFmtDescriptor *desc = NULL;
++    int ret;
++
++    while ((desc = av_pix_fmt_desc_next(desc))) {
++        enum AVPixelFormat fmt = av_pix_fmt_desc_get_id(desc);
++        if (is_usable(desc, 0) && (ret = ff_add_format(&pictures, fmt)) < 0)
++            return ret;
++        if (is_usable(desc, 1) && (ret = ff_add_format(&depths, fmt)) < 0)
++            return ret;
++    }
++    if ((ret = ff_formats_ref(pictures, &cfg_in[0]->formats)) < 0 ||
++        (ret = ff_formats_ref(pictures, &cfg_out[0]->formats)) < 0)
++        return ret;
++    return ff_formats_ref(depths, &cfg_in[1]->formats);
++}
++
++/* What the depth frame's samples mean: its side data (or the picture's), else the option. */
++static int convention(AVFilterContext *ctx, const AVFrame *picture, const AVFrame *depth,
++                      struct stereo_depth_convention *c, int bits)
++{
++    DibrContext *s = ctx->priv;
++    const AVFrameSideData *sd;
++
++    memset(c, 0, sizeof(*c));
++    c->bits  = bits;
++    c->zero  = s->zero;
++    c->range = s->range;
++    c->shift = s->shift;
++    c->kind  = s->depth == DEPTH_AUTO ? STEREO_DEPTH_NEARNESS : s->depth;
++    if (s->z_near > 0 && s->z_far > 0) {
++        c->z_present = 1;
++        c->z_near    = s->z_near;
++        c->z_far     = s->z_far;
++    }
++    if (s->depth != DEPTH_AUTO)
++        return 0;
++
++    /* H.264 H.13.2.3, H.265 G.14.3.4, HEIF auxC: the first view's parameters */
++    sd = av_frame_get_side_data(depth, AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO);
++    if (!sd)
++        sd = av_frame_get_side_data(picture, AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO);
++    if (sd) {
++        const AVDepthRepresentationInfo *info = (const AVDepthRepresentationInfo *)sd->data;
++        const AVDepthRepresentationView *v = info->nb_views ?
++                                             av_depth_representation_info_get_view(info, 0) : NULL;
++        int ret;
++
++        switch (info->type) {
++        case AV_DEPTH_REPRESENTATION_INVERSE_Z:
++            c->kind = STEREO_DEPTH_INVERSE_Z;
++            break;
++        case AV_DEPTH_REPRESENTATION_DISPARITY:
++            c->kind = STEREO_DEPTH_DISPARITY;
++            break;
++        case AV_DEPTH_REPRESENTATION_Z:
++            c->kind = STEREO_DEPTH_Z;
++            break;
++        case AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY:
++            c->kind = STEREO_DEPTH_NONLINEAR_DISPARITY;
++            ret = av_depth_representation_nonlinear_lut(info, bits, s->lut);
++            if (ret < 0)
++                return ret;
++            c->lut = s->lut;
++            break;
++        default:
++            av_log(ctx, AV_LOG_WARNING, "Reserved depth representation type %d, "
++                   "read as larger samples nearer\n", info->type);
++            return 0;
++        }
++        if (v && info->z_near_present && info->z_far_present && !c->z_present) {
++            c->z_present = 1;
++            c->z_near    = av_multiview_real_to_double(&v->z_near);
++            c->z_far     = av_multiview_real_to_double(&v->z_far);
++        }
++        if (v && info->d_min_present && info->d_max_present) {
++            /* in luma samples of the view, the picture (H.265 G.14.3.4) */
++            c->d_present = 1;
++            c->d_min     = av_multiview_real_to_double(&v->d_min);
++            c->d_max     = av_multiview_real_to_double(&v->d_max);
++            c->d_width   = picture->width;
++        }
++        return 0;
++    }
++
++    /* ISO/IEC 23002-3, which is not freely available: our reading */
++    sd = av_frame_get_side_data(depth, AV_FRAME_DATA_AUXILIARY_VIDEO_INFO);
++    if (sd) {
++        const AVAuxiliaryVideoInfo *info = (const AVAuxiliaryVideoInfo *)sd->data;
++
++        if (info->type == AV_AUXILIARY_VIDEO_PARALLAX) {
++            c->kind           = STEREO_DEPTH_PARALLAX;
++            c->parallax_zero  = info->parallax_zero;
++            c->parallax_scale = info->parallax_scale;
++            c->wref           = info->wref;
++        } else if (info->nkfar + info->nknear > 0) {
++            /* kfar behind the screen, knear in front of it, both of the
++             * screen width: the screen sits where one gives way to the other */
++            c->zero = (double)info->nkfar / (info->nkfar + info->nknear);
++        }
++    }
++    return 0;
++}
++
++/* The planes of a frame for libstereo-dibr, starting x_offset luma samples
++ * in; a hole of the none fill is black: limited range black and neutral
++ * chroma for YUV (gray is full range), zero for RGB, opaque alpha. */
++static void fill_picture(struct stereo_dibr_picture *p, const AVPixFmtDescriptor *desc,
++                         uint8_t *const data[4], const int linesize[4], int w, int h,
++                         int x_offset, int full_range)
++{
++    const int rgb = desc->flags & AV_PIX_FMT_FLAG_RGB;
++
++    memset(p, 0, sizeof(*p));
++    p->width     = w;
++    p->height    = h;
++    p->nb_planes = desc->nb_components;
++    for (int k = 0; k < desc->nb_components; k++) {
++        const AVComponentDescriptor *c = &desc->comp[k];
++        struct stereo_dibr_plane *pl = &p->plane[c->plane];
++        const int alpha  = k == 3 || (k == 1 && desc->nb_components == 2);
++        const int chroma = !rgb && !alpha && (k == 1 || k == 2);
++
++        pl->bytes  = c->step;
++        pl->log2_w = chroma ? desc->log2_chroma_w : 0;
++        pl->log2_h = chroma ? desc->log2_chroma_h : 0;
++        pl->stride = linesize[c->plane];
++        pl->data   = data[c->plane] + (x_offset >> pl->log2_w) * pl->bytes;
++        if (alpha)
++            pl->hole = (1u << c->depth) - 1;
++        else if (chroma)
++            pl->hole = 1u << (c->depth - 1);
++        else if (rgb || full_range || desc->nb_components < 3)
++            pl->hole = 0;
++        else
++            pl->hole = 16u << FFMAX(c->depth - 8, 0);
++    }
++}
++
++static int do_dibr(FFFrameSync *fs)
++{
++    AVFilterContext *ctx = fs->parent;
++    DibrContext *s = ctx->priv;
++    AVFilterLink *outlink = ctx->outputs[0];
++    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(outlink->format);
++    const AVPixFmtDescriptor *ddesc;
++    struct stereo_depth_convention c;
++    struct stereo_dibr_params p;
++    struct stereo_dibr_picture in, left, right;
++    struct stereo_dibr_depth dm;
++    AVFrame *picture, *depth, *out;
++    AVStereo3D *stereo;
++    int ret, bits, full;
++
++    ret = ff_framesync_dualinput_get(fs, &picture, &depth);
++    if (ret < 0)
++        return ret;
++
++    if (depth) {
++        ddesc = av_pix_fmt_desc_get(depth->format);
++        bits  = ddesc->comp[0].depth;
++        if ((ret = convention(ctx, picture, depth, &c, bits)) < 0)
++            goto fail;
++        if (c.kind != s->last_kind) {
++            av_log(ctx, AV_LOG_VERBOSE, "depth read as convention %d\n", c.kind);
++            s->last_kind = c.kind;
++        }
++        s->table_size = 1 << bits;
++        if (stereo_depth_parallax_table(&c, picture->width, s->table) < 0) {
++            ret = AVERROR(EINVAL);
++            goto fail;
++        }
++        dm.data   = depth->data[0];
++        dm.stride = depth->linesize[0];
++        dm.bytes  = ddesc->comp[0].step;
++        dm.width  = depth->width;
++        dm.height = depth->height;
++    } else {
++        /* no depth yet: both eyes see the picture at the screen */
++        static const uint8_t flat = 0;
++        s->table[0]   = 0.0f;
++        s->table_size = 1;
++        dm.data   = &flat;
++        dm.stride = 1;
++        dm.bytes  = 1;
++        dm.width  = 1;
++        dm.height = 1;
++    }
++
++    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
++    if (!out) {
++        ret = AVERROR(ENOMEM);
++        goto fail;
++    }
++    ret = av_frame_copy_props(out, picture);
++    if (ret < 0) {
++        av_frame_free(&out);
++        goto fail;
++    }
++    av_frame_remove_side_data(out, AV_FRAME_DATA_STEREO3D);
++
++    full = picture->color_range == AVCOL_RANGE_JPEG;
++    fill_picture(&in, desc, picture->data, picture->linesize, picture->width, picture->height, 0, full);
++    fill_picture(&left, desc, out->data, out->linesize, picture->width, picture->height, 0, full);
++    fill_picture(&right, desc, out->data, out->linesize, picture->width, picture->height,
++                 picture->width, full);
++
++    stereo_dibr_params_default(&p);
++    p.view    = s->view;
++    p.warp    = s->warp;
++    p.fill    = s->fill;
++    p.smooth  = s->smooth;
++    p.sigma_h = s->sigma_h;
++    p.sigma_v = s->sigma_v;
++    p.radius  = s->radius;
++    ret = stereo_dibr_render(s->dibr, &p, s->table, s->table_size, &in, &dm, &left, &right);
++    if (ret < 0) {
++        av_log(ctx, AV_LOG_ERROR, "libstereo-dibr failed: %d\n", ret);
++        av_frame_free(&out);
++        ret = ret == -2 ? AVERROR(ENOMEM) : AVERROR(EINVAL);
++        goto fail;
++    }
++
++    /* full side by side, the left eye first */
++    stereo = av_stereo3d_create_side_data(out);
++    if (!stereo) {
++        av_frame_free(&out);
++        ret = AVERROR(ENOMEM);
++        goto fail;
++    }
++    stereo->type = AV_STEREO3D_SIDEBYSIDE;
++    stereo->view = AV_STEREO3D_VIEW_PACKED;
++
++    av_frame_free(&picture);
++    return ff_filter_frame(outlink, out);
++
++fail:
++    av_frame_free(&picture);
++    return ret;
++}
++
++static av_cold int init(AVFilterContext *ctx)
++{
++    DibrContext *s = ctx->priv;
++
++    s->dibr  = stereo_dibr_alloc();
++    s->table = av_malloc_array(1 << 16, sizeof(*s->table));
++    s->lut   = av_malloc_array(1 << 16, sizeof(*s->lut));
++    if (!s->dibr || !s->table || !s->lut)
++        return AVERROR(ENOMEM);
++    s->last_kind = -1;
++    s->fs.on_event = do_dibr;
++    return 0;
++}
++
++static int config_output(AVFilterLink *outlink)
++{
++    AVFilterContext *ctx = outlink->src;
++    DibrContext *s = ctx->priv;
++    AVFilterLink *mainlink = ctx->inputs[0];
++    FilterLink *ol = ff_filter_link(outlink);
++    FilterLink *ml = ff_filter_link(mainlink);
++    int ret;
++
++    if (mainlink->w > INT_MAX / 2) {
++        av_log(ctx, AV_LOG_ERROR, "Picture too wide\n");
++        return AVERROR(EINVAL);
++    }
++    if ((ret = ff_framesync_init_dualinput(&s->fs, ctx)) < 0)
++        return ret;
++
++    outlink->w = mainlink->w * 2;
++    outlink->h = mainlink->h;
++    outlink->time_base = mainlink->time_base;
++    outlink->sample_aspect_ratio = mainlink->sample_aspect_ratio;
++    ol->frame_rate = ml->frame_rate;
++
++    return ff_framesync_configure(&s->fs);
++}
++
++static int activate(AVFilterContext *ctx)
++{
++    DibrContext *s = ctx->priv;
++    return ff_framesync_activate(&s->fs);
++}
++
++static av_cold void uninit(AVFilterContext *ctx)
++{
++    DibrContext *s = ctx->priv;
++
++    ff_framesync_uninit(&s->fs);
++    stereo_dibr_free(s->dibr);
++    av_freep(&s->table);
++    av_freep(&s->lut);
++}
++
++static const AVFilterPad dibr_inputs[] = {
++    {
++        .name = "picture",
++        .type = AVMEDIA_TYPE_VIDEO,
++    },{
++        .name = "depth",
++        .type = AVMEDIA_TYPE_VIDEO,
++    },
++};
++
++static const AVFilterPad dibr_outputs[] = {
++    {
++        .name         = "default",
++        .type         = AVMEDIA_TYPE_VIDEO,
++        .config_props = config_output,
++    },
++};
++
++#define OFFSET(x) offsetof(DibrContext, x)
++#define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
++
++static const AVOption dibr_options[] = {
++    { "view", "what the picture is", OFFSET(view), AV_OPT_TYPE_INT, { .i64 = STEREO_DIBR_VIEW_LEFT }, 0, 1, FLAGS, .unit = "view" },
++        { "left",   "the left eye",   0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_VIEW_LEFT },   0, 0, FLAGS, .unit = "view" },
++        { "center", "the middle",     0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_VIEW_CENTER }, 0, 0, FLAGS, .unit = "view" },
++    { "warp", "how the picture is warped", OFFSET(warp), AV_OPT_TYPE_INT, { .i64 = STEREO_DIBR_WARP_FORWARD }, 0, 2, FLAGS, .unit = "warp" },
++        { "forward",  "splat the picture into the view",               0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_WARP_FORWARD },  0, 0, FLAGS, .unit = "warp" },
++        { "backward", "warp the depth, then sample the picture",       0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_WARP_BACKWARD }, 0, 0, FLAGS, .unit = "warp" },
++        { "layered",  "draw a boundary layer over the main layer",     0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_WARP_LAYERED },  0, 0, FLAGS, .unit = "warp" },
++    { "fill", "how disocclusions are filled", OFFSET(fill), AV_OPT_TYPE_INT, { .i64 = STEREO_DIBR_FILL_BACKGROUND }, 0, 3, FLAGS, .unit = "fill" },
++        { "background", "extend the background",                      0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_FILL_BACKGROUND },  0, 0, FLAGS, .unit = "fill" },
++        { "depth",      "fill from background pixels only",           0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_FILL_DEPTH_AIDED }, 0, 0, FLAGS, .unit = "fill" },
++        { "telea",      "Telea's inpainting from the background side", 0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_FILL_TELEA },      0, 0, FLAGS, .unit = "fill" },
++        { "none",       "leave them black",                           0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_FILL_NONE },       0, 0, FLAGS, .unit = "fill" },
++    { "smooth", "smooth the depth first", OFFSET(smooth), AV_OPT_TYPE_INT, { .i64 = STEREO_DIBR_SMOOTH_OFF }, 0, 1, FLAGS, .unit = "smooth" },
++        { "off",      "no smoothing",          0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_SMOOTH_OFF },                 0, 0, FLAGS, .unit = "smooth" },
++        { "gaussian", "an asymmetric Gaussian", 0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DIBR_SMOOTH_ASYMMETRIC_GAUSSIAN }, 0, 0, FLAGS, .unit = "smooth" },
++    { "sigma_h", "horizontal standard deviation of the smoothing, pixels at 1920", OFFSET(sigma_h), AV_OPT_TYPE_DOUBLE, { .dbl = 10 }, 0, 1000, FLAGS },
++    { "sigma_v", "vertical standard deviation of the smoothing, pixels at 1920",   OFFSET(sigma_v), AV_OPT_TYPE_DOUBLE, { .dbl = 30 }, 0, 1000, FLAGS },
++    { "radius", "neighbourhood of the depth-aided and Telea fills, pixels", OFFSET(radius), AV_OPT_TYPE_INT, { .i64 = 5 }, 1, 100, FLAGS },
++    { "depth", "what a depth sample means", OFFSET(depth), AV_OPT_TYPE_INT, { .i64 = DEPTH_AUTO }, -1, STEREO_DEPTH_PARALLAX, FLAGS, .unit = "depth" },
++        { "auto",      "from the side data, else nearness",          0, AV_OPT_TYPE_CONST, { .i64 = DEPTH_AUTO },                       0, 0, FLAGS, .unit = "depth" },
++        { "nearness",  "larger samples nearer (2D-plus-depth)",      0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_NEARNESS },            0, 0, FLAGS, .unit = "depth" },
++        { "farness",   "larger samples farther",                     0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_FARNESS },             0, 0, FLAGS, .unit = "depth" },
++        { "inverse_z", "uniform in 1/Z (type 0)",                    0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_INVERSE_Z },           0, 0, FLAGS, .unit = "depth" },
++        { "disparity", "uniform in disparity (type 1)",              0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_DISPARITY },           0, 0, FLAGS, .unit = "depth" },
++        { "z",         "uniform in Z (type 2)",                      0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_Z },                   0, 0, FLAGS, .unit = "depth" },
++        { "nonlinear", "non-linear disparity (type 3)",              0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_NONLINEAR_DISPARITY }, 0, 0, FLAGS, .unit = "depth" },
++        { "parallax",  "an ISO/IEC 23002-3 parallax map",            0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_PARALLAX },            0, 0, FLAGS, .unit = "depth" },
++    { "range", "largest parallax either side of the screen, pixels at 1920", OFFSET(range), AV_OPT_TYPE_DOUBLE, { .dbl = 58 }, -INT_MAX, INT_MAX, FLAGS },
++    { "zero",  "where the screen is in nearness, 0 to 1",                    OFFSET(zero),  AV_OPT_TYPE_DOUBLE, { .dbl = 0.5 }, 0, 1, FLAGS },
++    { "shift", "parallax added to all, pixels at 1920",                      OFFSET(shift), AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, -INT_MAX, INT_MAX, FLAGS },
++    { "z_near", "ZNear for Z depth without one",                             OFFSET(z_near), AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, 0, DBL_MAX, FLAGS },
++    { "z_far",  "ZFar for Z depth without one",                              OFFSET(z_far),  AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, 0, DBL_MAX, FLAGS },
++    { NULL }
++};
++
++FRAMESYNC_DEFINE_CLASS(dibr, DibrContext, fs);
++
++const FFFilter ff_vf_dibr = {
++    .p.name        = "dibr",
++    .p.description = NULL_IF_CONFIG_SMALL("Render full side by side stereo from a picture and its depth."),
++    .p.priv_class  = &dibr_class,
++    .preinit       = dibr_framesync_preinit,
++    .priv_size     = sizeof(DibrContext),
++    .init          = init,
++    .uninit        = uninit,
++    .activate      = activate,
++    FILTER_INPUTS(dibr_inputs),
++    FILTER_OUTPUTS(dibr_outputs),
++    FILTER_QUERY_FUNC2(query_formats),
++};
+-- 
+2.53.0
+

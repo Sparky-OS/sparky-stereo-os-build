@@ -1,0 +1,90 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/05ca2a51eea8bd7815c34969bdcd82a2d62a2d1f
+From 05ca2a51eea8bd7815c34969bdcd82a2d62a2d1f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:58:06 -0300
+Subject: [PATCH 46/48] fate/mpegps: test ISO/IEC 23002-3 auxiliary video
+ streams
+
+The streams of the mpegts auxiliary video test in a program stream, the
+maps in PES packets with stream_id_extension 0x10 and 0x11 and described
+in the program stream map.
+
+The sample, mpegps/depth-aux.mpg, needs to be uploaded to the FATE
+suite.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ tests/fate/mpegps.mak                 | 11 +++++++-
+ tests/ref/fate/mpegps-auxiliary-video | 39 +++++++++++++++++++++++++++
+ 2 files changed, 49 insertions(+), 1 deletion(-)
+ create mode 100644 tests/ref/fate/mpegps-auxiliary-video
+
+diff --git a/tests/fate/mpegps.mak b/tests/fate/mpegps.mak
+index a6114b1a..c1530aab 100644
+--- a/tests/fate/mpegps.mak
++++ b/tests/fate/mpegps.mak
+@@ -3,5 +3,14 @@ FATE_MPEGPS-$(call REMUX, MPEG1SYSTEM MPEGPS) += fate-mpegps-remuxed-pcm-demux
+ fate-mpegps-remuxed-pcm-demux: $(SAMPLES)/mpegps/pcm_aud.mpg
+ fate-mpegps-remuxed-pcm-demux: CMD = stream_remux "mpeg" "$(TARGET_SAMPLES)/mpegps/pcm_aud.mpg" "" "mpeg" "-map 0:a:0" "" "-codec copy"
+ 
++# ISO/IEC 23002-3 auxiliary video streams in a program stream: a depth map
++# and a parallax map with stream_id_extension 0x10 and 0x11, which the
++# program stream map describes as stream type 0x1E with an auxiliary video
++# stream descriptor each (ISO/IEC 13818-1 2.16)
++FATE_MPEGPS_FFPROBE-$(call FRAMECRC, MPEGPS, H264, H264_PARSER) += fate-mpegps-auxiliary-video
++fate-mpegps-auxiliary-video: CMD = stream_demux mpeg $(TARGET_SAMPLES)/mpegps/depth-aux.mpg "" "-c:v copy -map 0" \
++  "-of compact -show_entries stream=index,id,codec_name:stream_side_data_list"
++
+ FATE_SAMPLES_FFMPEG += $(FATE_MPEGPS-yes)
+-fate-mpegps: $(FATE_MPEGPS-yes)
++FATE_SAMPLES_FFMPEG_FFPROBE += $(FATE_MPEGPS_FFPROBE-yes)
++fate-mpegps: $(FATE_MPEGPS-yes) $(FATE_MPEGPS_FFPROBE-yes)
+diff --git a/tests/ref/fate/mpegps-auxiliary-video b/tests/ref/fate/mpegps-auxiliary-video
+new file mode 100644
+index 00000000..fa517933
+--- /dev/null
++++ b/tests/ref/fate/mpegps-auxiliary-video
+@@ -0,0 +1,39 @@
++#extradata 0:       39, 0x9bc3097b
++#extradata 1:       39, 0x91b50921
++#extradata 2:       39, 0x91b50921
++#tb 0: 1/90000
++#media_type 0: video
++#codec_id 0: h264
++#dimensions 0: 128x72
++#sar 0: 0/1
++#tb 1: 1/90000
++#media_type 1: video
++#codec_id 1: h264
++#dimensions 1: 128x72
++#sar 1: 0/1
++#tb 2: 1/90000
++#media_type 2: video
++#codec_id 2: h264
++#dimensions 2: 128x72
++#sar 2: 0/1
++0,      -7200,          0,     3600,     2337, 0xb98f1239
++1,      -7200,          0,     3600,      953, 0xc8035fc3
++2,      -7200,          0,     3600,      876, 0xec433d42
++0,      -3600,       7200,     3600,      363, 0xcb4eb649, F=0x0
++1,      -3600,       7200,     3600,       49, 0xb6ea15a6, F=0x0
++2,      -3600,       7200,     3600,       44, 0x500b1250, F=0x0
++0,          0,       3600,     3600,      262, 0xbbee7f93, F=0x0
++1,          0,       3600,     3600,       44, 0x4a911154, F=0x0
++2,          0,       3600,     3600,       35, 0xb08b0c1a, F=0x0
++0,       3600,      10800,     3600,     1827, 0x44cd8fd1
++1,       3600,      10800,     3600,      301, 0xab118d2f
++2,       3600,      10800,     3600,      220, 0x2d5265a7
++0,       7200,      18000,     3600,      539, 0x02880d8c, F=0x0
++1,       7200,      14400,     3600,       49, 0xca2b1651, F=0x0
++2,       7200,      18000,     3600,       53, 0x2dde18f2, F=0x0
++0,      10800,      14400,     3600,      299, 0x8cbb9226, F=0x0
++1,      10800,      18000,     3600,       64, 0xf3be1c9b, F=0x0
++2,      10800,      14400,     3600,       33, 0x84cd0b43, F=0x0
++stream|index=0|codec_name=h264|id=0x1e0
++stream|index=1|codec_name=h264|id=0xfd10|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=depth|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=0|side_datum/mpeg_c_part_3_auxiliary_video_information:nkfar=32|side_datum/mpeg_c_part_3_auxiliary_video_information:nknear=16|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++stream|index=2|codec_name=h264|id=0xfd11|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=parallax|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=1|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=8|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=4|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_zero=128|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_scale=64|side_datum/mpeg_c_part_3_auxiliary_video_information:dref=300|side_datum/mpeg_c_part_3_auxiliary_video_information:wref=100
+-- 
+2.53.0
+

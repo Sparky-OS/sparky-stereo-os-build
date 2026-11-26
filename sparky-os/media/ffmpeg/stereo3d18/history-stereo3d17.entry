@@ -1,0 +1,18 @@
+ffmpeg-dmo (10:9.0.2-dmo1+stereo3d17) unstable; urgency=medium
+
+  * This entry holds the changes of two versions, because +stereo3d16 was
+    staged and never published. First (+stereo3d16): import the HandBrake
+    1.11.2 FFmpeg fixes into the shared edition libraries; build against
+    x265 ABI 30219.
+  * Second (+stereo3d17): drop libnvidia-glvkspirv [amd64 i386] from
+    Build-Depends, inherited from deb-multimedia since its 7.x sources:
+    nothing in the source names it (no configure test, rule or test), its
+    package ships only NVIDIA's private versioned library, and the
+    edition's NVIDIA pin gives it no candidate on a machine without a
+    driver lock, so sparky-stereo-ffmpeg-fdk stopped at build-dep there.
+    Built without it, every binary package equals +16 apart from the
+    version: file lists, Depends, NEEDED, exported symbols, -buildconf and
+    the lists of encoders, decoders, filters, hwaccels, bitstream filters
+    and protocols.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 20 Nov 2026 17:53:12 +0000

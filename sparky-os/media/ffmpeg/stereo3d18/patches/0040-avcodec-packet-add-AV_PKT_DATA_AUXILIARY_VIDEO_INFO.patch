@@ -1,0 +1,81 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/b01902019e8eaed5791f14ee9021952f532d7079
+From b01902019e8eaed5791f14ee9021952f532d7079 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:35:41 -0300
+Subject: [PATCH 40/48] avcodec/packet: add AV_PKT_DATA_AUXILIARY_VIDEO_INFO
+
+The stream twin of AV_FRAME_DATA_AUXILIARY_VIDEO_INFO, for the
+supplemental information an MPEG-2 transport stream signals for an
+auxiliary video stream in its program map table.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the value stays as published in +15, before FFmpeg 9.1's AV_PKT_DATA_GAIN_MAP_PARAMS. FFmpeg 9.1 gives every packet side data type a handle (FF_PACKET_SIDE_DATA_HANDLES, read by the side_data bitstream filter and required by the packet_side_data_handle test); this patch adds the handles of its types and that test's reference in the edition's numbering.
+
+diff --git a/libavcodec/avcodec.c b/libavcodec/avcodec.c
+index e6e9788971349222c8e0398139f15abb07017f3a..d97870d8f3deb1f2b1c1b26bc44b1d41b028eef9 100644
+--- a/libavcodec/avcodec.c
++++ b/libavcodec/avcodec.c
+@@ -76,6 +76,7 @@ const SideDataMap ff_sd_global_map[] = {
+     { AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID, AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID },
+     { AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO,     AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO },
+     { AV_PKT_DATA_AUXILIARY_ID,               AV_FRAME_DATA_AUXILIARY_ID },
++    { AV_PKT_DATA_AUXILIARY_VIDEO_INFO,       AV_FRAME_DATA_AUXILIARY_VIDEO_INFO },
+     { AV_PKT_DATA_NB },
+ };
+ 
+diff --git a/libavcodec/packet.c b/libavcodec/packet.c
+index 198d73d4ec6732820db812662ee8a09b20d665d6..c01d89b038060a4753456c7f3a65a0882679c5e7 100644
+--- a/libavcodec/packet.c
++++ b/libavcodec/packet.c
+@@ -322,6 +322,7 @@ const char *av_packet_side_data_name(enum AVPacketSideDataType type)
+     case AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID: return "Constrained Depth Parameter Set Identifier";
+     case AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO:     return "Alternative Depth Information";
+     case AV_PKT_DATA_AUXILIARY_ID:               return "Auxiliary Picture Type (AuxId)";
++    case AV_PKT_DATA_AUXILIARY_VIDEO_INFO:       return "MPEG-C Part 3 Auxiliary Video Information";
+     }
+     return NULL;
+ }
+diff --git a/libavcodec/packet.h b/libavcodec/packet.h
+index 42bbdbdc512f13b9ed7bbf4238f34a66bc0ef6f1..c4fae5c1da54d5ac62959ed7907afb91b79c60b0 100644
+--- a/libavcodec/packet.h
++++ b/libavcodec/packet.h
+@@ -438,6 +438,14 @@ enum AVPacketSideDataType {
+      */
+     AV_PKT_DATA_AUXILIARY_ID,
+ 
++    /**
++     * The supplemental information of an ISO/IEC 23002-3 (MPEG-C Part 3)
++     * auxiliary video stream, as the auxiliary video stream descriptor of an
++     * MPEG-2 transport stream carries it. The data is the AVAuxiliaryVideoInfo
++     * struct defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_AUXILIARY_VIDEO_INFO,
++
+     /**
+      * Parameters describing how to combine this gain map with its base image
+      * to form an alternate rendition. The payload is the AVGainMapParams
+diff --git a/libavcodec/packet_internal.h b/libavcodec/packet_internal.h
+index c0975c9e33e0271fa5af5f388466023863cbcb04..267e5a17ade078cb7de7626c844f58d0f2f5b4df 100644
+--- a/libavcodec/packet_internal.h
++++ b/libavcodec/packet_internal.h
+@@ -89,6 +89,7 @@ int ff_side_data_set_prft(AVPacket *pkt, int64_t timestamp);
+     HANDLE(CONSTRAINED_DEPTH_PARAMETER_SET_ID, "constrained_depth_parameter_set_id") \
+     HANDLE(ALTERNATIVE_DEPTH_INFO,      "alternative_depth_info")            \
+     HANDLE(AUXILIARY_ID,                "auxiliary_id")                      \
++    HANDLE(AUXILIARY_VIDEO_INFO,        "auxiliary_video_info")              \
+     HANDLE(GAIN_MAP_PARAMS,             "gain_map_params")
+ 
+ #endif // AVCODEC_PACKET_INTERNAL_H
+diff --git a/tests/ref/fate/packet-side-data-handle b/tests/ref/fate/packet-side-data-handle
+index 1c8c5bd586558cd7bdb44163bc0feeecf0b2b195..575bcf2e100792acfcbb6b5e4524057439cd9882 100644
+--- a/tests/ref/fate/packet-side-data-handle
++++ b/tests/ref/fate/packet-side-data-handle
+@@ -50,4 +50,5 @@
+ 49: constrained_depth_parameter_set_id
+ 50: alternative_depth_info
+ 51: auxiliary_id
+-52: gain_map_params
++52: auxiliary_video_info
++53: gain_map_params

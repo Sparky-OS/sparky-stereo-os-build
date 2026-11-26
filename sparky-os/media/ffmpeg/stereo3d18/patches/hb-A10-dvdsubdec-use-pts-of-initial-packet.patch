@@ -1,0 +1,65 @@
+Description: [PATCH 10/22] dvdsubdec: use pts of initial packet
+Author: John Stebbins
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A10-dvdsubdec-use-pts-of-initial-packet.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/2726c0ef6c7c41e3b47de23094f58e226df605a8
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/dvdsubdec.c
++++ b/libavcodec/dvdsubdec.c
+@@ -45,6 +45,7 @@
+   int      buf_size;
+   int      forced_subs_only;
+   uint8_t  used_color[256];
++  int64_t  pts;
+ } DVDSubContext;
+ 
+ static void yuv_a_to_rgba(const uint8_t *ycbcr, const uint8_t *alpha, uint32_t *rgba, int num_values)
+@@ -533,10 +534,13 @@
+     int appended = 0;
+     int is_menu;
+ 
++    if (ctx->pts == AV_NOPTS_VALUE && sub->pts != AV_NOPTS_VALUE)
++        ctx->pts = sub->pts;
+     if (ctx->buf_size) {
+         int ret = append_to_cached_buf(avctx, buf, buf_size);
+         if (ret < 0) {
+             *data_size = 0;
++            ctx->pts = AV_NOPTS_VALUE;
+             return ret;
+         }
+         buf = ctx->buf;
+@@ -549,6 +553,7 @@
+         *data_size = 0;
+         int ret = appended ? 0 : append_to_cached_buf(avctx, buf, buf_size);
+         if (ret < 0) {
++            ctx->pts = AV_NOPTS_VALUE;
+             return ret;
+         }
+         return buf_size;
+@@ -560,6 +565,7 @@
+         reset_rects(sub);
+         *data_size = 0;
+ 
++        ctx->pts = AV_NOPTS_VALUE;
+         return buf_size;
+     }
+     if (!is_menu && find_smallest_bounding_rectangle(ctx, sub) == 0)
+@@ -570,6 +576,8 @@
+ 
+     ctx->buf_size = 0;
+     *data_size = 1;
++    sub->pts = ctx->pts;
++    ctx->pts = AV_NOPTS_VALUE;
+     return buf_size;
+ }
+ 
+@@ -697,6 +705,8 @@
+         av_log(avctx, AV_LOG_DEBUG, "\n");
+     }
+ 
++    ctx->pts = AV_NOPTS_VALUE;
++
+     return 0;
+ }
+ 

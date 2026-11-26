@@ -1,0 +1,210 @@
+Description: avcodec/vulkan: write stereo frame packing with the selected units
+ .
+ Add default-on frame_packing to the existing units option. Use CBS in the
+ encoder's extra-header path and clear HEVC non-packed constraints when
+ initial decoded side data establishes the layout.
+ .
+ RTX 3060 tests cover all supported packings and eye orders, independent
+ NAL parsing, trace_headers and FFmpeg/mpv decoding. Temporal B-frames,
+ late-layout refusal and tiled geometry controls pass. Unmarked output is
+ byte-identical to the unpatched encoder.
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/ff983fe5bac19a357d85fd6e7ffac6603e1fbd97
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/libavcodec/vulkan_encode_h264.c b/libavcodec/vulkan_encode_h264.c
+index 33a9b0a7b8f..b4067ae7213 100644
+--- a/libavcodec/vulkan_encode_h264.c
++++ b/libavcodec/vulkan_encode_h264.c
+@@ -27,12 +27,14 @@
+ #include "h264_levels.h"
+ #include "h2645data.h"
+ #include "codec_internal.h"
++#include "frame_packing.h"
+ #include "version.h"
+ #include "hw_base_encode_h264.h"
+ 
+ #include "vulkan_encode.h"
+ 
+ enum UnitElems {
++    UNIT_SEI_FRAME_PACKING = 1 << 5,
+     UNIT_AUD            = 1 << 0,
+     UNIT_SEI_TIMING     = 1 << 1,
+     UNIT_SEI_IDENTIFIER = 1 << 2,
+@@ -92,6 +94,7 @@ typedef struct VulkanEncodeH264Context {
+     FFHWBaseEncodeH264Opts unit_opts;
+ 
+     enum UnitElems unit_elems;
++    FFFramePacking frame_packing;
+ 
+     uint8_t fixed_qp_p;
+     uint8_t fixed_qp_b;
+@@ -110,6 +113,7 @@ typedef struct VulkanEncodeH264Context {
+     H264RawSEIPicTiming         sei_pic_timing;
+     H264RawSEIRecoveryPoint     sei_recovery_point;
+     SEIRawUserDataRegistered    sei_a53cc;
++    H264RawSEIFramePackingArrangement sei_frame_packing;
+     void                       *sei_a53cc_data;
+     char                       *sei_identifier_string;
+ } VulkanEncodeH264Context;
+@@ -203,6 +207,21 @@ static int vk_enc_h264_update_pic_info(AVCodecContext *avctx,
+ 
+     hp->units_needed = 0;
+ 
++    if (enc->frame_packing.enabled) {
++        FFFramePackingParams packing;
++        int err = ff_frame_packing_prepare(avctx, &enc->frame_packing,
++                                           pic->input_image,
++                                           pic->type == FF_HW_PICTURE_TYPE_IDR ||
++                                           pic->type == FF_HW_PICTURE_TYPE_I,
++                                           pic->display_order, &packing);
++        if (err < 0)
++            return err;
++        if (err) {
++            ff_frame_packing_h264(&packing, &enc->sei_frame_packing);
++            hp->units_needed |= UNIT_SEI_FRAME_PACKING;
++        }
++    }
++
+     if (enc->unit_elems & UNIT_SEI_IDENTIFIER && pic->encode_order == 0)
+         hp->units_needed |= UNIT_SEI_IDENTIFIER;
+ 
+@@ -1310,6 +1329,14 @@ static int write_extra_headers(AVCodecContext *avctx,
+             goto fail;
+     }
+ 
++    if (hp->units_needed & UNIT_SEI_FRAME_PACKING) {
++        err = ff_cbs_sei_add_message(enc->cbs, au, 1,
++                                     SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                     &enc->sei_frame_packing, NULL);
++        if (err < 0)
++            goto fail;
++    }
++
+     if (hp->units_needed) {
+         err = write_access_unit(avctx, data, data_len, au);
+         if (err < 0)
+@@ -1371,6 +1398,12 @@ static av_cold int vulkan_encode_h264_init(AVCodecContext *avctx)
+     FFHWBaseEncodeContext *base_ctx = &ctx->base;
+     int flags;
+ 
++    err = ff_frame_packing_init(avctx, &enc->frame_packing,
++                                !!(enc->unit_elems & UNIT_SEI_FRAME_PACKING),
++                                "-units -frame_packing", 0);
++    if (err < 0)
++        return err;
++
+     if (avctx->profile == AV_PROFILE_UNKNOWN)
+         avctx->profile = enc->common.opts.profile;
+ 
+@@ -1616,7 +1649,9 @@ static const AVOption vulkan_encode_h264_options[] = {
+         { "cabac", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, INT_MIN, INT_MAX, FLAGS, "coder" },
+         { "vlc",   NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, INT_MIN, INT_MAX, FLAGS, "coder" },
+ 
+-    { "units", "Set units to include", OFFSET(unit_elems), AV_OPT_TYPE_FLAGS, { .i64 = UNIT_AUD | UNIT_SEI_IDENTIFIER | UNIT_SEI_RECOVERY | UNIT_SEI_TIMING | UNIT_SEI_A53_CC }, 0, INT_MAX, FLAGS, "units" },
++    { "units", "Set units to include", OFFSET(unit_elems), AV_OPT_TYPE_FLAGS, { .i64 = UNIT_AUD | UNIT_SEI_IDENTIFIER | UNIT_SEI_RECOVERY | UNIT_SEI_TIMING | UNIT_SEI_A53_CC | UNIT_SEI_FRAME_PACKING }, 0, INT_MAX, FLAGS, "units" },
++        { "frame_packing", "Include stereo frame packing", 0, AV_OPT_TYPE_CONST,
++          { .i64 = UNIT_SEI_FRAME_PACKING }, INT_MIN, INT_MAX, FLAGS, "units" },
+         { "aud",        "Include AUD units", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_AUD }, INT_MIN, INT_MAX, FLAGS, "units" },
+         { "identifier", "Include encoder version identifier", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_SEI_IDENTIFIER }, INT_MIN, INT_MAX, FLAGS, "units" },
+         { "timing",     "Include timing parameters (buffering_period and pic_timing)", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_SEI_TIMING }, INT_MIN, INT_MAX, FLAGS, "units" },
+diff --git a/libavcodec/vulkan_encode_h265.c b/libavcodec/vulkan_encode_h265.c
+index 1218017555b..08d5d73629d 100644
+--- a/libavcodec/vulkan_encode_h265.c
++++ b/libavcodec/vulkan_encode_h265.c
+@@ -26,12 +26,14 @@
+ #include "libavutil/mastering_display_metadata.h"
+ 
+ #include "codec_internal.h"
++#include "frame_packing.h"
+ #include "version.h"
+ #include "hw_base_encode_h265.h"
+ 
+ #include "vulkan_encode.h"
+ 
+ enum UnitElems {
++    UNIT_SEI_FRAME_PACKING = 1 << 5,
+     UNIT_AUD                     = 1 << 0,
+     UNIT_SEI_MASTERING_DISPLAY   = 1 << 1,
+     UNIT_SEI_CONTENT_LIGHT_LEVEL = 1 << 2,
+@@ -84,6 +86,7 @@ typedef struct VulkanEncodeH265Context {
+     FFHWBaseEncodeH265Opts unit_opts;
+ 
+     enum UnitElems unit_elems;
++    FFFramePacking frame_packing;
+ 
+     uint8_t fixed_qp_idr;
+     uint8_t fixed_qp_p;
+@@ -105,6 +108,7 @@ typedef struct VulkanEncodeH265Context {
+     SEIRawMasteringDisplayColourVolume sei_mastering_display;
+     SEIRawContentLightLevelInfo        sei_content_light_level;
+     SEIRawUserDataRegistered           sei_a53cc;
++    SEIRawFramePackingArrangement sei_frame_packing;
+     void                              *sei_a53cc_data;
+ } VulkanEncodeH265Context;
+ 
+@@ -194,6 +198,21 @@ static int vk_enc_h265_update_pic_info(AVCodecContext *avctx,
+ 
+     hp->units_needed = 0;
+ 
++    if (enc->frame_packing.enabled) {
++        FFFramePackingParams packing;
++        int err = ff_frame_packing_prepare(avctx, &enc->frame_packing,
++                                           pic->input_image,
++                                           pic->type == FF_HW_PICTURE_TYPE_IDR ||
++                                           pic->type == FF_HW_PICTURE_TYPE_I,
++                                           pic->display_order, &packing);
++        if (err < 0)
++            return err;
++        if (err) {
++            ff_frame_packing_hevc(&packing, &enc->sei_frame_packing);
++            hp->units_needed |= UNIT_SEI_FRAME_PACKING;
++        }
++    }
++
+     if (enc->unit_elems & UNIT_AUD) {
+         hp->units_needed |= UNIT_AUD;
+         enc->raw_aud = (H265RawAUD) {
+@@ -1470,6 +1489,14 @@ static int write_extra_headers(AVCodecContext *avctx,
+             goto fail;
+     }
+ 
++    if (hp->units_needed & UNIT_SEI_FRAME_PACKING) {
++        err = ff_cbs_sei_add_message(enc->cbs, au, 1,
++                                     SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                     &enc->sei_frame_packing, NULL);
++        if (err < 0)
++            goto fail;
++    }
++
+     if (hp->units_needed) {
+         err = write_access_unit(avctx, data, data_len, au);
+         if (err < 0)
+@@ -1532,6 +1559,13 @@ static av_cold int vulkan_encode_h265_init(AVCodecContext *avctx)
+     FFHWBaseEncodeContext *base_ctx = &ctx->base;
+     int flags;
+ 
++    err = ff_frame_packing_init(avctx, &enc->frame_packing,
++                                !!(enc->unit_elems & UNIT_SEI_FRAME_PACKING),
++                                "-units -frame_packing", 1);
++    if (err < 0)
++        return err;
++    enc->unit_opts.frame_packing = err;
++
+     if (avctx->profile == AV_PROFILE_UNKNOWN)
+         avctx->profile = enc->common.opts.profile;
+ 
+@@ -1744,7 +1778,9 @@ static const AVOption vulkan_encode_h265_options[] = {
+     { LEVEL("6.2", 186) },
+ #undef LEVEL
+ 
+-    { "units", "Set units to include", OFFSET(unit_elems), AV_OPT_TYPE_FLAGS, { .i64 = UNIT_SEI_MASTERING_DISPLAY | UNIT_SEI_CONTENT_LIGHT_LEVEL | UNIT_SEI_A53_CC }, 0, INT_MAX, FLAGS, "units" },
++    { "units", "Set units to include", OFFSET(unit_elems), AV_OPT_TYPE_FLAGS, { .i64 = UNIT_SEI_MASTERING_DISPLAY | UNIT_SEI_CONTENT_LIGHT_LEVEL | UNIT_SEI_A53_CC | UNIT_SEI_FRAME_PACKING }, 0, INT_MAX, FLAGS, "units" },
++        { "frame_packing", "Include stereo frame packing", 0, AV_OPT_TYPE_CONST,
++          { .i64 = UNIT_SEI_FRAME_PACKING }, INT_MIN, INT_MAX, FLAGS, "units" },
+         { "hdr",        "Include HDR metadata for mastering display colour volume and content light level information", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_SEI_MASTERING_DISPLAY | UNIT_SEI_CONTENT_LIGHT_LEVEL }, INT_MIN, INT_MAX, FLAGS, "units" },
+         { "a53_cc",     "Include A/53 caption data", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_SEI_A53_CC }, INT_MIN, INT_MAX, FLAGS, "units" },
+ 

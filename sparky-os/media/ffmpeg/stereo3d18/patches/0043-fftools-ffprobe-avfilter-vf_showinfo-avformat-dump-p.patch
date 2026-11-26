@@ -1,0 +1,139 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/3ebbedb97544ec29d47a49efd8301a01d7dce247
+From 3ebbedb97544ec29d47a49efd8301a01d7dce247 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:55:22 -0300
+Subject: [PATCH 43/48] fftools/ffprobe, avfilter/vf_showinfo, avformat/dump:
+ print the auxiliary video information
+
+Print the type of an ISO/IEC 23002-3 auxiliary video stream and its
+parameters, and the AuxId of a stream in avformat's dump.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ fftools/ffprobe.c         | 22 ++++++++++++++++++++++
+ libavfilter/vf_showinfo.c | 22 ++++++++++++++++++++++
+ libavformat/dump.c        | 20 ++++++++++++++++++++
+ 3 files changed, 64 insertions(+)
+
+diff --git a/fftools/ffprobe.c b/fftools/ffprobe.c
+index 181a8df0..8e490063 100644
+--- a/fftools/ffprobe.c
++++ b/fftools/ffprobe.c
+@@ -694,6 +694,26 @@ static void print_depth_sampling_info(AVTextFormatContext *tfc, const AVDepthSam
+     av_bprint_finalize(&pbuf, NULL);
+ }
+ 
++static void print_auxiliary_video_info(AVTextFormatContext *tfc, const AVAuxiliaryVideoInfo *info)
++{
++    print_str("type", info->type == AV_AUXILIARY_VIDEO_DEPTH    ? "depth"    :
++                      info->type == AV_AUXILIARY_VIDEO_PARALLAX ? "parallax" : "unknown");
++    print_int("aux_is_one_field", info->aux_is_one_field);
++    print_int("aux_is_bottom_field", info->aux_is_bottom_field);
++    print_int("aux_is_interlaced", info->aux_is_interlaced);
++    print_int("position_offset_h", info->position_offset_h);
++    print_int("position_offset_v", info->position_offset_v);
++    if (info->type == AV_AUXILIARY_VIDEO_DEPTH) {
++        print_int("nkfar", info->nkfar);
++        print_int("nknear", info->nknear);
++    } else if (info->type == AV_AUXILIARY_VIDEO_PARALLAX) {
++        print_int("parallax_zero", info->parallax_zero);
++        print_int("parallax_scale", info->parallax_scale);
++        print_int("dref", info->dref);
++        print_int("wref", info->wref);
++    }
++}
++
+ static void print_alternative_depth_info(AVTextFormatContext *tfc, const AVAlternativeDepthInfo *info)
+ {
+     AVBPrint pbuf;
+@@ -785,6 +805,8 @@ static int print_multiview_side_data(AVTextFormatContext *tfc, int is_frame, int
+         print_alternative_depth_info(tfc, data);
+     else if (type == TYPE(3D_REFERENCE_DISPLAYS))
+         print_tdrdi(tfc, data);
++    else if (type == TYPE(AUXILIARY_VIDEO_INFO))
++        print_auxiliary_video_info(tfc, data);
+     else
+         return 0;
+ #undef TYPE
+diff --git a/libavfilter/vf_showinfo.c b/libavfilter/vf_showinfo.c
+index a1c3602d..35f2fa0c 100644
+--- a/libavfilter/vf_showinfo.c
++++ b/libavfilter/vf_showinfo.c
+@@ -179,6 +179,25 @@ static void dump_depth_representation_info(AVFilterContext *ctx, const AVFrameSi
+     }
+ }
+ 
++static void dump_auxiliary_video_info(AVFilterContext *ctx, const AVFrameSideData *sd)
++{
++    const AVAuxiliaryVideoInfo *info = (const AVAuxiliaryVideoInfo *)sd->data;
++
++    if (info->type == AV_AUXILIARY_VIDEO_DEPTH)
++        av_log(ctx, AV_LOG_INFO, "depth map, nkfar: %u, nknear: %u",
++               info->nkfar, info->nknear);
++    else
++        av_log(ctx, AV_LOG_INFO, "parallax map, parallax zero: %u, scale: %u, "
++               "dref: %u, wref: %u", info->parallax_zero, info->parallax_scale,
++               info->dref, info->wref);
++    av_log(ctx, AV_LOG_INFO, ", offset: %u/16, %u/16", info->position_offset_h,
++           info->position_offset_v);
++    if (info->aux_is_one_field)
++        av_log(ctx, AV_LOG_INFO, ", %s field", info->aux_is_bottom_field ? "bottom" : "top");
++    else if (info->aux_is_interlaced)
++        av_log(ctx, AV_LOG_INFO, ", interlaced");
++}
++
+ static void dump_multiview_scene_info(AVFilterContext *ctx, const AVFrameSideData *sd)
+ {
+     const AVMultiviewSceneInfo *info = (const AVMultiviewSceneInfo *)sd->data;
+@@ -910,6 +929,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
+         case AV_FRAME_DATA_MULTIVIEW_SCENE_INFO:
+             dump_multiview_scene_info(ctx, sd);
+             break;
++        case AV_FRAME_DATA_AUXILIARY_VIDEO_INFO:
++            dump_auxiliary_video_info(ctx, sd);
++            break;
+         case AV_FRAME_DATA_MULTIVIEW_ACQUISITION_INFO:
+             av_log(ctx, AV_LOG_INFO, "cameras: %u",
+                    ((const AVMultiviewAcquisitionInfo *)sd->data)->nb_cameras);
+diff --git a/libavformat/dump.c b/libavformat/dump.c
+index dfc39819..5fae872f 100644
+--- a/libavformat/dump.c
++++ b/libavformat/dump.c
+@@ -475,6 +475,20 @@ static void dump_depth_representation_info(void *ctx, const AVPacketSideData *sd
+ 
+     av_log(ctx, log_level, "type: %d, views: %u", info->type, info->nb_views);
+ }
++
++static void dump_auxiliary_video_info(void *ctx, const AVPacketSideData *sd, int log_level)
++{
++    const AVAuxiliaryVideoInfo *info = (const AVAuxiliaryVideoInfo *)sd->data;
++
++    if (info->type == AV_AUXILIARY_VIDEO_DEPTH)
++        av_log(ctx, log_level, "depth map, nkfar: %u, nknear: %u",
++               info->nkfar, info->nknear);
++    else
++        av_log(ctx, log_level, "parallax map, parallax zero: %u, scale: %u, "
++               "dref: %u, wref: %u", info->parallax_zero, info->parallax_scale,
++               info->dref, info->wref);
++}
++
+ static void dump_sidedata(void *ctx, const AVPacketSideData *side_data, int nb_side_data,
+                           int w, int h, AVRational avg_frame_rate,
+                           const char *indent, int log_level)
+@@ -542,6 +556,12 @@ static void dump_sidedata(void *ctx, const AVPacketSideData *side_data, int nb_s
+         case AV_PKT_DATA_DEPTH_REPRESENTATION_INFO:
+             dump_depth_representation_info(ctx, sd, log_level);
+             break;
++        case AV_PKT_DATA_AUXILIARY_ID:
++            av_log(ctx, log_level, "%d", *(const int *)sd->data);
++            break;
++        case AV_PKT_DATA_AUXILIARY_VIDEO_INFO:
++            dump_auxiliary_video_info(ctx, sd, log_level);
++            break;
+         default:
+             if (name)
+                 av_log(ctx, log_level, "(%zu bytes)", sd->size);
+-- 
+2.53.0
+

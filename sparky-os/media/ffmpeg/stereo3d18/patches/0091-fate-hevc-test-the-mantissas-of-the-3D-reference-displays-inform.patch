@@ -1,0 +1,64 @@
+Description: fate/hevc: test the mantissas of the 3D reference displays information
+ .
+ Decode an MP4 file whose hvcC box carries a 3D reference displays
+ information SEI message with mantissas of 20, 30, 40 and 45 bits, the
+ way a container passes such a message to the decoder, and check the
+ values of the frame side data against the bits written.
+ .
+ The sample is made from the raw stream of the fate/cbs test by
+ ffmpeg -c copy, with the SEI NAL unit also added to the hvcC box by
+ the script attached to the pull request.
+ .
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/75585ded5e5904bb0e660cea677f764f58e82ebd
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/tests/fate/hevc.mak b/tests/fate/hevc.mak
+index 2112d901b9c..91e6065e42e 100644
+--- a/tests/fate/hevc.mak
++++ b/tests/fate/hevc.mak
+@@ -297,6 +297,9 @@ FATE_HEVC_FFPROBE-$(call DEMDEC, HEVC, HEVC) += fate-hevc-hdr10-plus-metadata
+ fate-hevc-probe-layers: CMD = probe -show_entries format=format_name $(TARGET_SAMPLES)/hevc/x265-alpha.hevc
+ FATE_HEVC_FFPROBE-$(call DEMDEC, HEVC, HEVC) += fate-hevc-probe-layers
+ 
++fate-hevc-tdrdi-mantissa: CMD = probeframes -show_entries frame=side_data_list:frame_side_data=side_data_type,prec_ref_display_width,ref_viewing_distance_flag,prec_ref_viewing_dist,num_ref_displays,display0_left_view_id,display0_right_view_id,display0_exponent_ref_display_width,display0_mantissa_ref_display_width,display0_exponent_ref_viewing_distance,display0_mantissa_ref_viewing_distance,display0_additional_shift_present_flag,display0_num_sample_shift,display1_left_view_id,display1_right_view_id,display1_exponent_ref_display_width,display1_mantissa_ref_display_width,display1_exponent_ref_viewing_distance,display1_mantissa_ref_viewing_distance,display1_additional_shift_present_flag,display1_num_sample_shift $(TARGET_SAMPLES)/hevc/tdrdi-mantissa.mp4
++FATE_HEVC_FFPROBE-$(call DEMDEC, MOV, HEVC) += fate-hevc-tdrdi-mantissa
++
+ fate-hevc-hdr-vivid-metadata: CMD = probeframes -show_entries frame=side_data_list $(TARGET_SAMPLES)/hevc/hdr_vivid_h265_sample.hevc
+ FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-hdr-vivid-metadata
+ 
+diff --git a/tests/ref/fate/hevc-tdrdi-mantissa b/tests/ref/fate/hevc-tdrdi-mantissa
+new file mode 100644
+index 00000000000..7c0372f2536
+--- /dev/null
++++ b/tests/ref/fate/hevc-tdrdi-mantissa
+@@ -0,0 +1,25 @@
++[FRAME]
++[SIDE_DATA]
++side_data_type=3D Reference Displays Information
++prec_ref_display_width=31
++ref_viewing_distance_flag=1
++prec_ref_viewing_dist=31
++num_ref_displays=2
++display0_left_view_id=0
++display0_right_view_id=1
++display0_exponent_ref_display_width=20
++display0_mantissa_ref_display_width=632259
++display0_exponent_ref_viewing_distance=30
++display0_mantissa_ref_viewing_distance=717020913
++display0_additional_shift_present_flag=1
++display0_num_sample_shift=8
++display1_left_view_id=1
++display1_right_view_id=0
++display1_exponent_ref_display_width=40
++display1_mantissa_ref_display_width=711448700325
++display1_exponent_ref_viewing_distance=45
++display1_mantissa_ref_viewing_distance=20015998341291
++display1_additional_shift_present_flag=1
++display1_num_sample_shift=0
++[/SIDE_DATA]
++[/FRAME]

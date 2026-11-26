@@ -1,0 +1,23 @@
+Description: [PATCH 16/22] libavcodec/qsvenc.c: update has_b_frames value after initialization of encoder
+Author: galinart
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A16-libavcodec-qsvenc.c-update-has_b_frames-value-after-.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/82a75013402293f86fca38a8ffc1b3c7fe6d8b0e
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/qsvenc.c
++++ b/libavcodec/qsvenc.c
+@@ -1849,6 +1849,13 @@
+         return ret;
+     }
+ 
++    // Update AVCodecContext with actual encoding parameters
++    mfxInfoMFX *info = &q->param.mfx;
++    avctx->has_b_frames = 0;
++    if (info->GopRefDist > 1) {
++        avctx->has_b_frames = info->GopRefDist - 1;
++    }
++
+     q->avctx = avctx;
+ 
+     return 0;

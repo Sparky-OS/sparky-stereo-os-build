@@ -1,0 +1,17 @@
+Description: [PATCH] movenc: set the chapters track language to the same as the first track
+Author: Damiano Galassi
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A23-movenc-set-the-chapters-track-language-to-the-same-a.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/16f6b39dd663c8e1d1e2afa3ccf0a3f1147369a7
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavformat/movenc.c
++++ b/libavformat/movenc.c
+@@ -7932,6 +7932,7 @@
+     track->tag = MKTAG('t','e','x','t');
+     track->timescale = mov->movie_timescale;
+     track->par = avcodec_parameters_alloc();
++    track->language = mov->tracks[0].language;
+     if (!track->par)
+         return AVERROR(ENOMEM);
+     track->par->codec_type = AVMEDIA_TYPE_SUBTITLE;

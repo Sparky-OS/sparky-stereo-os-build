@@ -1,0 +1,170 @@
+Description: avutil/stereo3d: represent tiled and remaining quincunx layouts
+ .
+ H.264 D.2.26 permits tiled packing and quincunx sampling of rows,
+ columns and top/bottom layouts. Give each a named side-data value,
+ following the existing side-by-side quincunx representation.
+ .
+ Extend the name conversion test through all new values. It passes
+ with this implementation and fails with the previous name table.
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/61cfefab0ad6d1a263870167f182b0242d8beea5
+Forwarded: no
+Last-Update: 2026-11-09
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: libavutil's minor version is raised from FFmpeg 9.1's 61.19 to 61.20, the step this addition took on 9.0.2.
+
+diff --git a/doc/APIchanges b/doc/APIchanges
+index eaad0b1f53d6938d2167f566cd77f850f82ce689..e253b2be8df6089ec91d0a5cf806cc1b2d1dca2e 100644
+--- a/doc/APIchanges
++++ b/doc/APIchanges
+@@ -158,6 +158,10 @@ API changes, most recent first:
+   Add av_bsf_source_parameters_set(), av_bsf_source_get_status().
+   Add av_bsf_sink_get_packet(), av_bsf_sink_get_time_base(), av_bsf_sink_get_parameters().
+ 
++2026-11-09 - xxxxxxxxxx - lavu 61.2.100 - stereo3d.h
++  Add AV_STEREO3D_TILED, AV_STEREO3D_TOPBOTTOM_QUINCUNX,
++  AV_STEREO3D_LINES_QUINCUNX and AV_STEREO3D_COLUMNS_QUINCUNX.
++
+ 2026-06-23 - 61693f6c35f - lavu 60.34.100 - hwcontext_vulkan.h
+   Switch AVVkFrame.access to VkAccessFlagBits2.
+ 
+diff --git a/libavutil/stereo3d.c b/libavutil/stereo3d.c
+index 561784bc7b749fb0f8fc73a822b57098f72a58b2..e0b1729ab303846fd1eb88aa129c34c353c89ccb 100644
+--- a/libavutil/stereo3d.c
++++ b/libavutil/stereo3d.c
+@@ -75,6 +75,10 @@ static const char * const stereo3d_type_names[] = {
+     [AV_STEREO3D_LINES]               = "interleaved lines",
+     [AV_STEREO3D_COLUMNS]             = "interleaved columns",
+     [AV_STEREO3D_UNSPEC]              = "unspecified",
++    [AV_STEREO3D_TILED]               = "tiled",
++    [AV_STEREO3D_TOPBOTTOM_QUINCUNX]   = "top and bottom (quincunx subsampling)",
++    [AV_STEREO3D_LINES_QUINCUNX]       = "interleaved lines (quincunx subsampling)",
++    [AV_STEREO3D_COLUMNS_QUINCUNX]     = "interleaved columns (quincunx subsampling)",
+ };
+ 
+ static const char * const stereo3d_view_names[] = {
+diff --git a/libavutil/stereo3d.h b/libavutil/stereo3d.h
+index c0a4ab3f2d393553a643cb91a453354b1b4eba54..249829e2f829fdfdee94aaf2f38d8cf04d6aed10 100644
+--- a/libavutil/stereo3d.h
++++ b/libavutil/stereo3d.h
+@@ -141,6 +141,35 @@ enum AVStereo3DType {
+      * Video is stereoscopic but the packing is unspecified.
+      */
+     AV_STEREO3D_UNSPEC,
++
++    /**
++     * Views use the tile format of H.264, section D.2.26, type 7.
++     * Each cell below is one third of the cropped width and height.
++     * The first view occupies the four L cells. The second view has
++     * its left part in A and its right part in B above C. X is unused.
++     *
++     * @code{.unparsed}
++     *    LLA
++     *    LLA
++     *    BCX
++     * @endcode
++     */
++    AV_STEREO3D_TILED,
++
++    /**
++     * Views are on top of each other, with quincunx subsampling.
++     */
++    AV_STEREO3D_TOPBOTTOM_QUINCUNX,
++
++    /**
++     * Views are packed per line, with quincunx subsampling.
++     */
++    AV_STEREO3D_LINES_QUINCUNX,
++
++    /**
++     * Views are packed per column, with quincunx subsampling.
++     */
++    AV_STEREO3D_COLUMNS_QUINCUNX,
+ };
+ 
+ /**
+diff --git a/libavutil/tests/stereo3d.c b/libavutil/tests/stereo3d.c
+index 73106d744f9865fc30636ecc39a77f797bda4ff8..8bc63703d2f98fdc3c0c29e4bad423bb013fa6d3 100644
+--- a/libavutil/tests/stereo3d.c
++++ b/libavutil/tests/stereo3d.c
+@@ -51,7 +51,7 @@ int main(void)
+ 
+     /* av_stereo3d_type_name - all valid types */
+     printf("\nTesting av_stereo3d_type_name()\n");
+-    for (int i = 0; i <= AV_STEREO3D_UNSPEC; i++)
++    for (int i = 0; i <= AV_STEREO3D_COLUMNS_QUINCUNX; i++)
+         printf("type %d: %s\n", i, av_stereo3d_type_name(i));
+     printf("out of range: %s\n", av_stereo3d_type_name(100));
+ 
+@@ -61,7 +61,10 @@ int main(void)
+         static const char * const names[] = {
+             "2D", "side by side", "top and bottom", "frame alternate",
+             "checkerboard", "side by side (quincunx subsampling)",
+-            "interleaved lines", "interleaved columns", "unspecified",
++            "interleaved lines", "interleaved columns", "unspecified", "tiled",
++            "top and bottom (quincunx subsampling)",
++            "interleaved lines (quincunx subsampling)",
++            "interleaved columns (quincunx subsampling)",
+         };
+         for (int i = 0; i < FF_ARRAY_ELEMS(names); i++)
+             printf("%s: %d\n", names[i], av_stereo3d_from_name(names[i]));
+@@ -71,7 +74,7 @@ int main(void)
+ 
+     /* av_stereo3d_type_name / av_stereo3d_from_name round-trip */
+     printf("\nTesting type name round-trip\n");
+-    for (int i = 0; i <= AV_STEREO3D_UNSPEC; i++) {
++    for (int i = 0; i <= AV_STEREO3D_COLUMNS_QUINCUNX; i++) {
+         const char *name = av_stereo3d_type_name(i);
+         int rt = av_stereo3d_from_name(name);
+         printf("type roundtrip %d (%s): %s\n", i, name, rt == i ? "OK" : "FAIL");
+diff --git a/libavutil/version.h b/libavutil/version.h
+index 88908b702487b83943923d04ca6fb760538aced8..cbdd0ad029eca3497098867e2acbc251699137f4 100644
+--- a/libavutil/version.h
++++ b/libavutil/version.h
+@@ -79,7 +79,7 @@
+  */
+ 
+ #define LIBAVUTIL_VERSION_MAJOR  61
+-#define LIBAVUTIL_VERSION_MINOR  19
++#define LIBAVUTIL_VERSION_MINOR  20
+ #define LIBAVUTIL_VERSION_MICRO 100
+ 
+ #define LIBAVUTIL_VERSION_INT   AV_VERSION_INT(LIBAVUTIL_VERSION_MAJOR, \
+diff --git a/tests/ref/fate/stereo3d b/tests/ref/fate/stereo3d
+index 6ed769ce24c94bfeedce774a9a77ebca1ee990e7..380bfaf99f7eda79c490e3e016e37301f70f6776 100644
+--- a/tests/ref/fate/stereo3d
++++ b/tests/ref/fate/stereo3d
+@@ -15,6 +15,10 @@ type 5: side by side (quincunx subsampling)
+ type 6: interleaved lines
+ type 7: interleaved columns
+ type 8: unspecified
++type 9: tiled
++type 10: top and bottom (quincunx subsampling)
++type 11: interleaved lines (quincunx subsampling)
++type 12: interleaved columns (quincunx subsampling)
+ out of range: unknown
+ 
+ Testing av_stereo3d_from_name()
+@@ -27,6 +31,10 @@ side by side (quincunx subsampling): 5
+ interleaved lines: 6
+ interleaved columns: 7
+ unspecified: 8
++tiled: 9
++top and bottom (quincunx subsampling): 10
++interleaved lines (quincunx subsampling): 11
++interleaved columns (quincunx subsampling): 12
+ nonexistent: -1
+ 
+ Testing type name round-trip
+@@ -39,6 +47,10 @@ type roundtrip 5 (side by side (quincunx subsampling)): OK
+ type roundtrip 6 (interleaved lines): OK
+ type roundtrip 7 (interleaved columns): OK
+ type roundtrip 8 (unspecified): OK
++type roundtrip 9 (tiled): OK
++type roundtrip 10 (top and bottom (quincunx subsampling)): OK
++type roundtrip 11 (interleaved lines (quincunx subsampling)): OK
++type roundtrip 12 (interleaved columns (quincunx subsampling)): OK
+ 
+ Testing av_stereo3d_view_name()
+ view 0: packed

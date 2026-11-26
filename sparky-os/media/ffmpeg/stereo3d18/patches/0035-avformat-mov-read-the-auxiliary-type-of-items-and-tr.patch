@@ -1,0 +1,365 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/98a1d927b38c54772e80031209fdcb563b145af0
+From 98a1d927b38c54772e80031209fdcb563b145af0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:32:16 -0300
+Subject: [PATCH 35/48] avformat/mov: read the auxiliary type of items and
+ tracks, depth included
+
+The auxiliary type of a HEIF item (auxC, ISO/IEC 23008-12) and of an
+auxiliary video track (auxi) names alpha or depth, for HEVC
+(urn:mpeg:hevc:2015:auxid:N), AVC (urn:mpeg:avc:2015:auxid:N) and any
+codec (urn:mpeg:mpegB:cicp:systems:auxiliary:alpha and :depth). Export it
+as the stream's AV_PKT_DATA_AUXILIARY_ID, 1 for alpha and 2 for depth
+(H.265 Table F.2).
+
+The aux_subtype of an HEVC depth item carries SEI NAL units, each after
+its 32-bit size, after the 32-bit size of them all, as libheif reads them
+from cameras' images: export the depth representation information
+message (H.265 G.14.2.4) as AV_PKT_DATA_DEPTH_REPRESENTATION_INFO.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: FFmpeg 9.1 moved the item reference and display matrix code into mov_parse_heif_item_references(), and added its own auxC reader (gain map and alpha flags on HEIF items) with its own parse table entry. One reader stays: this patch's (bounded read, the AuxId of the exact type, the depth aux_subtype) with 9.1's two flags set by 9.1's own matching; 9.1's definition and this patch's second table entry for auxC are gone. The auxiliary type and depth representation side data follow the stream's disposition as before.
+
+diff --git a/libavformat/isom.h b/libavformat/isom.h
+index 18c2fe41b9a0e527bae26413052990391c6c6592..2b6bc7a92bdbce2e7cc4a1dc61cf14a594e9db19 100644
+--- a/libavformat/isom.h
++++ b/libavformat/isom.h
+@@ -316,6 +316,9 @@ typedef struct HEIFItem {
+     int type;
+     int is_gainmap;
+     int is_alpha;
++    int aux_id;               ///< AuxId of the item's auxiliary type, 1 alpha, 2 depth (auxC)
++    uint8_t *depth_info;      ///< AVDepthRepresentationInfo of a depth item's aux_subtype
++    size_t depth_info_size;
+     int is_idat_relative;
+     AVExifMetadata ifd;
+     uint8_t *icc_profile;
+diff --git a/libavformat/mov.c b/libavformat/mov.c
+index 4aeb80a5ca7d24e1d41da4496f56e92cd1c24154..87aa16e6f2f90ee4443949c25c0c40a95eaac693 100644
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -43,6 +43,7 @@
+ #include "libavutil/dict.h"
+ #include "libavutil/display.h"
+ #include "libavutil/mem.h"
++#include "libavutil/multiview.h"
+ #include "libavutil/opt.h"
+ #include "libavutil/aes.h"
+ #include "libavutil/aes_ctr.h"
+@@ -70,7 +71,9 @@
+ #include "dovi_isom.h"
+ #include "riff.h"
+ #include "isom.h"
++#include "libavcodec/bytestream.h"
+ #include "libavcodec/get_bits.h"
++#include "libavcodec/golomb.h"
+ #include "id3v1.h"
+ #include "mov_chan.h"
+ #include "replaygain.h"
+@@ -9444,31 +9447,255 @@ static int rb_size(AVIOContext *pb, int64_t *value, int size)
+     return size;
+ }
+ 
++/* The auxiliary types of ISO/IEC 23008-12 (HEIF items, auxC) and of tracks
++ * (auxi): alpha and depth, for HEVC and AVC, and for any codec with the
++ * MPEG-B CICP names. Returns the AuxId of ITU-T H.265 Table F.2, or 0. */
++static int mov_aux_id_from_type(const char *aux_type)
++{
++    if (!strcmp(aux_type, "urn:mpeg:hevc:2015:auxid:1") ||
++        !strcmp(aux_type, "urn:mpeg:avc:2015:auxid:1") ||
++        !strcmp(aux_type, "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"))
++        return 1;
++    if (!strcmp(aux_type, "urn:mpeg:hevc:2015:auxid:2") ||
++        !strcmp(aux_type, "urn:mpeg:avc:2015:auxid:2") ||
++        !strcmp(aux_type, "urn:mpeg:mpegB:cicp:systems:auxiliary:depth"))
++        return 2;
++    return 0;
++}
++
++static void mov_read_depth_rep_element(GetBitContext *gb, AVMultiviewReal *r)
++{
++    r->sign          = get_bits1(gb);
++    r->exponent      = get_bits(gb, 7);
++    r->exponent_bits = 7;
++    r->mantissa_bits = get_bits(gb, 5) + 1;
++    r->mantissa      = get_bits64(gb, r->mantissa_bits);
++}
++
++/* depth_representation_info() of H.265 G.14.2.4 */
++static int mov_read_depth_representation_info(GetBitContext *gb, HEIFItem *item)
++{
++    AVDepthRepresentationInfo *info;
++    AVDepthRepresentationView *v;
++    int z_near, z_far, d_min, d_max;
++    unsigned type;
++    size_t size;
++
++    z_near = get_bits1(gb);
++    z_far  = get_bits1(gb);
++    d_min  = get_bits1(gb);
++    d_max  = get_bits1(gb);
++    type   = get_ue_golomb_long(gb);
++    if (type > 15)
++        return AVERROR_INVALIDDATA;
++
++    info = av_depth_representation_info_alloc(type <= 3, &size);
++    if (!info)
++        return AVERROR(ENOMEM);
++    info->type = type;
++    /* data after a reserved type is ignored */
++    if (type <= 3) {
++        info->z_near_present = z_near;
++        info->z_far_present  = z_far;
++        info->d_min_present  = d_min;
++        info->d_max_present  = d_max;
++        v = av_depth_representation_info_get_view(info, 0);
++        if (d_min || d_max) {
++            unsigned ref = get_ue_golomb_long(gb);
++            if (ref > 1023)
++                goto invalid;
++            v->disparity_reference_view = ref;
++        }
++        if (z_near)
++            mov_read_depth_rep_element(gb, &v->z_near);
++        if (z_far)
++            mov_read_depth_rep_element(gb, &v->z_far);
++        if (d_min)
++            mov_read_depth_rep_element(gb, &v->d_min);
++        if (d_max)
++            mov_read_depth_rep_element(gb, &v->d_max);
++        if (type == AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY) {
++            unsigned num_minus1 = get_ue_golomb_long(gb);
++            if (num_minus1 > 62)
++                goto invalid;
++            info->nb_nonlinear_model = num_minus1 + 3;
++            for (unsigned i = 1; i <= num_minus1 + 1; i++) {
++                unsigned model = get_ue_golomb_long(gb);
++                if (model > 65535)
++                    goto invalid;
++                info->nonlinear_model[i] = model;
++            }
++        }
++    }
++    if (get_bits_left(gb) < 0)
++        goto invalid;
++
++    av_freep(&item->depth_info);
++    item->depth_info      = (uint8_t *)info;
++    item->depth_info_size = size;
++    return 0;
++invalid:
++    av_free(info);
++    return AVERROR_INVALIDDATA;
++}
++
++/* The aux_subtype of an HEVC depth item: a 32-bit size, then SEI NAL units,
++ * each after its 32-bit size, as libheif reads them (ISO/IEC 23008-12 leaves
++ * aux_subtype to the auxiliary type). The depth representation information
++ * message is taken. */
++static int mov_read_auxc_depth_subtype(MOVContext *c, const uint8_t *data, int size,
++                                       HEIFItem *item)
++{
++    GetByteContext gbc;
++
++    bytestream2_init(&gbc, data, size);
++    if (bytestream2_get_bytes_left(&gbc) < 4)
++        return 0;
++    bytestream2_skipu(&gbc, 4); /* the size of what follows */
++
++    while (bytestream2_get_bytes_left(&gbc) > 4) {
++        unsigned nal_size = bytestream2_get_be32u(&gbc);
++        const uint8_t *nal = gbc.buffer;
++        uint8_t *rbsp;
++        int rbsp_size = 0, type, ret;
++        GetByteContext msgs;
++
++        if (nal_size < 3 || nal_size > bytestream2_get_bytes_left(&gbc))
++            break;
++        bytestream2_skipu(&gbc, nal_size);
++        type = (nal[0] >> 1) & 0x3f;
++        if (type != HEVC_NAL_SEI_PREFIX && type != HEVC_NAL_SEI_SUFFIX)
++            continue;
++
++        /* without the emulation prevention bytes */
++        rbsp = av_malloc(nal_size + AV_INPUT_BUFFER_PADDING_SIZE);
++        if (!rbsp)
++            return AVERROR(ENOMEM);
++        for (unsigned i = 2; i < nal_size; i++) {
++            if (i + 2 < nal_size && !nal[i] && !nal[i + 1] && nal[i + 2] == 3) {
++                rbsp[rbsp_size++] = 0;
++                rbsp[rbsp_size++] = 0;
++                i += 2;
++            } else {
++                rbsp[rbsp_size++] = nal[i];
++            }
++        }
++        memset(rbsp + rbsp_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++
++        bytestream2_init(&msgs, rbsp, rbsp_size);
++        while (bytestream2_get_bytes_left(&msgs) > 2) {
++            int payload_type = 0, payload_size = 0, byte;
++            GetBitContext gb;
++
++            do {
++                byte = bytestream2_get_byte(&msgs);
++                payload_type += byte;
++            } while (byte == 0xff);
++            do {
++                byte = bytestream2_get_byte(&msgs);
++                payload_size += byte;
++            } while (byte == 0xff);
++            if (payload_size > bytestream2_get_bytes_left(&msgs))
++                break;
++            if (payload_type == 177 /* depth_representation_info */) {
++                ret = init_get_bits8(&gb, msgs.buffer, payload_size);
++                if (ret >= 0)
++                    ret = mov_read_depth_representation_info(&gb, item);
++                if (ret < 0)
++                    av_log(c->fc, AV_LOG_WARNING,
++                           "Invalid depth representation information of item %d\n",
++                           item->item_id);
++            }
++            bytestream2_skipu(&msgs, payload_size);
++        }
++        av_free(rbsp);
++    }
++
++    return 0;
++}
++
+ static int mov_read_auxc(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+ {
+-    AVBPrint aux_type;
++    uint8_t *buf;
++    const char *aux_type;
++    size_t type_len;
+     HEIFItem *item;
++    int ret;
++
++    if (atom.size < 4 || atom.size > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
++        return AVERROR_INVALIDDATA;
+ 
+     avio_r8(pb);  /* version */
+     avio_rb24(pb);  /* flags */
+ 
+-    av_bprint_init(&aux_type, 0, AV_BPRINT_SIZE_AUTOMATIC);
+-    ff_read_string_to_bprint_overwrite(pb, &aux_type, atom.size - 4);
++    buf = av_mallocz(atom.size - 4 + 1 + AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!buf)
++        return AVERROR(ENOMEM);
++    ret = ffio_read_size(pb, buf, atom.size - 4);
++    if (ret < 0) {
++        av_free(buf);
++        return ret;
++    }
++    aux_type = (const char *)buf;
++    type_len = strlen(aux_type); /* buf ends with a zero byte */
+ 
+     av_log(c->fc, AV_LOG_TRACE, "auxC: item_id %d, aux_type %s\n",
+-           c->cur_item_id, aux_type.str);
++           c->cur_item_id, aux_type);
+ 
+     item = get_heif_item(c, c->cur_item_id);
+     if (item) {
+-        if ((av_stristr(aux_type.str, "hdrgainmap")))
++        if (av_stristr(aux_type, "hdrgainmap"))
+             item->is_gainmap = 1;
+-        else if (strstr(aux_type.str, "urn:mpeg:hevc:2015:auxid:1") ||
+-                 strstr(aux_type.str, "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"))
++        else if (strstr(aux_type, "urn:mpeg:hevc:2015:auxid:1") ||
++                 strstr(aux_type, "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"))
+             item->is_alpha = 1;
++        item->aux_id = mov_aux_id_from_type(aux_type);
++        /* aux_subtype follows the null-terminated aux_type */
++        if (item->aux_id == 2 && type_len + 1 < atom.size - 4) {
++            ret = mov_read_auxc_depth_subtype(c, buf + type_len + 1,
++                                              atom.size - 4 - type_len - 1, item);
++            if (ret < 0) {
++                av_free(buf);
++                return ret;
++            }
++        }
+     }
++
++    av_free(buf);
+     return 0;
+ }
+ 
++static int mov_read_auxi(MOVContext *c, AVIOContext *pb, MOVAtom atom)
++{
++    AVBPrint aux_type;
++    AVPacketSideData *sd;
++    AVStream *st;
++    int aux_id;
++
++    if (c->fc->nb_streams < 1 || atom.size < 4)
++        return 0;
++    st = c->fc->streams[c->fc->nb_streams - 1];
++
++    avio_r8(pb);  /* version */
++    avio_rb24(pb);  /* flags */
++
++    av_bprint_init(&aux_type, 0, AV_BPRINT_SIZE_AUTOMATIC);
++    ff_read_string_to_bprint_overwrite(pb, &aux_type, atom.size - 4);
++    aux_id = mov_aux_id_from_type(aux_type.str);
++    av_log(c->fc, AV_LOG_TRACE, "auxi: aux_track_type %s\n", aux_type.str);
++    av_bprint_finalize(&aux_type, NULL);
++    if (!aux_id)
++        return 0;
++
++    sd = av_packet_side_data_new(&st->codecpar->coded_side_data,
++                                 &st->codecpar->nb_coded_side_data,
++                                 AV_PKT_DATA_AUXILIARY_ID, sizeof(int), 0);
++    if (!sd)
++        return AVERROR(ENOMEM);
++    *(int *)sd->data = aux_id;
++
++    return 0;
++}
+ static int mov_read_pitm(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+ {
+     avio_rb32(pb);  // version & flags.
+@@ -10418,6 +10645,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
+ { MKTAG('p','i','t','m'), mov_read_pitm },
+ { MKTAG('e','v','c','C'), mov_read_glbl },
+ { MKTAG('a','u','x','C'), mov_read_auxc },
++{ MKTAG('a','u','x','i'), mov_read_auxi },
+ { MKTAG('i','d','a','t'), mov_read_idat },
+ { MKTAG('i','m','i','r'), mov_read_imir },
+ { MKTAG('i','r','e','f'), mov_read_iref },
+@@ -10963,6 +11191,7 @@ static int mov_read_close(AVFormatContext *s)
+         av_freep(&mov->heif_item[i]->iref_to_list);
+         av_freep(&mov->heif_item[i]->icc_profile);
+         av_exif_free(&mov->heif_item[i]->ifd);
++        av_freep(&mov->heif_item[i]->depth_info);
+         av_freep(&mov->heif_item[i]);
+     }
+     av_freep(&mov->heif_item);
+@@ -12064,6 +12293,25 @@ static int mov_parse_heif_items(AVFormatContext *s)
+         if (item->item_id == mov->primary_item_id)
+             st->disposition |= AV_DISPOSITION_DEFAULT;
+ 
++        /* auxiliary type and depth representation information */
++        if (item->aux_id) {
++            AVPacketSideData *sd = av_packet_side_data_new(&st->codecpar->coded_side_data,
++                                                           &st->codecpar->nb_coded_side_data,
++                                                           AV_PKT_DATA_AUXILIARY_ID, sizeof(int), 0);
++            if (!sd)
++                return AVERROR(ENOMEM);
++            *(int *)sd->data = item->aux_id;
++        }
++        if (item->depth_info_size) {
++            AVPacketSideData *sd = av_packet_side_data_new(&st->codecpar->coded_side_data,
++                                                           &st->codecpar->nb_coded_side_data,
++                                                           AV_PKT_DATA_DEPTH_REPRESENTATION_INFO,
++                                                           item->depth_info_size, 0);
++            if (!sd)
++                return AVERROR(ENOMEM);
++            memcpy(sd->data, item->depth_info, item->depth_info_size);
++        }
++
+         mov_build_index(mov, st);
+     }
+ 

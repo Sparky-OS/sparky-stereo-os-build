@@ -1,0 +1,37 @@
+ffmpeg-dmo (@VERSION@) unstable; urgency=medium
+
+  * Rebase the edition's series onto deb-multimedia's 10:9.1-dmo1
+    (FFmpeg 9.1, the release tarball checked against FFmpeg's release
+    key), whose packaging is taken whole: libcurl, the obsolete opengl
+    option dropped, the install globs.
+  * Keep the side data values the edition published in +15:
+    AV_FRAME_DATA_DOWNMIX_MATRIX, AV_FRAME_DATA_GAIN_MAP_PARAMS and
+    AV_PKT_DATA_GAIN_MAP_PARAMS, new in FFmpeg 9.1, follow the edition's
+    entries, so programs built against +15 to +17 read the same values.
+  * Keep xfade easing: deb-multimedia's 02_vf_xfade-3.6.6.patch, which
+    its 9.1 build drops because it no longer applies, refreshed without
+    its slide wrap-around hunks (FFmpeg 9.1 has 16a4ce48c for them), and
+    the header copied again by debian/rules.
+  * Drop 03_fix-padding-in-mp3.patch, as deb-multimedia does: FFmpeg 9.1
+    holds it (23fccd657c, Romain Beauxis).
+  * Port 0031, 0035 (one auxC reader: the edition's with FFmpeg 9.1's
+    gain map and alpha flags), 0042, 0053 (now the edition's ca5dbc9 in
+    its original form), 0075, hb-A05, hb-A15 (with FFmpeg 9.1's
+    pgssubdec fixes e3d24a4a1 and bfba88103 by Michael Niedermayer) and
+    hb-A24; raise libavutil's minor version for 0076 and 0089 from 9.1's
+    61.19. Refresh the context of 20 more; 76 apply as they are.
+  * Give the edition's ten packet side data types FFmpeg 9.1's handles,
+    so the side_data bitstream filter can name them.
+  * Bring nine FATE references of the edition's tests to what the
+    programs print: two persistence tests and three MPEG-TS tests take
+    FFmpeg 9.1's ffprobe output (42b8f75a6b, 88f7fd9ec5); the depth SEI
+    references take the fields 0090 prints, the MP4 depth track
+    reference the titl box hb-A02 writes (stale since +15 and +16; the
+    three tests failed on +17 too), and 9.1's AVIF alpha grid test the
+    AuxId 0035 exports on the alpha tiles.
+  * Keep Fraunhofer's xHE-AAC library, new in deb-multimedia's 9.1 build,
+    with libfdk-aac behind the pkg.ffmpeg-dmo.fdk profile: both are
+    non-free and stay out of the packages that are shipped.
+  * HandBrake's FFmpeg fixes are part of the recipe's series.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@

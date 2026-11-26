@@ -1,0 +1,184 @@
+Description: fate/vvc: test base pictures and SEI in multilayer access units
+ Decode the base pictures of VPS_A_3 and OPI_B_3, comparing against
+ independent layer-0 extraction references. Enable crccheck+explode so
+ allowing enhancement suffix SEI to overwrite a base picture's hash
+ fails the tests, even when the output pixels would otherwise match.
+ .
+ Check content light level metadata with a generated sample containing
+ 1000/400 in layer 0 and 2000/800 in layer 1. Only the layer-0 message
+ may reach the decoded pictures.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+ .
+ Port to 9.0.2: tests/fate/vvc.mak: the hunk lists are placed by 9.0.2 context (fate-vvc-eos-cra sits beside them).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/edfce157285004d8311c4c60cd2419910f3a4f84
+Forwarded: no, held by Daniel 2026-11-03 (fork branch vvc-layer-au on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/tests/fate/vvc.mak b/tests/fate/vvc.mak
+index 3dee65f..be247af 100644
+--- a/tests/fate/vvc.mak
++++ b/tests/fate/vvc.mak
+@@ -35,19 +35,24 @@ VVC_SAMPLES_444_10BIT =   \
+     CROP_B_4              \
+     ACT_A_3               \
+ 
++# multilayer, only the base layer (OLS 0) is decoded
++VVC_SAMPLES_MULTILAYER =  \
++    OPI_B_3               \
++    VPS_A_3               \
++
+ # not tested:
+ # BOUNDARY_A_3 (too big)
+-# OPI_B_3 (Inter layer ref support needed)
+-# VPS_A_3 (Inter layer ref support needed)
+ 
+-FATE_VVC_VARS := 8BIT 10BIT 422_10BIT 444_10BIT
++FATE_VVC_VARS := 8BIT 10BIT 422_10BIT 444_10BIT MULTILAYER
+ $(foreach VAR,$(FATE_VVC_VARS), $(eval VVC_TESTS_$(VAR) := $(addprefix fate-vvc-conformance-, $(VVC_SAMPLES_$(VAR)))))
+ 
+ $(VVC_TESTS_8BIT): SCALE_OPTS := -pix_fmt yuv420p
+ $(VVC_TESTS_10BIT): SCALE_OPTS := -pix_fmt yuv420p10le -vf scale
+ $(VVC_TESTS_422_10BIT): SCALE_OPTS := -pix_fmt yuv422p10le -vf scale
+ $(VVC_TESTS_444_10BIT): SCALE_OPTS := -pix_fmt yuv444p10le -vf scale
++$(VVC_TESTS_MULTILAYER): SCALE_OPTS := -pix_fmt yuv420p10le -vf scale
+ fate-vvc-conformance-%: CMD = framecrc -c:v vvc -i $(TARGET_SAMPLES)/vvc-conformance/$(subst fate-vvc-conformance-,,$(@)).bit $(SCALE_OPTS)
++$(VVC_TESTS_MULTILAYER): CMD = framecrc -c:v vvc -err_detect crccheck+explode -i $(TARGET_SAMPLES)/vvc-conformance/$(subst fate-vvc-conformance-,,$(@)).bit $(SCALE_OPTS)
+ fate-vvc-output-ref: CMD = framecrc -c:v vvc -i $(TARGET_SAMPLES)/vvc/Hierarchical.bit $(SCALE_OPTS)
+ fate-vvc-frames-with-ltr: CMD = framecrc -c:v vvc -i $(TARGET_SAMPLES)/vvc/vvc_frames_with_ltr.vvc -pix_fmt yuv420p10le -vf scale
+ fate-vvc-wpp-single-slice-pic: CMD = framecrc -c:v vvc -i $(TARGET_SAMPLES)/vvc/wpp-single-slice-pic.vvc -pix_fmt yuv420p10le -vf scale
+@@ -58,6 +63,7 @@ FATE_VVC-$(call FRAMECRC, VVC, VVC, VVC_PARSER SCALE_FILTER) +=
+                                                     $(VVC_TESTS_10BIT)            \
+                                                     $(VVC_TESTS_422_10BIT)        \
+                                                     $(VVC_TESTS_444_10BIT)        \
++                                                    $(VVC_TESTS_MULTILAYER)       \
+                                                     fate-vvc-frames-with-ltr      \
+                                                     fate-vvc-wpp-single-slice-pic \
+                                                     fate-vvc-eos-cra              \
+@@ -100,9 +106,15 @@ FATE_VVC-$(call ALLYES, FILE_PROTOCOL VVC_DEMUXER VVC_PARSER VVC_DECODER \
+                         MATROSKA_MUXER MATROSKA_DEMUXER NULL_MUXER WRAPPED_AVFRAME_ENCODER \
+                         SHOWINFO_FILTER) += fate-vvc-frame-packing-container-only
+ 
++# A content light level message of the base layer applies to its frames, one
++# of layer 1 does not.
++fate-vvc-multilayer-sei: CMD = probeframes -show_entries frame=side_data_list $(TARGET_SAMPLES)/vvc/multilayer-sei.vvc
++FATE_VVC_FFPROBE-$(call PARSERDEMDEC, VVC, VVC, VVC) += fate-vvc-multilayer-sei
++
+ FATE_SAMPLES_FFMPEG += $(FATE_VVC-yes)
++FATE_SAMPLES_FFPROBE += $(FATE_VVC_FFPROBE-yes)
+ 
+-fate-vvc: $(FATE_VVC-yes)
++fate-vvc: $(FATE_VVC-yes) $(FATE_VVC_FFPROBE-yes)
+ 
+ # Keep all PUs in their own AU, including AUs without the highest VPS layer.
+ fate-vvc-parser-multilayer-vps: CMD = framecrc -i $(TARGET_SAMPLES)/vvc-conformance/VPS_A_3.bit -c copy
+diff --git a/tests/ref/fate/vvc-conformance-OPI_B_3 b/tests/ref/fate/vvc-conformance-OPI_B_3
+new file mode 100644
+index 0000000..cdc35d4
+--- /dev/null
++++ b/tests/ref/fate/vvc-conformance-OPI_B_3
+@@ -0,0 +1,22 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 416x240
++#sar 0: 0/1
++0,          0,          0,        1,   299520, 0xdf1640db
++0,          1,          1,        1,   299520, 0x15e032ea
++0,          2,          2,        1,   299520, 0x0219c889
++0,          3,          3,        1,   299520, 0x01240e10
++0,          4,          4,        1,   299520, 0xc29436fe
++0,          5,          5,        1,   299520, 0x4553fcdc
++0,          6,          6,        1,   299520, 0xc9b15ca7
++0,          7,          7,        1,   299520, 0x2c90059d
++0,          8,          8,        1,   299520, 0x1d2ecaf6
++0,          9,          9,        1,   299520, 0xb481625c
++0,         10,         10,        1,   299520, 0x48384732
++0,         11,         11,        1,   299520, 0x564b826b
++0,         12,         12,        1,   299520, 0x26cd7227
++0,         13,         13,        1,   299520, 0x8e4d6b84
++0,         14,         14,        1,   299520, 0xc85a4819
++0,         15,         15,        1,   299520, 0xf1e3fd64
++0,         16,         16,        1,   299520, 0xd660429c
+diff --git a/tests/ref/fate/vvc-conformance-VPS_A_3 b/tests/ref/fate/vvc-conformance-VPS_A_3
+new file mode 100644
+index 0000000..3dc3f9d
+--- /dev/null
++++ b/tests/ref/fate/vvc-conformance-VPS_A_3
+@@ -0,0 +1,14 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 208x120
++#sar 0: 0/1
++0,          0,          0,        1,    74880, 0x1b401a6d
++0,          1,          1,        1,    74880, 0x1b401a6d
++0,          2,          2,        1,    74880, 0xa5773594
++0,          3,          3,        1,    74880, 0x8c76f61b
++0,          4,          4,        1,    74880, 0xb1ed0762
++0,          5,          5,        1,    74880, 0x5648e464
++0,          6,          6,        1,    74880, 0xce03b844
++0,          7,          7,        1,    74880, 0xdf5158a8
++0,          8,          8,        1,    74880, 0x01cd1256
+diff --git a/tests/ref/fate/vvc-multilayer-sei b/tests/ref/fate/vvc-multilayer-sei
+new file mode 100644
+index 0000000..2810753
+--- /dev/null
++++ b/tests/ref/fate/vvc-multilayer-sei
+@@ -0,0 +1,53 @@
++[FRAME]
++[/FRAME]
++[FRAME]
++[/FRAME]
++[FRAME]
++[SIDE_DATA]
++side_data_type=Content light level metadata
++max_content=1000
++max_average=400
++[/SIDE_DATA]
++[/FRAME]
++[FRAME]
++[SIDE_DATA]
++side_data_type=Content light level metadata
++max_content=1000
++max_average=400
++[/SIDE_DATA]
++[/FRAME]
++[FRAME]
++[SIDE_DATA]
++side_data_type=Content light level metadata
++max_content=1000
++max_average=400
++[/SIDE_DATA]
++[/FRAME]
++[FRAME]
++[SIDE_DATA]
++side_data_type=Content light level metadata
++max_content=1000
++max_average=400
++[/SIDE_DATA]
++[/FRAME]
++[FRAME]
++[SIDE_DATA]
++side_data_type=Content light level metadata
++max_content=1000
++max_average=400
++[/SIDE_DATA]
++[/FRAME]
++[FRAME]
++[SIDE_DATA]
++side_data_type=Content light level metadata
++max_content=1000
++max_average=400
++[/SIDE_DATA]
++[/FRAME]
++[FRAME]
++[SIDE_DATA]
++side_data_type=Content light level metadata
++max_content=1000
++max_average=400
++[/SIDE_DATA]
++[/FRAME]

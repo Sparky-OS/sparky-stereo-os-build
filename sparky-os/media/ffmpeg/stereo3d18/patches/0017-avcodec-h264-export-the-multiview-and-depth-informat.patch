@@ -1,0 +1,109 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/2d07ba47bf5d836a76188121459f1cc1ed31b58c
+From 2d07ba47bf5d836a76188121459f1cc1ed31b58c Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:36:08 -0300
+Subject: [PATCH 17/48] avcodec/h264: export the multiview and depth
+ information
+
+The multiview and depth information SEI messages apply from their access
+unit on, in decoding order, until the next message of their type or the
+end of the coded video sequence (H.264 G.13.2, H.13.2.3, H.13.2.5,
+H.13.2.6, H.13.2.7, I.13.2.1). Keep the information in force in the
+decoder and export it on every frame it applies to; a skipped picture
+still starts the information its access unit carries.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/h264_slice.c | 21 +++++++++++++++++++++
+ libavcodec/h264dec.c    |  4 ++++
+ libavcodec/h264dec.h    |  5 +++++
+ 3 files changed, 30 insertions(+)
+
+diff --git a/libavcodec/h264_slice.c b/libavcodec/h264_slice.c
+index d1c2c7bc..16d97971 100644
+--- a/libavcodec/h264_slice.c
++++ b/libavcodec/h264_slice.c
+@@ -432,6 +432,12 @@ int ff_h264_update_thread_context(AVCodecContext *dst,
+     h->output_frame_packing = h1->output_frame_packing;
+     h->poc_offset        = h1->poc_offset;
+ 
++    for (int i = 0; i < H2645_SEI_MULTIVIEW_NB; i++) {
++        ret = av_buffer_replace(&h->multiview[i], h1->multiview[i]);
++        if (ret < 0)
++            return ret;
++    }
++
+     memcpy(h->mmco, h1->mmco, sizeof(h->mmco));
+     h->nb_mmco         = h1->nb_mmco;
+     h->mmco_reset      = h1->mmco_reset;
+@@ -1266,6 +1272,17 @@ static int h264_export_frame_props(H264Context *h)
+     if (ret < 0)
+         return ret;
+ 
++    /* The multiview and depth information applies from its access unit on
++     * in decoding order, until the next message of its type or the end of
++     * the coded video sequence (H.264 G.13.2, H.13.2 and I.13.2). */
++    ret = ff_h2645_sei_multiview_update(h->multiview, &h->sei.common.multiview,
++                                        !!(out->flags & AV_FRAME_FLAG_KEY));
++    if (ret < 0)
++        return ret;
++    ret = ff_h2645_sei_multiview_to_frame(h->avctx, out, h->multiview);
++    if (ret < 0)
++        return ret;
++
+     if (h->sei.picture_timing.timecode_cnt > 0) {
+         uint32_t *tc_sd;
+         char tcbuf[AV_TIMECODE_STR_SIZE];
+@@ -2153,6 +2170,10 @@ int ff_h264_queue_decode_slice(H264Context *h, const H2645NAL *nal)
+             (h->avctx->skip_frame >= AVDISCARD_NONINTRA && sl->slice_type_nos != AV_PICTURE_TYPE_I) ||
+             (h->avctx->skip_frame >= AVDISCARD_NONKEY && h->nal_unit_type != H264_NAL_IDR_SLICE && h->sei.recovery_point.recovery_frame_cnt < 0) ||
+             h->avctx->skip_frame >= AVDISCARD_ALL) {
++            /* a skipped picture still starts the information it carries */
++            if (!sl->first_mb_addr)
++                ff_h2645_sei_multiview_update(h->multiview, &h->sei.common.multiview,
++                                              nal->type == H264_NAL_IDR_SLICE);
+             return 0;
+         }
+     }
+diff --git a/libavcodec/h264dec.c b/libavcodec/h264dec.c
+index 3dae5189..2946503f 100644
+--- a/libavcodec/h264dec.c
++++ b/libavcodec/h264dec.c
+@@ -370,6 +370,8 @@ static av_cold int h264_decode_end(AVCodecContext *avctx)
+ 
+     ff_h264_sei_uninit(&h->sei);
+     ff_h264_ps_uninit(&h->ps);
++    for (i = 0; i < H2645_SEI_MULTIVIEW_NB; i++)
++        av_buffer_unref(&h->multiview[i]);
+ 
+     ff_h2645_packet_uninit(&h->pkt);
+ 
+@@ -455,6 +457,8 @@ void ff_h264_flush_change(H264Context *h)
+     h->next_outputed_poc = INT_MIN;
+     h->prev_interlaced_frame = 1;
+     memset(&h->output_frame_packing, 0, sizeof(h->output_frame_packing));
++    for (i = 0; i < H2645_SEI_MULTIVIEW_NB; i++)
++        av_buffer_unref(&h->multiview[i]);
+     idr(h);
+ 
+     h->poc.prev_frame_num = -1;
+diff --git a/libavcodec/h264dec.h b/libavcodec/h264dec.h
+index 538ac1ea..6754c3db 100644
+--- a/libavcodec/h264dec.h
++++ b/libavcodec/h264dec.h
+@@ -476,6 +476,11 @@ typedef struct H264Context {
+     H264Picture *next_output_pic;
+     int next_outputed_poc;
+     H2645SEIFramePacking output_frame_packing; ///< arrangement in force in output order
++    /**
++     * The multiview and depth information in force in decoding order, as
++     * frame side data, one per H2645_SEI_MULTIVIEW_* type.
++     */
++    AVBufferRef *multiview[H2645_SEI_MULTIVIEW_NB];
+     int poc_offset;         ///< PicOrderCnt_offset from SMPTE RDD-2006
+ 
+     /**
+-- 
+2.53.0
+

@@ -1,0 +1,143 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/e47e7e3902ed2cbdfab12c2db21ceadb2e89c774
+From e47e7e3902ed2cbdfab12c2db21ceadb2e89c774 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:33:38 -0300
+Subject: [PATCH 39/48] avutil: add the ISO/IEC 23002-3 auxiliary video
+ information
+
+An MPEG-C Part 3 auxiliary video stream carries a depth or parallax map
+for a primary video, described by its supplemental information
+(si_rbsp()): the field and sampling grid relation, and the depth range
+(depth_params()) or the parallax coding (parallax_params(): parallax_zero,
+parallax_scale, dref and wref, the same coding as HDMI 1.4a's 3D_Meta).
+Add a structure for it and a frame side data type.
+
+ISO/IEC 23002-3 is not freely available: the fields are named as open
+implementations (TSDuck) read them, and the formulas that derive depth
+and parallax from them (6.1.2.2, 6.2.2.2) are marked unverified.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the value stays as published in +15, before FFmpeg 9.1's AV_FRAME_DATA_DOWNMIX_MATRIX and AV_FRAME_DATA_GAIN_MAP_PARAMS.
+
+diff --git a/libavutil/frame.h b/libavutil/frame.h
+index 246e9afaa4f2d0f91ac4f174e40bed4732379afd..d0efe1d4df9f34b23af1c1ca9387ec1daa9a6593 100644
+--- a/libavutil/frame.h
++++ b/libavutil/frame.h
+@@ -361,6 +361,13 @@ enum AVFrameSideDataType {
+      */
+     AV_FRAME_DATA_AUXILIARY_ID,
+ 
++    /**
++     * The supplemental information of an ISO/IEC 23002-3 (MPEG-C Part 3)
++     * auxiliary video stream. The data is the AVAuxiliaryVideoInfo struct
++     * defined in libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_AUXILIARY_VIDEO_INFO,
++
+     /**
+      * Metadata relevant to a downmix procedure in the form of a remixig matrix.
+      * The data is the AVDownmixMatrix struct defined in libavutil/downmix_info.h.
+diff --git a/libavutil/multiview.c b/libavutil/multiview.c
+index b205ec5f069916f9412ed1afd7e63bb40253542d..d4d80ecb82d3df6eaf7a8241818733a2c664653f 100644
+--- a/libavutil/multiview.c
++++ b/libavutil/multiview.c
+@@ -245,3 +245,13 @@ AVAlternativeDepthInfo *av_alternative_depth_info_alloc(unsigned int nb_views, s
+ 
+     return info;
+ }
++
++AVAuxiliaryVideoInfo *av_auxiliary_video_info_alloc(size_t *size)
++{
++    AVAuxiliaryVideoInfo *info = av_mallocz(sizeof(*info));
++
++    if (info && size)
++        *size = sizeof(*info);
++
++    return info;
++}
+diff --git a/libavutil/multiview.h b/libavutil/multiview.h
+index 554ddd89f7c7f4a848a773c5ab974675ff1ee892..fda393c55b6d69876ec7099195470deb2b128d15 100644
+--- a/libavutil/multiview.h
++++ b/libavutil/multiview.h
+@@ -679,6 +679,67 @@ av_alternative_depth_info_get_view(const AVAlternativeDepthInfo *info, unsigned
+                                       idx * info->view_size);
+ }
+ 
++/**
++ * The type of an ISO/IEC 23002-3 (MPEG-C Part 3) auxiliary video stream: the
++ * payloadType of the supplemental information message that describes it.
++ */
++enum AVAuxiliaryVideoType {
++    AV_AUXILIARY_VIDEO_DEPTH    = 0, ///< a depth map, with depth_params()
++    AV_AUXILIARY_VIDEO_PARALLAX = 1, ///< a parallax map, with parallax_params()
++};
++
++/**
++ * The supplemental information of an ISO/IEC 23002-3 (MPEG-C Part 3)
++ * auxiliary video stream (si_rbsp()), as an MPEG-2 transport stream carries it
++ * in the auxiliary video stream descriptor of a stream of type 0x1E (ITU-T
++ * H.222.0). ISO/IEC 23002-3 is not freely available: the fields are named as
++ * open implementations read them, and the formulas that derive depth and
++ * parallax from them (6.1.2.2 and 6.2.2.2) are unverified here.
++ */
++typedef struct AVAuxiliaryVideoInfo {
++    /**
++     * An enum AVAuxiliaryVideoType.
++     */
++    uint8_t type;
++
++    /**
++     * generic_params(): whether the auxiliary video corresponds to one field
++     * of the primary video, and then whether that is the bottom field;
++     * otherwise whether its resampling is field based (interlaced).
++     */
++    uint8_t aux_is_one_field;
++    uint8_t aux_is_bottom_field;
++    uint8_t aux_is_interlaced;
++
++    /**
++     * The position of the auxiliary video's samples in the primary video's
++     * sampling grid, in 1/16 sample.
++     */
++    uint8_t position_offset_h;
++    uint8_t position_offset_v;
++
++    /**
++     * depth_params(): the numerators of kfar and knear, the range of the
++     * depth behind and in front of the screen relative to the screen width.
++     */
++    uint8_t nkfar;
++    uint8_t nknear;
++
++    /**
++     * parallax_params(): the sample value of zero parallax, the scale of the
++     * parallax, and the reference viewing distance and screen width.
++     */
++    uint16_t parallax_zero;
++    uint16_t parallax_scale;
++    uint16_t dref;
++    uint16_t wref;
++} AVAuxiliaryVideoInfo;
++
++/**
++ * Allocate an AVAuxiliaryVideoInfo.
++ */
++AVAuxiliaryVideoInfo *av_auxiliary_video_info_alloc(size_t *size);
++
+ /**
+  * @}
+  */
+diff --git a/libavutil/side_data.c b/libavutil/side_data.c
+index 89dcac19e119e11cd0be5d290a1adb870ea28f20..fc62c181017ed9a41a252dbae40171e431b8d195 100644
+--- a/libavutil/side_data.c
++++ b/libavutil/side_data.c
+@@ -73,6 +73,7 @@ static const AVSideDataDescriptor sd_props[] = {
+     [AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID] = { "Constrained depth parameter set identifier", AV_SIDE_DATA_PROP_GLOBAL },
+     [AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO]      = { "Alternative depth information",                AV_SIDE_DATA_PROP_GLOBAL },
+     [AV_FRAME_DATA_AUXILIARY_ID]                = { "Auxiliary picture type (AuxId)",               AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_AUXILIARY_VIDEO_INFO]        = { "MPEG-C Part 3 auxiliary video information",    AV_SIDE_DATA_PROP_GLOBAL },
+ };
+ 
+ const AVSideDataDescriptor *av_frame_side_data_desc(enum AVFrameSideDataType type)

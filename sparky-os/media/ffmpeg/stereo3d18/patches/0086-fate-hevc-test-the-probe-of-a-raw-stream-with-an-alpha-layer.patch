@@ -1,0 +1,38 @@
+Description: fate/hevc: test the probe of a raw stream with an alpha layer
+ .
+ Probe a raw HEVC stream made by x265 --alpha, whose alpha layer has
+ nuh_layer_id 1, without naming the format.
+ .
+ The sample is an x265 stream of 8 frames of 64x64 pixels.
+ .
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/6bcf8cb7ca9a930ec087d210b913596d455a2521
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/tests/fate/hevc.mak b/tests/fate/hevc.mak
+index 6cd3510c7f4..31862783f7e 100644
+--- a/tests/fate/hevc.mak
++++ b/tests/fate/hevc.mak
+@@ -294,6 +294,9 @@ FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-frame-pack
+ fate-hevc-hdr10-plus-metadata: CMD = probeframes -show_entries frame=side_data_list $(TARGET_SAMPLES)/hevc/hdr10_plus_h265_sample.hevc
+ FATE_HEVC_FFPROBE-$(call DEMDEC, HEVC, HEVC) += fate-hevc-hdr10-plus-metadata
+ 
++fate-hevc-probe-layers: CMD = probe -show_entries format=format_name $(TARGET_SAMPLES)/hevc/x265-alpha.hevc
++FATE_HEVC_FFPROBE-$(call DEMDEC, HEVC, HEVC) += fate-hevc-probe-layers
++
+ fate-hevc-hdr-vivid-metadata: CMD = probeframes -show_entries frame=side_data_list $(TARGET_SAMPLES)/hevc/hdr_vivid_h265_sample.hevc
+ FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-hdr-vivid-metadata
+ 
+diff --git a/tests/ref/fate/hevc-probe-layers b/tests/ref/fate/hevc-probe-layers
+new file mode 100644
+index 00000000000..23fc3dfb07a
+--- /dev/null
++++ b/tests/ref/fate/hevc-probe-layers
+@@ -0,0 +1,3 @@
++[FORMAT]
++format_name=hevc
++[/FORMAT]

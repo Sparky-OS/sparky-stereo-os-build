@@ -1,0 +1,79 @@
+Description: contrib: update ffmpeg to 8.0.1 (#7448)
+Author: hnsteyding
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A22-fix-d3d11-static-pool-size-error.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/ad21dd99c205642b8931ca0b8fd0d783a4a9420b
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavutil/hwcontext_d3d11va.c
++++ b/libavutil/hwcontext_d3d11va.c
+@@ -84,6 +84,9 @@
+ 
+     int nb_surfaces;
+     int nb_surfaces_used;
++
++    int max_retries;
++    int retries;
+ 
+     DXGI_FORMAT format;
+ 
+@@ -261,7 +264,9 @@
+     ID3D11Texture2D_GetDesc(hwctx->texture, &texDesc);
+ 
+     if (s->nb_surfaces_used >= texDesc.ArraySize) {
+-        av_log(ctx, AV_LOG_ERROR, "Static surface pool size exceeded.\n");
++        if (s->retries >= s->max_retries) {
++            av_log(ctx, AV_LOG_ERROR, "Static surface pool size exceeded.\n");
++        }
+         return NULL;
+     }
+ 
+@@ -347,20 +352,34 @@
+ static int d3d11va_get_buffer(AVHWFramesContext *ctx, AVFrame *frame)
+ {
+     AVD3D11FrameDescriptor *desc;
+-
+-    frame->buf[0] = av_buffer_pool_get(ctx->pool);
+-    if (!frame->buf[0])
+-        return AVERROR(ENOMEM);
+-
+-    desc = (AVD3D11FrameDescriptor *)frame->buf[0]->data;
+-
+-    frame->data[0] = (uint8_t *)desc->texture;
+-    frame->data[1] = (uint8_t *)desc->index;
+-    frame->format  = AV_PIX_FMT_D3D11;
+-    frame->width   = ctx->width;
+-    frame->height  = ctx->height;
+-
+-    return 0;
++    D3D11VAFramesContext       *s = ctx->hwctx;
++    s->retries = 0;
++    s->max_retries = 50;
++
++    /**
++     * Loop until a buffer becomes available from the pool.
++     * In a full hardware pipeline, all buffers may be temporarily in use by
++     * other modules (encoder/filter/decoder). Rather than immediately failing
++     * with ENOMEM, we wait for a buffer to be released back to the pool, which
++     * maintains pipeline flow and prevents unnecessary allocation failures
++     * during normal operation.
++     */
++    while (s->retries < s->max_retries) {
++        frame->buf[0] = av_buffer_pool_get(ctx->pool);
++        if (frame->buf[0]) {
++            desc = (AVD3D11FrameDescriptor *)frame->buf[0]->data;
++            frame->data[0] = (uint8_t *)desc->texture;
++            frame->data[1] = (uint8_t *)desc->index;
++            frame->format  = AV_PIX_FMT_D3D11;
++            frame->width   = ctx->width;
++            frame->height  = ctx->height;
++            return 0;
++        }
++
++        av_usleep(1000);
++    }
++ 
++    return AVERROR(ENOMEM);
+ }
+ 
+ static int d3d11va_transfer_get_formats(AVHWFramesContext *ctx,

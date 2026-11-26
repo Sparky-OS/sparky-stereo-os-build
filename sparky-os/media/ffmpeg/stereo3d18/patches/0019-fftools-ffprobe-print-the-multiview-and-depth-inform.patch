@@ -1,0 +1,275 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/db4cf6e69bc8b0fc006fdb9a0281bc914605813f
+From db4cf6e69bc8b0fc006fdb9a0281bc914605813f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:36:08 -0300
+Subject: [PATCH 19/48] fftools/ffprobe: print the multiview and depth
+ information side data
+
+Print every field of the multiview and depth information side data of
+frames, packets and streams, real numbers as their values.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+Refreshed for FFmpeg 9.1 (deb-multimedia 10:9.1-dmo1), 2026-11-26: the context moved in FFmpeg 9.1; the lines this patch adds and removes are unchanged
+
+diff --git a/fftools/ffprobe.c b/fftools/ffprobe.c
+index 0f71c3e6a73760ad4c2f3dbb301b5cbae3606acb..17c396f648fd39a8788db08a4c1c06498aa59c70 100644
+--- a/fftools/ffprobe.c
++++ b/fftools/ffprobe.c
+@@ -49,6 +49,7 @@
+ #include "libavutil/hdr_dynamic_vivid_metadata.h"
+ #include "libavutil/dovi_meta.h"
+ #include "libavutil/mem.h"
++#include "libavutil/multiview.h"
+ #include "libavutil/opt.h"
+ #include "libavutil/pixdesc.h"
+ #include "libavutil/spherical.h"
+@@ -581,6 +582,231 @@ static void print_displaymatrix(AVTextFormatContext *tfc, const int32_t matrix[9
+     print_int("rotation", rotation);
+ }
+ 
++static void print_multiview_real(AVTextFormatContext *tfc, const char *key,
++                                 const AVMultiviewReal *r)
++{
++    const double v = av_multiview_real_to_double(r);
++    AVBPrint pbuf;
++
++    av_bprint_init(&pbuf, 1, AV_BPRINT_SIZE_UNLIMITED);
++    if (isnan(v))
++        print_str(key, "unspecified");
++    else
++        print_fmt(key, "%.9g", v);
++    av_bprint_finalize(&pbuf, NULL);
++}
++
++#define print_multiview_real_fmt(f, r, ...) do {        \
++    char key_buf[64];                                   \
++    snprintf(key_buf, sizeof(key_buf), f, __VA_ARGS__); \
++    print_multiview_real(tfc, key_buf, r);              \
++} while (0)
++
++#define print_int_key_fmt(f, v, ...) do {               \
++    char key_buf[64];                                   \
++    snprintf(key_buf, sizeof(key_buf), f, __VA_ARGS__); \
++    print_int(key_buf, v);                              \
++} while (0)
++
++static void print_multiview_scene_info(AVTextFormatContext *tfc,
++                                       const AVMultiviewSceneInfo *info)
++{
++    if (info->min_disparity_present) {
++        print_int("min_disparity", info->min_disparity);
++        print_int("max_disparity_range", info->max_disparity_range);
++    } else {
++        print_int("max_disparity", info->max_disparity);
++    }
++}
++
++static void print_multiview_acquisition_info(AVTextFormatContext *tfc,
++                                             const AVMultiviewAcquisitionInfo *info)
++{
++    print_int("intrinsic_param", info->intrinsic_param);
++    print_int("extrinsic_param", info->extrinsic_param);
++    print_int("intrinsic_params_equal", info->intrinsic_params_equal);
++    print_int("nb_cameras", info->nb_cameras);
++    for (unsigned i = 0; i < info->nb_cameras; i++) {
++        const AVMultiviewCamera *c = av_multiview_acquisition_info_get_camera(info, i);
++
++        if (info->intrinsic_param && (i == 0 || !info->intrinsic_params_equal)) {
++            print_multiview_real_fmt("camera%u_focal_length_x",    &c->focal_length_x,    i);
++            print_multiview_real_fmt("camera%u_focal_length_y",    &c->focal_length_y,    i);
++            print_multiview_real_fmt("camera%u_principal_point_x", &c->principal_point_x, i);
++            print_multiview_real_fmt("camera%u_principal_point_y", &c->principal_point_y, i);
++            print_multiview_real_fmt("camera%u_skew_factor",       &c->skew_factor,       i);
++        }
++        if (info->extrinsic_param) {
++            for (int j = 0; j < 3; j++) {
++                for (int k = 0; k < 3; k++)
++                    print_multiview_real_fmt("camera%u_rotation_%d%d", &c->rotation[j][k], i, j, k);
++                print_multiview_real_fmt("camera%u_translation_%d", &c->translation[j], i, j);
++            }
++        }
++    }
++}
++
++static void print_multiview_view_position(AVTextFormatContext *tfc,
++                                          const AVMultiviewViewPosition *pos)
++{
++    const uint16_t *p = av_multiview_view_position_get(pos);
++    AVBPrint pbuf;
++
++    av_bprint_init(&pbuf, 1, AV_BPRINT_SIZE_UNLIMITED);
++    print_int("nb_views", pos->nb_views);
++    print_list_fmt("view_position", "%"PRIu16, pos->nb_views, 1, p[idx]);
++    av_bprint_finalize(&pbuf, NULL);
++}
++
++static void print_depth_representation_info(AVTextFormatContext *tfc,
++                                            const AVDepthRepresentationInfo *info)
++{
++    print_int("depth_representation_type", info->type);
++    if (info->type > AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY)
++        return;
++    print_int("all_views_equal", info->all_views_equal);
++    if (info->z_near_present || info->z_far_present) {
++        print_int("z_axis_equal", info->z_axis_equal);
++        if (info->z_axis_equal)
++            print_int("common_z_axis_reference_view", info->common_z_axis_reference_view);
++    }
++    print_int("nb_views", info->nb_views);
++    for (unsigned i = 0; i < info->nb_views; i++) {
++        const AVDepthRepresentationView *v = av_depth_representation_info_get_view(info, i);
++
++        print_int_key_fmt("view%u_view_id", v->view_id, i);
++        if ((info->z_near_present || info->z_far_present) && !info->z_axis_equal)
++            print_int_key_fmt("view%u_z_axis_reference_view", v->z_axis_reference_view, i);
++        if (info->d_min_present || info->d_max_present)
++            print_int_key_fmt("view%u_disparity_reference_view", v->disparity_reference_view, i);
++        if (info->z_near_present)
++            print_multiview_real_fmt("view%u_z_near", &v->z_near, i);
++        if (info->z_far_present)
++            print_multiview_real_fmt("view%u_z_far", &v->z_far, i);
++        if (info->d_min_present)
++            print_multiview_real_fmt("view%u_d_min", &v->d_min, i);
++        if (info->d_max_present)
++            print_multiview_real_fmt("view%u_d_max", &v->d_max, i);
++    }
++    if (info->type == AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY) {
++        AVBPrint pbuf;
++
++        av_bprint_init(&pbuf, 1, AV_BPRINT_SIZE_UNLIMITED);
++        print_list_fmt("nonlinear_model", "%"PRIu16, info->nb_nonlinear_model, 1,
++                       info->nonlinear_model[idx]);
++        av_bprint_finalize(&pbuf, NULL);
++    }
++}
++
++static void print_depth_timing(AVTextFormatContext *tfc, const AVDepthTiming *t)
++{
++    AVBPrint pbuf;
++
++    av_bprint_init(&pbuf, 1, AV_BPRINT_SIZE_UNLIMITED);
++    print_int("per_view", t->per_view);
++    print_list_fmt("offsets", "%"PRIu32"/2^%d", t->nb_offsets, 1,
++                   av_depth_timing_get_offset(t, idx)->offset_fp,
++                   av_depth_timing_get_offset(t, idx)->offset_dp);
++    av_bprint_finalize(&pbuf, NULL);
++}
++
++static void print_depth_sampling_info(AVTextFormatContext *tfc, const AVDepthSamplingInfo *info)
++{
++    AVBPrint pbuf;
++
++    av_bprint_init(&pbuf, 1, AV_BPRINT_SIZE_UNLIMITED);
++    print_fmt("dttsr_x", "%d/2^%d", info->dttsr_x_mul, info->dttsr_x_dp);
++    print_fmt("dttsr_y", "%d/2^%d", info->dttsr_y_mul, info->dttsr_y_dp);
++    print_int("per_view", info->per_view);
++    for (unsigned i = 0; i < info->nb_positions; i++) {
++        const AVDepthGridPosition *g = av_depth_sampling_info_get_position(info, i);
++        char key_buf[64];
++
++        if (info->per_view)
++            print_int_key_fmt("grid%u_view_id", g->view_id, i);
++        snprintf(key_buf, sizeof(key_buf), "grid%u_x", i);
++        print_fmt(key_buf, "%s%"PRIu32"/2^%d", g->x_sign ? "-" : "", g->x_fp, g->x_dp);
++        snprintf(key_buf, sizeof(key_buf), "grid%u_y", i);
++        print_fmt(key_buf, "%s%"PRIu32"/2^%d", g->y_sign ? "-" : "", g->y_fp, g->y_dp);
++    }
++    av_bprint_finalize(&pbuf, NULL);
++}
++
++static void print_alternative_depth_info(AVTextFormatContext *tfc, const AVAlternativeDepthInfo *info)
++{
++    AVBPrint pbuf;
++
++    print_int("cancel", info->cancel);
++    if (info->cancel)
++        return;
++    print_int("depth_type", info->depth_type);
++    if (info->depth_type == AV_ALTERNATIVE_DEPTH_GVD) {
++        print_int("depth_present", info->depth_present);
++        print_int("nb_views", info->nb_views);
++        for (unsigned i = 0; i < info->nb_views; i++) {
++            const AVAlternativeDepthView *v = av_alternative_depth_info_get_view(info, i);
++
++            if (info->z_present) {
++                print_multiview_real_fmt("view%u_z_near", &v->z_near, i);
++                print_multiview_real_fmt("view%u_z_far",  &v->z_far,  i);
++            }
++            if (info->intrinsic_param) {
++                print_multiview_real_fmt("view%u_focal_length_x",    &v->focal_length_x,    i);
++                print_multiview_real_fmt("view%u_focal_length_y",    &v->focal_length_y,    i);
++                print_multiview_real_fmt("view%u_principal_point_x", &v->principal_point_x, i);
++                print_multiview_real_fmt("view%u_principal_point_y", &v->principal_point_y, i);
++            }
++            if (info->rotation_param)
++                for (int j = 0; j < 3; j++)
++                    for (int k = 0; k < 3; k++)
++                        print_multiview_real_fmt("view%u_rotation_%d%d", &v->rotation[j][k], i, j, k);
++            if (info->translation_param)
++                print_multiview_real_fmt("view%u_translation_x", &v->translation_x, i);
++        }
++    } else if (info->depth_type == AV_ALTERNATIVE_DEPTH_WARP_MAP) {
++        av_bprint_init(&pbuf, 1, AV_BPRINT_SIZE_UNLIMITED);
++        print_fmt("min_offset_x", "%"PRId32"+%d/256", info->min_offset_x_int, info->min_offset_x_frac);
++        print_fmt("max_offset_x", "%"PRId32"+%d/256", info->max_offset_x_int, info->max_offset_x_frac);
++        if (info->offset_y_present) {
++            print_fmt("min_offset_y", "%"PRId32"+%d/256", info->min_offset_y_int, info->min_offset_y_frac);
++            print_fmt("max_offset_y", "%"PRId32"+%d/256", info->max_offset_y_int, info->max_offset_y_frac);
++        }
++        if (info->warp_map_size_present) {
++            print_int("warp_map_width", info->warp_map_width);
++            print_int("warp_map_height", info->warp_map_height);
++        }
++        av_bprint_finalize(&pbuf, NULL);
++    }
++}
++
++/* the multiview and depth information types of frame and packet side data */
++static int print_multiview_side_data(AVTextFormatContext *tfc, int is_frame, int type, const void *data)
++{
++#define TYPE(name) (is_frame ? (int)AV_FRAME_DATA_ ## name : (int)AV_PKT_DATA_ ## name)
++    if (type == TYPE(MULTIVIEW_SCENE_INFO))
++        print_multiview_scene_info(tfc, data);
++    else if (type == TYPE(MULTIVIEW_ACQUISITION_INFO))
++        print_multiview_acquisition_info(tfc, data);
++    else if (type == TYPE(MULTIVIEW_VIEW_POSITION))
++        print_multiview_view_position(tfc, data);
++    else if (type == TYPE(DEPTH_REPRESENTATION_INFO))
++        print_depth_representation_info(tfc, data);
++    else if (type == TYPE(DEPTH_TIMING))
++        print_depth_timing(tfc, data);
++    else if (type == TYPE(DEPTH_SAMPLING_INFO))
++        print_depth_sampling_info(tfc, data);
++    else if (type == TYPE(CONSTRAINED_DEPTH_PARAMETER_SET_ID)) {
++        const AVConstrainedDepthParameterSetId *id = data;
++        print_int("max_dps_id", id->max_dps_id);
++        print_int("max_dps_id_diff", id->max_dps_id_diff);
++    } else if (type == TYPE(ALTERNATIVE_DEPTH_INFO))
++        print_alternative_depth_info(tfc, data);
++    else
++        return 0;
++#undef TYPE
++    return 1;
++}
++
+ static void print_mastering_display_metadata(AVTextFormatContext *tfc,
+                                              const AVMasteringDisplayMetadata *metadata)
+ {
+@@ -1207,6 +1433,7 @@ static void print_pkt_side_data(AVTextFormatContext *tfc,
+         print_int("baseline", stereo->baseline);
+         print_q("horizontal_disparity_adjustment", stereo->horizontal_disparity_adjustment, '/');
+         print_q("horizontal_field_of_view", stereo->horizontal_field_of_view, '/');
++    } else if (print_multiview_side_data(tfc, 0, sd->type, sd->data)) {
+     } else if (sd->type == AV_PKT_DATA_SPHERICAL) {
+         const AVSphericalMapping *spherical = (AVSphericalMapping *)sd->data;
+         print_str("projection", av_spherical_projection_name(spherical->projection));
+@@ -1610,6 +1837,7 @@ static void print_frame_side_data(AVTextFormatContext *tfc,
+             print_gain_map_params(tfc, (const AVGainMapParams *)sd->data);
+         } else if (sd->type == AV_FRAME_DATA_VIEW_ID) {
+             print_int("view_id", *(int*)sd->data);
++        } else if (print_multiview_side_data(tfc, 1, sd->type, sd->data)) {
+         } else if (sd->type == AV_FRAME_DATA_EXIF) {
+             print_int("size", sd->size);
+         } else if (sd->type == AV_FRAME_DATA_IAMF_MIX_GAIN_PARAM ||

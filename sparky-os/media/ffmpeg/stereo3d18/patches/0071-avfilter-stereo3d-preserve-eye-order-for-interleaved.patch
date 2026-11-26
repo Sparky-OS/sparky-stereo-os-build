@@ -1,0 +1,119 @@
+Description: avfilter/stereo3d: preserve eye order for interleaved columns
+ Select the source column from the input eye order and leave the output
+ placement to the selected output layout. Swapping the configured offsets
+ as well as the source columns reversed icr packed output. Depending on
+ the output enum parity also reversed right-first alternating output.
+ .
+ Use the actual input order when interleaving columns again, so icl:icr
+ exchanges the eyes instead of copying the original column order.
+ .
+ Add an analytic RGB FATE regression with different markers in each eye.
+ Use frame MD5 because the exchanged views have the same Adler checksum.
+ The reference is generated from independently packed left and right
+ images, and fails on unpatched master.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/e3fc6350190ed43dd39ee76025f69f6a76ab0467
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25377
+Last-Update: 2026-11-06
+
+diff --git a/libavfilter/vf_stereo3d.c b/libavfilter/vf_stereo3d.c
+index 15d6f31..b53eb5a 100644
+--- a/libavfilter/vf_stereo3d.c
++++ b/libavfilter/vf_stereo3d.c
+@@ -576,17 +576,6 @@ static int config_output(AVFilterLink *outlink)
+         return AVERROR(EINVAL);
+     }
+ 
+-    if (s->in.format == INTERLEAVE_COLS_LR || s->in.format == INTERLEAVE_COLS_RL) {
+-        if ((s->in.format & 1) != (s->out.format & 1)) {
+-            FFSWAP(int, s->in.row_left,   s->in.row_right);
+-            FFSWAP(int, s->in.off_lstep,  s->in.off_rstep);
+-            FFSWAP(int, s->in.off_left,   s->in.off_right);
+-            FFSWAP(int, s->out.row_left,  s->out.row_right);
+-            FFSWAP(int, s->out.off_lstep, s->out.off_rstep);
+-            FFSWAP(int, s->out.off_left,  s->out.off_right);
+-        }
+-    }
+-
+     outlink->w = s->out.width;
+     outlink->h = s->out.height;
+     ol->frame_rate = fps;
+@@ -860,7 +849,7 @@ copy:
+         if (s->in.format == INTERLEAVE_COLS_LR ||
+             s->in.format == INTERLEAVE_COLS_RL) {
+             for (i = 0; i < s->nb_planes; i++) {
+-                int d = (s->in.format & 1) != (s->out.format & 1);
++                int d = s->in.format == INTERLEAVE_COLS_RL;
+ 
+                 interleave_cols_to_any(s, out_off_left,  i, ileft,  oleft,   d);
+                 interleave_cols_to_any(s, out_off_right, i, iright, oright, !d);
+@@ -1021,12 +1010,14 @@ copy:
+         for (i = 0; i < s->nb_planes; i++) {
+             const int d = (s->in.format == INTERLEAVE_COLS_LR || s->in.format == INTERLEAVE_COLS_RL);
+             const int m = 1 + d;
++            const int l = s->in.format == INTERLEAVE_COLS_RL;
++            const int r = s->in.format == INTERLEAVE_COLS_LR;
+             int x, y;
+ 
+             for (y = 0; y < s->pheight[i]; y++) {
+                 uint8_t *dst = out->data[i] + out->linesize[i] * y;
+-                uint8_t *left = ileft->data[i] + ileft->linesize[i] * y * s->in.row_step + s->in_off_left[i] + d * s->pixstep[i];
+-                uint8_t *right = iright->data[i] + iright->linesize[i] * y * s->in.row_step + s->in_off_right[i];
++                uint8_t *left = ileft->data[i] + ileft->linesize[i] * y * s->in.row_step + s->in_off_left[i] + l * s->pixstep[i];
++                uint8_t *right = iright->data[i] + iright->linesize[i] * y * s->in.row_step + s->in_off_right[i] + r * s->pixstep[i];
+                 int p, b;
+ 
+                 if (s->out.format == INTERLEAVE_COLS_LR)
+diff --git a/tests/fate/filter-video.mak b/tests/fate/filter-video.mak
+index 74dc41d..e834be7 100644
+--- a/tests/fate/filter-video.mak
++++ b/tests/fate/filter-video.mak
+@@ -624,6 +624,15 @@ FATE_STEREO3D-$(call FILTERDEMDEC, SCALE STEREO3D, IMAGE2, PGMYUV) += $(FATE_STE
+ fate-filter-stereo3d: $(FATE_STEREO3D-yes)
+ FATE_FILTER_VSYNTH-yes += $(FATE_STEREO3D-yes)
+ 
++# Analytic right-first columns: red left view, blue right view, different white boxes.
++FATE_STEREO3D_ICR-$(call ALLYES, NULLSRC_FILTER GEQ_FILTER FORMAT_FILTER SCALE_FILTER \
++                              STEREO3D_FILTER RAWVIDEO_ENCODER FRAMEMD5_MUXER \
++                              FILE_PROTOCOL PIPE_PROTOCOL) += fate-filter-stereo3d-icr-sbsl
++fate-filter-stereo3d-icr-sbsl: tests/data/filtergraphs/stereo3d-icr
++fate-filter-stereo3d-icr-sbsl: CMD = framemd5 -/filter_complex $(TARGET_PATH)/tests/data/filtergraphs/stereo3d-icr -frames:v 1 -pix_fmt rgb24
++FATE_FILTER-yes += $(FATE_STEREO3D_ICR-yes)
++fate-filter-stereo3d: $(FATE_STEREO3D_ICR-yes)
++
+ FATE_FILTER_VSYNTH_VIDEO_FILTER-$(call ALLYES, SCALE_FILTER THUMBNAIL_FILTER) += fate-filter-thumbnail
+ fate-filter-thumbnail: CMD = video_filter "scale,thumbnail=10"
+ 
+diff --git a/tests/filtergraphs/stereo3d-icr b/tests/filtergraphs/stereo3d-icr
+new file mode 100644
+index 0000000..d9d063a
+--- /dev/null
++++ b/tests/filtergraphs/stereo3d-icr
+@@ -0,0 +1,8 @@
++nullsrc=s=128x48:r=1,
++format=gbrp,
++geq=r='if(mod(X,2),255,255*between(X,64,79)*between(Y,24,31))':
++    g='if(mod(X,2),255*between(X,16,31)*between(Y,8,15),255*between(X,64,79)*between(Y,24,31))':
++    b='if(mod(X,2),255*between(X,16,31)*between(Y,8,15),255)',
++scale,
++format=rgb24,
++stereo3d=icr:sbsl
+diff --git a/tests/ref/fate/filter-stereo3d-icr-sbsl b/tests/ref/fate/filter-stereo3d-icr-sbsl
+new file mode 100644
+index 0000000..0f830b7
+--- /dev/null
++++ b/tests/ref/fate/filter-stereo3d-icr-sbsl
+@@ -0,0 +1,10 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/1
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 128x48
++#sar 0: 1/1
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,        1,    18432, 04d7d564965d41f85a201062e55ee9de

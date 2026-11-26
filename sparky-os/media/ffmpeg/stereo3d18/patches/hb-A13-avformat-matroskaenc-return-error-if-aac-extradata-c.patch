@@ -1,0 +1,26 @@
+Description: [PATCH 13/22] avformat/matroskaenc: return error if aac extradata changes extradata changing would result in an invalid stream. also, as the code was written, rewriting extradata was corrupting the track header resulting in an invalid file.
+Author: Damiano Galassi
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A13-avformat-matroskaenc-return-error-if-aac-extradata-c.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/44f891701500c285fc28f39bcb94a264f9a80aa9
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavformat/matroskaenc.c
++++ b/libavformat/matroskaenc.c
+@@ -3065,6 +3065,16 @@
+     case AV_CODEC_ID_AAC:
+         if (side_data_size && mkv->track.bc) {
+             int output_sample_rate = 0;
++            if (par->extradata && par->extradata_size) {
++                if (par->extradata_size != side_data_size ||
++                    memcmp(par->extradata, side_data, side_data_size)) {
++                    av_log(s, AV_LOG_ERROR, "Error, AAC extradata changed mid-stream.\n");
++                    return AVERROR(EINVAL);
++                } else {
++                    // Already written
++                    break;
++                }
++            }
+             ret = get_aac_sample_rates(s, mkv, side_data, side_data_size,
+                                        &track->sample_rate, &output_sample_rate);
+             if (ret < 0)
