@@ -6,7 +6,8 @@
 ROLE staged: the desk one element step behind the window, the paper at the window's plane (parallax -1 at the shipped
 element limit of 1 on a view 1920 wide, -12 at the measuring scale of 12), equal eyes at an element limit of 0 and in
 presentation mode, a background window flat inside (its paper and desk at one level), a page run under the toolbar cut
-at the window's plane. ROLE published: no step anywhere (the desk at the paper's level). With --baseline, a 2D screen
+at the window's plane. ROLE published: no step anywhere (the desk at the paper's level). ROLE kwin-older: the staged
+Qt and Okular on a Stereo KWin older than version 7: no step, and each program's log says why. With --baseline, a 2D screen
 shows the same pixels as the baseline's run (published) of the same case.
 """
 import json
@@ -78,6 +79,14 @@ for kind in ("okular", "preview"):
         row(f"{kind}-2d same pixels as the baseline", bool(b) and b.get("differing") == 0, b and b.get("differing"), 0)
     m = load(f"{kind}-2d")
     row(f"{kind}-2d a 2D capture", bool(m) and not m.get("stereo"), m and m.get("capture"), "one picture")
+if role == "kwin-older":
+    for kind in ("okular", "preview"):
+        try:
+            with open(os.path.join(results, f"{kind}-3d", "program.err"), errors="replace") as f:
+                said = sum(1 for line in f if "kde_stereo_depth_v1 version 7" in line)
+        except OSError:
+            said = None
+        row(f"{kind}-3d says why it is flat", said == 1, said, "one log line")
 m = load("okular-presentation")
 row("okular-presentation equal eyes", bool(m) and m.get("stereo") and m.get("differing") == 0, m and m.get("differing"), 0)
 

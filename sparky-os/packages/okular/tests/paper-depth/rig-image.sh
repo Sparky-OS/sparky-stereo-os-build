@@ -7,6 +7,7 @@
 # test installed by apt over it: the newer build of every package the image already has, and okular.
 # The edition's local names map to 127.0.0.1, so no packet reaches the local network; sparky-stereo.sources, which
 # sparky-stereo-apt adds, is removed after any install. NAME is committed from the container; PREFIX names the container.
+# SKIP='REGEX': the packages under test whose names match are left as published (the KWin-older red row).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 BASE=$1 NAME=$2 REPO=$(cd "$3" && pwd -P); shift 3
@@ -21,7 +22,7 @@ docker run --name "$container" --pull=never --ulimit core=1 --cpus 4 --platform 
 	--mount type=bind,src=/usr/share/keyrings/deb-multimedia-keyring.pgp,dst=/usr/share/keyrings/deb-multimedia-keyring.pgp,readonly \
 	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly \
 	--mount "type=bind,src=$HERE/../../../../../tools/https-only-apt.sh,dst=/run/https-only-apt.sh,readonly" \
-	"$BASE" bash -c '
+	-e "SKIP=${SKIP:-}" "$BASE" bash -c '
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 sh /run/https-only-apt.sh
@@ -40,6 +41,7 @@ if compgen -G "/debs/*/*.deb" > /dev/null; then
 	for f in /debs/*/*.deb; do
 		p=$(dpkg-deb -f "$f" Package)
 		case $p in *-dbgsym) continue ;; esac
+		if [ -n "$SKIP" ] && [[ $p =~ $SKIP ]]; then continue; fi
 		if dpkg-query -W -f="\${Status}" "$p" 2>/dev/null | grep -q "install ok installed" || [ "$p" = okular ] || [ "$p" = okular-data ] \
 			|| [ "${p#libokular}" != "$p" ]; then want+=("$f"); fi
 	done
