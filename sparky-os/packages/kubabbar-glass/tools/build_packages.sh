@@ -79,7 +79,8 @@ g=$work/sparky-stereo-gtk
 mkdir -p "$g/usr/bin" "$g/usr/share/themes" "$g/usr/lib/systemd/user/graphical-session.target.wants" "$g/etc/xdg/autostart"
 install -m 755 "$repo/bin/sparky-stereo-gtk-sync" "$g/usr/bin/"
 cp -a "$repo/share/themes/." "$g/usr/share/themes/"
-install -m 644 "$repo/lib/systemd/user/"* "$g/usr/lib/systemd/user/"
+# only the GTK sync's own units: kubabbar-glass-9-sync's belong to Kubabbar Glass 9's package (one file, one owner)
+install -m 644 "$repo/lib/systemd/user/sparky-stereo-gtk-sync.path" "$repo/lib/systemd/user/sparky-stereo-gtk-sync.service" "$g/usr/lib/systemd/user/"
 ln -s ../sparky-stereo-gtk-sync.path "$g/usr/lib/systemd/user/graphical-session.target.wants/sparky-stereo-gtk-sync.path"
 install -m 644 "$repo/etc/xdg/autostart/sparky-stereo-gtk-sync.desktop" "$g/etc/xdg/autostart/"
 sparky-stereo-problems catalog sparky-stereo-gtk "$repo/lang/gtk-sync" "$g/usr/lib/systemd/catalog" --subject LOCAL1
