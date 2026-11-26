@@ -42,6 +42,10 @@ def find(name, *, visible=True, roles=()):
 
 
 def wait(callback, seconds, what):
+    # The wait ends on the state it reads. Its figure only bounds a failure, and grows with the
+    # machine's load so that a busy machine is given the time it needs.
+    load = float(Path("/proc/loadavg").read_text().split()[0])
+    seconds *= float(os.environ.get("KV74_WAIT_FACTOR", "4")) * max(1.0, load / (os.cpu_count() or 1))
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         value = callback()
@@ -159,12 +163,15 @@ def main():
             if close is not None:
                 click(close)
             click(accessible(r"Save", roles=(Atspi.Role.PUSH_BUTTON,)))
-            time.sleep(0.6)
-            dialog = find(re.compile(r"OK"))
-            if dialog is not None:
-                click(dialog)
-            changed = wait(lambda: next((file for file in path.glob("*.ass") if read_subtitles(file)), None),
-                           20, "saved subtitle file with dialogue")
+
+            def saved():
+                # A project of an older document version asks once before its first save.
+                dialog = find(re.compile(r"OK"))
+                if dialog is not None:
+                    click(dialog)
+                return next((file for file in path.glob("*.ass") if read_subtitles(file)), None)
+
+            changed = wait(saved, 20, "saved subtitle file with dialogue")
             subtitles = read_subtitles(changed)
             text = words(" ".join(row[2] for row in subtitles))
             assert len({"fox", "dog", "boat", "river"} & set(text)) >= 3, subtitles
