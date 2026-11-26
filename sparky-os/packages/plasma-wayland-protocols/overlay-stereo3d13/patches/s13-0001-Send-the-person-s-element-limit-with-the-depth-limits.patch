@@ -1,0 +1,99 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Carry stereo content protocol version 7: the person's element limit
+
+kde_stereo_depth_v1 gains the event element_limit at version 7: how far an
+element drawn inside a surface may lie in front of or behind what it lies on,
+in pixels of a view 1920 wide, the user's element limit (queue row 121). It
+is sent before output_width and depth_limits, which ends the group. Keep every
+request and event of the earlier versions.
+
+Assisted-by: Claude Opus 5.5
+
+diff --git a/src/protocols/kde-stereo-content-v1.xml b/src/protocols/kde-stereo-content-v1.xml
+index f1d371f..a87ddb0 100644
+--- a/src/protocols/kde-stereo-content-v1.xml
++++ b/src/protocols/kde-stereo-content-v1.xml
+@@ -6,7 +6,7 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-<interface name="kde_stereo_content_manager_v1" version="6">
++<interface name="kde_stereo_content_manager_v1" version="7">
+   <description summary="declare stereo content of surfaces">
+     A program tells the compositor that a surface's picture holds two
+     views packed full side by side, with the left view first.
+@@ -15,7 +15,8 @@
+ 
+     Since version 3, a program may also follow a surface's desktop depth
+     with get_depth, to draw the elements inside the surface at their own
+-    depths.
++    depths; since version 7 it is also told the user's element limit, the
++    step of depth inside a window.
+ 
+     Clients may use this protocol to declare stereo content. The version 1
+     wire values are stable; future requests must use a new interface version.
+@@ -52,7 +53,7 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_content_v1" version="6">
++<interface name="kde_stereo_content_v1" version="7">
+   <description summary="stereo content declaration of one surface">
+     The declaration of one surface, created with
+     kde_stereo_content_manager_v1.create.
+@@ -68,6 +69,7 @@
+ 
+     Version 3 changes nothing in this interface.
+     Version 4 adds a double-buffered native source rectangle for each view.
++    Versions 5 to 7 change nothing in this interface.
+   </description>
+ 
+   <enum name="error">
+@@ -125,7 +127,7 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_depth_v1" version="6">
++<interface name="kde_stereo_depth_v1" version="7">
+   <description summary="desktop depth of one surface">
+     The compositor shows the desktop's own surfaces at depth levels: the
+     active window at the screen, the windows lying behind it sunk, menus,
+@@ -149,6 +151,12 @@
+     depth on the same screen. Before version 5 the client reads the user's
+     settings itself.
+ 
++    Since version 7 the compositor also tells the client the user's element
++    limit (element_limit): how far an element drawn inside the surface may
++    lie in front of or behind what it lies on, a pixel or so, where the
++    depth limits above are for the desktop's own surfaces. A toolkit that
++    draws a surface's elements at their own depths takes its steps from it.
++
+     A surface may have any number of these objects. The depth state is sent
+     to each of them. The surface is marked as desktop depth while any of
+     its objects marks it, and its place is the one set most recently by any
+@@ -272,6 +280,25 @@
+     <arg name="width" type="uint" summary="selected output width in pixels per view, or zero"/>
+   </event>
+ 
++  <event name="element_limit" since="7">
++    <description summary="The element limit on the surface's output">
++      Sent to resources of version 7 or newer immediately before
++      output_width, so before every depth_limits event, and whenever the
++      value changes; depth_limits ends the group, and all three describe the
++      same selected output.
++
++      limit is how far an element drawn inside the surface (a button, a
++      field, a page) may lie in front of or behind the surface it lies on,
++      in pixels of a view 1920 wide: the user's element limit, one step of
++      depth inside a window. Zero means the elements inside the surface lie
++      flat. The compositor gives it as the user set it; a client converts
++      it to its buffer's pixels as it converts the depth limits, through the
++      shared stereo_depth_limits_for_buffer conversion, and never rescales
++      it by the size of its window or of an element.
++    </description>
++    <arg name="limit" type="fixed" summary="the element limit, pixels of a view 1920 wide"/>
++  </event>
++
+ </interface>
+ 
+ </protocol>
