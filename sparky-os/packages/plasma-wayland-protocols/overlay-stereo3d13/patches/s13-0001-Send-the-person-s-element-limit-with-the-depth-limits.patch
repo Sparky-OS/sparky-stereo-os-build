@@ -5,7 +5,9 @@ kde_stereo_depth_v1 gains the event element_limit at version 7: how far an
 element drawn inside a surface may lie in front of or behind what it lies on,
 in pixels of a view 1920 wide, the user's element limit (queue row 121). It
 is sent before output_width and depth_limits, which ends the group. Keep every
-request and event of the earlier versions.
+request and event of the earlier versions. The contract test follows:
+version 7, the new event's form, and the events' order, which is their
+wire opcodes.
 
 Assisted-by: Claude Opus 5.5
 
@@ -97,3 +99,38 @@ index f1d371f..a87ddb0 100644
  </interface>
  
  </protocol>
+diff --git a/tests/virtual-stereo-contract.py b/tests/virtual-stereo-contract.py
+index 90c0349..fbf6c95 100644
+--- a/tests/virtual-stereo-contract.py
++++ b/tests/virtual-stereo-contract.py
+@@ -17,14 +17,14 @@ class VirtualStereoContract(unittest.TestCase):
+     def test_desktop_depth(self):
+         protocol = ET.parse(ROOT / 'kde-stereo-content-v1.xml')
+         manager = protocol.find("interface[@name='kde_stereo_content_manager_v1']")
+-        self.assertEqual(manager.get('version'), '6')
+-        self.assertEqual(protocol.find("interface[@name='kde_stereo_content_v1']").get('version'), '6')
++        self.assertEqual(manager.get('version'), '7')
++        self.assertEqual(protocol.find("interface[@name='kde_stereo_content_v1']").get('version'), '7')
+         get_depth = manager.find("request[@name='get_depth']")
+         self.assertEqual(get_depth.get('since'), '3')
+         self.assertEqual([(a.get('name'), a.get('type'), a.get('interface')) for a in get_depth.findall('arg')],
+                          [('id', 'new_id', 'kde_stereo_depth_v1'), ('surface', 'object', 'wl_surface')])
+         depth = protocol.find("interface[@name='kde_stereo_depth_v1']")
+-        self.assertEqual(depth.get('version'), '6')
++        self.assertEqual(depth.get('version'), '7')
+         limits = depth.find("event[@name='depth_limits']")
+         self.assertEqual(limits.get('since'), '5')
+         self.assertEqual([(a.get('name'), a.get('type')) for a in limits.findall('arg')],
+@@ -32,6 +32,12 @@ class VirtualStereoContract(unittest.TestCase):
+         width = depth.find("event[@name='output_width']")
+         self.assertEqual(width.get('since'), '6')
+         self.assertEqual([(a.get('name'), a.get('type')) for a in width.findall('arg')], [('width', 'uint')])
++        element = depth.find("event[@name='element_limit']")
++        self.assertEqual(element.get('since'), '7')
++        self.assertEqual([(a.get('name'), a.get('type')) for a in element.findall('arg')], [('limit', 'fixed')])
++        # an event's opcode is its place: new events only ever join at the end
++        self.assertEqual([e.get('name') for e in depth.findall('event')],
++                         ['depth_state', 'depth_limits', 'output_width', 'element_limit'])
+         state = depth.find("event[@name='depth_state']")
+         self.assertEqual([(a.get('name'), a.get('type')) for a in state.findall('arg')], [('awake', 'uint'), ('output_edges', 'uint')])
+         edges = depth.find("enum[@name='edge']")
