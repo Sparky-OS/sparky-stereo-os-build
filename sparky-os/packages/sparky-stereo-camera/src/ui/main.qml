@@ -254,6 +254,13 @@ KCM.SimpleKCM {
                 opacity: 0.7
                 text: i18n("Programs that choose their own size and format are not changed by this.")
             }
+            QQC2.Label {
+                Kirigami.FormData.label: ""
+                Layout.maximumWidth: Kirigami.Units.gridUnit * 28
+                wrapMode: Text.WordWrap
+                opacity: 0.7
+                text: i18n("A camera you have not set starts at its largest picture and, at that size, its highest frame rate.")
+            }
         }
 
         Kirigami.FormLayout {

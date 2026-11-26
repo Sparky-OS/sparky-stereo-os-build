@@ -1,3 +1,20 @@
+sparky-stereo-camera (0.1.3) unstable; urgency=medium
+
+  * Save only what is a setting (ORDER 678): no inactive, read-only,
+    write-only, volatile, relative or speed control, action or control
+    without a range; every V4L2 control flag has its rule.
+  * Apply governing controls before the values they govern, with fresh
+    flags; a saved setting still inactive is not a failure.
+  * Clean an entry written by 0.1.0 to 0.1.2 once, each removal logged,
+    and clear the problems kept for those entries.
+  * A camera nobody set starts at its largest picture and, at that size,
+    its highest frame rate (ORDER 682); a known machine's caveat can name
+    the formats to use. New command: best NAME.
+  * Keep a refused mode or reset said on the page; translate five more
+    packing names from the stereo layer's catalogues.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 08:59:00 +0000
+
 sparky-stereo-camera (0.1.2) unstable; urgency=medium
 
   * Read every input packing from stereo-policy and test exact list parity.

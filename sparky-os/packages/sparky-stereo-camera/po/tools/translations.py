@@ -169,4 +169,38 @@ T = {
  "Uma câmera com duas lentes envia as duas imagens em uma. Diga como ela as empacota e a pré-visualização mostra o par em 3D. Uma câmera com uma lente fica em \"Não é 3D\".",
  "双镜头摄像头会把两路画面合成一幅发送。指明合成方式后，预览会以 3D 显示这一对画面。单镜头摄像头保持“非 3D”。",
  "雙鏡頭相機會把兩路畫面合成一幅傳送。指明合成方式後，預覽會以 3D 顯示這一對畫面。單鏡頭相機維持「非 3D」。"),
+"Another program is using this control now, so it cannot be changed here.": (
+ "Ein anderes Programm verwendet diesen Regler gerade, daher lässt er sich hier nicht ändern.", "Otro programa está usando este control ahora, así que no se puede cambiar aquí.", "Un autre programme utilise ce réglage en ce moment : il ne peut pas être modifié ici.",
+ "別のプログラムが現在この調整項目を使用しているため、ここでは変更できません。", "다른 프로그램이 지금 이 조절 항목을 사용 중이어서 여기서 바꿀 수 없습니다.", "Inny program używa teraz tej regulacji, więc nie można jej tu zmienić.",
+ "Outro programa está usando este controle agora, então ele não pode ser alterado aqui.", "另一个程序正在使用此调节项，因此无法在这里更改。", "另一個程式正在使用此調整項目，因此無法在這裡變更。"),
+"This control moves the camera or starts an action, so it is not kept for the next time the camera is plugged in.": (
+ "Dieser Regler bewegt die Kamera oder löst eine Aktion aus, daher wird er nicht für das nächste Anschließen der Kamera gespeichert.",
+ "Este control mueve la cámara o inicia una acción, así que no se guarda para la próxima vez que se conecte la cámara.",
+ "Ce réglage déplace la caméra ou déclenche une action : il n’est pas conservé pour le prochain branchement de la caméra.",
+ "この調整項目はカメラを動かすか動作を開始するものなので、次にカメラを接続するときのためには保存されません。",
+ "이 조절 항목은 카메라를 움직이거나 동작을 시작하므로, 다음에 카메라를 연결할 때를 위해 저장되지 않습니다.",
+ "Ta regulacja porusza kamerą lub uruchamia działanie, więc nie jest zapamiętywana na następne podłączenie kamery.",
+ "Este controle move a câmera ou inicia uma ação, então ele não é guardado para a próxima vez que a câmera for conectada.",
+ "此调节项会移动摄像头或启动某个动作，因此不会为下次插入摄像头而保存。", "此調整項目會移動相機或啟動某個動作，因此不會為下次插入相機而儲存。"),
+"The camera changes this value by itself, so it is not kept.": (
+ "Die Kamera ändert diesen Wert selbst, daher wird er nicht gespeichert.", "La cámara cambia este valor por sí misma, así que no se guarda.", "La caméra modifie cette valeur d’elle-même : elle n’est pas conservée.",
+ "この値はカメラが自動で変えるため、保存されません。", "이 값은 카메라가 스스로 바꾸므로 저장되지 않습니다.", "Kamera sama zmienia tę wartość, więc nie jest ona zapamiętywana.",
+ "A câmera muda este valor sozinha, então ele não é guardado.", "此值由摄像头自行改变，因此不会保存。", "此值由相機自行改變，因此不會儲存。"),
+"The camera gives this control no range, so there is nothing to set or keep.": (
+ "Die Kamera gibt für diesen Regler keinen Bereich an, daher gibt es nichts einzustellen oder zu speichern.",
+ "La cámara no indica ningún rango para este control, así que no hay nada que ajustar ni guardar.",
+ "La caméra n’indique aucune plage pour ce réglage : il n’y a rien à régler ni à conserver.",
+ "カメラはこの調整項目の範囲を示していないため、設定や保存の対象はありません。", "카메라가 이 조절 항목의 범위를 알려 주지 않으므로 설정하거나 저장할 것이 없습니다.",
+ "Kamera nie podaje zakresu tej regulacji, więc nie ma czego ustawić ani zapamiętać.",
+ "A câmera não informa um intervalo para este controle, então não há nada a ajustar nem a guardar.",
+ "摄像头没有为此调节项提供范围，因此没有可设置或保存的内容。", "相機沒有為此調整項目提供範圍，因此沒有可設定或儲存的內容。"),
+"A camera you have not set starts at its largest picture and, at that size, its highest frame rate.": (
+ "Eine Kamera, die Sie nicht eingestellt haben, startet mit ihrem größten Bild und bei dieser Größe mit den meisten Bildern pro Sekunde.",
+ "Una cámara que no haya configurado empieza con su imagen más grande y, en ese tamaño, con el mayor número de fotogramas por segundo.",
+ "Une caméra que vous n’avez pas réglée démarre avec sa plus grande image et, à cette taille, avec le plus grand nombre d’images par seconde.",
+ "設定していないカメラは、最も大きい画像で始まり、そのサイズでの最も多い毎秒フレーム数を使います。",
+ "설정하지 않은 카메라는 가장 큰 화면으로 시작하며, 그 크기에서 가장 높은 초당 프레임 수를 씁니다.",
+ "Kamera, której nie ustawiono, zaczyna od największego obrazu i przy tym rozmiarze od największej liczby klatek na sekundę.",
+ "Uma câmera que você não configurou começa com a sua maior imagem e, nesse tamanho, com o maior número de quadros por segundo.",
+ "未设置过的摄像头以最大的画面启动，并在该尺寸下使用最高的每秒帧数。", "未設定過的相機以最大的畫面啟動，並在該尺寸下使用最高的每秒幀數。"),
 }

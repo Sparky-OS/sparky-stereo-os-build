@@ -48,8 +48,8 @@ void print(const QJsonValue &v)
 
 int usage()
 {
-    err << "usage: sparky-stereo-camera list | default [NAME] | formats NAME | mode NAME [FOURCC WxH FPS] | controls NAME | control NAME CONTROL [VALUE]"
-           " | reset NAME | packing NAME [ID|list] | save NAME | apply [NAME] | watch\n"
+    err << "usage: sparky-stereo-camera list | default [NAME] | formats NAME | best NAME | mode NAME [FOURCC WxH FPS] | controls NAME"
+           " | control NAME CONTROL [VALUE] | reset NAME | packing NAME [ID|list] | save NAME | apply [NAME] | watch\n"
            "A change on the device is saved for the camera too unless --no-save comes first.\n";
     return 2;
 }
@@ -61,36 +61,39 @@ QJsonObject controlJson(const Control &c)
         menu.append(QJsonObject{{QStringLiteral("index"), double(m.index)}, {QStringLiteral("text"), m.text}});
     }
     static const char *kinds[] = {"integer", "boolean", "menu", "integer-menu", "button", "other"};
-    return {{QStringLiteral("id"), double(c.id)},
-            {QStringLiteral("name"), c.name},
-            {QStringLiteral("kind"), QString::fromLatin1(kinds[c.kind])},
-            {QStringLiteral("min"), double(c.minimum)},
-            {QStringLiteral("max"), double(c.maximum)},
-            {QStringLiteral("step"), double(c.step)},
-            {QStringLiteral("default"), double(c.defaultValue)},
-            {QStringLiteral("value"), double(c.value)},
-            {QStringLiteral("inactive"), c.inactive},
-            {QStringLiteral("readOnly"), c.readOnly},
-            {QStringLiteral("menu"), menu}};
+    QJsonObject o{{QStringLiteral("id"), double(c.id)},
+                  {QStringLiteral("name"), c.name},
+                  {QStringLiteral("kind"), QString::fromLatin1(kinds[c.kind])},
+                  {QStringLiteral("min"), double(c.minimum)},
+                  {QStringLiteral("max"), double(c.maximum)},
+                  {QStringLiteral("step"), double(c.step)},
+                  {QStringLiteral("default"), double(c.defaultValue)},
+                  {QStringLiteral("effectiveDefault"), double(effectiveDefault(c))},
+                  {QStringLiteral("value"), double(c.value)},
+                  {QStringLiteral("valueKnown"), c.valueKnown},
+                  {QStringLiteral("flags"), double(c.flags)},
+                  {QStringLiteral("inactive"), c.inactive},
+                  {QStringLiteral("readOnly"), c.readOnly},
+                  {QStringLiteral("grabbed"), c.grabbed},
+                  {QStringLiteral("keep"), keepName(keepRule(c))},
+                  {QStringLiteral("menu"), menu}};
+    return o;
 }
 
-// The saved choice of a camera is the device's present state of everything that differs from the driver's default
+// The saved choice of a camera: its settings that differ from their default, each taken while it is active (choiceFromDevice)
 void saveState(const CameraInfo &cam, V4l2Camera &dev, bool withMode)
 {
-    CameraChoice c = loadChoice(cam.key);
-    if (withMode) {
-        c.hasMode = true;
-        c.mode = dev.currentMode();
+    saveChoice(cam.key, choiceFromDevice(dev, loadChoice(cam.key), withMode));
+}
+
+void printReport(const ApplyReport &r)
+{
+    for (const QString &m : r.messages) {
+        err << m << Qt::endl;
     }
-    c.controls.clear();
-    c.controlNames.clear();
-    for (const Control &ctl : dev.controls()) {
-        if (ctl.kind != Control::Button && ctl.kind != Control::Other && !ctl.readOnly && ctl.value != ctl.defaultValue) {
-            c.controls.insert(ctl.id, ctl.value);
-            c.controlNames.insert(ctl.id, ctl.name);
-        }
+    for (const QString &l : r.log) {
+        out << l << Qt::endl;
     }
-    saveChoice(cam.key, c);
 }
 
 int cmdList()
@@ -158,6 +161,9 @@ int main(int argc, char **argv)
                 for (const QString &m : r.messages) {
                     qWarning().noquote() << m;
                 }
+                for (const QString &l : r.log) {
+                    qInfo().noquote() << l;
+                }
                 qInfo().noquote() << QStringLiteral("camera %1: %2 saved settings applied").arg(c.node.name).arg(r.applied);
             }
             seen = now;
@@ -190,9 +196,7 @@ int main(int argc, char **argv)
         int bad = 0;
         for (const CameraInfo &c : listCameras(&error)) {
             const ApplyReport r = applyChoice(c);
-            for (const QString &m : r.messages) {
-                err << m << Qt::endl;
-            }
+            printReport(r);
             bad += r.messages.size();
         }
         return error.isEmpty() ? (bad ? 1 : 0) : fail(error);
@@ -206,9 +210,7 @@ int main(int argc, char **argv)
     }
     if (verb == QLatin1String("apply")) {
         const ApplyReport r = applyChoice(cam);
-        for (const QString &m : r.messages) {
-            err << m << Qt::endl;
-        }
+        printReport(r);
         return r.ok() ? 0 : 1;
     }
     if (cam.key.isEmpty()) {
@@ -217,6 +219,18 @@ int main(int argc, char **argv)
     V4l2Camera dev(cam.node.v4l2Path);
     if (!dev.isOpen()) {
         return fail(V4l2Camera::explain({false, dev.openError(), QStringLiteral("open")}, cam.node.description));
+    }
+    if (verb == QLatin1String("best")) {
+        // the mode this camera starts at when nobody chose one (ORDER 682), and the known machine's caveat that limits it
+        const BestModeChoice best = bestModeFor(dev);
+        QJsonObject o{{QStringLiteral("usb"), usbIdOf(dev.path())}, {QStringLiteral("allowedFormats"), QJsonArray::fromStringList(best.allowedFormats)}};
+        if (best.mode) {
+            o.insert(QStringLiteral("mode"), modeJson(*best.mode));
+        } else {
+            o.insert(QStringLiteral("note"), best.note);
+        }
+        print(o);
+        return best.mode ? 0 : 1;
     }
     if (verb == QLatin1String("formats")) {
         QJsonArray fs;

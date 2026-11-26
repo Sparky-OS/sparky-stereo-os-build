@@ -7,6 +7,7 @@
 #include "pipewirecameras.h"
 #include "v4l2camera.h"
 
+#include <QJsonArray>
 #include <QStringList>
 
 namespace Sparky::Camera
@@ -26,11 +27,36 @@ CameraInfo findCamera(const QString &nodeName, QString *error);
 
 // What happened when the saved choice was applied to a camera
 struct ApplyReport {
-    QStringList messages; // one sentence for each thing the camera refused
+    QStringList messages; // one sentence for each thing the camera refused (translated; each is also kept by the problems engine)
+    QStringList log; // what was done that is not a failure, for the journal: a setting left while inactive, an entry cleaned, the best mode
     int applied = 0;
     bool ok() const { return messages.isEmpty(); }
 };
+// Applies the camera's saved choice: the controls that change the picture's layout (V4L2_CTRL_FLAG_MODIFY_LAYOUT), the saved mode
+// or, when none is saved, the best mode (bestModeFor), then the other saved controls with V4l2Camera::setControls. A saved setting
+// still inactive at the end keeps its value for when it is active, and no problem. An entry 0.1.0 to 0.1.2 wrote is cleaned once.
 ApplyReport applyChoice(const CameraInfo &camera);
-// The known machines' references that concern a camera (sparky-stereo-hardware's table), in words
+
+// The choice to save from the camera's present state: settings only (keepRule), each one taken from the camera only while it is
+// active and not held by another program; such a setting keeps the value a 0.1.3 entry held for it. The mode is the camera's
+// present mode when withMode, else the stored one (a mode the person did not choose is not saved).
+CameraChoice choiceFromDevice(V4l2Camera &device, const CameraChoice &stored, bool withMode);
+
+// The best mode of a camera (bestMode) with the known machine's caveat for this camera, and the note when the caveat leaves none
+struct BestModeChoice {
+    std::optional<Mode> mode;
+    QStringList allowedFormats; // the caveat's formats; empty: every format
+    QString note; // for the journal when no mode could be chosen
+};
+BestModeChoice bestModeFor(V4l2Camera &device);
+
+// The USB vendor:product of a V4L2 device ("0bda:5722"), from sysfs; empty for a camera that is not on USB
+QString usbIdOf(const QString &v4l2Path);
+// The references of the known machines that match this computer (sparky-stereo-hardware's table, sparky-stereo-known-machines --list)
+QJsonArray knownMachineReferences();
+// A camera caveat in that table: a reference with "owner": "sparky-stereo-camera", "camera": "VVVV:PPPP" and "formats": [...] names
+// the only formats in which that camera, in that machine, delivers a correct picture. Empty: no caveat for this camera.
+QStringList machineFormatsFor(const QJsonArray &references, const QString &usbId);
+// The known machines' references that concern a camera, in words
 QStringList knownMachineNotes();
 }

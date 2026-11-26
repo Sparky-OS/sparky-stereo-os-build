@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/15
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/15
+# Last update 2026/11/26
 # A conventional debhelper source, made the edition's way: the committed recipe is copied, lean.debian_prepare adds the Lean Code
 # stages and the +lc1 entry, dpkg-buildpackage builds the source package, the runtime archive and its HR companion.
 set -euo pipefail
@@ -9,7 +9,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 TOOLKIT=$(cd "$HERE/../.." && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
 PACKAGE=sparky-stereo-camera
-VERSION=0.1.2
+VERSION=0.1.3
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the date of the recipe: build-provenance.sh}
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME="Daniel Ramos (Capitain Jack)"
 mkdir -p "$OUT"

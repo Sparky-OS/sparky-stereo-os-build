@@ -71,6 +71,7 @@ Q_SIGNALS:
 
 private:
     void readDetails();
+    void showError(const QString &error);
     Sparky::Camera::CameraInfo currentInfo() const;
     void remember(const QString &message);
 
@@ -87,7 +88,11 @@ private:
     QVariantList m_packings;
     QString m_packing;
     QString m_modeError;
+    QString m_pendingError; // Defaults' refused best mode, said with the reset that follows it
     QStringList m_savedNotes;
     QSet<QString> m_touched; // cameras whose device state the person changed here: saved with Apply
+    QSet<QString> m_modeChosen; // cameras whose mode the person chose here: their mode is saved with Apply
+    QSet<QString> m_modeDefault; // cameras put back to their best mode by Defaults: their saved mode is forgotten with Apply
+    QMap<quint32, quint32> m_controlFlags; // the current camera's controls' flags as shown, to follow a change another control makes
     QTimer m_poll;
 };
