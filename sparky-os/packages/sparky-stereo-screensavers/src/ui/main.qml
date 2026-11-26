@@ -19,6 +19,20 @@ KCM.AbstractKCM {
     readonly property var current: list.currentIndex >= 0 ? (ticks, kcm.savers.get(list.currentIndex)) : ({})
     property int ticks: 0 // read again after a tick changes
 
+    // A quieter text (a count, a mark, a credit, a hint) takes the colour scheme's dim colour only where that can be
+    // read on its background, 4.5:1; else the nearest colour that can (readabletext.h). Called with the item's own
+    // Kirigami.Theme, so each text is judged on the background of the colour set it stands in.
+    function quiet(theme) {
+        return kcm.readableColor(theme.disabledTextColor, theme.textColor, theme.backgroundColor);
+    }
+    // The same for a text on the selection's colour (the selected row of the list).
+    function onSelection(theme) {
+        return kcm.readableColor(theme.highlightedTextColor, theme.highlightedTextColor, theme.highlightColor);
+    }
+    // The preview's width when the column has room for it. The column keeps room for its scroll bar beside it: a
+    // preview that the column cuts cannot be shown as a pair.
+    readonly property int previewWidth: 320
+
     function failureText(kind, detail, title) {
         switch (kind) {
         case 3:
@@ -95,6 +109,9 @@ KCM.AbstractKCM {
     RowLayout {
         anchors.fill: parent
         spacing: Kirigami.Units.largeSpacing
+        // the page's ground is the view's colour (framedView: false): its texts take the view's colours with it
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -105,11 +122,12 @@ KCM.AbstractKCM {
             Kirigami.SearchField {
                 id: search
                 Layout.fillWidth: true
+                placeholderTextColor: root.quiet(Kirigami.Theme)
             }
             QQC2.Label {
                 Layout.fillWidth: true
                 text: i18n("%1 in 3D, %2 in 2D", kcm.savers.stereoCount, kcm.savers.flatCount)
-                color: Kirigami.Theme.disabledTextColor
+                color: root.quiet(Kirigami.Theme)
                 elide: Text.ElideRight
             }
 
@@ -157,11 +175,13 @@ KCM.AbstractKCM {
                                 Layout.fillWidth: true
                                 text: row.title
                                 elide: Text.ElideRight
-                                color: row.offered ? (row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor) : Kirigami.Theme.disabledTextColor
+                                // a saver that is not offered can still be selected, to read why: its name is a text to read
+                                color: row.highlighted ? root.onSelection(Kirigami.Theme) : row.offered || row.hovered ? Kirigami.Theme.textColor : root.quiet(Kirigami.Theme)
                             }
                             QQC2.Label {
                                 text: !row.offered ? i18n("Not offered") : row.stereo ? i18nc("a screensaver drawn with depth", "3D") : i18nc("a screensaver drawn flat", "2D")
-                                color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
+                                // under the pointer the row's background is the style's own: the mark takes the name's colour there
+                                color: row.highlighted ? root.onSelection(Kirigami.Theme) : row.hovered ? Kirigami.Theme.textColor : root.quiet(Kirigami.Theme)
                             }
                         }
                     }
@@ -193,8 +213,8 @@ KCM.AbstractKCM {
         QQC2.ScrollView {
             id: side
             Layout.fillHeight: true
-            Layout.preferredWidth: frame.implicitWidth + Kirigami.Units.largeSpacing * 2
-            Layout.minimumWidth: frame.implicitWidth + Kirigami.Units.largeSpacing * 2
+            Layout.preferredWidth: root.previewWidth + Kirigami.Units.largeSpacing * 2 + QQC2.ScrollBar.vertical.width
+            Layout.minimumWidth: Layout.preferredWidth
             contentWidth: availableWidth
 
             ColumnLayout {
@@ -204,8 +224,9 @@ KCM.AbstractKCM {
                 Rectangle {
                     id: frame
                     Layout.alignment: Qt.AlignHCenter
-                    implicitWidth: 320
-                    implicitHeight: 180
+                    // never wider than the column shows: a narrower preview is still a pair, a cut one is not
+                    implicitWidth: Math.max(64, Math.min(root.previewWidth, Math.floor(side.availableWidth)))
+                    implicitHeight: Math.round(implicitWidth * 9 / 16)
                     color: "black"
                     radius: 0
 
@@ -279,7 +300,7 @@ KCM.AbstractKCM {
                     visible: (root.current.authors ?? "") !== ""
                     wrapMode: Text.WordWrap
                     font: Kirigami.Theme.smallFont
-                    color: Kirigami.Theme.disabledTextColor
+                    color: root.quiet(Kirigami.Theme)
                     text: i18n("By %1. XScreenSaver is by Jamie Zawinski and its contributors.", root.current.authors ?? "")
                 }
 
@@ -339,7 +360,7 @@ KCM.AbstractKCM {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     font: Kirigami.Theme.smallFont
-                    color: Kirigami.Theme.disabledTextColor
+                    color: root.quiet(Kirigami.Theme)
                     text: i18n("The show also plays after a manual lock while the screen is on. The desktop and the lock screen each keep their own background: a picture, a slide show, a stereo image or a video is chosen on Wallpaper for the desktop and on Screen Locking for the lock screen.")
                 }
                 QQC2.Label {
@@ -347,7 +368,7 @@ KCM.AbstractKCM {
                     visible: !kcm.kindInstalled("org.kde.video")
                     wrapMode: Text.WordWrap
                     font: Kirigami.Theme.smallFont
-                    color: Kirigami.Theme.neutralTextColor
+                    color: kcm.readableColor(Kirigami.Theme.neutralTextColor, Kirigami.Theme.textColor, Kirigami.Theme.backgroundColor)
                     text: i18n("The video background is not installed (the package %1). Install it to choose a video on Wallpaper and on Screen Locking.", "qml-module-org-kde-video-wallpaper")
                 }
             }

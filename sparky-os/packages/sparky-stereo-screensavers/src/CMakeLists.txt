@@ -10,6 +10,8 @@ add_library(sparkystereosavers STATIC
     saverrunner.cpp saverrunner.h
     pairsurface.cpp pairsurface.h
     saverpreview.cpp saverpreview.h
+    readabletext.cpp readabletext.h
+    textreport.cpp textreport.h
     ${CMAKE_CURRENT_BINARY_DIR}/viewporter-protocol.c ${CMAKE_CURRENT_BINARY_DIR}/viewporter-client-protocol.h)
 set_target_properties(sparkystereosavers PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(sparkystereosavers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})

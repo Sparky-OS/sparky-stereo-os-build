@@ -6,6 +6,8 @@
 
 #include <KQuickConfigModule>
 
+#include <QColor>
+
 /* System Settings' Screensavers page. It edits the stereo show's own keys
  * (stereoshowrc, the file Screen Locking edits too) and keeps no copy of
  * any; what belongs to other pages is shown and linked, not edited here. */
@@ -47,6 +49,8 @@ public:
     Q_INVOKABLE bool kindInstalled(const QString &plugin) const;
     Q_INVOKABLE bool openVariety();
     Q_INVOKABLE void refreshOtherPages();
+    /* The colour for a quieter text: the wanted one when it can be read on that background, else the nearest that can (ReadableText). */
+    Q_INVOKABLE QColor readableColor(const QColor &wanted, const QColor &text, const QColor &background) const;
 
 public Q_SLOTS:
     void load() override;

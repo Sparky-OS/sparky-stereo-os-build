@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-2.0-or-later
 cmake_minimum_required(VERSION 3.22)
-project(sparky-stereo-screensavers VERSION 0.1.0 LANGUAGES C CXX)
+project(sparky-stereo-screensavers VERSION 0.1.1 LANGUAGES C CXX)
 
 set(QT_MIN_VERSION "6.8.0")
 set(KF_MIN_VERSION "6.10.0")

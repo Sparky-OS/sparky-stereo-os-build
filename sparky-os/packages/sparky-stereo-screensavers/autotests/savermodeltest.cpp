@@ -3,6 +3,7 @@
 // The list of savers on a tree of the test's own: which are listed, their kind, the reason of one that cannot be
 // offered, the store's two values, names the store holds for savers that are not installed, and the depth conversion.
 #include "savermodel.h"
+#include "readabletext.h"
 #include "saverpreview.h"
 
 #include <QDir>
@@ -123,6 +124,55 @@ private Q_SLOTS:
         QCOMPARE(SaverPreview::shareFor(0.0, 640.0), 0.0);
         QCOMPARE(SaverPreview::shareFor(100.0, 320.0), 10.0); // the layer's own ceiling
         QCOMPARE(SaverPreview::shareFor(4.0, 0.0), -1.0);
+    }
+
+    void contrastIsWcags()
+    {
+        // WCAG 2.2's own figures: black on white 21:1; #767676 on white is the lightest grey that passes 4.5:1, #777777 does not
+        const QColor white(255, 255, 255), black(0, 0, 0);
+        QCOMPARE(ReadableText::contrast(black, white), 21.0);
+        QCOMPARE(ReadableText::contrast(white, black), 21.0);
+        QVERIFY(ReadableText::contrast(QColor(0x76, 0x76, 0x76), white) >= 4.5);
+        QVERIFY(ReadableText::contrast(QColor(0x77, 0x77, 0x77), white) < 4.5);
+        QVERIFY(qAbs(ReadableText::contrast(QColor(0x76, 0x76, 0x76), white) - 4.54) < 0.01);
+    }
+
+    void quietTextIsReadable_data()
+    {
+        QTest::addColumn<QColor>("wanted");
+        QTest::addColumn<QColor>("text");
+        QTest::addColumn<QColor>("background");
+        QTest::addColumn<bool>("kept");
+        // Breeze Light: the inactive text on the window and view backgrounds; Breeze Dark: the same roles
+        QTest::newRow("breeze light window") << QColor(112, 125, 138) << QColor(35, 38, 41) << QColor(239, 240, 241) << false;
+        QTest::newRow("breeze light view") << QColor(112, 125, 138) << QColor(35, 38, 41) << QColor(255, 255, 255) << false;
+        QTest::newRow("breeze dark window") << QColor(161, 169, 177) << QColor(252, 252, 252) << QColor(32, 35, 38) << true;
+        QTest::newRow("breeze light neutral") << QColor(246, 116, 0) << QColor(35, 38, 41) << QColor(239, 240, 241) << false;
+        QTest::newRow("already readable") << QColor(90, 90, 90) << QColor(0, 0, 0) << QColor(255, 255, 255) << true;
+        QTest::newRow("the normal text is short too, light ground") << QColor(200, 200, 200) << QColor(150, 150, 150) << QColor(255, 255, 255) << false;
+        QTest::newRow("the normal text is short too, dark ground") << QColor(60, 60, 60) << QColor(90, 90, 90) << QColor(20, 20, 20) << false;
+        QTest::newRow("translucent") << QColor(0, 0, 0, 100) << QColor(0, 0, 0) << QColor(255, 255, 255) << false;
+        QTest::newRow("on the other side of the ground") << QColor(250, 250, 250) << QColor(20, 20, 20) << QColor(230, 230, 230) << false;
+    }
+
+    void quietTextIsReadable()
+    {
+        QFETCH(QColor, wanted);
+        QFETCH(QColor, text);
+        QFETCH(QColor, background);
+        QFETCH(bool, kept);
+        const QColor got = ReadableText::colour(wanted, text, background);
+        QVERIFY2(ReadableText::contrast(got, background) >= 4.5, qPrintable(got.name()));
+        QCOMPARE(got == wanted, kept);
+        if (!kept && wanted.alpha() == 255 && ReadableText::contrast(text, background) >= 4.5) {
+            // the smallest step: one 64th of the way back towards the wanted colour is short of 4.5:1 again
+            const auto channel = [&](int from, int to, int now) { return to == from ? 0.0 : double(now - from) / (to - from); };
+            const double share = std::max({channel(wanted.red(), text.red(), got.red()), channel(wanted.green(), text.green(), got.green()), channel(wanted.blue(), text.blue(), got.blue())});
+            QVERIFY(share > 0.0 && share <= 1.0);
+            const double before = share - 1.0 / 64;
+            const QColor earlier(qRound(wanted.red() + (text.red() - wanted.red()) * before), qRound(wanted.green() + (text.green() - wanted.green()) * before), qRound(wanted.blue() + (text.blue() - wanted.blue()) * before));
+            QVERIFY2(ReadableText::contrast(earlier, background) < 4.5, qPrintable(earlier.name()));
+        }
     }
 };
 

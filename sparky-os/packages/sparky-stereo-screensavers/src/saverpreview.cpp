@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "saverpreview.h"
 
+#include "textreport.h"
+
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -11,6 +13,7 @@
 #include <QPainter>
 #include <QQuickRenderControl>
 #include <QQuickWindow>
+#include <QSaveFile>
 #include <QScreen>
 
 #include <cmath>
@@ -48,6 +51,11 @@ SaverPreview::SaverPreview(QQuickItem *parent)
     m_follow.setInterval(150);
     connect(&m_follow, &QTimer::timeout, this, &SaverPreview::follow);
     connect(&m_runner, &SaverRunner::frameChanged, this, &SaverPreview::onFrame);
+    if (qEnvironmentVariableIsSet("SPARKY_SAVER_TEXT_REPORT")) { // a proof aid: textreport.h
+        m_report.setInterval(1000);
+        connect(&m_report, &QTimer::timeout, this, &SaverPreview::report);
+        m_report.start();
+    }
     connect(&m_surface, &PairSurface::limitsChanged, this, [this] {
         if (m_waited && !m_runner.running()) {
             m_restart.stop();
@@ -167,6 +175,20 @@ QRect SaverPreview::place(QWindow **hostOut) const
         }
     }
     return rect;
+}
+
+void SaverPreview::report()
+{
+    QPoint offset;
+    const QWindow *real = host(&offset);
+    if (!real) {
+        return;
+    }
+    QSaveFile file(qEnvironmentVariable("SPARKY_SAVER_TEXT_REPORT"));
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(TextReport::json(window(), real, offset, ++m_reportSerial));
+        file.commit();
+    }
 }
 
 void SaverPreview::restart()

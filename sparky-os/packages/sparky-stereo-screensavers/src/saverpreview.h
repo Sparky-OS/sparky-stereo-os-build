@@ -71,12 +71,15 @@ private:
     void begin();
     void follow();
     void onFrame();
+    void report();
     QWindow *host(QPoint *offset) const;
     QRect place(QWindow **hostOut) const;
     SaverRunner m_runner;
     PairSurface m_surface;
     QTimer m_restart;
     QTimer m_follow;
+    QTimer m_report;
+    int m_reportSerial = 0;
     QString m_saver;
     QString m_pairNote;
     QString m_failureDetail;

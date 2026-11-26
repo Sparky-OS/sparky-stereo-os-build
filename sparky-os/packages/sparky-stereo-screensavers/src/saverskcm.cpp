@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "saverskcm.h"
 
+#include "readabletext.h"
 #include "saverpreview.h"
 #include "showstore.h"
 
@@ -145,6 +146,11 @@ QString SaversKcm::kindName(const QString &plugin) const
 bool SaversKcm::kindInstalled(const QString &plugin) const
 {
     return !wallpaperFile(plugin).isEmpty();
+}
+
+QColor SaversKcm::readableColor(const QColor &wanted, const QColor &text, const QColor &background) const
+{
+    return ReadableText::colour(wanted, text, background);
 }
 
 bool SaversKcm::varietyInstalled() const
