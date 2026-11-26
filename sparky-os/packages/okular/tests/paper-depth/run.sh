@@ -59,7 +59,7 @@ if [ "$M2" = 1 ]; then
         tmp=$(mktemp -d)
         trap "rm -rf \"$tmp\"" EXIT
         mkdir -p /out/bin/styles
-        /usr/lib/qt6/libexec/moc /tests/words-desk-style.cpp -o "$tmp/words-desk-style.moc"
+        /usr/lib/qt6/libexec/moc $(pkg-config --cflags Qt6Widgets) /tests/words-desk-style.cpp -o "$tmp/words-desk-style.moc"
         g++ -O1 -fPIC -shared -I"$tmp" -o /out/bin/styles/libpaperdepth.so /tests/words-desk-style.cpp \
             $(pkg-config --cflags --libs Qt6Widgets)'
     test -s "$RESULTS/bin/styles/libpaperdepth.so"
