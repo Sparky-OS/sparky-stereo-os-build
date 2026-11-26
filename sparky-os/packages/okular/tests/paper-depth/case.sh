@@ -113,8 +113,22 @@ preview-*)
 esac
 if [ "$CASE" = okular-kcm ]; then
     env "${env[@]}" kcmshell6 kcm_kwinstereodepth > "$OUT/kcm.out" 2> "$OUT/kcm.err" & kcm=$!
-    sleep 4
-    place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 175, y: 95, width: 1000, height: 850};'
+    # Select the KCM by caption. The viewer may still own focus while it launches.
+    for attempt in 1 2 3; do
+        place 'var ws = workspace.stackingOrder; for (var i = 0; i < ws.length; i++) { var w = ws[i]; if (w.caption === "3D Depth") { w.setMaximize(false, false); w.frameGeometry = {x: 175, y: 95, width: 1000, height: 850}; workspace.activeWindow = w; } }'
+        python3 -I /tests/kwin_windows.py "$OUT/kwin.log" > "$OUT/kcm-windows.json"
+        if python3 -I - "$OUT/kcm-windows.json" <<'PYKCM'
+import json
+import sys
+with open(sys.argv[1]) as stream:
+    frames = [w["fg"] for w in json.load(stream)["windows"] if w["caption"] == "3D Depth"]
+sys.exit(0 if frames == [[175, 95, 1000, 850]] else 1)
+PYKCM
+        then
+            break
+        fi
+        [ "$attempt" != 3 ] || exit 1
+    done
     python3 -I /tests/capture.py "$OUT/kcm.png" > "$OUT/kcm-capture.json" 2> "$OUT/kcm-capture.err"
     # Click the field in the stand-alone KCM, replace its value with 6, then Apply.
     read -r field_x field_y <<< "${KCM_FIELD_XY:-655 409}"
