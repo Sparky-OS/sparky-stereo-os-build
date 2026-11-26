@@ -9,12 +9,12 @@ Its Look and Feel currently applies the milestone 1 drawings; complete applicati
 
 For both looks, retain the edition's `Effect-translucency` values in `config/kwinrc`.
 Explicitly set `blurEnabled=false` and `contrastEnabled=false` in its `[Plugins]` group.
-The SVG backgrounds have their own 91 percent alpha; do not set opacity on the whole plasmashell window or an applet's content item.
+The SVG backgrounds have their own alpha, Sparky Black's level for each surface (the solid and opaque variants 91 percent); do not set opacity on the whole plasmashell window or an applet's content item.
 The included test applet is a fixture and is not in the install payload.
 
 Reproducible verification: `bash rig/run.sh alpha-THEME-BACKGROUND-MODE` in the source bundle, where THEME is classic or oxygen, BACKGROUND is black or white, and MODE is 2d or stereo.
 Run `tools/check_frame_alpha.py` and `tools/check_compositor_alpha.py` inside the documented fixture image.
 After all alpha and window capture cases, `bash rig/verify.sh` runs the asset, background, window and depth checks in that image.
-The compositor measurement requires background alpha 232/255, the nearest 8-bit value to 91 percent and the same value measured for inactive windows.
-The SVG opacity 233/256 compensates Qt's fixed-point group-opacity quantisation so the resulting pixel is 232/255 in both QtSvg and librsvg.
+The compositor measurement of milestone 2 required background alpha 232/255, the nearest 8-bit value to 91 percent and the same value measured for inactive windows; since queue row 125 the backgrounds take Sparky Black's levels and the solid and opaque variants keep 232/255.
+Each SVG opacity is k/256, the smallest k for which Qt's fixed-point group opacity gives the wanted 8-bit alpha (233/256 gives 232/255), so the pixel is the same in QtSvg and librsvg.
 It rejects an opaque or whole-applet-faded result and requires OpenGL, loaded Translucency and real stereo capture metadata.

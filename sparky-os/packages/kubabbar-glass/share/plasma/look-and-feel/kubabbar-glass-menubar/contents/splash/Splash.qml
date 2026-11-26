@@ -1,12 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Kubabbar Glass, menu bar and dock: the launcher star on the quiet pattern, a menu bar strip above and a bevelled progress bar below.
+// Kubabbar Glass, menu bar and dock: the clean boot background (the one the boot splash draws, without its logo), a
+// menu bar strip with the launcher star above, and in the middle, one under the other: the Sparky logo when the system
+// has it, the theme's name, the system's name and version from os-release and a bevelled progress bar.
+// A distribution without the Sparky logo shows the theme's name in its place; the theme never carries the logo.
+// On a 3D screen the background and the strip (it touches the screen's edges) stay at the screen and the middle stands
+// at the person's popped limit (StereoDepth of org.sparky.stereo); on a 2D screen it is the same picture, plain.
 import QtQuick
+import org.kde.coreaddons
+import org.sparky.stereo
 
 Rectangle {
     id: root
-    color: "#7e8f86"
+    color: "#000000"
 
     property int stage
+
+    // The edition's swirl, installed by its artwork package (sparkyos-artwork): white on clear, as it is drawn on the
+    // dark background.
+    readonly property url logoSource: "file:///usr/share/pixmaps/sparkyos.png"
+    // KOSRelease gives os-release's own defaults (Linux, linux) when neither /etc/os-release nor /usr/lib/os-release
+    // can be read; then only the theme's name is shown.
+    readonly property bool osRead: !(KOSRelease.name === "Linux" && KOSRelease.id === "linux"
+                                     && KOSRelease.prettyName === "Linux" && KOSRelease.version === ""
+                                     && KOSRelease.versionId === "")
+    readonly property string osName: osRead ? (KOSRelease.version !== "" ? KOSRelease.name + " " + KOSRelease.version
+                                                                         : KOSRelease.name) : ""
 
     onStageChanged: {
         if (stage >= 1) {
@@ -17,7 +35,8 @@ Rectangle {
     Image {
         anchors.fill: parent
         source: "images/background.png"
-        fillMode: Image.Tile
+        fillMode: Image.PreserveAspectCrop
+        smooth: true
     }
 
     Rectangle {
@@ -47,24 +66,29 @@ Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
         y: root.height
         spacing: 18
+        StereoDepth.depth: StereoDepth.Popped
         Image {
             anchors.horizontalCenter: parent.horizontalCenter
-            width: 160
-            height: 160
-            source: "images/logo.svg"
-            sourceSize: Qt.size(320, 320)
+            width: 96
+            height: 96
+            visible: status === Image.Ready
+            source: root.logoSource
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            mipmap: true
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: "Kubabbar Glass"
-            color: "#1b2119"
+            color: "#f3f5ee"
             font.pixelSize: 34
             font.bold: true
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "Sparky Stereo OS"
-            color: "#3e5231"
+            visible: root.osName !== ""
+            text: root.osName
+            color: "#f3f5ee"
             font.pixelSize: 16
         }
         Rectangle {
