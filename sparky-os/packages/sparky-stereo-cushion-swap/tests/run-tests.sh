@@ -1299,8 +1299,9 @@ dracut_mismatch_says_update_grub() {
 	local d=$1 rc
 	rm -rf "$W/state"
 	swaps "$W/s"
+	printf 'RESUME=UUID=swap-part\n' >"$W/resume-dracut-part"
 	echo 8:1 >"$W/sys/power/resume"
-	hibernate_env INITRAMFS_GENERATOR=dracut DRACUT_RESUME_PATH="$W/resume-part" INITRAMFS_RESUME_PATH=/nonexistent "$d" --hibernate-deploy >"$W/log" 2>&1
+	hibernate_env INITRAMFS_GENERATOR=dracut DRACUT_RESUME_PATH="$W/resume-dracut-part" INITRAMFS_RESUME_PATH=/nonexistent "$d" --hibernate-deploy >"$W/log" 2>&1
 	rc=$?
 	echo 0:0 >"$W/sys/power/resume"
 	[[ $rc == 1 ]] && kept_problem hibernate-mismatch 'sudo update-grub' && ! kept_problem hibernate-mismatch 'update-initramfs' ||
