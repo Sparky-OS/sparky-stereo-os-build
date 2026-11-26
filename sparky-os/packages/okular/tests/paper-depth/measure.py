@@ -167,7 +167,7 @@ def words_pages_and_desk():
     # canvas may also form a run, but has no shift that can be measured.
     top = y0 + 84
     stripe = left[top:y1 - 60, cx0 + 8:cx1 - 8]
-    visible = np.flatnonzero(is_paper(stripe).mean(axis=1) > 0.8)
+    visible = np.flatnonzero(is_paper(stripe).mean(axis=1) > 0.6)
     page_boxes = []
     for band in np.split(visible, np.nonzero(np.diff(visible) > 1)[0] + 1):
         if len(band) <= 45:
