@@ -567,7 +567,8 @@ hibernate_keeps_used_area() {
 	mkdir -p "$W/state"
 	printf '100 %s 1\n' "$W/dev/vdb3" >"$W/state/hibernate-deployed"
 	swaps "$W/s" "$W/dev/vdb3" 16777216 524288
-	hibernate_env CUSHION_SWAP_AREA="$W/dev/vdb3" INITRAMFS_RESUME_PATH="$W/resume-part" "$d" --hibernate-resume >"$W/log" 2>&1
+	meminfo "$W/m" 16326000 "$G"
+	hibernate_env MEMINFO_PATH="$W/m" CUSHION_SWAP_AREA="$W/dev/vdb3" INITRAMFS_RESUME_PATH="$W/resume-part" "$d" --hibernate-resume >"$W/log" 2>&1
 	[[ ! -e $W/actions ]] && grep -q 'retracts it when it is safe' "$W/log"
 }
 

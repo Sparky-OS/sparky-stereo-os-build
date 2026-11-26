@@ -1352,8 +1352,8 @@ hibernate_deploy() {
 	exit 0
 }
 
-# After resume: the daemon can retract its own area later. A dedicated resume
-# area must be released here, with enough headroom to read its pages back in.
+# After resume: release an area activated for the image when its pages fit
+# back in memory. Under pressure the daemon can later release its own area.
 hibernate_resume() {
 	local since="" target="" switched="" used why output rc
 	[[ -e $HIBERNATE_MARK ]] || exit 0
@@ -1373,11 +1373,6 @@ hibernate_resume() {
 		used=$SWAP_USED_KIB
 		resolve_area
 		if ((used > 0)); then
-			if [[ $target == "$AREA" ]]; then
-				log "after resume: $target holds $(gib_str "$used"); the daemon retracts it when it is safe"
-				problem_clear resume-swapoff
-				exit 0
-			fi
 			why=""
 			if read_meminfo; then
 				compute_thresholds
@@ -1388,6 +1383,11 @@ hibernate_resume() {
 				why="cannot safely read pages back: $MEMINFO_PATH $MEMINFO_WHY"
 			fi
 			if [[ -n $why ]]; then
+				if [[ $target == "$AREA" ]]; then
+					log "after resume: $target holds $(gib_str "$used"); the daemon retracts it when it is safe ($why)"
+					problem_clear resume-swapoff
+					exit 0
+				fi
 				problem_set resume-swapoff notice LOCAL15 "$target" "$why"
 				exit 1
 			fi

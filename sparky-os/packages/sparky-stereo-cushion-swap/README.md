@@ -335,10 +335,12 @@ daemon is not running and 4 when the state cannot be read.
 
 With no swap area configured the service reports the problem and waits.
 The settings watcher applies changes to /etc/fstab and /etc/default/cushion-swap.
-On a hybrid setup, the hibernation hook releases a dedicated resume partition
-that it switched on for the image. If it still holds pages, the hook checks
+The hibernation hook releases the area it switched on for the image.
+If the area still holds pages, the hook checks
 available memory and the configured retraction margin before reading them back
-with swapoff. A refusal or a failed swapoff is reported through Problems.
+with swapoff. Under pressure the daemon can later release its own area.
+A refusal to release a dedicated hibernation partition, or a failed swapoff,
+is reported through Problems.
 
 Nothing fails silently
 -------------
