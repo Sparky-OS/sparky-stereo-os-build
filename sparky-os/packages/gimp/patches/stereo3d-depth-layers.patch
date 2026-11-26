@@ -1631,10 +1631,10 @@ index 2c8db3b..27bc8e9 100644
  )
 diff --git a/app/display/gimpdisplayshell-depth.c b/app/display/gimpdisplayshell-depth.c
 new file mode 100644
-index 0000000..4057734
+index 0000000..026bd5e
 --- /dev/null
 +++ b/app/display/gimpdisplayshell-depth.c
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,301 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -1688,6 +1688,50 @@ index 0000000..4057734
 +                                                           GimpDisplayShell *shell);
 +
 +
++/*  While a tool's drag holds the keyboard, a key press reaches the canvas
++ *  and no accelerator: the two actions' accelerators, as the person has
++ *  them now, are matched here too.  Returns -1 (pop), 1 (sink) or 0.
++ */
++static gint
++gimp_display_shell_depth_key_of (const GdkEventKey *kevent)
++{
++  static const gchar *actions[] = { "app.layers-depth-pop", "app.layers-depth-sink" };
++  GApplication       *app       = g_application_get_default ();
++  GdkModifierType     mask      = gtk_accelerator_get_default_mod_mask ();
++  gint                i;
++
++  if (! GTK_IS_APPLICATION (app))
++    return 0;
++
++  for (i = 0; i < G_N_ELEMENTS (actions); i++)
++    {
++      gchar **accels = gtk_application_get_accels_for_action (GTK_APPLICATION (app),
++                                                              actions[i]);
++      gint    j;
++      gint    found  = 0;
++
++      for (j = 0; accels && accels[j] && ! found; j++)
++        {
++          guint           key;
++          GdkModifierType mods;
++
++          gtk_accelerator_parse (accels[j], &key, &mods);
++
++          if (key &&
++              gdk_keyval_to_lower (key) == gdk_keyval_to_lower (kevent->keyval) &&
++              (kevent->state & mask) == mods)
++            found = i == 0 ? -1 : 1;
++        }
++
++      g_strfreev (accels);
++
++      if (found)
++        return found;
++    }
++
++  return 0;
++}
++
 +static GimpDepthLayer *
 +gimp_display_shell_depth_layer (GimpDisplayShell *shell)
 +{
@@ -1729,29 +1773,27 @@ index 0000000..4057734
 +      return FALSE;
 +    }
 +
++  /*  the movement counts from the pointer's last place on the canvas,
++   *  which the canvas's own events keep (depth_key_last_x and _y)
++   */
 +  shell->depth_key_direction   = direction;
 +  shell->depth_key_keyval      = keyval;
-+  shell->depth_key_have_last   = FALSE;
 +  shell->depth_key_undo_pushed = FALSE;
++  /*  the movement counts from where the pointer is when the key goes
++   *  down, in root coordinates as the motion events give them (the canvas
++   *  sees no motion of a hovering pointer before the gesture)
++   */
++  {
++    GdkDisplay *display = gtk_widget_get_display (GTK_WIDGET (shell));
++    GdkDevice  *pointer = gdk_seat_get_pointer (gdk_display_get_default_seat (display));
++    gdouble     x, y;
 +
-+  /*  the movement counts from where the pointer is when the key goes down  */
-+  if (gtk_widget_get_realized (shell->canvas))
-+    {
-+      GdkDisplay *display = gtk_widget_get_display (shell->canvas);
-+      GdkDevice  *pointer = gdk_seat_get_pointer (gdk_display_get_default_seat (display));
-+      gdouble     x, y;
++    gdk_device_get_position_double (pointer, NULL, &x, &y);
 +
-+      /*  the return value is the window under the pointer (another one
-+       *  over the canvas, or none), not a failure: x and y are always the
-+       *  pointer's place relative to the canvas's window
-+       */
-+      gdk_window_get_device_position_double (gtk_widget_get_window (shell->canvas),
-+                                             pointer, &x, &y, NULL);
-+
-+      shell->depth_key_have_last = TRUE;
-+      shell->depth_key_last_x    = x;
-+      shell->depth_key_last_y    = y;
-+    }
++    shell->depth_key_have_last = TRUE;
++    shell->depth_key_last_x    = x;
++    shell->depth_key_last_y    = y;
++  }
 +
 +  /*  the key's release may reach another widget of the window than the
 +   *  canvas: the window itself is watched until the gesture ends
@@ -1792,7 +1834,6 @@ index 0000000..4057734
 +
 +  shell->depth_key_direction   = 0;
 +  shell->depth_key_keyval      = 0;
-+  shell->depth_key_have_last   = FALSE;
 +  shell->depth_key_undo_pushed = FALSE;
 +}
 +
@@ -1805,8 +1846,34 @@ index 0000000..4057734
 +{
 +  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), FALSE);
 +
++  if (event->type == GDK_KEY_PRESS)
++    {
++      gint direction = gimp_display_shell_depth_key_of (&event->key);
++
++      if (direction)
++        return gimp_display_shell_depth_key_press (shell, direction, event->key.keyval) || TRUE;
++    }
++
++  /*  the pointer's last place, for the next gesture's start; in root
++   *  coordinates, the same whichever of the canvas's windows (the stereo
++   *  area's own, for one) the event came through
++   */
 +  if (! shell->depth_key_direction)
-+    return FALSE;
++    {
++      gdouble x, y;
++
++      if ((event->type == GDK_MOTION_NOTIFY  ||
++           event->type == GDK_BUTTON_PRESS   ||
++           event->type == GDK_ENTER_NOTIFY) &&
++          gdk_event_get_root_coords (event, &x, &y))
++        {
++          shell->depth_key_have_last = TRUE;
++          shell->depth_key_last_x    = x;
++          shell->depth_key_last_y    = y;
++        }
++
++      return FALSE;
++    }
 +
 +  switch (event->type)
 +    {
@@ -1826,8 +1893,8 @@ index 0000000..4057734
 +    case GDK_MOTION_NOTIFY:
 +      {
 +        GimpDepthLayer *layer = gimp_display_shell_depth_layer (shell);
-+        gdouble         x     = event->motion.x;
-+        gdouble         y     = event->motion.y;
++        gdouble         x     = event->motion.x_root;
++        gdouble         y     = event->motion.y_root;
 +        gdouble         travel;
 +
 +        if (! layer)
@@ -2206,7 +2273,7 @@ index e756fa0..df2e4d4 100644
  
  static void
 diff --git a/app/display/gimpdisplayshell-tool-events.c b/app/display/gimpdisplayshell-tool-events.c
-index 40d8bb7..6445639 100644
+index 40d8bb7..49b9025 100644
 --- a/app/display/gimpdisplayshell-tool-events.c
 +++ b/app/display/gimpdisplayshell-tool-events.c
 @@ -67,6 +67,7 @@
@@ -2217,12 +2284,24 @@ index 40d8bb7..6445639 100644
  #include "gimpdisplayshell-cursor.h"
  #include "gimpdisplayshell-grab.h"
  #include "gimpdisplayshell-layer-select.h"
-@@ -379,6 +380,10 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+@@ -375,10 +376,22 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+   if (! shell->display || ! gimp_display_get_shell (shell->display))
+     return TRUE;
+ 
++  /*  the pop and sink keys of depth layers, before the shell's own key
++   *  handling, which swallows most keys while button 1 is down
++   */
++  if ((event->type == GDK_KEY_PRESS || event->type == GDK_KEY_RELEASE) &&
++      gimp_display_shell_depth_key_event (shell, event))
++    return TRUE;
++
+   /*  set the active display before doing any other canvas event processing  */
    if (gimp_display_shell_events (canvas, event, shell))
      return TRUE;
  
 +  /*  a held pop or sink key takes the pointer's movement  */
-+  if (gimp_display_shell_depth_key_event (shell, event))
++  if (event->type != GDK_KEY_PRESS && event->type != GDK_KEY_RELEASE &&
++      gimp_display_shell_depth_key_event (shell, event))
 +    return TRUE;
 +
    /*  events on overlays have a different window, but these windows'
