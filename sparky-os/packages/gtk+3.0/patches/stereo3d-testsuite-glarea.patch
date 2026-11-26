@@ -1,0 +1,239 @@
+Description: testsuite: GtkGLArea's stereo, depth and colour state API
+ The defaults, the setters with their notifications, the CICP code points and
+ the honest failure of a stereo area on a display that announces no stereo.
+ GtkGLArea's color-state defaults to sRGB's colour state, a boxed value: the
+ defaultvalue test lists it with the other boxed defaults.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff --git a/testsuite/gtk/defaultvalue.c b/testsuite/gtk/defaultvalue.c
+index 7ed024d..49a83f0 100644
+--- a/testsuite/gtk/defaultvalue.c
++++ b/testsuite/gtk/defaultvalue.c
+@@ -202,6 +202,11 @@ test_type (gconstpointer data)
+ 	   strcmp (pspec->name, "rgba") == 0))
+ 	continue;
+ 
++      /* the default colour state of a GtkGLArea is sRGB's, a boxed value */
++      if (g_type_is_a (type, GTK_TYPE_GL_AREA) &&
++          strcmp (pspec->name, "color-state") == 0)
++        continue;
++
+ G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+ 
+       if (g_type_is_a (type, GTK_TYPE_COLOR_SELECTION) &&
+diff --git a/testsuite/gtk/glarea.c b/testsuite/gtk/glarea.c
+new file mode 100644
+index 0000000..05f1bfe
+--- /dev/null
++++ b/testsuite/gtk/glarea.c
+@@ -0,0 +1,195 @@
++/* GtkGLArea: the stereo, depth and colour state API
++ *
++ * Copyright 2026 Daniel Campos Ramos
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <gtk/gtk.h>
++
++static void
++test_defaults (void)
++{
++  GtkWidget *area = gtk_gl_area_new ();
++  int width = 0, height = 0;
++
++  g_object_ref_sink (area);
++  g_assert_false (gtk_gl_area_get_stereo (GTK_GL_AREA (area)));
++  g_assert_false (gtk_gl_area_get_stereo_shown (GTK_GL_AREA (area)));
++  g_assert_null (gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)));
++  g_assert_cmpint (gtk_gl_area_get_current_eye (GTK_GL_AREA (area)), ==, GTK_GL_AREA_EYE_NONE);
++  gtk_gl_area_get_stereo_view_size (GTK_GL_AREA (area), &width, &height);
++  g_assert_cmpint (width, ==, -1);
++  g_assert_cmpint (height, ==, -1);
++  g_assert_cmpint (gtk_gl_area_get_format (GTK_GL_AREA (area)), ==, GDK_MEMORY_R8G8B8A8_PREMULTIPLIED);
++  g_assert_true (gdk_color_state_equal (gtk_gl_area_get_color_state (GTK_GL_AREA (area)), gdk_color_state_get_srgb ()));
++  g_object_unref (area);
++}
++
++static void
++count_notify (GObject *object, GParamSpec *pspec, gpointer data)
++{
++  (*(int *) data)++;
++}
++
++static void
++test_setters (void)
++{
++  GtkWidget *area = gtk_gl_area_new ();
++  const GdkMemoryFormat formats[] = {
++    GDK_MEMORY_R8G8B8A8_PREMULTIPLIED, GDK_MEMORY_ABGR2101010_PREMULTIPLIED, GDK_MEMORY_R16G16B16A16_PREMULTIPLIED,
++    GDK_MEMORY_R16G16B16A16_FLOAT_PREMULTIPLIED, GDK_MEMORY_R32G32B32A32_FLOAT_PREMULTIPLIED,
++  };
++  GdkColorState *state = NULL;
++  int width = 0, height = 0, notified = 0;
++  gboolean stereo = FALSE;
++
++  g_object_ref_sink (area);
++
++  g_signal_connect (area, "notify::stereo", G_CALLBACK (count_notify), &notified);
++  gtk_gl_area_set_stereo (GTK_GL_AREA (area), TRUE);
++  gtk_gl_area_set_stereo (GTK_GL_AREA (area), TRUE);
++  g_object_get (area, "stereo", &stereo, NULL);
++  g_assert_true (stereo);
++  g_assert_cmpint (notified, ==, 1);
++
++  gtk_gl_area_set_stereo_view_size (GTK_GL_AREA (area), 1920, 540);
++  gtk_gl_area_get_stereo_view_size (GTK_GL_AREA (area), &width, &height);
++  g_assert_cmpint (width, ==, 1920);
++  g_assert_cmpint (height, ==, 540);
++  g_object_get (area, "stereo-view-width", &width, "stereo-view-height", &height, NULL);
++  g_assert_cmpint (width, ==, 1920);
++  g_assert_cmpint (height, ==, 540);
++  gtk_gl_area_set_stereo_view_size (GTK_GL_AREA (area), -1, -1);
++  gtk_gl_area_get_stereo_view_size (GTK_GL_AREA (area), &width, &height);
++  g_assert_cmpint (width, ==, -1);
++  g_assert_cmpint (height, ==, -1);
++
++  for (gsize i = 0; i < G_N_ELEMENTS (formats); i++)
++    {
++      gtk_gl_area_set_format (GTK_GL_AREA (area), formats[i]);
++      g_assert_cmpint (gtk_gl_area_get_format (GTK_GL_AREA (area)), ==, formats[i]);
++    }
++
++  gtk_gl_area_set_color_state (GTK_GL_AREA (area), gdk_color_state_get_rec2100_pq ());
++  g_object_get (area, "color-state", &state, NULL);
++  g_assert_true (gdk_color_state_equal (state, gdk_color_state_get_rec2100_pq ()));
++  gdk_color_state_unref (state);
++  gtk_gl_area_set_color_state (GTK_GL_AREA (area), NULL);
++  g_assert_true (gdk_color_state_equal (gtk_gl_area_get_color_state (GTK_GL_AREA (area)), gdk_color_state_get_srgb ()));
++
++  g_object_unref (area);
++}
++
++static void
++test_cicp (void)
++{
++  GdkCicpParams *cicp = gdk_cicp_params_new ();
++  GdkColorState *state;
++  GError *error = NULL;
++
++  /* ITU-T H.273: BT.2020 primaries (9), PQ (16), RGB (0), full range: GTK 4's rec2100-pq */
++  gdk_cicp_params_set_color_primaries (cicp, 9);
++  gdk_cicp_params_set_transfer_function (cicp, 16);
++  gdk_cicp_params_set_matrix_coefficients (cicp, 0);
++  gdk_cicp_params_set_range (cicp, GDK_CICP_RANGE_FULL);
++  state = gdk_cicp_params_build_color_state (cicp, &error);
++  g_assert_no_error (error);
++  g_assert_true (gdk_color_state_equal (state, gdk_color_state_get_rec2100_pq ()));
++  gdk_color_state_unref (state);
++
++  /* reserved code points and YUV matrices are refused */
++  gdk_cicp_params_set_transfer_function (cicp, 3);
++  g_assert_null (gdk_cicp_params_build_color_state (cicp, &error));
++  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
++  g_clear_error (&error);
++  gdk_cicp_params_set_transfer_function (cicp, 18);
++  gdk_cicp_params_set_matrix_coefficients (cicp, 9);
++  g_assert_null (gdk_cicp_params_build_color_state (cicp, &error));
++  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
++  g_clear_error (&error);
++  g_object_unref (cicp);
++}
++
++typedef struct {
++  int eyes[3];
++  gboolean timed_out;
++} RenderLog;
++
++static gboolean
++render_cb (GtkGLArea *area, GdkGLContext *context, RenderLog *log)
++{
++  log->eyes[gtk_gl_area_get_current_eye (area)]++;
++  return TRUE;
++}
++
++static gboolean
++time_out (gpointer data)
++{
++  ((RenderLog *) data)->timed_out = TRUE;
++  return G_SOURCE_REMOVE;
++}
++
++/* A stereo area on a display that announces no stereo says so and renders its left view alone */
++static void
++test_stereo_unavailable (void)
++{
++  GtkWidget *window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
++  GtkWidget *area = gtk_gl_area_new ();
++  RenderLog log = { { 0, 0, 0 }, FALSE };
++  guint timeout;
++
++  gtk_widget_set_size_request (area, 64, 48);
++  gtk_container_add (GTK_CONTAINER (window), area);
++  g_signal_connect (area, "render", G_CALLBACK (render_cb), &log);
++  gtk_gl_area_set_stereo (GTK_GL_AREA (area), TRUE);
++  gtk_widget_show_all (window);
++
++  timeout = g_timeout_add_seconds (10, time_out, &log);
++  while (!log.timed_out && log.eyes[GTK_GL_AREA_EYE_LEFT] + log.eyes[GTK_GL_AREA_EYE_NONE] == 0 &&
++         gtk_gl_area_get_error (GTK_GL_AREA (area)) == NULL)
++    g_main_context_iteration (NULL, TRUE);
++  /* the frame after the one that found the failure */
++  for (int i = 0; i < 20 && g_main_context_iteration (NULL, FALSE); i++)
++    ;
++
++  if (gtk_gl_area_get_error (GTK_GL_AREA (area)) != NULL)
++    g_test_skip ("No OpenGL on this display");
++  else if (gtk_gl_area_get_stereo_shown (GTK_GL_AREA (area)))
++    g_test_skip ("This display shows the area per eye: the case is for a display without stereo");
++  else
++    {
++      g_assert_false (log.timed_out);
++      g_assert_nonnull (gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)));
++      g_assert_cmpint (log.eyes[GTK_GL_AREA_EYE_RIGHT], ==, 0);
++      g_assert_cmpint (log.eyes[GTK_GL_AREA_EYE_LEFT], >, 0);
++    }
++
++  if (!log.timed_out)
++    g_source_remove (timeout);
++  gtk_widget_destroy (window);
++}
++
++int
++main (int argc, char *argv[])
++{
++  gtk_test_init (&argc, &argv);
++
++  g_test_add_func ("/glarea/defaults", test_defaults);
++  g_test_add_func ("/glarea/setters", test_setters);
++  g_test_add_func ("/glarea/cicp", test_cicp);
++  g_test_add_func ("/glarea/stereo-unavailable", test_stereo_unavailable);
++
++  return g_test_run ();
++}
+diff --git a/testsuite/gtk/meson.build b/testsuite/gtk/meson.build
+index 5e2324a..0d1439f 100644
+--- a/testsuite/gtk/meson.build
++++ b/testsuite/gtk/meson.build
+@@ -22,6 +22,7 @@ tests = [
+   ['floating'],
+   ['focus'],
+   ['gestures'],
++  ['glarea'],
+   ['grid'],
+   ['gtkmenu'],
+   ['icontheme'],
