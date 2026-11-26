@@ -1,0 +1,101 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Created by Daniel Ramos (Capitain Jack) 2026/11/26
+# Copyright 2026 under the GNU GPL3 License
+# Bring Kubabbar Glass 9's Kvantum theme and fonts into the session while it is the applied Look and Feel.
+# Plasma's Look and Feel manager writes a look's values into ~/.config/kdedefaults and removes the person's own value of
+# every key it applies, so the look cannot carry its fonts there without erasing a person's own font choices. This
+# script writes the fonts and the Kvantum theme into that same defaults store only: a person's own values in
+# ~/.config/kdeglobals and ~/.config/Kvantum/kvantum.kvconfig always win. It records what it wrote and removes exactly
+# that when another look is applied. A step that fails is kept and said (sparky-stereo-problems, person scope).
+set -eu
+package=sparky-stereo-look-kubabbar-glass-9
+repair='["kubabbar-glass-9-sync"]'
+config=${XDG_CONFIG_HOME:-$HOME/.config}
+defaults=$config/kdedefaults
+record=$defaults/kubabbar-glass-9-sync.written
+run() {
+	key=$1
+	shift
+	sparky-stereo-problems run --person --repair "$repair" "$package" "$key" LOCAL2 -- "$@"
+}
+readable() { # a file that exists and cannot be read stops the run, said
+	if [ -e "$1" ] && [ ! -r "$1" ]; then
+		sparky-stereo-problems keep --person --repair "$repair" "$package" read LOCAL3 "$1"
+		exit 1
+	fi
+}
+for file in "$defaults/package" "$defaults/kdeglobals" "$config/kdeglobals" "$config/kubabbar-glass-9rc" "$record"; do
+	readable "$file"
+done
+sparky-stereo-problems clear --person "$package" read
+look=$(cat "$defaults/package" 2>/dev/null || true)
+
+forget() { # remove what this script wrote, where it still holds what was written
+	[ -f "$record" ] || return 0
+	while IFS='|' read -r file group key value; do
+		[ -n "$file" ] || continue
+		now=$(kreadconfig6 --file "$file" --group "$group" --key "$key" 2>/dev/null || true)
+		if [ "$now" = "$value" ]; then
+			run "forget-$key" kwriteconfig6 --file "$file" --group "$group" --key "$key" --delete < /dev/null
+		fi
+	done < "$record"
+	run forget-record rm -f "$record"
+}
+
+if [ "$look" != kubabbar-glass-9 ]; then
+	if [ -f "$record" ]; then
+		forget
+		dbus-send --session --type=signal /KDEPlatformTheme org.kde.KDEPlatformTheme.refreshFonts 2>/dev/null || true
+		sparky-stereo-problems say "$package" LOCAL5
+	fi
+	exit 0
+fi
+
+# the accent follows the colour scheme the person chose (their own kdeglobals first, then the look's)
+scheme=$(kreadconfig6 --file "$config/kdeglobals" --group General --key ColorScheme 2>/dev/null || true)
+[ -n "$scheme" ] || scheme=$(kreadconfig6 --file "$defaults/kdeglobals" --group General --key ColorScheme 2>/dev/null || true)
+case "$scheme" in
+	kubabbar-glass-9-graphite) accent=Graphite ;;
+	kubabbar-glass-9-ivy) accent=Ivy ;;
+	kubabbar-glass-9-rose) accent=Rose ;;
+	kubabbar-glass-9-gold) accent=Gold ;;
+	kubabbar-glass-9-teal) accent=Teal ;;
+	*) accent= ;;
+esac
+arrows=$(kreadconfig6 --file "$config/kubabbar-glass-9rc" --group Scrolling --key Arrows 2>/dev/null || true)
+case "$arrows" in apart) apart=Apart ;; *) apart= ;; esac
+theme=KubabbarGlass9$accent$apart
+
+# Charcoal where the person has it installed (its weight is its regular face); otherwise the free font measured
+# nearest to it, Noto Sans Display, in its bold face, the weight Charcoal draws with
+if fc-list -q 'Charcoal'; then
+	system='Charcoal,9,-1,5,400,0,0,0,0,0,0,0,0,0,0,1'
+	shown=Charcoal
+else
+	system='Noto Sans Display,9,-1,5,700,0,0,0,0,0,0,0,0,0,0,1'
+	shown='Noto Sans Display'
+fi
+small='Geneva,8,-1,5,400,0,0,0,0,0,0,0,0,0,0,1'
+toolbar='Geneva,9,-1,5,400,0,0,0,0,0,0,0,0,0,0,1'
+fixed='Monaco,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1'
+
+run defaults-directory mkdir -p "$defaults/Kvantum"
+forget
+tmp=$(mktemp "$defaults/.kubabbar-glass-9-sync.XXXXXX")
+write() { # file group key value
+	run "write-$3" kwriteconfig6 --file "$1" --group "$2" --key "$3" "$4"
+	printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" >> "$tmp"
+}
+write "$defaults/Kvantum/kvantum.kvconfig" General theme "$theme"
+write "$defaults/kdeglobals" General font "$system"
+write "$defaults/kdeglobals" General menuFont "$system"
+write "$defaults/kdeglobals" WM activeFont "$system"
+write "$defaults/kdeglobals" General toolBarFont "$toolbar"
+write "$defaults/kdeglobals" General smallestReadableFont "$small"
+write "$defaults/kdeglobals" General fixed "$fixed"
+run record mv "$tmp" "$record"
+# tell the running programs (a signal has no reply: only its delivery to the bus is known)
+run refresh-fonts dbus-send --session --type=signal /KDEPlatformTheme org.kde.KDEPlatformTheme.refreshFonts
+run refresh-style dbus-send --session --type=signal /KGlobalSettings org.kde.KGlobalSettings.notifyChange int32:2 int32:0
+sparky-stereo-problems say "$package" LOCAL4 "$theme" "$shown"
