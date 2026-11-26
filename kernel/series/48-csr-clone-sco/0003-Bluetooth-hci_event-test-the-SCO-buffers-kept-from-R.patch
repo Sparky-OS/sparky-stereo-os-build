@@ -1,0 +1,298 @@
+From 94e14a7cca406373c76ac57edf0b1f41097fbf69 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 18:22:05 -0300
+Subject: [PATCH 3/3] Bluetooth: hci_event: test the SCO buffers kept from Read
+ Buffer Size
+
+Call hci_cc_read_buffer_size() and hci_cc_write_voice_setting() in KUnit
+with the parameters a controller sends: a controller whose voice setting
+can be read keeps its SCO buffers; a fake CSR controller, one that does
+not list HCI_Read_Voice_Setting and one with only
+HCI_QUIRK_FIXUP_BUFFER_SIZE get none; HCI_QUIRK_VOICE_SETTING_BY_DRIVER
+keeps the reported buffers, or the fixup's sizes when both are set; a
+failed command and an ACL MTU of 0 behave as before; a successful
+HCI_Write_Voice_Setting is stored and notified, a refused one is not.
+
+The test file is included from hci_event.c so the static handlers are
+reached without exporting them.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ net/bluetooth/Kconfig          |   9 ++
+ net/bluetooth/hci_event.c      |   4 +
+ net/bluetooth/hci_event_test.c | 234 +++++++++++++++++++++++++++++++++
+ 3 files changed, 247 insertions(+)
+ create mode 100644 net/bluetooth/hci_event_test.c
+
+diff --git a/net/bluetooth/Kconfig b/net/bluetooth/Kconfig
+index 1cda01614..270a83453 100644
+--- a/net/bluetooth/Kconfig
++++ b/net/bluetooth/Kconfig
+@@ -138,6 +138,15 @@ config BT_SELFTEST_SMP
+ 	  Run test cases for SMP cryptographic functionality, including both
+ 	  legacy SMP as well as the Secure Connections features.
+ 
++config BT_HCI_EVENT_KUNIT_TEST
++	bool "KUnit tests for HCI event handling" if !KUNIT_ALL_TESTS
++	depends on BT=y && KUNIT=y
++	default KUNIT_ALL_TESTS
++	help
++	  Check the SCO buffers kept from HCI_Read_Buffer_Size and the voice
++	  setting stored from HCI_Write_Voice_Setting, with the parameters a
++	  controller sends and no controller.
++
+ config BT_FEATURE_DEBUG
+ 	bool "Enable runtime option for debugging statements"
+ 	depends on BT && !DYNAMIC_DEBUG
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index d5eea0d41..53c5be040 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -7971,3 +7971,7 @@ void hci_event_packet(struct hci_dev *hdev, struct sk_buff *skb)
+ 	kfree_skb(skb);
+ 	hdev->stat.evt_rx++;
+ }
++
++#if IS_ENABLED(CONFIG_BT_HCI_EVENT_KUNIT_TEST)
++#include "hci_event_test.c"
++#endif
+diff --git a/net/bluetooth/hci_event_test.c b/net/bluetooth/hci_event_test.c
+new file mode 100644
+index 000000000..85ef4277c
+--- /dev/null
++++ b/net/bluetooth/hci_event_test.c
+@@ -0,0 +1,234 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * KUnit tests for the SCO buffers hci_cc_read_buffer_size() keeps and the
++ * voice setting hci_cc_write_voice_setting() stores. Included from
++ * hci_event.c, so the static handlers are called directly with the
++ * Command Complete parameters a controller sends; no controller is used.
++ */
++
++#include <kunit/test.h>
++
++/* SCO MTU 48 with 16 packets, as the CSR clone with LMP subversion 0x2312
++ * reports them; the ACL values are a common CSR answer.
++ */
++#define TEST_ACL_MTU	310
++#define TEST_ACL_PKTS	10
++#define TEST_SCO_MTU	48
++#define TEST_SCO_PKTS	16
++
++static void hci_event_test_free_dev(void *hdev)
++{
++	hci_free_dev(hdev);
++}
++
++static struct hci_dev *hci_event_test_dev(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_alloc_dev_priv(sizeof(unsigned int));
++
++	KUNIT_ASSERT_NOT_NULL(test, hdev);
++	KUNIT_ASSERT_EQ(test, 0, kunit_add_action_or_reset(test,
++				hci_event_test_free_dev, hdev));
++	return hdev;
++}
++
++/* A controller that lists HCI_Read_Voice_Setting (octet 9, bit 2) */
++static struct hci_dev *hci_event_test_chip(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_dev(test);
++
++	hdev->commands[9] |= 0x04;
++	return hdev;
++}
++
++/* A fake CSR controller as btusb_setup_csr() leaves it */
++static struct hci_dev *hci_event_test_fake(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_chip(test);
++
++	hci_set_quirk(hdev, HCI_QUIRK_BROKEN_READ_VOICE_SETTING);
++	return hdev;
++}
++
++static u8 hci_event_test_rbs(struct hci_dev *hdev, u8 status, u16 acl_mtu)
++{
++	struct hci_rp_read_buffer_size rp = {
++		.status = status,
++		.acl_mtu = cpu_to_le16(acl_mtu),
++		.sco_mtu = TEST_SCO_MTU,
++		.acl_max_pkt = cpu_to_le16(TEST_ACL_PKTS),
++		.sco_max_pkt = cpu_to_le16(TEST_SCO_PKTS),
++	};
++
++	return hci_cc_read_buffer_size(hdev, &rp, NULL);
++}
++
++static void hci_event_test_expect_sco(struct kunit *test, struct hci_dev *hdev,
++				      unsigned int mtu, unsigned int pkts)
++{
++	KUNIT_EXPECT_EQ(test, hdev->sco_mtu, mtu);
++	KUNIT_EXPECT_EQ(test, hdev->sco_pkts, pkts);
++	KUNIT_EXPECT_EQ(test, hdev->sco_cnt, pkts);
++	KUNIT_EXPECT_EQ(test, hdev->acl_mtu, TEST_ACL_MTU);
++	KUNIT_EXPECT_EQ(test, hdev->acl_pkts, TEST_ACL_PKTS);
++	KUNIT_EXPECT_EQ(test, hdev->acl_cnt, TEST_ACL_PKTS);
++}
++
++/* A controller whose voice setting can be read keeps what it reports. */
++static void rbs_readable_voice_setting_keeps_buffers(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_chip(test);
++
++	KUNIT_EXPECT_EQ(test, 0, hci_event_test_rbs(hdev, 0, TEST_ACL_MTU));
++	hci_event_test_expect_sco(test, hdev, TEST_SCO_MTU, TEST_SCO_PKTS);
++}
++
++/* The guard of 14d17c78a4b1: a fake CSR controller gets no SCO. */
++static void rbs_broken_read_voice_setting_disables_sco(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_fake(test);
++
++	KUNIT_EXPECT_EQ(test, 0, hci_event_test_rbs(hdev, 0, TEST_ACL_MTU));
++	hci_event_test_expect_sco(test, hdev, TEST_SCO_MTU, 0);
++}
++
++/* A controller that does not list the command gets no SCO either. */
++static void rbs_unlisted_read_voice_setting_disables_sco(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_dev(test);
++
++	KUNIT_EXPECT_EQ(test, 0, hci_event_test_rbs(hdev, 0, TEST_ACL_MTU));
++	hci_event_test_expect_sco(test, hdev, TEST_SCO_MTU, 0);
++}
++
++/* force_scofix (HCI_QUIRK_FIXUP_BUFFER_SIZE) alone does not lift the guard. */
++static void rbs_fixup_alone_keeps_sco_disabled(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_fake(test);
++
++	hci_set_quirk(hdev, HCI_QUIRK_FIXUP_BUFFER_SIZE);
++	KUNIT_EXPECT_EQ(test, 0, hci_event_test_rbs(hdev, 0, TEST_ACL_MTU));
++	hci_event_test_expect_sco(test, hdev, 64, 0);
++}
++
++/* The driver writes the voice setting: the reported SCO buffers stay. */
++static void rbs_voice_setting_by_driver_keeps_buffers(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_fake(test);
++
++	hci_set_quirk(hdev, HCI_QUIRK_VOICE_SETTING_BY_DRIVER);
++	KUNIT_EXPECT_EQ(test, 0, hci_event_test_rbs(hdev, 0, TEST_ACL_MTU));
++	hci_event_test_expect_sco(test, hdev, TEST_SCO_MTU, TEST_SCO_PKTS);
++}
++
++/* With both quirks the fixup's sizes are used, as force_scofix asks. */
++static void rbs_voice_setting_by_driver_with_fixup(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_fake(test);
++
++	hci_set_quirk(hdev, HCI_QUIRK_VOICE_SETTING_BY_DRIVER);
++	hci_set_quirk(hdev, HCI_QUIRK_FIXUP_BUFFER_SIZE);
++	KUNIT_EXPECT_EQ(test, 0, hci_event_test_rbs(hdev, 0, TEST_ACL_MTU));
++	hci_event_test_expect_sco(test, hdev, 64, 8);
++}
++
++/* A failed command changes nothing. */
++static void rbs_failed_command_changes_nothing(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_fake(test);
++
++	hci_set_quirk(hdev, HCI_QUIRK_VOICE_SETTING_BY_DRIVER);
++	KUNIT_EXPECT_EQ(test, HCI_ERROR_UNSPECIFIED,
++			hci_event_test_rbs(hdev, HCI_ERROR_UNSPECIFIED,
++					   TEST_ACL_MTU));
++	KUNIT_EXPECT_EQ(test, hdev->sco_mtu, 0);
++	KUNIT_EXPECT_EQ(test, hdev->sco_pkts, 0);
++	KUNIT_EXPECT_EQ(test, hdev->acl_mtu, 0);
++}
++
++/* An ACL MTU of 0 is still refused. */
++static void rbs_zero_acl_mtu_is_refused(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_fake(test);
++
++	hci_set_quirk(hdev, HCI_QUIRK_VOICE_SETTING_BY_DRIVER);
++	KUNIT_EXPECT_EQ(test, HCI_ERROR_INVALID_PARAMETERS,
++			hci_event_test_rbs(hdev, 0, 0));
++}
++
++static void hci_event_test_record_notify(struct hci_dev *hdev, unsigned int evt)
++{
++	*(unsigned int *)hci_get_priv(hdev) = evt;
++}
++
++static void hci_event_test_free_skb(void *skb)
++{
++	kfree_skb(skb);
++}
++
++static void hci_event_test_sent_voice(struct kunit *test, struct hci_dev *hdev,
++				      u16 setting)
++{
++	struct hci_command_hdr *hdr;
++	struct sk_buff *skb;
++
++	skb = alloc_skb(HCI_COMMAND_HDR_SIZE + 2, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, skb);
++	KUNIT_ASSERT_EQ(test, 0, kunit_add_action_or_reset(test,
++				hci_event_test_free_skb, skb));
++	hdr = skb_put(skb, HCI_COMMAND_HDR_SIZE);
++	hdr->opcode = cpu_to_le16(HCI_OP_WRITE_VOICE_SETTING);
++	hdr->plen = 2;
++	put_unaligned_le16(setting, skb_put(skb, 2));
++	hdev->sent_cmd = skb;
++}
++
++/* The write the driver makes in post_init is what btusb_work() reads. */
++static void write_voice_setting_is_stored_and_notified(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_fake(test);
++	struct hci_ev_status rp = { .status = 0 };
++
++	hdev->notify = hci_event_test_record_notify;
++	hci_event_test_sent_voice(test, hdev, 0x0060);
++	KUNIT_EXPECT_EQ(test, 0, hci_cc_write_voice_setting(hdev, &rp, NULL));
++	KUNIT_EXPECT_EQ(test, hdev->voice_setting, 0x0060);
++	KUNIT_EXPECT_EQ(test, *(unsigned int *)hci_get_priv(hdev),
++			HCI_NOTIFY_VOICE_SETTING);
++	hdev->sent_cmd = NULL;
++}
++
++/* A refused write leaves the voice setting unknown. */
++static void write_voice_setting_refused_stays_unknown(struct kunit *test)
++{
++	struct hci_dev *hdev = hci_event_test_fake(test);
++	struct hci_ev_status rp = { .status = HCI_ERROR_UNSPECIFIED };
++
++	hdev->notify = hci_event_test_record_notify;
++	hci_event_test_sent_voice(test, hdev, 0x0060);
++	KUNIT_EXPECT_EQ(test, HCI_ERROR_UNSPECIFIED,
++			hci_cc_write_voice_setting(hdev, &rp, NULL));
++	KUNIT_EXPECT_EQ(test, hdev->voice_setting, 0);
++	KUNIT_EXPECT_EQ(test, *(unsigned int *)hci_get_priv(hdev), 0);
++	hdev->sent_cmd = NULL;
++}
++
++static struct kunit_case hci_event_sco_cases[] = {
++	KUNIT_CASE(rbs_readable_voice_setting_keeps_buffers),
++	KUNIT_CASE(rbs_broken_read_voice_setting_disables_sco),
++	KUNIT_CASE(rbs_unlisted_read_voice_setting_disables_sco),
++	KUNIT_CASE(rbs_fixup_alone_keeps_sco_disabled),
++	KUNIT_CASE(rbs_voice_setting_by_driver_keeps_buffers),
++	KUNIT_CASE(rbs_voice_setting_by_driver_with_fixup),
++	KUNIT_CASE(rbs_failed_command_changes_nothing),
++	KUNIT_CASE(rbs_zero_acl_mtu_is_refused),
++	KUNIT_CASE(write_voice_setting_is_stored_and_notified),
++	KUNIT_CASE(write_voice_setting_refused_stays_unknown),
++	{}
++};
++
++static struct kunit_suite hci_event_sco_suite = {
++	.name = "bt-hci-event-sco",
++	.test_cases = hci_event_sco_cases,
++};
++
++kunit_test_suite(hci_event_sco_suite);

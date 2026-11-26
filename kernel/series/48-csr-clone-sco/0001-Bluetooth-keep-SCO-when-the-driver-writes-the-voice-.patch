@@ -1,0 +1,70 @@
+From 93c74f47ff3383951194e709e03aee0faff54b79 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 18:19:46 -0300
+Subject: [PATCH 1/3] Bluetooth: keep SCO when the driver writes the voice
+ setting itself
+
+hci_cc_read_buffer_size() disables SCO (sco_pkts = 0) when the voice
+setting cannot be read, since 14d17c78a4b1 ("Bluetooth: Disable SCO
+support if READ_VOICE_SETTING is unsupported/broken"): a SCO connection
+without the proper voice setting can lock the controller up.
+
+The voice setting can also be made known the other way round: a driver
+whose controller answers HCI_OP_READ_VOICE_SETTING wrongly but accepts
+HCI_OP_WRITE_VOICE_SETTING can write it once the controller is
+initialized (after its HCI_Reset), in its post_init callback, before any
+SCO connection can be made. hci_cc_write_voice_setting() then stores it
+in hdev->voice_setting and notifies the driver, and btusb picks the
+isochronous alternate setting from it.
+
+Add HCI_QUIRK_VOICE_SETTING_BY_DRIVER for such a driver: the SCO buffers
+the controller reports are kept. The driver disables SCO itself when its
+write fails. Nothing changes for a controller without the quirk, also
+with HCI_QUIRK_FIXUP_BUFFER_SIZE set (force_scofix).
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ include/net/bluetooth/hci.h | 11 +++++++++++
+ net/bluetooth/hci_event.c   |  7 ++++++-
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/include/net/bluetooth/hci.h b/include/net/bluetooth/hci.h
+index 1641d879d..7d04e1cc4 100644
+--- a/include/net/bluetooth/hci.h
++++ b/include/net/bluetooth/hci.h
+@@ -375,6 +375,17 @@ enum {
+ 	 */
+ 	HCI_QUIRK_BROKEN_READ_PAGE_SCAN_TYPE,
+ 
++	/* When this quirk is set, the driver writes the voice setting
++	 * (HCI_OP_WRITE_VOICE_SETTING) itself in its post_init callback,
++	 * so SCO stays enabled with the buffer sizes the controller
++	 * reports even though HCI_OP_READ_VOICE_SETTING cannot be used.
++	 * If that write fails, the driver disables SCO (sco_pkts = 0).
++	 *
++	 * This quirk can be set before hci_register_dev is called or
++	 * during the hdev->setup vendor callback.
++	 */
++	HCI_QUIRK_VOICE_SETTING_BY_DRIVER,
++
+ 	__HCI_NUM_QUIRKS,
+ };
+ 
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index 03b805207..d5eea0d41 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -947,7 +947,12 @@ static u8 hci_cc_read_buffer_size(struct hci_dev *hdev, void *data,
+ 		hdev->sco_pkts = 8;
+ 	}
+ 
+-	if (!read_voice_setting_capable(hdev))
++	/* A SCO connection without the proper voice setting can lock the
++	 * controller up, so SCO is disabled when the voice setting cannot
++	 * be read, unless the driver writes it itself.
++	 */
++	if (!read_voice_setting_capable(hdev) &&
++	    !hci_test_quirk(hdev, HCI_QUIRK_VOICE_SETTING_BY_DRIVER))
+ 		hdev->sco_pkts = 0;
+ 
+ 	hdev->acl_cnt = hdev->acl_pkts;

@@ -507,3 +507,21 @@
 47-security-beyond-7.3.4/0004-tcp-ipv6-do-not-read-ireq-pktopts-from-tcp_v6_send_s.patch
 47-security-beyond-7.3.4/0005-tcp-do-not-coalesce-segments-after-FIN.patch
 47-security-beyond-7.3.4/0006-tcp-fix-request_sock-use-after-free-during-Fast-Open.patch
+
+# ==== 48-csr-clone-sco: voice on the CSR clone 0a12:0001 with bcdDevice 0x8891, HCI revision 0x0810 and LMP subversion 0x2312 (queue row 129, ORDER 133)
+#      status: candidate for build 19. It ships only after Daniel's station test hears a headset microphone through this clone; if that test stays silent, drop the group: with SCO
+#      enabled, sparky-stereo-hardware's bt-voice notice (it keys on sco_pkts 0) would no longer tell the person that this adapter carries no voice.
+#      Ours; nothing upstream. bluetooth-next f57f78086a (2026-11-24), torvalds master 9437ee8b6c (v7.4-rc4+571, 2026-11-26) and linux-7.3.y v7.3.6 have hci_cc_read_buffer_size(),
+#      hci_cc_write_voice_setting(), btusb_setup_csr() and read_voice_setting_capable() as v7.3.4 has them; no linux-bluetooth mail from 2025-01-15 to 2026-11-26 lifts the guard for a clone.
+#      v7.3.5 renamed drivers/bluetooth/btusb.c to btusb_main.c: when the base moves, 0002 moves with it (its context is unchanged there).
+#      The guard is Pedro Nishiyama's 14d17c78a4b1 ("Bluetooth: Disable SCO support if READ_VOICE_SETTING is unsupported/broken", 2025-03-01, applied by Luiz Augusto von Dentz):
+#      "A SCO connection without the proper voice_setting can cause the controller to lock up"; before it he measured on these clones that an SCO connection "is not usable".
+#      0001 net/bluetooth: HCI_QUIRK_VOICE_SETTING_BY_DRIVER keeps the SCO buffers the controller reports, for a driver that writes the voice setting itself; nothing changes without
+#      the quirk, HCI_QUIRK_FIXUP_BUFFER_SIZE (force_scofix) included. 0002 btusb: only this clone (is_fake plus bcdDevice, HCI revision and LMP subversion; a genuine CSR8510 also
+#      reports bcdDevice 0x8891) gets the quirk and writes voice setting 0x0060 in post_init, after the HCI_Reset of init and before any SCO connection can exist; a failed write
+#      disables SCO again; btusb.disable_scofix=1 turns the exception off. 0003: KUnit suite bt-hci-event-sco (10 cases; kernel/tests/csr-clone-sco).
+#      Replaces ORDER 133's held form (b481dcaa, then kernel/held/csr-clone-sco): it left hdev->voice_setting at 0 (btusb then picks the 8-bit alternate setting for a 16-bit link, the
+#      guard's own case), replaced the clone's 48:16 by the fixup's 64:8 (more than the 48-byte SCO packets the controller declares), and lifted the guard for any clone given force_scofix.
+48-csr-clone-sco/0001-Bluetooth-keep-SCO-when-the-driver-writes-the-voice-.patch
+48-csr-clone-sco/0002-Bluetooth-btusb-write-the-voice-setting-of-the-CSR-c.patch
+48-csr-clone-sco/0003-Bluetooth-hci_event-test-the-SCO-buffers-kept-from-R.patch
