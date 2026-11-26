@@ -114,8 +114,10 @@ trap 'rm -rf "${W:?}"' EXIT
 # 1. Choose the newest version of each package and where it goes in the pool.
 SOURCES_DIR=${SPARKY_REPO_SOURCES:-$SRC/source}
 export SOURCES_DIR
-python3 - "$SRC" "$W/selection.tsv" "$W/leftout.txt" "${EXTRA[@]}" <<'PY'
+PYTHONPATH="$HERE:$HERE/../packages/sparky-stereo-apt/install-downloads${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 - "$SRC" "$W/selection.tsv" "$W/leftout.txt" "${EXTRA[@]}" <<'PY'
 import hashlib, os, re, sys, subprocess
+from install_download_cohort import CONTROL_FIELDS, check_install_downloads
 
 src, out_sel, out_left = sys.argv[1:4]
 extra = sys.argv[4:]
@@ -174,8 +176,9 @@ for e in extra:
 best = {}
 allv = {}
 identities = {}
+download_fields = {}
 for path, nested in debs:
-    r = subprocess.run(['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture', 'Source', 'Architecture-Variant'],
+    r = subprocess.run(['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture', 'Source', 'Architecture-Variant', *CONTROL_FIELDS],
                        capture_output=True, text=True, check=True).stdout
     f = {}
     for line in r.splitlines():
@@ -195,6 +198,7 @@ for path, nested in debs:
             raise SystemExit('a variant build must be named NAME_VERSION_amd64v3.deb, or it takes the baseline build\'s pool path: ' + path)
         arch = variant
     identity = (pkg, ver, arch)
+    download_fields[identity] = {key: f[key] for key in CONTROL_FIELDS if key in f}
     with open(path, 'rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     previous = identities.setdefault(identity, (digest, path))
@@ -210,6 +214,14 @@ for path, nested in debs:
     # newest wins; the same version in the top folder beats the same one in carried/
     if cur is None or vercmp(ver, cur[0]) > 0 or (vercmp(ver, cur[0]) == 0 and cur[3] and not nested):
         best[key] = (ver, path, srcname, nested, srcver)
+
+# The fonts helper selects its provider at install time; normal APT Depends
+# would install it in the live image and fetch the licensed data too early.
+chosen = {(name, arch): (entry[0], download_fields[name, entry[0], arch])
+          for (name, arch), entry in best.items()}
+problems = list(check_install_downloads(chosen, vercmp))
+if problems:
+    raise SystemExit("Install-time download cohort refused:\n" + "\n".join(problems))
 
 def pooldir(name):
     return name[:4] if name.startswith('lib') and len(name) > 3 else name[0]
