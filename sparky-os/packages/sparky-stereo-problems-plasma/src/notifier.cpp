@@ -178,6 +178,9 @@ void Notifier::rescan()
             dismissedNow.insert(identOf(p));
             continue;
         }
+        if (!p[u"data"_s].toObject()[u"notify"_s].toBool(true)) {
+            continue;
+        }
         if (m_dismissed.contains(identOf(p))) {
             // brought back on the Problems page: told again, as a new problem is
             m_notified.remove(identOf(p));

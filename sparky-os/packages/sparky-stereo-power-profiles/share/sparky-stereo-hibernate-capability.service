@@ -1,0 +1,12 @@
+[Unit]
+Description=Check hibernation availability
+ConditionKernelCommandLine=!boot=live
+After=systemd-logind.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/sparky-stereo/hibernate-check --check
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

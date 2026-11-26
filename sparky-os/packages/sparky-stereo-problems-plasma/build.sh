@@ -7,7 +7,11 @@
 # Last update 2026/11/08
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-REPRO="$HERE/../../repo/reproducible.py"
+TOOLKIT=$HERE/release-toolkit
+if [ ! -d "$TOOLKIT" ]; then
+    TOOLKIT=$(realpath "$HERE/../..")
+fi
+REPRO="$TOOLKIT/repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
 PACKAGE=sparky-stereo-problems-plasma
 VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
@@ -56,9 +60,13 @@ Description: the computer's problems as notifications and a Problems page in Pla
 EOC
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 
+if [ ! -d "$HERE/debian/source" ]; then
 S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian/source"
 cp -a "$HERE/." "$S/"
+mkdir -p "$S/release-toolkit/repo"
+cp -a "$TOOLKIT/lean" "$S/release-toolkit/"
+cp "$TOOLKIT/repo/"{provenance.sh,reproducible.py} "$S/release-toolkit/repo/"
 cat >"$S/debian/control" <<EOC
 Source: $PACKAGE
 Section: kde
@@ -80,7 +88,7 @@ EOC
 {
 	printf '%s (%s) unstable; urgency=medium\n\n' "$PACKAGE" "$VERSION"
 	sed -n '4,/^---/p' "$HERE/CHANGELOG" | grep -v '^---'
-	printf '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 00:00:00 -0300\n'
+	printf '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  %s\n' "${SOURCE_DATE_RFC2822:?source date from the recipe}"
 } >"$S/debian/changelog"
 cp "$HERE/copyright" "$S/debian/copyright"
 echo '3.0 (native)' >"$S/debian/source/format"
@@ -99,7 +107,8 @@ export SOURCE_DATE_EPOCH
 python3 "$REPRO" normalize "$SOURCE_DATE_EPOCH" "$S"
 (cd "$WORK" && dpkg-source -b "$S" >/dev/null)
 cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
+fi
 
-"$HERE/../../repo/provenance.sh" --tree "$D"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
+"$TOOLKIT/repo/provenance.sh" --tree "$D"
+PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
 sync

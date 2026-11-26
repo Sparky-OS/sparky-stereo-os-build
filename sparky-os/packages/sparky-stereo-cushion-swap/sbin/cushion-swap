@@ -248,9 +248,14 @@ json_str() {
 }
 problem_set() {
 	local code=$1 effect=$2 key=$3 arg body hash severity args="" english file
+	local repair=()
 	file=$(problem_file "$1")
 	shift 3
 	body="EFFECT=$effect"$'\n'"KEY=$key"
+	if [[ $code == no-area && $key == LOCAL1 ]]; then
+		repair=(--repair '["/usr/libexec/cushion-swap/repair-swap","cushion"]')
+		body+=$'\n'"${repair[1]}"
+	fi
 	for arg in "$@"; do body+=$'\n'"ARG=${arg//$'\n'/ }"; args+="${args:+,}$(json_str "${arg//$'\n'/ }")"; done
 	[[ ${PROBLEM_BODY[$code]:-} == "$body" && -e $file ]] && return 0
 	hash=$(printf '%s' "$body" | sha1sum) hash=${hash%% *}
@@ -264,7 +269,7 @@ problem_set() {
 	log_err "$english"
 	((DRY_RUN)) && return 0
 	case $effect in no) severity=failed ;; degraded) severity=degraded ;; *) severity=notice ;; esac
-	if ! "$PROBLEMS_BIN" keep --boot --quiet --severity "$severity" "$PROBLEM_PKG" "$code" "$key" \
+	if ! "$PROBLEMS_BIN" keep --boot --quiet --severity "$severity" "${repair[@]}" "$PROBLEM_PKG" "$code" "$key" \
 		--details "{\"args\":[$args],\"data\":{\"body\":\"$hash\"}}" 2>/dev/null; then
 		log_err "cannot keep the problem $code ($PROBLEMS_BIN keep failed): the journal line above is all there is"
 	fi

@@ -27,6 +27,7 @@ gcc ${CFLAGS:--O2 -Wall -Wextra -Werror} -pthread -o "$D/usr/libexec/cushion-swa
 strip --strip-unneeded "$D/usr/libexec/cushion-swap/alloc-rate"
 install -Dm644 "$HERE/etc/default/cushion-swap" "$D/etc/default/cushion-swap"
 install -Dm755 "$HERE/sbin/cushion-swap" "$D/usr/sbin/cushion-swap"
+install -Dm755 "$HERE/sbin/repair-swap" "$D/usr/libexec/cushion-swap/repair-swap"
 install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE"/lib/systemd/system/cushion-swap*.{service,path}
 for operation in hibernate hybrid-sleep suspend-then-hibernate; do
 	install -Dm644 "$HERE/lib/systemd/system/systemd-$operation.service.d/50-cushion-swap.conf" \
@@ -42,7 +43,7 @@ install -Dm644 -t "$D/usr/share/sparky/$PACKAGE" "$HERE"/lang/*
 sparky-stereo-problems catalog $PACKAGE "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 install -m644 "$HERE/copyright" "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/"
 GLIBC=$(objdump -T "$D/usr/libexec/cushion-swap/psi-wake" "$D/usr/libexec/cushion-swap/alloc-rate" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n 1)
-DEPENDS="bash, libc6 (>= $GLIBC), logrotate, mount, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
+DEPENDS="bash, libc6 (>= $GLIBC), e2fsprogs, initramfs-tools, logrotate, mount, python3, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -178,8 +179,9 @@ $PACKAGE ($VERSION) unstable; urgency=medium
 
   * Release a dedicated resume area safely after restoring the image.
   * Watch for settings changes when a swap area is missing.
+  * Offer a repair for an installed system with no delegated area.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 02:40:00 +0000
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 02:50:09 +0000
 
 $PACKAGE (0.3.5) unstable; urgency=medium
 
