@@ -1,0 +1,99 @@
+Description: Say when no picture arrives for an approved Throw
+Origin: vendor
+Last-Update: 2026-11-26
+
+diff --git a/rdp/catch/catchcontroller.cpp b/rdp/catch/catchcontroller.cpp
+index 39e0f0a4..412b529a 100644
+--- a/rdp/catch/catchcontroller.cpp
++++ b/rdp/catch/catchcontroller.cpp
+@@ -96,6 +96,21 @@ CatchController::CatchController(QObject *parent)
+             setStatus(pairingRequired());
+         }
+     });
++    m_firstPicture.setSingleShot(true);
++    m_firstPicture.setTimerType(Qt::PreciseTimer);
++    m_firstPicture.setInterval(25000);
++    connect(&m_firstPicture, &QTimer::timeout, this, [this] {
++        if (m_active && isPaired(m_active->peerCertificate())) {
++            auto socket = m_active;
++            m_active.clear();
++            // Let this final message drain before ending the control connection.
++            m_connections.remove(socket);
++            socket->write("{\"action\":\"no-picture\"}\n");
++            socket->disconnectFromHost();
++        }
++        finishListening(i18n("No picture arrived from the desktop. Start the Throw again."));
++    });
++
+     m_control.accept = [this](qintptr fd) {
+         auto socket = new QSslSocket(this);
+         if (!socket->setSocketDescriptor(fd) || m_connections.size() >= 4) {
+@@ -130,6 +145,7 @@ CatchController::CatchController(QObject *parent)
+             m_connections.remove(socket);
+             if (m_active == socket) {
+                 m_active.clear();
++                m_firstPicture.stop();
+                 if (m_session)
+                     m_session->stop();
+                 m_receiving = false;
+@@ -375,6 +391,7 @@ void CatchController::connectRdp(const QJsonObject &message, const QHostAddress
+         if (!frame.image.isNull() && m_view) {
+             m_view->setFrame(std::move(frame), m_layout);
+             if (!m_receiving) {
++                m_firstPicture.stop();
+                 m_receiving = true;
+                 Q_EMIT changed();
+             }
+@@ -385,16 +402,25 @@ void CatchController::connectRdp(const QJsonObject &message, const QHostAddress
+             return;
+         if (m_active)
+             m_active->abort();
++        m_firstPicture.stop();
+         setStatus(i18n("The desktop connection ended"));
+     });
+     if (!m_session->start()) {
+         m_active->abort();
+         setStatus(i18n("The desktop connection ended"));
++    } else {
++        m_firstPicture.start();
+     }
+ }
+ void CatchController::stop()
++{
++    finishListening(i18n("Ready to catch a desktop"));
++}
++
++void CatchController::finishListening(const QString &status)
+ {
+     m_pairingCheck.stop();
++    m_firstPicture.stop();
+     m_control.close();
+     m_http.close();
+     m_ssdp.close();
+@@ -408,5 +434,5 @@ void CatchController::stop()
+     m_receiving = false;
+     m_certificate.clear();
+     m_key.clear();
+-    setStatus(i18n("Ready to catch a desktop"));
++    setStatus(status);
+ }
+diff --git a/rdp/catch/catchcontroller.h b/rdp/catch/catchcontroller.h
+index ae3cf808..367f08df 100644
+--- a/rdp/catch/catchcontroller.h
++++ b/rdp/catch/catchcontroller.h
+@@ -55,6 +55,7 @@ public:
+     Q_SIGNAL void changed();
+
+ private:
++    void finishListening(const QString &status);
+     void receive(QSslSocket *socket);
+     void connectRdp(const QJsonObject &message, const QHostAddress &peer);
+     void announce(const QHostAddress &destination, quint16 port);
+@@ -66,6 +67,7 @@ private:
+     QSslCertificate m_certificate;
+     QSslKey m_key;
+     QTimer m_pairingCheck;
++    QTimer m_firstPicture;
+     QJsonObject m_panel;
+     QString m_status;
+     QString m_layout = QStringLiteral("native");
