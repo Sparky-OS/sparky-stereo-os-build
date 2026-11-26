@@ -88,13 +88,15 @@ Rectangle {{
         height: content.implicitHeight + 2 * 30
         anchors.centerIn: parent
         StereoDepth.depth: StereoDepth.Popped
-        // the frame and its contents are drawn as one picture at the family's glass for dialogs
-        layer.enabled: true
+        // the family's glass for dialogs; the frame's parts do not overlap, so every pixel of it is at that level (a
+        // layer would make one picture of it, but the stereo layer moves items, not a layer's texture, per eye)
         opacity: {glass}
 
-        Rectangle {{ anchors.fill: parent; color: "{outline}" }}
-        Rectangle {{ x: 1; y: 1; width: parent.width - 2; height: parent.height - 2; color: "{light}" }}
-        Rectangle {{ x: 2; y: 2; width: parent.width - 3; height: parent.height - 3; color: "{shadow}" }}
+        Rectangle {{ anchors.fill: parent; color: "transparent"; border.color: "{outline}"; border.width: 1 }}
+        Rectangle {{ x: 1; y: 1; width: parent.width - 2; height: 1; color: "{light}" }}
+        Rectangle {{ x: 1; y: 2; width: 1; height: parent.height - 3; color: "{light}" }}
+        Rectangle {{ x: 2; y: parent.height - 2; width: parent.width - 3; height: 1; color: "{shadow}" }}
+        Rectangle {{ x: parent.width - 2; y: 2; width: 1; height: parent.height - 4; color: "{shadow}" }}
         Rectangle {{ x: 2; y: 2; width: parent.width - 4; height: parent.height - 4; color: "{face}" }}
 
         Column {{

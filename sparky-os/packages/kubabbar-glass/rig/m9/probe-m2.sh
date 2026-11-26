@@ -15,6 +15,8 @@ for step in ${STEPS:-panels:panels}; do
 		log "glass done" ;;
 	panels:*)
 		python3 "$M9/session2.py" panels "${step#panels:}" >> "$CASE/probe-m2.log" 2>&1 || log "FAIL $step" ;;
+	panelshot:*)
+		python3 "$M9/session2.py" panelshot "${step#panelshot:}" >> "$CASE/probe-m2.log" 2>&1 || log "FAIL $step" ;;
 	*)
 		python3 "$M9/session2.py" "$step" >> "$CASE/probe-m2.log" 2>&1 || log "FAIL $step" ;;
 	esac

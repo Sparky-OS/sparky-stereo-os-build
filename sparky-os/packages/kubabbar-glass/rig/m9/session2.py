@@ -3,6 +3,7 @@
 """session2.py STEP: milestone 2's steps inside a real login (rig/m9/probe-m2.sh), with the session's own environment
 (plasmashell's), geometry from KWin and Plasma's scripting, results in $CASE.
   panels NAME   the desktop's panels (edge, height, floating, opacity, applets), into NAME.json
+  panelshot NAME  a capture once KWin lists the two panels (NAME.png)
   keep          the person's own panels kept: Kubabbar Glass 9's menu bar look applied by Plasma's own tool without the
                 layout (panels-after-apply.json, as before), then with it (panels-after-reset.json, the menu bar layout)
   greeter       SDDM's greeter in test mode with the 9's theme, a Wayland window of the session: a capture, then Return
@@ -131,7 +132,7 @@ app = QApplication(sys.argv[:1])
 def font(f):
     i = QFontInfo(f)
     return {"asked": f.toString(), "family": i.family(), "weight": i.weight(), "pointSize": i.pointSize()}
-out = {"style": app.style().objectName(), "platformTheme": app.platformName(),
+out = {"style": app.style().objectName(), "platform": app.platformName(),
        "general": font(app.font()), "menu": font(app.font(QMenu())), "toolButton": font(app.font(QToolButton())),
        "fixed": font(QFontDatabase.systemFont(QFontDatabase.FixedFont))}
 from PyQt5.QtGui import QGuiApplication
@@ -141,7 +142,8 @@ print(json.dumps(out))
 
 
 def qt5():
-    env = dict(session_env(), QT_QPA_PLATFORM="wayland")
+    # Qt's own fallback list: Qt 5 has no Wayland plugin unless qtwayland5 is installed, and then runs on Xwayland
+    env = dict(session_env(), QT_QPA_PLATFORM="wayland;xcb")
     r = subprocess.run(["python3", "-c", QT5_PROBE], env=env, capture_output=True, text=True, timeout=60)
     maps = subprocess.run(["sh", "-c", "python3 -c 'import time; from PyQt5.QtWidgets import QApplication; a=QApplication([]); "
                            "import os; print(open(\"/proc/self/maps\").read())' | grep -o -E '[^ ]*(platformthemes|styles)/[^ ]*\\.so' | sort -u"],
@@ -185,9 +187,28 @@ def gtk():
     print("gtk", json.dumps({k: (v.get("theme") if isinstance(v, dict) else v) for k, v in report.items()})[:800])
 
 
+def panelshot(name):
+    """A capture once KWin lists the desktop's panels (dock windows) and they have settled: the desktop's own capture
+    can come before plasmashell has made them."""
+    for _ in range(60):
+        wins = kwin_windows()
+        wins = wins.get("windows", []) if isinstance(wins, dict) else wins
+        # a panel is one of plasmashell's windows, not a normal one, a strip under 100 pixels high
+        docks = [w for w in wins if isinstance(w, dict) and "plasmashell" in w.get("cls", "") and not w.get("normal")
+                 and w.get("fg") and w["fg"][3] < 100]
+        if len(docks) >= 2:
+            break
+        time.sleep(1)
+    time.sleep(3)
+    json.dump(kwin_windows(), open(os.path.join(CASE, name + "-windows.json"), "w"), indent=1)
+    shot(name)
+
+
 if __name__ == "__main__":
     step = sys.argv[1]
     if step == "panels":
         panels(sys.argv[2])
+    elif step == "panelshot":
+        panelshot(sys.argv[2])
     else:
         {"keep": keep, "greeter": greeter, "qt5": qt5, "gtk": gtk}[step]()

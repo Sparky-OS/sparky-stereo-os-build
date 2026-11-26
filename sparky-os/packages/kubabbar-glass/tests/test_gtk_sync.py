@@ -112,6 +112,7 @@ arrow_cases = {'arrows-apart': ('kubabbar-glass-9-rose', 'apart', 'Kubabbar-Glas
                'arrows-together': ('kubabbar-glass-9-teal', 'together', 'Kubabbar-Glass-9-Teal'),
                'arrows-other-look': ('kubabbar-glass', 'apart', 'Kubabbar-Glass'),
                'arrows-unreadable': ('kubabbar-glass-9', 'apart', None)}
+cases += [('gtk2-file-absent', 'works', True, None, None)]
 cases += [(name, 'works', True, 'arrows' if name == 'arrows-unreadable' else None,
            'Cannot read' if name == 'arrows-unreadable' else None) for name in arrow_cases]
 with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
@@ -139,6 +140,9 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
         if arrows_file and theme_9:
             expected_theme = theme_9
         source.write_text('[General]\nColorScheme=' + scheme + '\n')
+        # KDE's GTK module's GTK 2 file, with its own theme name and a line of the person's that must stay
+        if name != 'gtk2-file-absent':
+            (work / '.gtkrc-2.0').write_text('gtk-theme-name="Breeze"\ngtk-cursor-blink=1\n')
         if name == 'unreadable':
             source.chmod(0)
         if xsettings:
@@ -165,6 +169,10 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
                           kept=any(r['key'] == key for r in records),
                           no_success='GTK synchronization completed' not in run.stdout and 'sparky-stereo-gtk-sync: scheme=' not in run.stdout)
         else:
+            gtk2 = (work / '.gtkrc-2.0').read_text() if (work / '.gtkrc-2.0').exists() else ''
+            checks['gtk2_theme'] = 'gtk-theme-name="' + expected_theme + '"\n' in gtk2 and gtk2.count('gtk-theme-name=') == 1
+            if name != 'gtk2-file-absent':
+                checks['gtk2_other_lines_kept'] = 'gtk-cursor-blink=1\n' in gtk2
             checks.update(exit_zero=run.returncode == 0, no_problem=not records,
                           theme=all('gtk-theme-name=' + expected_theme + '\n' in (config/('gtk-'+v)/'settings.ini').read_text() for v in ('3.0', '4.0')),
                           dark=all('gtk-application-prefer-dark-theme=' + expected_dark + '\n' in (config/('gtk-'+v)/'settings.ini').read_text() for v in ('3.0', '4.0')))
