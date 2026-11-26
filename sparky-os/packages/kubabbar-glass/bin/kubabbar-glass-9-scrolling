@@ -1,0 +1,47 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Created by Daniel Ramos (Capitain Jack) 2026/11/26
+# Copyright 2026 under the GNU GPL3 License
+# Choose where Kubabbar Glass 9 puts the scroll arrows: together at the end of the scrollbar (the default, as the classic
+# Appearance panel could set them) or at both ends. The choice is the person's own (~/.config/kubabbar-glass-9rc);
+# kubabbar-glass-9-sync turns it into the Kvantum theme. A choice that cannot be saved is said and kept.
+set -eu
+package=sparky-stereo-look-kubabbar-glass-9
+dir=/usr/share/sparky/kubabbar-glass-9-scrolling
+[ -d "$dir" ] || dir=$(dirname "$0")/../lang/scrolling9
+code=${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}
+[ -n "$code" ] || code=$(sed -n 's/^LANG=//p' /etc/default/locale 2>/dev/null | head -n 1 | tr -d '"')
+code=${code%%.*}
+case "$code" in
+	zh_HK|zh_MO) code=zh_TW ;;
+	zh_SG) code=zh_CN ;;
+esac
+for try in "$code" "${code%%_*}" en; do
+	if [ -f "$dir/$try" ]; then . "$dir/$try"; break; fi
+done
+
+usage() {
+	echo "$LOCAL1"
+	printf '  %-9s %s\n' together "$LOCAL2" apart "$LOCAL3"
+}
+[ $# -eq 1 ] || { usage; exit 0; }
+case "$1" in
+	together) label=$LOCAL2 ;;
+	apart) label=$LOCAL3 ;;
+	*) printf "$LOCAL5\n" "$1" >&2; usage >&2; exit 2 ;;
+esac
+config=${XDG_CONFIG_HOME:-$HOME/.config}
+command="kubabbar-glass-9-scrolling $1"
+repair=$(printf '["kubabbar-glass-9-scrolling","%s"]' "$1")
+if ! err=$(kwriteconfig6 --file "$config/kubabbar-glass-9rc" --group Scrolling --key Arrows "$1" 2>&1); then
+	sparky-stereo-problems keep --person --repair "$repair" "$package" scrolling LOCAL6 Arrows "${err:-kwriteconfig6 failed}" "$command" || true
+	exit 1
+fi
+saved=$(kreadconfig6 --file "$config/kubabbar-glass-9rc" --group Scrolling --key Arrows 2>&1) || saved="kreadconfig6 failed: $saved"
+if [ "$saved" != "$1" ]; then
+	sparky-stereo-problems keep --person --repair "$repair" "$package" scrolling LOCAL6 Arrows "the saved value reads back as '$saved'" "$command" || true
+	exit 1
+fi
+sparky-stereo-problems clear --person "$package" scrolling || true
+kubabbar-glass-9-sync
+printf "$LOCAL4\n" "$label"

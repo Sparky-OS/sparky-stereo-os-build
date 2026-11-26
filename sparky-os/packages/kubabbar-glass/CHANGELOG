@@ -1,3 +1,24 @@
+sparky-stereo-look-kubabbar-glass-9 20261126~sparky9~0 (2026-11-26)
+  * A new look of the Kubabbar family, its classic variant (queue row 147; Daniel, 2026-10-15: "another theme on the
+    kubabbar theme - more close to the qplatinum"; "all the looks, the button looks, scroll bars - as we did with
+    kababbar - this will be glassy variant"). Every control is drawn in a classic bevelled form by Kvantum themes made
+    for it (tools/make_kvantum9.py, original drawings, Qt 6 and Qt 5), with the scroll arrows together at the end of the
+    scrollbar by default and at both ends as the person's option (kubabbar-glass-9-scrolling); six accent colour
+    schemes, lavender first; a pinstriped window frame with the family's buttons and layout; a Plasma style at the
+    family's glass; an original wallpaper; the default layout's Look and Feel.
+  * The fonts: the look names Charcoal, Geneva and Monaco and uses them where installed; fontconfig aliases give the
+    free fonts measured nearest to them (Noto Sans Display, DejaVu Sans, Inconsolata). None of the classic fonts ships.
+  * kubabbar-glass-9-sync brings the Kvantum theme and the fonts into the session through the look's own defaults
+    store, so a person's own fonts and Kvantum choice are never overwritten (Plasma's Look and Feel manager removes a
+    person's own value of each key it applies); it removes exactly what it wrote when another look is applied.
+  * Every text reads at 4.5:1 or more: the schemes on their own backgrounds, the Plasma style's over its translucent
+    surfaces on the wallpaper (Daniel, 2026-11-25: "yes, fix them. bring them to a readable level").
+  * Depends on the edition's Kvantum (kvantum 1.1.8-1+stereo3d1), which knows the scroll_arrows_together key.
+
+sparky-stereo-look-kubabbar-glass (recipe only, no new version)
+  * The family's glass levels move to tools/glass_levels.py, read by both looks' generators (the generated files are
+    byte for byte the same); the base package excludes Kubabbar Glass 9's files, which have their own package.
+
 sparky-stereo-look-kubabbar-glass 20261126~sparky9~0 (2026-11-26)
   * The loading screen (queue row 125; Daniel, 2026-10-15: "The loading screen for our Kubabbar Glass should have Sparky
     logo instead of the theme name, make sense? and we sould use the same background as pymouth"; "and the os name

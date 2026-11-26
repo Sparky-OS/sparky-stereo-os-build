@@ -126,9 +126,14 @@ k=$work/sparky-stereo-look-kubabbar-glass
 mkdir -p "$k/usr/share" "$k/usr/bin" "$k/usr/share/sparky/kubabbar-glass-style"
 # The optional menubar package owns its layout and launcher. Copying all of share/
 # also picked up milestone 3's files and made the two packages conflict on upgrade.
+# Kubabbar Glass 9 is a package of its own too (tools/build_glass9_package.sh, queue row 147).
 (cd "$repo/share" && tar cf - --exclude='./plasma/desktoptheme/sparky-stereo-oxygen' --exclude='./themes' \
 	--exclude='./plasma/look-and-feel/kubabbar-glass-menubar' \
-	--exclude='./icons/hicolor/scalable/apps/kubabbar-glass-launcher.svg' .) | tar xf - -C "$k/usr/share"
+	--exclude='./icons/hicolor/scalable/apps/kubabbar-glass-launcher.svg' \
+	--exclude='./plasma/look-and-feel/kubabbar-glass-9' --exclude='./plasma/desktoptheme/kubabbar-glass-9' \
+	--exclude='./aurorae/themes/kubabbar-glass-9' --exclude='./kwin/decorations/kubabbar-glass-9' \
+	--exclude='./color-schemes/kubabbar-glass-9*' --exclude='./Kvantum/KubabbarGlass9*' \
+	--exclude='./wallpapers/kubabbar-glass-9' --exclude='./fontconfig' .) | tar xf - -C "$k/usr/share"
 install -m 755 "$repo/bin/kubabbar-glass-style" "$k/usr/bin/"
 for language in "$repo/lang/"*; do
 	[ -f "$language" ] || continue
