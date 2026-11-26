@@ -1,0 +1,145 @@
+Description: Report a paired Catch’s first-picture timeout on the desktop
+Origin: vendor
+Last-Update: 2026-11-26
+
+--- a/discovery/PanelDiscovery.cpp
++++ b/discovery/PanelDiscovery.cpp
+@@ -3,6 +3,7 @@
+ #include "PairingTrust.h"
+ #include <PanelDescriptor.h>
+ #include <KLocalizedString>
++#include <KNotification>
+ #include <QCryptographicHash>
+ #include <QDBusInterface>
+ #include <QDBusArgument>
+@@ -155,8 +156,20 @@
+         const auto message = QJsonDocument::fromJson(peer->input.left(end)).object();
+         peer->input.remove(0, end + 1);
+         if (peer->announced) {
+-            if (message.value(QStringLiteral("action")) != QStringLiteral("pong")) socket->abort();
+-            else peer->lastReply.restart();
++            const auto action = message.value(QStringLiteral("action")).toString();
++            if (action == QStringLiteral("no-picture") && !peer->lease.isEmpty()) {
++                const auto notice = i18n("No picture arrived from the desktop. Start the Throw again.");
++                qWarning().noquote() << notice;
++                KNotification::event(KNotification::Error, i18n("Throw failed"), notice,
++                                     QStringLiteral("flat-headset"));
++                socket->disconnectFromHost();
++                return;
++            }
++            if (action != QStringLiteral("pong")) {
++                socket->abort();
++                return;
++            }
++            peer->lastReply.restart();
+             continue;
+         }
+         const auto panel = KRdp::PanelDescriptor::fromJson(message.value(QStringLiteral("panel")).toObject());
+--- a/po/de/krdpserver.po
++++ b/po/de/krdpserver.po
+@@ -114,3 +114,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Headset getrennt: Die Kopplung in KDE Connect wurde entfernt."
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "Es ist kein Bild vom Desktop angekommen. Starten Sie die Übertragung erneut."
++
++msgid "Throw failed"
++msgstr "Übertragung fehlgeschlagen"
+--- a/po/es/krdpserver.po
++++ b/po/es/krdpserver.po
+@@ -99,3 +99,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Visor desconectado: se eliminó el emparejamiento en KDE Connect."
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "No llegó ninguna imagen del escritorio. Inicia el lanzamiento de nuevo."
++
++msgid "Throw failed"
++msgstr "El lanzamiento falló"
+--- a/po/fr/krdpserver.po
++++ b/po/fr/krdpserver.po
+@@ -112,3 +112,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Casque déconnecté : l’association dans KDE Connect a été supprimée."
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "Aucune image du bureau n’est arrivée. Relancez le lancer."
++
++msgid "Throw failed"
++msgstr "Échec du lancer"
+--- a/po/ja/krdpserver.po
++++ b/po/ja/krdpserver.po
+@@ -36,3 +36,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "ヘッドセットの接続が切れました。KDE Connect のペアリングが解除されました。"
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "デスクトップから映像が届きませんでした。もう一度スローを開始してください。"
++
++msgid "Throw failed"
++msgstr "スローに失敗しました"
+--- a/po/ko/krdpserver.po
++++ b/po/ko/krdpserver.po
+@@ -112,3 +112,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "헤드셋 연결이 끊어졌습니다. KDE Connect 페어링이 해제되었습니다."
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "데스크톱에서 화면이 오지 않았습니다. 던지기를 다시 시작하세요."
++
++msgid "Throw failed"
++msgstr "던지기 실패"
+--- a/po/pl/krdpserver.po
++++ b/po/pl/krdpserver.po
+@@ -113,3 +113,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Zestaw rozłączony: usunięto parowanie w KDE Connect."
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "Nie dotarł obraz z pulpitu. Uruchom przerzucanie ponownie."
++
++msgid "Throw failed"
++msgstr "Przerzucanie nie powiodło się"
+--- a/po/pt_BR/krdpserver.po
++++ b/po/pt_BR/krdpserver.po
+@@ -119,3 +119,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Headset desconectado: o emparelhamento no KDE Connect foi removido."
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "Nenhuma imagem do computador chegou. Inicie o arremesso novamente."
++
++msgid "Throw failed"
++msgstr "O arremesso falhou"
+--- a/po/zh_CN/krdpserver.po
++++ b/po/zh_CN/krdpserver.po
+@@ -112,3 +112,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "头显已断开连接：KDE Connect 配对已解除。"
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "没有收到桌面画面。请重新开始投送。"
++
++msgid "Throw failed"
++msgstr "投送失败"
+--- a/po/zh_TW/krdpserver.po
++++ b/po/zh_TW/krdpserver.po
+@@ -112,3 +112,9 @@
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "頭戴裝置已中斷連線：KDE Connect 配對已解除。"
++
++msgid "No picture arrived from the desktop. Start the Throw again."
++msgstr "沒有收到桌面畫面。請重新開始投送。"
++
++msgid "Throw failed"
++msgstr "投送失敗"
