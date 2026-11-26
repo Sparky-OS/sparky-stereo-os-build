@@ -5,24 +5,27 @@ Description: Show 3D films in 3D: one view per eye in a stereo GtkGLArea, the in
  compositor, and the area declares the pair as full side by side stereo
  content. A 2D film is rendered as before.
  The menu gains "3D" with the edition's options and no others: Enable 3D,
- 3D Input Format (the stereo layer's list, offered for a film shown in 3D or
- whose picture is found to be a pair), Swap left and right eyes and Save the
- correction into the file (for a film shown in 3D), Display Settings.
+ 3D Input Format (the stereo layer's list, offered for every film with a
+ picture, shown in 3D or flat, so that a film that declares nothing can be
+ given its packing), Swap left and right eyes and Save the correction into the
+ file (both only for a film shown in 3D), Display Settings.
  A correction is kept where Celluloid keeps the film's resume position
  (mpv's watch-later entry, video-stereo-input and video-stereo-swap), and the
  film's file is written only when the person chooses the save (libstereo-av:
  Matroska StereoMode, MP4 st3d, read back); the entry's correction is then
  cleared. A film that cannot be shown per eye is shown flat, left view alone,
- and the person is told once; a film without an audio track says "This film
- has no sound.". The window fits one view of a pair. The new sentences are in
+ and the person is told once what failed and why (a window drawn by the
+ processor on Wayland, or else the log, which keeps GTK's exact reason); a
+ film without an audio track says "This film has no sound.". The window fits
+ one view of a pair. The new sentences are in
  the nine catalogues of the edition's languages, the menu's words taken from
  the stereo layer's catalogues.
  Upstream does not take changes written with AI assistance (its README), so
  this is the edition's patch and is not offered.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Origin: other, Sparky Stereo OS (queue row 137, milestone 3)
+Origin: other, Sparky Stereo OS (queue row 137, milestone 3 and its review round)
 Forwarded: not-needed
-Last-Update: 2026-11-25
+Last-Update: 2026-11-26
 ---
 diff --git a/data/io.github.celluloid_player.Celluloid.gschema.xml b/data/io.github.celluloid_player.Celluloid.gschema.xml
 index bdac916817a5546e75b992eecd0ba7ff18a9fd2d..6691032ba8f6009509a12443393d1cc2d8750ed1 100644
@@ -52,10 +55,10 @@ index 3ad3f2de521f51822f31bfb62af9e6df37f20084..ea7e09628a840f2fbebe3f802d6ab4cd
  src/celluloid-view.c
 +src/celluloid-stereo.c
 diff --git a/po/de.po b/po/de.po
-index 4659a98787aeaf813ba7cab6868f731cc49169a9..379b554b6d71bd2103212d71d5be208f98096373 100644
+index 4659a98787aeaf813ba7cab6868f731cc49169a9..67b86f860f834b441f8798039e6fdd70af08b646 100644
 --- a/po/de.po
 +++ b/po/de.po
-@@ -1674,3 +1674,176 @@
+@@ -1674,3 +1674,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "_Wiedergabeliste ein/aus"
@@ -211,8 +214,11 @@ index 4659a98787aeaf813ba7cab6868f731cc49169a9..379b554b6d71bd2103212d71d5be208f
 +msgid "Display Settings could not be opened."
 +msgstr "Die Anzeigeeinstellungen konnten nicht geöffnet werden."
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "Dieser Film kann auf diesem Bildschirm nicht in 3D gezeigt werden. Er wird flach gezeigt."
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Dieser 3D-Film wird flach gezeigt: Das Fenster von Celluloid wird vom Prozessor gezeichnet, nicht von einer Grafikkarte, und ein Bild für jedes Auge braucht eine Grafikkarte."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Dieser 3D-Film wird flach gezeigt: Celluloid konnte dem Desktop kein Bild für jedes Auge geben. Der Grund steht im Systemprotokoll."
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -233,10 +239,10 @@ index 4659a98787aeaf813ba7cab6868f731cc49169a9..379b554b6d71bd2103212d71d5be208f
 +msgid "the file could not be written"
 +msgstr "die Datei konnte nicht geschrieben werden"
 diff --git a/po/es.po b/po/es.po
-index 0c3fbbe99147398d96daf833f3f56c2c56403d3a..fdf38ce0768b0cd3087fce75e1fafe0a8ce9670f 100644
+index 0c3fbbe99147398d96daf833f3f56c2c56403d3a..5885a0e0492905b46ba3fa0f7723225c2b6b5773 100644
 --- a/po/es.po
 +++ b/po/es.po
-@@ -1715,3 +1715,176 @@
+@@ -1715,3 +1715,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "Mostrar/ocultar la _lista de reproducción"
@@ -392,8 +398,11 @@ index 0c3fbbe99147398d96daf833f3f56c2c56403d3a..fdf38ce0768b0cd3087fce75e1fafe0a
 +msgid "Display Settings could not be opened."
 +msgstr "No se pudieron abrir los Ajustes de pantalla."
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "Esta película no se puede mostrar en 3D en esta pantalla. Se muestra en plano."
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Esta película 3D se muestra en plano: la ventana de Celluloid la dibuja el procesador, no una tarjeta gráfica, y una imagen para cada ojo necesita una tarjeta gráfica."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Esta película 3D se muestra en plano: Celluloid no pudo entregar al escritorio una imagen para cada ojo. El motivo está escrito en el registro del sistema."
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -414,10 +423,10 @@ index 0c3fbbe99147398d96daf833f3f56c2c56403d3a..fdf38ce0768b0cd3087fce75e1fafe0a
 +msgid "the file could not be written"
 +msgstr "no se pudo escribir el archivo"
 diff --git a/po/fr.po b/po/fr.po
-index 426ac8d254544ee3d499f5518df1f9d4bbd0efed..3499b34a5de0ec00800f50de27bf5d5981c231e0 100644
+index 426ac8d254544ee3d499f5518df1f9d4bbd0efed..277088637ebde2eb29c29621cc1c4d253afcf00d 100644
 --- a/po/fr.po
 +++ b/po/fr.po
-@@ -1716,3 +1716,176 @@
+@@ -1716,3 +1716,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "Afficher la _liste de lecture"
@@ -573,8 +582,11 @@ index 426ac8d254544ee3d499f5518df1f9d4bbd0efed..3499b34a5de0ec00800f50de27bf5d59
 +msgid "Display Settings could not be opened."
 +msgstr "Impossible d'ouvrir les Réglages de l'écran."
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "Ce film ne peut pas être affiché en 3D sur cet écran. Il est affiché à plat."
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Ce film 3D est affiché à plat : la fenêtre de Celluloid est dessinée par le processeur, pas par une carte graphique, et une image pour chaque œil demande une carte graphique."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Ce film 3D est affiché à plat : Celluloid n’a pas pu donner au bureau une image pour chaque œil. La raison est écrite dans le journal du système."
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -595,10 +607,10 @@ index 426ac8d254544ee3d499f5518df1f9d4bbd0efed..3499b34a5de0ec00800f50de27bf5d59
 +msgid "the file could not be written"
 +msgstr "le fichier n’a pas pu être écrit"
 diff --git a/po/ja.po b/po/ja.po
-index 32ed2d418bb183ea59f5f8f9ddb65c58cc721bba..314b3f7c7b624c282163e3ae0a23615e87f7419f 100644
+index 32ed2d418bb183ea59f5f8f9ddb65c58cc721bba..3788197cdd41a6f1ed53c6d2d71cedd0942d585b 100644
 --- a/po/ja.po
 +++ b/po/ja.po
-@@ -1640,3 +1640,176 @@
+@@ -1640,3 +1640,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "プレイリストの表示・非表示(_T)"
@@ -754,8 +766,11 @@ index 32ed2d418bb183ea59f5f8f9ddb65c58cc721bba..314b3f7c7b624c282163e3ae0a23615e
 +msgid "Display Settings could not be opened."
 +msgstr "ディスプレイ設定を開けませんでした。"
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "この映画はこの画面では 3D で表示できません。平面で表示します。"
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "この 3D 映画は平面で表示しています。Celluloid のウィンドウはグラフィックカードではなくプロセッサーで描画されており、目ごとの画像にはグラフィックカードが必要です。"
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "この 3D 映画は平面で表示しています。Celluloid は目ごとの画像をデスクトップに渡せませんでした。理由はシステムログに書かれています。"
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -776,10 +791,10 @@ index 32ed2d418bb183ea59f5f8f9ddb65c58cc721bba..314b3f7c7b624c282163e3ae0a23615e
 +msgid "the file could not be written"
 +msgstr "ファイルに書き込めませんでした"
 diff --git a/po/ko.po b/po/ko.po
-index bd0225f1b8a057964aebefca82ea24caebb3c4c5..7252374be6d1b778cd92fbda8114d00a5ed15227 100644
+index bd0225f1b8a057964aebefca82ea24caebb3c4c5..07c1afed514c13718f4e8b36ccfc58f5d3495f7b 100644
 --- a/po/ko.po
 +++ b/po/ko.po
-@@ -1628,3 +1628,176 @@
+@@ -1628,3 +1628,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "재생 목록 전환(_T)"
@@ -935,8 +950,11 @@ index bd0225f1b8a057964aebefca82ea24caebb3c4c5..7252374be6d1b778cd92fbda8114d00a
 +msgid "Display Settings could not be opened."
 +msgstr "디스플레이 설정을 열 수 없습니다."
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "이 영화는 이 화면에서 3D로 표시할 수 없습니다. 평면으로 표시합니다."
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "이 3D 영화는 평면으로 표시됩니다. Celluloid 창은 그래픽 카드가 아니라 프로세서가 그리며, 눈마다 따로 보이는 그림에는 그래픽 카드가 필요합니다."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "이 3D 영화는 평면으로 표시됩니다. Celluloid가 눈마다 따로 보이는 그림을 데스크톱에 넘기지 못했습니다. 이유는 시스템 로그에 기록되어 있습니다."
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -957,10 +975,10 @@ index bd0225f1b8a057964aebefca82ea24caebb3c4c5..7252374be6d1b778cd92fbda8114d00a
 +msgid "the file could not be written"
 +msgstr "파일에 쓸 수 없었습니다"
 diff --git a/po/pl.po b/po/pl.po
-index b325527782bc6fbdb5125f66e6170e2c22bc827e..22632037a87e9b95371abea6d8dfb3c4ad364223 100644
+index b325527782bc6fbdb5125f66e6170e2c22bc827e..99fad0ca16d4676ab1f0e7ed1a415c4e683edc31 100644
 --- a/po/pl.po
 +++ b/po/pl.po
-@@ -1679,3 +1679,176 @@
+@@ -1679,3 +1679,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "_Lista odtwarzania"
@@ -1116,8 +1134,11 @@ index b325527782bc6fbdb5125f66e6170e2c22bc827e..22632037a87e9b95371abea6d8dfb3c4
 +msgid "Display Settings could not be opened."
 +msgstr "Nie udało się otworzyć ustawień wyświetlacza."
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "Tego filmu nie można pokazać w 3D na tym ekranie. Jest pokazywany płasko."
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Ten film 3D jest pokazywany płasko: okno Celluloid rysuje procesor, a nie karta graficzna, a obraz dla każdego oka wymaga karty graficznej."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Ten film 3D jest pokazywany płasko: Celluloid nie mógł przekazać pulpitowi obrazu dla każdego oka. Przyczyna jest zapisana w dzienniku systemowym."
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -1138,10 +1159,10 @@ index b325527782bc6fbdb5125f66e6170e2c22bc827e..22632037a87e9b95371abea6d8dfb3c4
 +msgid "the file could not be written"
 +msgstr "nie udało się zapisać pliku"
 diff --git a/po/pt_BR.po b/po/pt_BR.po
-index 8c5b8345f130fe12f058f32ab5f6f4da3227fda2..28e64642eae377f883ca74303f5d7bf6bf980409 100644
+index 8c5b8345f130fe12f058f32ab5f6f4da3227fda2..0e9afee079f06cd269c4709fad4ce15628b13c19 100644
 --- a/po/pt_BR.po
 +++ b/po/pt_BR.po
-@@ -1736,3 +1736,176 @@
+@@ -1736,3 +1736,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "_Mostrar Lista de Reprodução"
@@ -1297,8 +1318,11 @@ index 8c5b8345f130fe12f058f32ab5f6f4da3227fda2..28e64642eae377f883ca74303f5d7bf6
 +msgid "Display Settings could not be opened."
 +msgstr "Não foi possível abrir as Configurações de tela."
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "Este filme não pode ser exibido em 3D nesta tela. Ele é exibido plano."
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "Este filme 3D é exibido plano: a janela do Celluloid é desenhada pelo processador, não por uma placa de vídeo, e uma imagem para cada olho precisa de uma placa de vídeo."
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "Este filme 3D é exibido plano: o Celluloid não conseguiu entregar à área de trabalho uma imagem para cada olho. O motivo está escrito no registro do sistema."
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -1319,10 +1343,10 @@ index 8c5b8345f130fe12f058f32ab5f6f4da3227fda2..28e64642eae377f883ca74303f5d7bf6
 +msgid "the file could not be written"
 +msgstr "não foi possível gravar o arquivo"
 diff --git a/po/zh_CN.po b/po/zh_CN.po
-index 8e5914efbd88f40bd78ae786b11ddb83249367a2..2cc499e0c8737f57c65c100c6b8c1e7bacc14dd9 100644
+index 8e5914efbd88f40bd78ae786b11ddb83249367a2..592ff7f0d644911d4d3575c943f19cb68b4a008c 100644
 --- a/po/zh_CN.po
 +++ b/po/zh_CN.po
-@@ -1623,3 +1623,176 @@
+@@ -1623,3 +1623,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "切换播放列表(_T)"
@@ -1478,8 +1502,11 @@ index 8e5914efbd88f40bd78ae786b11ddb83249367a2..2cc499e0c8737f57c65c100c6b8c1e7b
 +msgid "Display Settings could not be opened."
 +msgstr "无法打开显示设置。"
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "此影片无法在此屏幕上以 3D 显示，将以平面方式显示。"
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "此 3D 影片以平面方式显示：Celluloid 的窗口由处理器绘制，而不是由显卡绘制，而为每只眼睛分别提供画面需要显卡。"
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "此 3D 影片以平面方式显示：Celluloid 无法向桌面提供每只眼睛各自的画面。原因已写入系统日志。"
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -1500,10 +1527,10 @@ index 8e5914efbd88f40bd78ae786b11ddb83249367a2..2cc499e0c8737f57c65c100c6b8c1e7b
 +msgid "the file could not be written"
 +msgstr "无法写入文件"
 diff --git a/po/zh_TW.po b/po/zh_TW.po
-index a0857e4aa23d92946a5478496d31166a6299f41b..01a6b7685cc37abc585531d44bf50fca49e71c0e 100644
+index a0857e4aa23d92946a5478496d31166a6299f41b..0527e4616caa395218a2b3e8ab316ec574ae9eed 100644
 --- a/po/zh_TW.po
 +++ b/po/zh_TW.po
-@@ -1603,3 +1603,176 @@
+@@ -1603,3 +1603,179 @@
  
  #~ msgid "_Toggle Playlist"
  #~ msgstr "切換播放清單 (_T)"
@@ -1659,8 +1686,11 @@ index a0857e4aa23d92946a5478496d31166a6299f41b..01a6b7685cc37abc585531d44bf50fca
 +msgid "Display Settings could not be opened."
 +msgstr "無法開啟顯示設定。"
 +
-+msgid "This film cannot be shown in 3D on this screen. It is shown flat."
-+msgstr "此影片無法在此螢幕上以 3D 顯示，將以平面方式顯示。"
++msgid "This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card."
++msgstr "此 3D 影片以平面方式顯示：Celluloid 的視窗由處理器繪製，而不是由顯示卡繪製，而為每隻眼睛分別提供畫面需要顯示卡。"
++
++msgid "This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log."
++msgstr "此 3D 影片以平面方式顯示：Celluloid 無法向桌面提供每隻眼睛各自的畫面。原因已寫入系統記錄檔。"
 +
 +#, c-format
 +msgid "The correction was saved into %s."
@@ -1873,10 +1903,10 @@ index 04b16d298fa04cae653b3f74ce63475cf8c9044c..a677c49e0691727b1e27f93d70fb9050
  	for(gint i = 0; options[i].name; i++)
 diff --git a/src/celluloid-stereo.c b/src/celluloid-stereo.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57dec4b7c2b1
+index 0000000000000000000000000000000000000000..f0cc3b102fdf1688cd5b1d31b976f1a170f1408c
 --- /dev/null
 +++ b/src/celluloid-stereo.c
-@@ -0,0 +1,1170 @@
+@@ -0,0 +1,1075 @@
 +/*
 + * Copyright (c) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 + *
@@ -1906,6 +1936,10 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +#include <stereo-policy.h>
 +#include <stereo-mark.h>
 +
++#ifdef GDK_WINDOWING_WAYLAND
++#include <gdk/wayland/gdkwayland.h>
++#endif
++
 +#include "celluloid-stereo.h"
 +#include "celluloid-controller-private.h"
 +#include "celluloid-main-window.h"
@@ -1916,9 +1950,6 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +#include "celluloid-def.h"
 +
 +#define STEREO_KEY "celluloid-stereo"
-+#define HALVES_TRIES 3
-+#define HALVES_ASKS 10
-+#define HALVES_WIDTH 640
 +
 +/* The packings a film can come in, with the words the edition's stereo layer
 + * shows for them (Stereo::FileChoiceMenu), the value of mpv's
@@ -2018,13 +2049,15 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +	const StereoInput *input;
 +	gboolean swap;
 +
-+	/* A film that shows flat and could be a pair, by its shape or by its
-+	 * two halves (the stereo policy's rules) */
-+	gboolean could_be_pair;
-+	gint halves_tries;
-+	gint halves_asks;
-+	guint halves_id;
-+	gboolean want_picture;
++	/* Whether the loaded film has a picture: a video track that is not a
++	 * cover picture */
++	gboolean picture;
++
++	/* Whether the video area's OpenGL renderer is a software one (Mesa's
++	 * llvmpipe or softpipe, by GTK's own rule for its X11 way): read once
++	 * for each context */
++	gboolean renderer_known;
++	gboolean software;
 +
 +	/* The sizes last written to the debug log */
 +	gint traced_width;
@@ -2036,15 +2069,6 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +	gboolean fitted;
 +}
 +CelluloidStereo;
-+
-+static void
-+look_for_a_pair(CelluloidStereo *stereo);
-+
-+static gboolean
-+look_again(gpointer data);
-+
-+static gboolean
-+update_state_idle(gpointer data);
 +
 +static CelluloidStereo *
 +get_stereo(CelluloidController *controller)
@@ -2138,19 +2162,18 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +	}
 +}
 +
-+/* The input format is offered for a film shown in 3D, for a film that has a
-+ * correction, and for a film that shows flat and could be a pair. The swap
-+ * and the save are corrections of what is shown in 3D, and are not offered on
-+ * a flat picture.
++/* The input format is offered for every film with a picture, shown in 3D or
++ * flat: it is how the person says what a film that declares nothing holds
++ * (the edition's players keep it usable on 2D content so that unmarked stereo
++ * can be identified). The swap and the save are corrections of what is shown
++ * in 3D, and are not offered on a flat picture. A film without a picture has
++ * none of them.
 + */
 +static void
 +update_actions(CelluloidStereo *stereo)
 +{
 +	const gboolean shown = shown_in_3d(stereo);
-+	const gboolean offered =	stereo->supported &&
-+					(	stereo->views == 2 ||
-+						has_correction(stereo) ||
-+						stereo->could_be_pair );
++	const gboolean offered = stereo->supported && stereo->picture;
 +
 +	set_action_enabled(stereo, "stereo-input", offered);
 +	set_action_enabled(stereo, "stereo-input-offered", offered);
@@ -2186,7 +2209,6 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +		stereo->fitted = FALSE;
 +	}
 +
-+	look_for_a_pair(stereo);
 +	update_actions(stereo);
 +
 +	return G_SOURCE_REMOVE;
@@ -2218,7 +2240,12 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +}
 +
 +/* The video area cannot show the two views, one to each eye: the person is
-+ * told once for the film, and the area shows the left view.
++ * told once for the film what cannot be done and why, in words they can act
++ * on, and the area shows the left view; the log keeps GTK's exact reason. On
++ * Wayland the views reach the compositor as a buffer the graphics card shares
++ * (a dma-buf), which a software renderer cannot make: that one cause is said
++ * as it is. GTK gives every other cause the same error code, so the person is
++ * pointed to the log for those.
 + */
 +static void
 +stereo_error_handler(GObject *object, GParamSpec *pspec, gpointer data)
@@ -2230,12 +2257,34 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +
 +	if(error && !stereo->failure_told)
 +	{
++		gboolean processor = FALSE;
++		const gchar *sentence = NULL;
++
++#ifdef GDK_WINDOWING_WAYLAND
++		processor =	stereo->software &&
++				GDK_IS_WAYLAND_DISPLAY
++				(gtk_widget_get_display(GTK_WIDGET(object)));
++#endif
++
++		sentence =	processor ?
++				_("This 3D film is shown flat: Celluloid's window is drawn by the processor, not by a graphics card, and a picture for each eye needs a graphics card.") :
++				_("This 3D film is shown flat: Celluloid could not give the desktop a picture for each eye. The reason is written in the system log.");
 +		stereo->failure_told = TRUE;
 +		g_warning("The film cannot be shown in 3D: %s", error->message);
-+		celluloid_view_show_message_toast
-+			(	stereo->controller->view,
-+				_("This film cannot be shown in 3D on this screen. It is shown flat.") );
++		g_debug("Told the person: %s", sentence);
++		celluloid_view_show_message_toast(stereo->controller->view, sentence);
 +	}
++}
++
++/* The video area's OpenGL context goes with it: the next one's renderer is
++ * read again at its first render.
++ */
++static void
++unrealize_handler(GtkWidget *widget, gpointer data)
++{
++	CelluloidStereo *stereo = data;
++
++	stereo->renderer_known = FALSE;
 +}
 +
 +static gboolean
@@ -2317,131 +2366,14 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +	update_actions(stereo);
 +}
 +
-+/* A film that says nothing and shows flat: whether its picture is two similar
-+ * halves, by the stereo policy's test. The picture is the one just drawn into
-+ * the bound framebuffer, read back once: mpv cannot hand over a frame that
-+ * the machine's decoder keeps in the graphics card's memory. Called from the
-+ * video area's render, with its OpenGL context current.
++/* What the film's tracks hold: whether it has a picture (a video track that is
++ * not a cover picture), which is what the 3D menu's input format is offered
++ * for; and a film with a picture and no audio track says so, beside a volume
++ * control that stays usable: the sentence and the rule of the edition's stereo
++ * layer (Stereo::NoSound).
 + */
 +static void
-+test_drawn_picture(CelluloidStereo *stereo, gint framebuffer, gint width, gint height)
-+{
-+	const gint step = MAX(1, width/HALVES_WIDTH);
-+	const gint luma_width = width/step;
-+	const gint luma_height = height/step;
-+	guint8 *pixels = NULL;
-+	guint8 *luma = NULL;
-+	gint halves = STEREO_POLICY_HALVES_UNKNOWN;
-+
-+	stereo->want_picture = FALSE;
-+
-+	if(luma_width < 16 || luma_height < 16)
-+	{
-+		return;
-+	}
-+
-+	pixels = g_malloc((gsize)width*(gsize)height*4);
-+	luma = g_malloc((gsize)luma_width*(gsize)luma_height);
-+	/* mpv leaves its own framebuffers bound for reading */
-+	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)framebuffer);
-+	glReadBuffer(GL_COLOR_ATTACHMENT0);
-+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
-+	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-+
-+	for(gint y = 0; y < luma_height; y++)
-+	{
-+		const guint8 *row = pixels+(gsize)(y*step)*(gsize)width*4;
-+
-+		for(gint x = 0; x < luma_width; x++)
-+		{
-+			const guint8 *pixel = row+4*x*step;
-+
-+			luma[y*luma_width+x] =
-+				(guint8)((77*pixel[0]+150*pixel[1]+29*pixel[2])>>8);
-+		}
-+	}
-+
-+	halves = stereo_policy_halves_test(luma, luma_width, luma_height, luma_width);
-+	stereo->halves_tries++;
-+	stereo->could_be_pair = halves != STEREO_POLICY_HALVES_UNKNOWN;
-+	g_debug(	"The halves of the film's picture (%dx%d): %s",
-+			luma_width,
-+			luma_height,
-+			halves == STEREO_POLICY_HALVES_SIDE_BY_SIDE ?
-+			"alike side by side" :
-+			halves == STEREO_POLICY_HALVES_TOP_AND_BOTTOM ?
-+			"alike top and bottom" :
-+			"not alike" );
-+	g_free(luma);
-+	g_free(pixels);
-+
-+	if(stereo->could_be_pair && stereo->state_id == 0)
-+	{
-+		stereo->state_id = g_idle_add(update_state_idle, stereo);
-+	}
-+}
-+
-+static void
-+look_for_a_pair(CelluloidStereo *stereo)
-+{
-+	gint64 dw = 0;
-+	gint64 dh = 0;
-+
-+	g_debug(	"Looking for a pair: views %d, supported %d, tries %d, found %d",
-+			stereo->views,
-+			stereo->supported,
-+			stereo->halves_tries,
-+			stereo->could_be_pair );
-+
-+	if(stereo->could_be_pair || stereo->views != 1 || !stereo->supported)
-+	{
-+		return;
-+	}
-+
-+	if(	get_int_property(stereo, "video-params/dw", &dw) &&
-+		get_int_property(stereo, "video-params/dh", &dh) &&
-+		stereo_policy_video_side_by_side_by_shape((int)dw, (int)dh) == 1 )
-+	{
-+		stereo->could_be_pair = TRUE;
-+	}
-+	else if(stereo->halves_tries < HALVES_TRIES)
-+	{
-+		/* the next picture the video area draws is looked at */
-+		stereo->want_picture = TRUE;
-+		gtk_gl_area_queue_render(stereo->area);
-+	}
-+
-+	if(stereo->could_be_pair)
-+	{
-+		update_actions(stereo);
-+	}
-+	else if(	stereo->halves_tries < HALVES_TRIES &&
-+			stereo->halves_asks++ < HALVES_ASKS &&
-+			stereo->halves_id == 0 )
-+	{
-+		/* the film's first picture may not be there yet, or may be
-+		 * a black lead-in that says nothing: look again in a moment */
-+		stereo->halves_id = g_timeout_add_seconds(1, look_again, stereo);
-+	}
-+}
-+
-+static gboolean
-+look_again(gpointer data)
-+{
-+	CelluloidStereo *stereo = data;
-+
-+	stereo->halves_id = 0;
-+	look_for_a_pair(stereo);
-+
-+	return G_SOURCE_REMOVE;
-+}
-+
-+/* A film with a picture and no audio track says so, beside a volume control
-+ * that stays usable: the sentence and the rule of the edition's stereo layer
-+ * (Stereo::NoSound).
-+ */
-+static void
-+tell_no_sound(CelluloidStereo *stereo)
++read_tracks(CelluloidStereo *stereo)
 +{
 +	CelluloidMpv *mpv = get_mpv(stereo);
 +	gint64 count = 0;
@@ -2471,6 +2403,8 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +		g_free(name);
 +	}
 +
++	stereo->picture = picture;
++
 +	if(picture && !sound)
 +	{
 +		const gchar *sentence =
@@ -2491,10 +2425,6 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +	 * correction of this film */
 +	stereo->input = input_from_mpv(value);
 +	stereo->swap = celluloid_mpv_get_property_flag(mpv, "video-stereo-swap");
-+	stereo->could_be_pair = FALSE;
-+	stereo->halves_tries = 0;
-+	stereo->halves_asks = 0;
-+	stereo->want_picture = FALSE;
 +	stereo->failure_told = FALSE;
 +	stereo->fitted = FALSE;
 +	mpv_free(value);
@@ -2504,26 +2434,24 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +		keep_corrections(stereo);
 +	}
 +
-+	tell_no_sound(stereo);
++	read_tracks(stereo);
 +	update_actions(stereo);
 +}
 +
 +static void
 +mpv_event_handler(CelluloidMpv *mpv, gint event_id, gpointer event_data, gpointer data)
 +{
++	CelluloidStereo *stereo = data;
++
 +	if(event_id == MPV_EVENT_FILE_LOADED)
 +	{
-+		file_loaded(data);
++		file_loaded(stereo);
 +	}
-+	else if(event_id == MPV_EVENT_PLAYBACK_RESTART)
++	else if(event_id == MPV_EVENT_END_FILE)
 +	{
-+		CelluloidStereo *stereo = data;
-+
-+		/* after a seek the picture is another one: one more look, so
-+		 * that a film with a black lead-in can still be found a pair */
-+		stereo->halves_tries = MIN(stereo->halves_tries, HALVES_TRIES-1);
-+		stereo->halves_asks = 0;
-+		look_for_a_pair(stereo);
++		/* no film is loaded until the next one is: nothing to correct */
++		stereo->picture = FALSE;
++		update_actions(stereo);
 +	}
 +}
 +
@@ -2778,7 +2706,6 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +
 +	g_clear_handle_id(&stereo->apply_id, g_source_remove);
 +	g_clear_handle_id(&stereo->state_id, g_source_remove);
-+	g_clear_handle_id(&stereo->halves_id, g_source_remove);
 +	g_clear_object(&stereo->settings);
 +	g_free(stereo);
 +}
@@ -2822,6 +2749,10 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +				"notify::stereo-error",
 +				G_CALLBACK(stereo_error_handler),
 +				stereo );
++	g_signal_connect(	stereo->area,
++				"unrealize",
++				G_CALLBACK(unrealize_handler),
++				stereo );
 +
 +	update_actions(stereo);
 +}
@@ -2842,6 +2773,16 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +	}
 +
 +	eye = gtk_gl_area_get_current_eye(stereo->area);
++
++	if(!stereo->renderer_known)
++	{
++		const gchar *renderer = (const gchar *)glGetString(GL_RENDERER);
++
++		stereo->renderer_known = TRUE;
++		stereo->software =	renderer &&
++					(	strstr(renderer, "llvmpipe") ||
++						strstr(renderer, "softpipe") );
++	}
 +
 +	/* Once for a frame, before its first view: what the film's frames hold
 +	 * now, and the size of a view that holds the video area measured in the
@@ -2944,13 +2885,7 @@ index 0000000000000000000000000000000000000000..ad24588c0b266882788b7275fd0b57de
 +	}
 +	else
 +	{
-+		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
 +		celluloid_model_render_frame(controller->model, width, height);
-+
-+		if(stereo->want_picture && stereo->views == 1 && fbo > 0)
-+		{
-+			test_drawn_picture(stereo, fbo, width, height);
-+		}
 +	}
 +}
 +

@@ -2,6 +2,7 @@
 
 Celluloid, the GTK 4 front end of mpv, showing 3D films in 3D (queue row 137, milestone 3).
 Debian's 0.29-3 source with one patch, `patches/stereo3d-3d-films.patch`: the video area is a stereo GtkGLArea rendered once per eye from libmpv, the 3D menu has the edition's options and no others, a film's correction is kept beside its resume position and saved into the file only when the person chooses it.
+"3D Input Format" is offered for every film with a picture, shown in 3D or flat, because it is how a person gives a film that declares nothing its packing; "Swap left and right eyes" and the save are offered only while the film is shown in 3D.
 
 ## Build
 
