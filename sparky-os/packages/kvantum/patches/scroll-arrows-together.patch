@@ -1,0 +1,235 @@
+Description: Put both scroll arrows together at the end of the scrollbar
+ A new theme key, "scroll_arrows_together" in the General section (false by
+ default), puts the sub-line arrow beside the add-line arrow at the end of a
+ scrollbar (the bottom of a vertical one, the right of a horizontal one, the
+ left in right-to-left layouts) and starts the groove at the other end, as the
+ scroll bars of the classic Mac OS from 8.5 could be set.
+ Only subControlRect() changes: the groove, the sub-line arrow and the two
+ pages follow the new place, and drawing and hit testing already go through
+ subControlRect(), so the Qt 6 and Qt 5 plugins behave the same. Themes that do
+ not set the key are unchanged.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff -ruN a/Kvantum/doc/Theme-Config b/Kvantum/doc/Theme-Config
+--- a/Kvantum/doc/Theme-Config	2026-05-09 17:40:42.000000000 -0300
++++ b/Kvantum/doc/Theme-Config	2026-11-26 12:23:02.082922370 -0300
+@@ -659,6 +659,15 @@
+                                                       as far as possible but some apps might
+                                                       still force scroll arrows.
+ 
++scroll_arrows_together            true/false          Put both scroll arrows together at
++                                                      the end of the scrollbar (the bottom
++                                                      of a vertical one, the right of a
++                                                      horizontal one, the left in right-to-
++                                                      left layouts), the groove starting at
++                                                      the other end? False by default. It
++                                                      has no effect when "scroll_arrows"
++                                                      is false.
++
+ scrollbar_in_view                 true/false          Should scrollbars be inside the view
+                                                       frame? It is false (outside) by default.
+ 
+diff -ruN a/Kvantum/style/Kvantum.cpp b/Kvantum/style/Kvantum.cpp
+--- a/Kvantum/style/Kvantum.cpp	2026-05-09 17:40:42.000000000 -0300
++++ b/Kvantum/style/Kvantum.cpp	2026-11-26 12:23:02.071798779 -0300
+@@ -16330,6 +16330,12 @@
+         arrowSize = extent;
+       }
+       bool horiz = (option->state & State_Horizontal);
++      /* with "scroll_arrows_together", the sub-line arrow is put beside the add-line one,
++         at the end of the scrollbar, and the groove starts at the beginning */
++      const bool together = arrowSize > 0 && tspec_.scroll_arrows_together;
++      const bool rtl = (option->direction == Qt::RightToLeft);
++      const int grooveOffset = !together ? arrowSize
++                                         : horiz && rtl ? 2*arrowSize : 0;
+ 
+       int maxLength = 0; // max slider length
+       int length = 0; // slider length
+@@ -16369,10 +16375,18 @@
+       switch (subControl) {
+         case SC_ScrollBarGroove :
+           if (horiz)
+-            return QRect(x+arrowSize, y, w-2*arrowSize, h);
++            return QRect(x+grooveOffset, y, w-2*arrowSize, h);
+           else
+-            return QRect(x, y+arrowSize, w, h-2*arrowSize);
++            return QRect(x, y+grooveOffset, w, h-2*arrowSize);
+         case SC_ScrollBarSubLine :
++          if (together)
++          {
++            if (horiz)
++              return QRect(rtl ? x+arrowSize : x+w-2*arrowSize, y,
++                           arrowSize, arrowSize);
++            else
++              return QRect(x, y+h-2*arrowSize, arrowSize, arrowSize);
++          }
+           if (horiz)
+             return QRect(option->direction == Qt::RightToLeft ? x+w-arrowSize : x, y,
+                          arrowSize, arrowSize);
+@@ -16393,17 +16407,17 @@
+         }
+         case SC_ScrollBarAddPage : {
+           if (horiz)
+-            return QRect(arrowSize+start+length, 0,
++            return QRect(grooveOffset+start+length, 0,
+                          maxLength-start-length, extent);
+           else
+-            return QRect(0, arrowSize+start+length,
++            return QRect(0, grooveOffset+start+length,
+                          extent, maxLength-start-length);
+         }
+         case SC_ScrollBarSubPage : {
+           if (horiz)
+-            return QRect(arrowSize, 0, start, extent);
++            return QRect(grooveOffset, 0, start, extent);
+           else
+-            return QRect(0, arrowSize, extent, start);
++            return QRect(0, grooveOffset, extent, start);
+         }
+ 
+         default : return QCommonStyle::subControlRect(control,option,subControl,widget);
+diff -ruN a/Kvantum/style/qt5/Kvantum5.cpp b/Kvantum/style/qt5/Kvantum5.cpp
+--- a/Kvantum/style/qt5/Kvantum5.cpp	2026-05-09 17:40:42.000000000 -0300
++++ b/Kvantum/style/qt5/Kvantum5.cpp	2026-11-26 12:23:02.081143453 -0300
+@@ -16179,6 +16179,12 @@
+         arrowSize = extent;
+       }
+       bool horiz = (option->state & State_Horizontal);
++      /* with "scroll_arrows_together", the sub-line arrow is put beside the add-line one,
++         at the end of the scrollbar, and the groove starts at the beginning */
++      const bool together = arrowSize > 0 && tspec_.scroll_arrows_together;
++      const bool rtl = (option->direction == Qt::RightToLeft);
++      const int grooveOffset = !together ? arrowSize
++                                         : horiz && rtl ? 2*arrowSize : 0;
+ 
+       int maxLength = 0; // max slider length
+       int length = 0; // slider length
+@@ -16218,10 +16224,18 @@
+       switch (subControl) {
+         case SC_ScrollBarGroove :
+           if (horiz)
+-            return QRect(x+arrowSize, y, w-2*arrowSize, h);
++            return QRect(x+grooveOffset, y, w-2*arrowSize, h);
+           else
+-            return QRect(x, y+arrowSize, w, h-2*arrowSize);
++            return QRect(x, y+grooveOffset, w, h-2*arrowSize);
+         case SC_ScrollBarSubLine :
++          if (together)
++          {
++            if (horiz)
++              return QRect(rtl ? x+arrowSize : x+w-2*arrowSize, y,
++                           arrowSize, arrowSize);
++            else
++              return QRect(x, y+h-2*arrowSize, arrowSize, arrowSize);
++          }
+           if (horiz)
+             return QRect(option->direction == Qt::RightToLeft ? x+w-arrowSize : x, y,
+                          arrowSize, arrowSize);
+@@ -16242,17 +16256,17 @@
+         }
+         case SC_ScrollBarAddPage : {
+           if (horiz)
+-            return QRect(arrowSize+start+length, 0,
++            return QRect(grooveOffset+start+length, 0,
+                          maxLength-start-length, extent);
+           else
+-            return QRect(0, arrowSize+start+length,
++            return QRect(0, grooveOffset+start+length,
+                          extent, maxLength-start-length);
+         }
+         case SC_ScrollBarSubPage : {
+           if (horiz)
+-            return QRect(arrowSize, 0, start, extent);
++            return QRect(grooveOffset, 0, start, extent);
+           else
+-            return QRect(0, arrowSize, extent, start);
++            return QRect(0, grooveOffset, extent, start);
+         }
+ 
+         default : return QCommonStyle::subControlRect(control,option,subControl,widget);
+diff -ruN a/Kvantum/style/qt5/specs5.h b/Kvantum/style/qt5/specs5.h
+--- a/Kvantum/style/qt5/specs5.h	2026-05-09 17:40:42.000000000 -0300
++++ b/Kvantum/style/qt5/specs5.h	2026-11-26 12:23:02.061668701 -0300
+@@ -160,6 +160,8 @@
+   bool center_scrollbar_indicator;
+   /* draw scroll arrows? */
+   bool scroll_arrows;
++  /* draw both scroll arrows together at the end of the scrollbar? */
++  bool scroll_arrows_together;
+   /* draw tree branch lines? */
+   bool tree_branch_line;
+ 
+@@ -520,6 +522,7 @@
+   tspec.scroll_min_extent = 36;
+   tspec.center_scrollbar_indicator = false;
+   tspec.scroll_arrows=true;
++  tspec.scroll_arrows_together=false;
+   tspec.tree_branch_line=false;
+   tspec.slider_width = 8;
+   tspec.slider_handle_width = 16;
+diff -ruN a/Kvantum/style/qt5/ThemeConfig5.cpp b/Kvantum/style/qt5/ThemeConfig5.cpp
+--- a/Kvantum/style/qt5/ThemeConfig5.cpp	2026-05-09 17:40:42.000000000 -0300
++++ b/Kvantum/style/qt5/ThemeConfig5.cpp	2026-11-26 12:23:02.062012622 -0300
+@@ -967,9 +967,18 @@
+     v = getValue(KSL("General"),KSL("scroll_arrows"));
+     if (v.isValid()) // true by default
+       r.scroll_arrows = v.toBool();
++
++    if (r.scroll_arrows)
++    {
++      v = getValue(KSL("General"),KSL("scroll_arrows_together"));
++      r.scroll_arrows_together = v.toBool(); // false by default
++    }
+   }
+   else
++  {
+     r.scroll_arrows = false;
++    r.scroll_arrows_together = false;
++  }
+ 
+   v = getValue(KSL("General"),KSL("dialog_button_layout"));
+   if (v.isValid()) // 0 by default
+diff -ruN a/Kvantum/style/themeconfig/specs.h b/Kvantum/style/themeconfig/specs.h
+--- a/Kvantum/style/themeconfig/specs.h	2026-05-09 17:40:42.000000000 -0300
++++ b/Kvantum/style/themeconfig/specs.h	2026-11-26 12:23:02.061333430 -0300
+@@ -160,6 +160,8 @@
+   bool center_scrollbar_indicator;
+   /* draw scroll arrows? */
+   bool scroll_arrows;
++  /* draw both scroll arrows together at the end of the scrollbar? */
++  bool scroll_arrows_together;
+   /* draw tree branch lines? */
+   bool tree_branch_line;
+ 
+@@ -520,6 +522,7 @@
+   tspec.scroll_min_extent = 36;
+   tspec.center_scrollbar_indicator = false;
+   tspec.scroll_arrows=true;
++  tspec.scroll_arrows_together=false;
+   tspec.tree_branch_line=false;
+   tspec.slider_width = 8;
+   tspec.slider_handle_width = 16;
+diff -ruN a/Kvantum/style/themeconfig/ThemeConfig.cpp b/Kvantum/style/themeconfig/ThemeConfig.cpp
+--- a/Kvantum/style/themeconfig/ThemeConfig.cpp	2026-05-09 17:40:42.000000000 -0300
++++ b/Kvantum/style/themeconfig/ThemeConfig.cpp	2026-11-26 12:23:02.061847382 -0300
+@@ -967,9 +967,18 @@
+     v = getValue(KSL("General"),KSL("scroll_arrows"));
+     if (v.isValid()) // true by default
+       r.scroll_arrows = v.toBool();
++
++    if (r.scroll_arrows)
++    {
++      v = getValue(KSL("General"),KSL("scroll_arrows_together"));
++      r.scroll_arrows_together = v.toBool(); // false by default
++    }
+   }
+   else
++  {
+     r.scroll_arrows = false;
++    r.scroll_arrows_together = false;
++  }
+ 
+   v = getValue(KSL("General"),KSL("dialog_button_layout"));
+   if (v.isValid()) // 0 by default
