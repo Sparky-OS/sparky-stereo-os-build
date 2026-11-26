@@ -152,7 +152,8 @@ int main(int argc, char **argv)
             }
             QSet<QString> now;
             for (const CameraInfo &c : cams) {
-                const QString sig = c.node.name + QLatin1Char('@') + QString::number(c.node.id);
+                // a camera unplugged and plugged in again between two passes can get its old id back, never its old serial
+                const QString sig = c.node.name + QLatin1Char('@') + QString::number(c.node.serial ? c.node.serial : c.node.id);
                 now.insert(sig);
                 if (seen.contains(sig)) {
                     continue;

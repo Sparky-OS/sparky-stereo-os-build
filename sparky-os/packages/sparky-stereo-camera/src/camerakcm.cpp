@@ -65,7 +65,8 @@ void CameraKcm::refresh()
     QString now;
     for (const CameraInfo &c : infos) {
         list.append(QVariantMap{{QStringLiteral("name"), c.node.name}, {QStringLiteral("description"), c.node.description}, {QStringLiteral("isDefault"), c.node.isDefault},
-                                {QStringLiteral("api"), c.node.api}, {QStringLiteral("note"), c.note}, {QStringLiteral("nodeId"), c.node.id}});
+                                {QStringLiteral("api"), c.node.api}, {QStringLiteral("note"), c.note}, {QStringLiteral("nodeId"), c.node.id},
+                                {QStringLiteral("serial"), c.node.serial}});
         if (c.node.isDefault) {
             now = c.node.name;
         }
