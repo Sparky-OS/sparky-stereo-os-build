@@ -16,6 +16,10 @@ SIBS=$(realpath "$7")
 : "${SPARKY_BUILD_IMAGE:?an owned build image}" "${BUILD_NAME_PREFIX:?an owned container prefix}"
 if [ "${SPARKY_PKG_RESUME:-0}" = 1 ]; then
     [ -f "$WORK/lc/source-closure.sha256" ] && [ -d "$WORK/lc/source/obj-x86_64-linux-gnu" ]
+    if compgen -G "$WORK/lc/*.deb" > /dev/null; then
+        echo "Move the previous binary output from $WORK/lc before resuming." >&2
+        exit 1
+    fi
 else
     [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 fi
