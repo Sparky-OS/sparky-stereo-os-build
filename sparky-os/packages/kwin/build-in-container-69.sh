@@ -15,6 +15,8 @@ printf 'deb [signed-by=/etc/apt/trusted.gpg.d/sparky-stereo-repo.asc] file:/repo
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
 printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
+# the published tree's key, as an image without the edition's key needs it
+cp /repo/sparky-stereo-repo.asc /etc/apt/trusted.gpg.d/sparky-stereo-repo.asc
 mkdir -p "$job/lc" && cd "$job/lc"
 build_args=()
 if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
