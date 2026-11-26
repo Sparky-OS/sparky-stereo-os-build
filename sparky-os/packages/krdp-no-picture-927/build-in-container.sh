@@ -58,6 +58,14 @@ fi
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 chown -R builder:builder /work
 cd /work/lc/source
+if [[ "${RESUME_927:-0}" == 1 ]]; then
+    # Reinstall from the compiled tree. The previous gate already marked its staging files.
+    binaries=$(dh_listpackages -a)
+    for binary in $binaries; do
+        rm -rf -- "debian/$binary" "debian/$binary.debhelper.log" "debian/$binary.substvars"
+    done
+    rm -rf -- debian/.debhelper debian/tmp debian/files
+fi
 runuser -u builder -- env HOME=/work/lc SPARKY_LC_PREVIOUS_DIR="$previous" "${gate[@]}" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
 	DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS" dpkg-buildpackage -b -us -uc -j"${THREADS:-4}" "${options[@]}"
 cd /work/lc
