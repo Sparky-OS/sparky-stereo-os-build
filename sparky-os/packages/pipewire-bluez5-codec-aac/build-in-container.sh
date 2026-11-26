@@ -3,8 +3,7 @@
 set -euo pipefail
 REPRO=/run/reproducible.py
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
-SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
-export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
+export SOURCE_DATE_EPOCH
 export DEBIAN_FRONTEND=noninteractive
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export DEB_BUILD_OPTIONS=parallel=4
@@ -14,6 +13,9 @@ sed -i 's/^Types: deb$/Types: deb deb-src/; s/^Components: main$/Components: mai
 apt-get -q update
 apt-get -y --no-install-recommends install build-essential debhelper devscripts \
     debian-keyring gnupg python3
+# python3 exists only from here on in a bare debian:testing image
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_RFC2822
 mkdir /work
 cd /work
 apt-get source --download-only --only-source "pipewire=$DEBV"
