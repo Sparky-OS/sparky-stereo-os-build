@@ -1,0 +1,115 @@
+Description: Keep generic virtual monitors after authenticated KRdp startup
+Origin: vendor, kdeconnect-kde commit b84e43cfe7eb88e5f47999681544898b89300004
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-26
+
+diff --git a/plugins/virtualmonitor/virtualmonitorplugin.cpp b/plugins/virtualmonitor/virtualmonitorplugin.cpp
+index 9d11d846e..54f72057d 100644
+--- a/plugins/virtualmonitor/virtualmonitorplugin.cpp
++++ b/plugins/virtualmonitor/virtualmonitorplugin.cpp
+@@ -28,6 +28,7 @@
+ #include <QJsonArray>
+ #include <QJsonObject>
+ #include <QProcess>
++#include <QProcessEnvironment>
+ #include <QScreen>
+ #include <QSettings>
+ #include <QSslCertificate>
+@@ -60,7 +61,8 @@ constexpr int ServerProbeAttempts = 50;
+ constexpr int ServerProbeIntervalMs = 100;
+ constexpr int ClientConnectionTimeoutMs = 45'000;
+ constexpr int PermissionRequestTimeoutMs = 30'000;
+-constexpr int RdpPreflightTimeoutMs = 3'000;
++constexpr int RdpPreflightStartTimeoutMs = 3'000;
++constexpr int RdpPreflightTimeoutSeconds = 15;
+ constexpr int MaxRemoteDiagnosticEntries = 50;
+ constexpr int MaxRemoteDiagnosticEntryLength = 500;
+ 
+@@ -196,17 +198,20 @@ QString VirtualMonitorPlugin::remoteDesktopPreflightError() const
+     helpProcess.setArguments({QStringLiteral("--help")});
+     helpProcess.setProcessChannelMode(QProcess::MergedChannels);
+     helpProcess.start();
+-    if (!helpProcess.waitForStarted(RdpPreflightTimeoutMs)) {
++    if (!helpProcess.waitForStarted(RdpPreflightStartTimeoutMs)) {
+         return i18n("The KRdp server could not be started: %1", helpProcess.errorString());
+     }
+-    if (!helpProcess.waitForFinished(RdpPreflightTimeoutMs)) {
++    if (!helpProcess.waitForFinished(RdpPreflightTimeoutSeconds * 1000)) {
+         helpProcess.kill();
+         helpProcess.waitForFinished();
+-        return i18n("The KRdp server compatibility check timed out.");
++        return i18n("The KRdp server compatibility check timed out after %1 seconds.", RdpPreflightTimeoutSeconds);
+     }
+     const QString help = QString::fromLocal8Bit(helpProcess.readAll());
+-    if (helpProcess.exitStatus() != QProcess::NormalExit || helpProcess.exitCode() != 0) {
+-        return i18n("The KRdp server compatibility check failed.");
++    if (helpProcess.exitStatus() != QProcess::NormalExit) {
++        return i18n("The KRdp server crashed during the compatibility check.");
++    }
++    if (helpProcess.exitCode() != 0) {
++        return i18n("The KRdp server compatibility check exited with code %1.", helpProcess.exitCode());
+     }
+     for (const QString &option : RequiredKrdpOptions) {
+         if (!help.contains(option)) {
+@@ -421,7 +426,7 @@ void VirtualMonitorPlugin::receivePacket(const NetworkPacket &received)
+             }
+         } else if (action == ActionClientConnected) {
+             const QString sessionId = received.get<QString>(QStringLiteral("sessionId"));
+-            if (sessionId == m_currentRequest.sessionId && m_serverReady) {
++            if (!m_currentRequest.panel.isEmpty() && sessionId == m_currentRequest.sessionId && m_serverReady) {
+                 m_clientConnected = true;
+                 sendStatus(QStringLiteral("connected"));
+             }
+@@ -743,7 +748,10 @@ bool VirtualMonitorPlugin::requestVirtualMonitor()
+         addError(i18n("Remote device does not have an RDP client installed."));
+     }
+     if (!isVirtualMonitorAvailable()) {
+-        addError(i18n("The krdp package is required on the local device."));
++        updateLocalRemoteDesktopCapabilities();
++        if (!isVirtualMonitorAvailable()) {
++            addError(m_remoteDesktopUnavailableReason);
++        }
+     }
+     if (m_remoteResolution.isEmpty()) {
+         addError(i18n("Cannot start a request without a resolution."));
+@@ -844,18 +852,37 @@ bool VirtualMonitorPlugin::startRdpSession(const SessionRequest &request)
+               << m_tlsDirectory->filePath(QStringLiteral("server.crt")) << QStringLiteral("--certificate-key")
+               << m_tlsDirectory->filePath(QStringLiteral("server.key"));
+ 
+-    if (isUsingPlasmaWayland()) {
++    const bool plasma = isUsingPlasmaWayland();
++    if (plasma) {
+         arguments << QStringLiteral("--plasma");
+     }
+ 
++    // KRdp creates the backend only after its RDP connection is authenticated
++    // and activated. Its TCP readiness probe and the stock RDP URL handler
++    // cannot establish that the backend session actually started.
++    const QString eventPrefix = QUuid::createUuid().toString(QUuid::Id128);
++    auto environment = QProcessEnvironment::systemEnvironment();
++    environment.insert(QStringLiteral("QT_MESSAGE_PATTERN"), eventPrefix + QStringLiteral(" %{category} %{type} %{message}"));
++    environment.insert(QStringLiteral("QT_LOGGING_RULES"),
++                       environment.value(QStringLiteral("QT_LOGGING_RULES")) + QStringLiteral("\norg.kde.krdp.debug=true"));
++    process->setProcessEnvironment(environment);
++    const QByteArray sessionStarted = eventPrefix.toLatin1() + (plasma ? " org.kde.krdp debug Started Plasma session\n"
++                                                                     : " org.kde.krdp debug Started Freedesktop Portal session\n");
++    const QByteArray sessionRecord = '\n' + sessionStarted;
++
+     process->setArguments(arguments);
+     process->setProcessChannelMode(QProcess::SeparateChannels);
+-    connect(process, &QProcess::readyReadStandardError, this, [this, process]() {
++    connect(process, &QProcess::readyReadStandardError, this, [this, process, generation, sessionStarted, sessionRecord]() {
+         const QByteArray output = process->readAllStandardError();
+         if (output.isEmpty()) {
+             return;
+         }
+         m_serverErrors.append(output);
++        if (generation == m_sessionGeneration && !m_clientConnected
++            && (m_serverErrors.startsWith(sessionStarted) || m_serverErrors.contains(sessionRecord))) {
++            m_clientConnected = true;
++            sendStatus(QStringLiteral("connected"));
++        }
+         constexpr qsizetype maximumBufferedOutput = 64 * 1024;
+         if (m_serverErrors.size() > maximumBufferedOutput) {
+             m_serverErrors.remove(0, m_serverErrors.size() - maximumBufferedOutput);

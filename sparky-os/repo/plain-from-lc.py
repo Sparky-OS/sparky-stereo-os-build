@@ -76,9 +76,10 @@ if no_build_depends:
     assert prefix not in control and re.search(r'^Build-Depends: ', control, re.M), 'Build-Depends starts with the lc1 build dependencies'
 elif at_end:
     suffix = ', gcc, node-acorn, nodejs, perl, python3, python3-yaml\n'
-    assert prefix not in control and len(re.findall(r'^Build-Depends: .*' + re.escape(suffix), control, re.M)) == 1, \
+    field = r'(^Build-Depends:[^\n]*(?:\n[ \t][^\n]*)*)' + re.escape(suffix)
+    assert prefix not in control and len(re.findall(field, control, re.M)) == 1, \
         'Build-Depends does not end with the lc1 build dependencies'
-    writes.append((deb / 'control', re.sub(r'^(Build-Depends: .*)' + re.escape(suffix), lambda m: m.group(1) + '\n', control, flags=re.M)))
+    writes.append((deb / 'control', re.sub(field, r'\1\n', control, flags=re.M)))
 else:
     assert control.count(prefix) == 1, 'the lc1 build dependencies are not where debian_prepare puts them'
     writes.append((deb / 'control', control.replace(prefix, 'Build-Depends:')))

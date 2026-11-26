@@ -41,7 +41,7 @@ belong in the Debian tarball when producing the next source descriptor.
 | Source | Exact checked source | Receiving recipe or build | Patch | Changelog entry |
 |---|---|---|---|---|
 | `command-not-found` | `23.04.0-3+sparky1+lc1` | `successor to 23.04.0-3+sparky1+lc1` | `command-not-found-order46b.po.patch` | `command-not-found_23.04.0-3+sparky2.txt` |
-| `kdeconnect` | `26.04.3-2+stereo3d1+lc1` | `successor to 26.04.3-2+stereo3d1+lc1` | `kdeconnect-order46b.po.patch` | `kdeconnect_26.04.3-2+stereo3d2.txt` |
+| `kdeconnect` | `26.04.3-2+stereo3d1+lc1` | `+stereo3d3` incorporates the planned `+stereo3d2` catalogues and ORDER 924 | `kdeconnect-order46b.po.patch` | `kdeconnect_26.04.3-2+stereo3d3.txt` |
 | `kf6-kfilemetadata` | `6.30.0-1+stereo3d5+lc1` | `successor to 6.30.0-1+stereo3d5+lc1` | `kf6-kfilemetadata-order46b.po.patch` | `kf6-kfilemetadata_6.30.0-1+stereo3d6.txt` |
 | `kf6-kio` | `6.30.0-1+stereo3d11+lc1` | `successor to 6.30.0-1+stereo3d11+lc1` | `kf6-kio-order46b.po.patch` | `kf6-kio_6.30.0-1+stereo3d12.txt` |
 | `kinfocenter` | `4:6.7.4-1+stereo3d3+lc1` | `successor to 4:6.7.4-1+stereo3d3+lc1` | `kinfocenter-order46b.patch` | `kinfocenter_6.7.4-1+stereo3d4.txt` |
