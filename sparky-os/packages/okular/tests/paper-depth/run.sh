@@ -55,6 +55,14 @@ if [ "$M2" = 1 ]; then
         wayland-scanner private-code "$xml" "$tmp/fake-input.c"
         cc -O2 -I"$tmp" /tests/input.c "$tmp/fake-input.c" -lwayland-client -lm -o /out/bin/input'
     test -x "$RESULTS/bin/input"
+    run build-words-style -- bash -ec '
+        tmp=$(mktemp -d)
+        trap "rm -rf \"$tmp\"" EXIT
+        mkdir -p /out/bin/styles
+        /usr/lib/qt6/libexec/moc /tests/words-desk-style.cpp -o "$tmp/words-desk-style.moc"
+        g++ -O1 -fPIC -shared -I"$tmp" -o /out/bin/styles/libpaperdepth.so /tests/words-desk-style.cpp \
+            $(pkg-config --cflags --libs Qt6Widgets)'
+    test -s "$RESULTS/bin/styles/libpaperdepth.so"
 fi
 grep -q 'build rc=0' "$RESULTS/bin/build.log" || { cat "$RESULTS/bin/build.log"; exit 1; }
 for case in $CASES; do

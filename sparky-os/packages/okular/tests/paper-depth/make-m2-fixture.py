@@ -37,19 +37,17 @@ def make_odt(path):
       </office:automatic-styles>
       <office:master-styles><style:master-page style:name="Standard" style:page-layout-name="Paper"/></office:master-styles>
     </office:document-styles>"""
+    paragraphs = []
+    for page in (1, 2):
+        style = ' text:style-name="NextPage"' if page == 2 else ""
+        paragraphs.append(f"<text:p{style}>Paper depth, page {page}</text:p>")
+        paragraphs.extend(f"<text:p>Page {page}, marker line {line}.</text:p>" for line in range(1, 9))
     content = f"""<office:document-content xmlns:office="{OFFICE}" xmlns:style="{STYLE}" xmlns:text="{TEXT}"
-                         xmlns:fo="{FO}" xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.2">
+                         xmlns:fo="{FO}" office:version="1.2">
       <office:automatic-styles>
         <style:style style:name="NextPage" style:family="paragraph"><style:paragraph-properties fo:break-before="page"/></style:style>
       </office:automatic-styles>
-      <office:body><office:text>
-        <text:p>Paper depth, page one</text:p>
-        <text:p>The text marks the plane of the page.<office:annotation><dc:creator>Rig</dc:creator><text:p>Page one comment</text:p></office:annotation></text:p>
-        <text:p>One more line at a known horizontal position.</text:p>
-        <text:p text:style-name="NextPage">Paper depth, page two</text:p>
-        <text:p>The second page has a different mark.<office:annotation><dc:creator>Rig</dc:creator><text:p>Page two comment</text:p></office:annotation></text:p>
-        <text:p>One more line at a known horizontal position.</text:p>
-      </office:text></office:body>
+      <office:body><office:text>{''.join(paragraphs)}</office:text></office:body>
     </office:document-content>"""
     manifest_ns = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"
     manifest = f"""<manifest:manifest xmlns:manifest="{manifest_ns}" manifest:version="1.2">

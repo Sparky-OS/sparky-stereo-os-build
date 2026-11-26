@@ -71,7 +71,7 @@ print(outputs[0]["uuid"])
 PYUUID
 ) || exit 1
     printf '\n[StereoDepth][%s]\nPoppedLimit=16\n' "$uuid" >> "$XDG_CONFIG_HOME/kwinrc"
-    gdbus call --session --dest org.kde.KWin --object-path /KWin --method org.kde.KWin.reconfigure
+    dbus-send --session --type=method_call --dest=org.kde.KWin /KWin org.kde.KWin.reconfigure || exit 1
     sleep 1
 fi
 env=(WAYLAND_DISPLAY=sub QT_QPA_PLATFORM=wayland LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
@@ -84,12 +84,13 @@ probe-override)
     sleep 5
     place 'var w = workspace.activeWindow; w.frameGeometry = {x: 60, y: 40, width: 900, height: 520};' ;;
 words-*)
-    env "${env[@]}" WAYLAND_DEBUG=client calligrawords /tmp/two-pages.odt > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
+    env "${env[@]}" WAYLAND_DEBUG=client QT_PLUGIN_PATH=/out/bin calligrawords -style PaperDepth /tmp/two-pages.odt > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
     sleep 8
     if [ "$CASE" = words-scrolled ]; then
         place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 575};'
-        input move 450 410
-        input scroll 125
+        input click 708 549
+        input click 708 549
+        input click 708 549
     else
         place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 960};'
     fi
