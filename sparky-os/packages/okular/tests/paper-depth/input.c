@@ -59,7 +59,10 @@ int main(int argc, char **argv)
                                                       wl_fixed_from_double(atof(argv[3])));
         wl_display_roundtrip(display);
         if (!strcmp(argv[1], "click")) {
+            usleep(180000);
             org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+            wl_display_roundtrip(display);
+            usleep(80000);
             org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
         }
     } else if (argc == 6 && !strcmp(argv[1], "drag")) {
@@ -69,6 +72,8 @@ int main(int argc, char **argv)
         wl_display_roundtrip(display);
         usleep(100000);
         org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+        wl_display_roundtrip(display);
+        usleep(80000);
         for (int step = 1; step <= 10; ++step) {
             org_kde_kwin_fake_input_pointer_motion_absolute(input, wl_fixed_from_double(x + dx * step / 10),
                                                            wl_fixed_from_double(y + dy * step / 10));
@@ -87,6 +92,8 @@ int main(int argc, char **argv)
                 key(code, 1);
             } else {
                 key(code, 1);
+                wl_display_roundtrip(display);
+                usleep(60000);
                 key(code, 0);
             }
             wl_display_roundtrip(display);

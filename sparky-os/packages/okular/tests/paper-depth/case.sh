@@ -112,7 +112,7 @@ preview-*)
 	sleep 2 ;;
 esac
 if [ "$CASE" = okular-kcm ]; then
-    env "${env[@]}" kcmshell6 kcm_kwinstereodepth > "$OUT/kcm.out" 2> "$OUT/kcm.err" & kcm=$!
+    env "${env[@]}" WAYLAND_DEBUG=client kcmshell6 kcm_kwinstereodepth > "$OUT/kcm.out" 2> "$OUT/kcm.err" & kcm=$!
     # Select the KCM by caption. The viewer may still own focus while it launches.
     for attempt in 1 2 3; do
         place 'var ws = workspace.stackingOrder; for (var i = 0; i < ws.length; i++) { var w = ws[i]; if (w.caption === "3D Depth") { w.setMaximize(false, false); w.frameGeometry = {x: 175, y: 95, width: 1000, height: 850}; workspace.activeWindow = w; } }'
