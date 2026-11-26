@@ -83,17 +83,32 @@ dpkg() {
 		[[ -z ${foreign:-} ]] || printf '%s\n' $foreign
 		return 0
 	fi
+	if [[ $1 == --audit ]]; then
+		[[ -z ${audit:-} ]] || printf '%s\n' "$audit"
+		return 0
+	fi
 	echo "dpkg $*" >>"$calls"
 	[[ ${fail_purge:-0} == 0 ]]
 }
 env() {
 	echo "$*" >>"$calls"
+	# the driver's plan (apt-get --simulate install), and what a download that fails prints
+	[[ $* != *'--simulate install nvidia-driver'* || -z ${driver_plan:-} ]] || printf '%s\n' "$driver_plan"
+	if [[ $* == *install\ nvidia-driver=* && $* != *--simulate* && ${fail_install:-0} != 0 && ${fetch_fail:-0} != 0 ]]; then
+		printf '%s\n' 'E: Failed to fetch https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/./nvidia-driver_615.71.09-2_amd64.deb  Temporary failure resolving' 'E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?'
+	fi
 	[[ $* != *"install $LOCK"* || ${fail_policy:-0} == 0 ]] || return 1
 	[[ $* != *"install $LEGACY_LOCK"* || ${fail_policy:-0} == 0 ]] || return 1
 	[[ $* != *'apt-get -y purge'* || ${fail_stale:-0} == 0 ]] || return 1
 	[[ $* != *'apt-get -y update'* || ${fail_update:-0} == 0 ]] || return 1
 	[[ $* != *--simulate* || ${fail_preflight:-0} == 0 ]] || return 1
 	[[ $* != *install\ nvidia-driver=* || $* == *--simulate* || ${fail_install:-0} == 0 ]] || return 1
+}
+# apt-get run without env: the plans the setup reads itself (the previous lock's purge, a switch's leftovers)
+apt-get() {
+	echo "apt-get $*" >>"$calls"
+	[[ $* != *--simulate* || -z ${apt_plan:-} ]] || printf '%s\n' "$apt_plan"
+	return 0
 }
 # a check that fails the test when the command succeeds (bash's set -e ignores a command inverted with !)
 refute() { if "$@"; then echo "FAIL: $*"; exit 1; fi; }
@@ -197,8 +212,31 @@ for module_version in 615.71.09-2 615.71.09-2+lc1; do
 done
 module_version=615.71.09-2+stereo3d4
 echo 'PASS NVIDIA driver version follows the module (a new version, a Lean Code build); a module without our suffix stops the setup and says so'
-fail_install=1
+# a transaction that fails: "half done" only when dpkg really stopped part way; a download that failed, and a run that
+# stopped before installing anything, are said as what they are (ORDER 675, continuation 3)
+fail_install=1 audit='The following packages are only half configured, probably due to problems configuring them'
 fails_with 'NVIDIA: the driver.s installation stopped part way' setup_nvidia
+audit='' fetch_fail=1
+fails_with 'NVIDIA: the driver.s packages could not be downloaded' setup_nvidia
+refute grep -q 'half done' "$T/out"
+fetch_fail=0
+fails_with 'NVIDIA: apt stopped before it installed anything of the driver' setup_nvidia
+refute grep -q 'half done' "$T/out"
+fail_install=0
+echo 'PASS a failed transaction is said as half done only when dpkg --audit names something; a failed download and an early stop are said as such'
+# a plan is read by every kind of line: the driver's plan may remove only NVIDIA's packages; the previous lock's purge may
+# install nothing
+: >"$calls"; driver_plan=$'Inst nvidia-driver (615.71.09-2 NVIDIA CUDA [amd64])\nRemv nvidia-detect [615.71.09-2]\nRemv glx-alternative-mesa [1.2.2]'
+fails_with "NVIDIA: apt.s plan for NVIDIA.s driver would also remove or install glx-alternative-mesa," setup_nvidia
+refute grep -q "^$DRIVER_LINE\$" "$calls"
+grep -Fxq "dpkg --purge $LOCK $REPO" "$calls"
+: >"$calls"; driver_plan=$'Inst nvidia-driver (615.71.09-2 NVIDIA CUDA [amd64])\nRemv nvidia-detect [615.71.09-2]'
+setup_nvidia >"$T/log"
+grep -Fxq "$DRIVER_LINE" "$calls"
+driver_plan=
+echo 'PASS the driver'"'"'s plan: a removal of a package that is not NVIDIA'"'"'s stops it before anything is installed; NVIDIA'"'"'s own (nvidia-detect) may leave'
+# the laptop case below starts from a failed transaction, as before
+fail_install=1
 echo 'PASS missing module, policy install, index update, preflight, purge and transaction error paths each fail visibly'
 
 printf 'action\tnvidia-runtime-pm\n' >"$WORK/plan"
@@ -306,9 +344,16 @@ grep -Fxq "$DRIVER_LINE" "$calls"
 fail_stale=1
 : >"$calls"
 fails_with "NVIDIA: $LEGACY_LOCK $LEGACY_MODULE, which hold NVIDIA's driver at 580, could not be purged" setup_nvidia
-refute grep -q -- '--simulate' "$calls"
+refute grep -q -- '--simulate install' "$calls"
 grep -Fq 'or keep nouveau, without HDMI 3D' "$T/out"
 fail_stale=0
+# the previous lock's purge is planned first, every kind of line read: a plan that would install something stops it
+: >"$calls"; apt_plan=$'Purg sparky-stereo-nvidia-legacy-580xx-driver-lock [1]\nInst nvidia-installer-cleanup:i386 (20240109+1 Debian:testing [i386])'
+fails_with "NVIDIA: apt.s plan for NVIDIA.s driver would also remove or install nvidia-installer-cleanup:i386," setup_nvidia
+refute grep -q 'apt-get -y purge' "$calls"
+refute grep -q -- '--simulate install' "$calls"
+apt_plan=
+echo 'PASS the previous lock'"'"'s purge: a plan that would install something stops the setup before anything is purged or installed'
 installed_packages=
 : >"$calls"
 setup_nvidia
@@ -330,6 +375,7 @@ apt-get() {
 	if [[ $* == *--simulate*purge* ]]; then
 		if [[ -n $purge_plan ]]; then set -- $purge_plan; else set -- "${@:4}"; fi
 		for package; do printf 'Purg %s [1] \n' "$package"; done
+		[[ -z ${purge_installs:-} ]] || printf 'Inst %s (1 Debian:testing [i386])\n' $purge_installs
 	fi
 }
 module_version=615.71.09-2+stereo3d4
@@ -348,9 +394,15 @@ refute grep -Fq 'unrelated-orphan' "$calls"
 echo 'PASS a switch removes only what the previous stack needed and nothing needs now: not a package that was unneeded before, not an unrelated unneeded package, never autoremove'
 : >"$calls"
 purge_plan="firmware-nvidia-gsp libwayland-server0 something-else"
-fails_with 'NVIDIA: removing the previous driver stack.s leftovers firmware-nvidia-gsp libwayland-server0 would also remove other packages' remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)"
+fails_with 'NVIDIA: removing the previous driver stack.s leftovers firmware-nvidia-gsp libwayland-server0 would also remove or install other packages' remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)"
 refute grep -q 'apt-get -y purge' "$calls"
 purge_plan=
+# a purge of the leftovers that would install something (an i386 copy of a Multi-Arch: foreign package) is refused too
+: >"$calls"; purge_installs=nvidia-installer-cleanup:i386
+fails_with 'NVIDIA: removing the previous driver stack.s leftovers firmware-nvidia-gsp libwayland-server0 would also remove or install other packages' remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)"
+grep -Fq 'Inst nvidia-installer-cleanup:i386' "$T/out"
+refute grep -q 'apt-get -y purge' "$calls"
+purge_installs=
 fail_stale=1
 : >"$calls"
 fails_with 'NVIDIA: the previous driver stack.s leftovers firmware-nvidia-gsp libwayland-server0 could not be removed' remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)"

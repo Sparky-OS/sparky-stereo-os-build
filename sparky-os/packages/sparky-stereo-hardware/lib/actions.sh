@@ -34,6 +34,56 @@ render_message() {
 	printf "$text\n" "$@"
 }
 
+# The plan as the person reads it, in the plan window. The plan file stays as the planner wrote it, in English, for the log
+# and the code that reads it. Each line's kind is shown as a word of the person's language (PLAN_KIND), and a line the
+# planner followed with "say<TAB>KEY<TAB>FIELD<TAB>ARG..." (lib/detect.py) shows that field of its value as the key's
+# message (PLAN_SAY), its arguments put in; names, identifiers and values stay as they are. The NVIDIA cards' sentence is
+# made of one sentence per card, each given as "KEY|ARG|ARG". A key or kind with no message shows the planner's English.
+declare -gA PLAN_KIND=([found]=125 [fact]=126 [package]=127 [action]=128 [note]=129 [partner]=130 [choice]=131 [candidate]=132
+	[licence]=133 [owner]=134)
+declare -gA PLAN_SAY=([laptop]=135 [desktop]=136 [cpu]=137 [no-cpu]=138 [firmware]=139 [nvidia]=140 [nvidia-580]=141
+	[nvidia-unsupported]=142 [nvidia-cards]=143 [nvidia-reason-open]=144 [nvidia-reason-580]=145 [nvidia-reason-older]=146
+	[nvidia-reason-none]=147 [no-nvidia]=148 [xbox-usb]=149 [pad]=150 [no-pad]=151 [v3-base]=152 [v3]=153 [lact]=154
+	[drives]=155 [smbus]=156 [network]=157 [partner-ollama]=158 [choice-580]=159 [choice-nouveau]=160 [candidate-rig]=161
+	[candidate-broadcom]=162 [owner-not]=163)
+# plan_for_person PLAN: the plan as the window shows it
+plan_for_person() {
+	local -a lines fields args parts reasons
+	local i line kind value next key field joined reason word
+	mapfile -t lines <"$1"
+	for ((i = 0; i < ${#lines[@]}; i++)); do
+		line=${lines[i]}
+		kind=${line%%$'\t'*}
+		[[ $kind != say ]] || continue
+		value=
+		[[ $line != *$'\t'* ]] || value=${line#*$'\t'}
+		next=${lines[i + 1]:-}
+		if [[ $next == say$'\t'* ]]; then
+			IFS=$'\t' read -r -a args <<<"${next#say$'\t'}"
+			key=${args[0]:-} field=${args[1]:-1}
+			args=("${args[@]:2}")
+			if [[ -n $key && -n ${PLAN_SAY[$key]:-} && $field =~ ^[1-9][0-9]*$ ]]; then
+				if [[ $key == nvidia-cards ]]; then
+					reasons=()
+					for reason in "${args[@]}"; do
+						IFS='|' read -r -a parts <<<"$reason"
+						if [[ -n ${PLAN_SAY[${parts[0]}]:-} ]]; then
+							reasons+=("$(render_message "${PLAN_SAY[${parts[0]}]}" "${parts[@]:1}")")
+						fi
+					done
+					joined=$(printf '%s; ' "${reasons[@]}")
+					args=("${joined%; }")
+				fi
+				IFS=$'\t' read -r -a fields <<<"$value"
+				fields[field - 1]=$(render_message "${PLAN_SAY[$key]}" "${args[@]}")
+				value=$(IFS=$'\t'; printf '%s' "${fields[*]}")
+			fi
+		fi
+		word=LOCAL${PLAN_KIND[$kind]:-}
+		printf '%s\t%s\n' "${!word:-$kind}" "$value"
+	done
+}
+
 # render_errors FILE: each error kept in FILE (its ID and arguments) in the strings now loaded, one per line
 render_errors() {
 	local line
@@ -76,7 +126,8 @@ load_strings() {
 }
 
 # plan_answer CODE: what the plan window's exit code means. yad gives the number of the button pressed (0 install, 2
-# install but keep nouveau, 4 ask about wl again, 6 use Broadcom's wl, 8 back to the kernel's Wi-Fi driver, 1 Cancel) and 252
+# install but keep nouveau, 4 ask about wl again, 6 use Broadcom's wl, 8 back to the kernel's Wi-Fi driver, 10 and 12 turn a
+# known machine's correction off or on, 1 Cancel) and 252
 # for a closed window; any other code is the window's own failure, never an
 # answer of the person's.
 plan_answer() {
@@ -86,6 +137,8 @@ plan_answer() {
 		4) echo wl-again ;;
 		6) echo wl-swap ;;
 		8) echo wl-back ;;
+		10) echo known-off ;;
+		12) echo known-on ;;
 		1|252) echo cancel ;;
 		*) echo window-failed ;;
 	esac
@@ -266,6 +319,18 @@ purge_added() {
 	fi
 }
 
+# An apt plan (apt-get --simulate) is read by every kind of line, never by one kind alone: a purge plan can install (on a
+# machine with i386 enabled a Multi-Arch: foreign package another package still needs comes back as its i386 copy), and an
+# install plan can remove. plan_removes PLAN and plan_installs PLAN print what it removes and what it installs, each as apt
+# names it; an Inst line's architecture is its last word, "(VERSION ORIGIN [ARCH])", and a native name gets it added.
+plan_removes() { sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' <<<"$1" | sort -u; }
+plan_installs() { awk '$1 == "Inst" {n = $2; a = $NF; gsub(/[][()]/, "", a); if (n !~ /:/) n = n ":" a; print n}' <<<"$1" | sort -u; }
+# nvidia_package NAME: a package of NVIDIA's driver by its name, as the card step reads it (nvidia-card)
+nvidia_package() {
+	local name=${1%%:*}
+	[[ $name == sparky-stereo-cuda-repo || $name =~ nvidia || $name =~ ^(libcuda|libnvcuvid|libnvoptix|libnvfbc|libnvjpeg) ]]
+}
+
 # foreign_i386: dpkg installs i386 packages beside amd64 ones on this machine (dpkg --add-architecture i386, which Steam's
 # and Wine's 32-bit programs need)
 foreign_i386() {
@@ -302,14 +367,17 @@ unneeded_packages() {
 # previous stack's packages needed (firmware-nvidia-gsp 615 after a switch to 580, libnvidia-egl-wayland1 after a switch back).
 # Never a general autoremove (system-self-prunes, Daniel 2026-10-07: it would remove what the person installed, CUDA on his
 # own host): a package the person installed, and every unneeded package the NVIDIA stack never needed, stay. The removal is
-# simulated first and must remove exactly these; what is removed is said.
+# simulated first and must remove exactly these and install nothing; what is removed is said.
 remove_previous_stack_leftovers() {
-	local before=$1 closure=$2 package
+	local before=$1 closure=$2 package plan
 	local -a leftovers=() planned=()
 	mapfile -t leftovers < <(comm -12 <(unneeded_packages) <(printf '%s\n' "$closure") | comm -23 - <(printf '%s\n' "$before"))
 	((${#leftovers[@]})) || { log "NVIDIA: the previous driver stack left nothing behind"; return 0; }
-	mapfile -t planned < <(LC_ALL=C apt-get --simulate --purge purge "${leftovers[@]}" | sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' | sort -u)
-	if [[ "${planned[*]}" != "$(printf '%s\n' "${leftovers[@]}" | sort -u | tr '\n' ' ' | sed 's/ $//')" ]]; then
+	# (a plan apt cannot make removes nothing, so it differs and is said as one that would remove more)
+	plan=$(LC_ALL=C apt-get --simulate --purge purge "${leftovers[@]}" 2>&1) || true
+	mapfile -t planned < <(plan_removes "$plan")
+	if [[ "${planned[*]}" != "$(printf '%s\n' "${leftovers[@]}" | sort -u | tr '\n' ' ' | sed 's/ $//')" || -n $(plan_installs "$plan") ]]; then
+		grep -E '^(Inst|Remv|Purg) ' <<<"$plan" || true
 		err 60 "${leftovers[*]}"
 		return 1
 	fi
@@ -406,17 +474,48 @@ setup_nvidia() {
 		err "43$tail"
 		return 1
 	fi
-	if ((${#stale[@]})) && ! run env DEBIAN_FRONTEND=noninteractive apt-get -y purge "${stale[@]}"; then
-		err 57 "${stale[*]}"
-		return 1
+	# The previous branch's lock (and the 580 module that depends on it) goes. Its plan may remove only NVIDIA's packages and
+	# install nothing: the new branch's lock, which the repository package's "lock | lock" also takes, came in above.
+	local plan taken
+	if ((${#stale[@]})); then
+		plan=$(LC_ALL=C apt-get --simulate --purge purge "${stale[@]}" 2>&1) || true
+		taken=$( { plan_removes "$plan" | while read -r package; do nvidia_package "$package" || printf '%s\n' "$package"; done; plan_installs "$plan"; } | paste -sd' ' -)
+		if [[ -n $taken ]]; then
+			grep -E '^(Inst|Remv|Purg) ' <<<"$plan" || true
+			purge_added "${added[@]}" || return 1
+			err "124$tail" "$taken"
+			return 1
+		fi
+		if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y purge "${stale[@]}"; then
+			err 57 "${stale[*]}"
+			return 1
+		fi
 	fi
-	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests "${options[@]}" --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
+	# The driver's plan installs what the driver needs, and may remove only NVIDIA's packages (NVIDIA's nvidia-kernel-support
+	# stands in for Debian's nvidia-detect, for one); a plan that would take anything else installs nothing.
+	if ! plan=$(run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests "${options[@]}" --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}" 2>&1); then
+		printf '%s\n' "$plan"
 		purge_added "${added[@]}" || return 1
 		err "44$tail" "$userspace"
 		return 1
 	fi
-	if ! apt_install "${options[@]}" "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
-		err 45
+	printf '%s\n' "$plan"
+	taken=$(plan_removes "$plan" | while read -r package; do nvidia_package "$package" || printf '%s\n' "$package"; done | paste -sd' ' -)
+	if [[ -n $taken ]]; then
+		purge_added "${added[@]}" || return 1
+		err "124$tail" "$taken"
+		return 1
+	fi
+	# A download that failed leaves apt and dpkg in order (nothing was unpacked, dpkg --audit is empty) and is said as
+	# that; "half done" is said only when dpkg really stopped part way.
+	if ! apt_install "${options[@]}" "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}" 2>&1 | tee "$WORK/driver-install.out"; then
+		if [[ -n $(dpkg --audit 2>/dev/null) ]]; then
+			err 45
+		elif grep -Eq '^(E: Failed to fetch|E: Unable to fetch some archives)' "$WORK/driver-install.out"; then
+			err 122
+		else
+			err 123
+		fi
 		return 1
 	fi
 	if ((switching)) && ! remove_previous_stack_leftovers "$unneeded_before" "$old_stack"; then

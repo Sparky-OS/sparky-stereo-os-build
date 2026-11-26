@@ -2,8 +2,9 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
 # Tests of lib/secureboot.py on fake EFI system partitions: where the certificate goes, the GRUB entry it writes
-# in each of the nine languages, and what it says and keeps when the certificate cannot be placed (0.1.5); this
-# computer's DKMS certificate beside it, its GRUB entry and, under a fake Secure Boot, the enrolment check (0.1.8).
+# in each of the ten languages, and what it says and keeps when the certificate cannot be placed (0.1.5); this
+# computer's DKMS certificate beside it, its GRUB entry and, under a fake Secure Boot, the enrolment check (0.1.8);
+# the entries only where the firmware has Secure Boot (0.1.15).
 # Needs python3, openssl and sparky-stereo-problems; run as root in a container.
 #   secureboot-tests.sh PATH/TO/sparky-stereo-boot
 set -u
@@ -44,7 +45,7 @@ check "no certificate beside another loader's BOOTX64.EFI" "$(ls "$T/b/EFI/BOOT"
 mkdir -p "$T/c/EFI/other"; echo grub > "$T/c/EFI/other/grubx64.efi"
 check "no shim: no GRUB entry" "$(run c en_US.UTF-8 grub)" ""
 
-# the entry: title in the system's language, the steps in nine languages (the system's first), MokManager beside GRUB,
+# the entry: title in the system's language, the steps in ten languages (the system's first), MokManager beside GRUB,
 # and the fallback only under Secure Boot
 for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	out=$(run a $l.UTF-8 grub)
@@ -53,8 +54,8 @@ for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	name=$(sed -n 's/^LOCAL14="\(.*\)"$/\1/p' "$P/lang/$code")
 	check "$l: title" "$(echo "$out" | sed -n "s/^ *menuentry '\(.*\)' --id sparky-enroll {$/\1/p")" "$title"
 	check "$l: its language first" "$(echo "$out" | grep -m1 'echo "' | sed 's/^ *echo "\([^:]*\):.*/\1/')" "$name"
-	check "$l: nine languages" "$(echo "$out" | grep -c -E 'echo "(English|Polski|Português|Français|Deutsch|日本語|한국어|简体中文|繁體中文):')" 9
-	check "$l: the system's folder named" "$(echo "$out" | grep -c 'sparky-stereo-secureboot-2026.der')" 9
+	check "$l: ten languages" "$(echo "$out" | grep -c -E 'echo "(English|Polski|Português|Français|Deutsch|Español|日本語|한국어|简体中文|繁體中文):')" 10
+	check "$l: the system's folder named" "$(echo "$out" | grep -c 'sparky-stereo-secureboot-2026.der')" 10
 done
 out=$(run a de_DE.UTF-8 grub)
 check "MokManager from the system's folder, the partition found by file" "$(echo "$out" | grep -c -E 'search --no-floppy --file --set=sparky_mm /EFI/sparky/mmx64.efi|chainloader \(\$sparky_mm\)/EFI/sparky/mmx64.efi')" 2
@@ -135,8 +136,8 @@ for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	code=$l; case $l in pt_BR|zh_CN|zh_TW) ;; *) code=${l%_*} ;; esac
 	title=$(sed -n 's/^LOCAL62="\(.*\)"$/\1/p' "$P/lang/$code")
 	check "$l: DKMS title" "$(echo "$out" | sed -n "s/^ *menuentry [\"']\(.*\)[\"'] --id sparky-enroll-dkms {$/\1/p")" "$title"
-	check "$l: DKMS steps in nine languages" "$(echo "$out" | sed -n '/sparky-enroll-dkms/,/^ *}/p' | grep -c -E 'echo "(English|Polski|Português|Français|Deutsch|日本語|한국어|简体中文|繁體中文):')" 9
-	check "$l: the certificate named in each" "$(echo "$out" | grep -c 'dkms-this-computer.der')" 10
+	check "$l: DKMS steps in ten languages" "$(echo "$out" | sed -n '/sparky-enroll-dkms/,/^ *}/p' | grep -c -E 'echo "(English|Polski|Português|Français|Deutsch|Español|日本語|한국어|简体中文|繁體中文):')" 10
+	check "$l: the certificate named in each" "$(echo "$out" | grep -c 'dkms-this-computer.der')" 11
 done
 out=$(SPARKY_STEREO_ESP_UUID=ABCD-1234 run a en_US.UTF-8 grub)
 check "English title in double quotes, its apostrophe kept" "$(echo "$out" | grep -c "menuentry \"Secure Boot: enroll this computer's DKMS key\" --id sparky-enroll-dkms {")" 1
@@ -200,5 +201,40 @@ DKMS_USED=$T/none.der run a pt_BR.UTF-8 dkms-key >/dev/null 2>&1
 check "no DKMS key on the computer: nothing kept" "$(ekey)" none
 DKMS_USED=$T/mok.pub KERNEL_USED=7.3.1-stereo3d14 run a pt_BR.UTF-8 dkms-key >/dev/null 2>&1
 check "no DKMS module for the running kernel: nothing kept" "$(ekey)" none
+# 0.1.15 (ORDER 666): the enrolment entries only where the firmware has Secure Boot; what the menu was written for is
+# kept, and the check at every boot writes the menu again when the firmware no longer matches it
+SBV=$T/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
+OTHER=$T/efi/efivars/Boot0000-8be4df61-93ca-11d2-aa0d-00e098032b8c
+MREC=$T/root/var/lib/sparky-stereo-boot/secureboot-menu
+MKEPT=$T/root/var/lib/sparky-stereo-problems/sparky-stereo-boot_secureboot-menu.json
+entries() { DKMS_USED=$T/mok.pub SPARKY_STEREO_ESP_UUID=ABCD-1234 run a "${1:-en_US.UTF-8}" grub 2>"$T/menu.err" | grep -c -E -- '--id sparky-enroll(-dkms)? \{'; }
+sb 1
+check "Secure Boot on: both enrolment entries" "$(entries)" 2
+check "the record says the menu has the entries" "$(cat "$MREC" 2>/dev/null)" entries
+sb 0
+check "Secure Boot switched off: both entries stay" "$(entries)" 2
+rm -f "$SBV"; printf '\007\000\000\000\001\000' > "$OTHER"
+check "a firmware without Secure Boot (variables readable, none named SecureBoot): no entry" "$(entries pt_BR.UTF-8)" 0
+check "nothing at all is written into the menu there" "$(DKMS_USED=$T/mok.pub SPARKY_STEREO_ESP_UUID=ABCD-1234 run a en_US.UTF-8 grub 2>/dev/null | wc -c)" 0
+check "said by update-grub, in the system's language" "$(grep -c 'O firmware deste computador não tem Secure Boot' "$T/menu.err")" 1
+check "the record says the menu has none" "$(cat "$MREC" 2>/dev/null)" none
+rm -f "$OTHER"
+check "variables that cannot be read (a BIOS start, a chroot): the entries as before" "$(entries)" 2
+# the check at every boot: the menu was written with the entries, this firmware has no Secure Boot
+mkdir -p "$T/root/boot/grub"; : > "$T/root/boot/grub/grub.cfg"
+printf '#!/bin/sh\necho ran >> "%s"\nexit "$(cat "%s")"\n' "$T/update-grub.ran" "$T/update-grub.status" > "$T/bin/update-grub"; chmod 755 "$T/bin/update-grub"
+echo 0 > "$T/update-grub.status"; : > "$T/update-grub.ran"
+printf '\007\000\000\000\001\000' > "$OTHER"; echo entries > "$MREC"
+DKMS_USED=$T/none.der run a en_US.UTF-8 dkms-key >/dev/null 2>&1
+check "the firmware no longer matches the menu: update-grub runs once" "$(grep -c ran "$T/update-grub.ran")" 1
+echo none > "$MREC"; : > "$T/update-grub.ran"
+DKMS_USED=$T/none.der run a en_US.UTF-8 dkms-key >/dev/null 2>&1
+check "the firmware matches the menu: update-grub does not run" "$(grep -c ran "$T/update-grub.ran")" 0
+echo entries > "$MREC"; echo 3 > "$T/update-grub.status"
+DKMS_USED=$T/none.der run a en_US.UTF-8 dkms-key >/dev/null 2>&1; rc=$?
+check "update-grub fails there: the step fails and the problem is kept with its repair" "$rc:$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["message"], d["args"], d["repair"])' "$MKEPT" 2>/dev/null)" "1:LOCAL104 ['3'] [['update-grub']]"
+echo 0 > "$T/update-grub.status"
+DKMS_USED=$T/none.der run a en_US.UTF-8 dkms-key >/dev/null 2>&1
+check "repaired: cleared" "$([ -e "$MKEPT" ] && echo kept || echo none)" none
 echo "== $( [ $fails = 0 ] && echo "ALL PASS" || echo "$fails FAILED")"
 [ $fails = 0 ]

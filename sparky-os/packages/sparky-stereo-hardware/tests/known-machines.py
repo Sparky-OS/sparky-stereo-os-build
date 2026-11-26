@@ -18,9 +18,17 @@ def run(device, data=table, success=True):
         root = Path(work)
         (root / 'devices').write_text(device)
         (root / 'table.json').write_text(json.dumps(data))
+        # --list: since 0.1.43 --apply writes boot images and GRUB's menu for a machine with a correction
+        # (tests/known-machines-corrections.py and the guest proof cover that); matching is the same for both.
+        # The table's firmware tables only have to exist here: a stand-in file per name.
+        (root / 'tables').mkdir()
+        for entry in table['machines']:
+            for correction in entry['corrections']:
+                if correction.get('table'):
+                    (root / 'tables' / correction['table']).write_bytes(b'')
         result = subprocess.run(['umockdev-run', '-d', str(root / 'devices'),
                                  '--', 'python3', str(tool), '--table',
-                                 str(root / 'table.json'), '--apply'],
+                                 str(root / 'table.json'), '--tables', str(root / 'tables'), '--list'],
                                 capture_output=True, text=True)
         assert (result.returncode == 0) == success, result.stderr
         return json.loads(result.stdout) if success else result.stderr
@@ -59,9 +67,11 @@ print('PASS unsupported correction and unknown match fields fail visibly')
 mac = ('P: /devices/virtual/dmi/id\nE: SUBSYSTEM=dmi\nA: product_name=MacBookPro9,2\n\n'
        'P: /devices/pci0000:00/0000:00:1c.1/0000:03:00.0\nE: SUBSYSTEM=pci\nA: vendor=0x14e4\nA: device=0x4331\n')
 result = run(mac)
-assert [entry['id'] for entry in result['matched']] == ['apple-macbookpro9-2'], result
+assert [entry['id'] for entry in result['matched']] == ['apple-macbookpro9-2', 'apple-macbookpro9-2-firmware'], result
 ref = result['matched'][0]['references'][0]
 assert result['matched'][0]['corrections'] == [] and ref['owner'] == 'broadcom-wl' and ref['card'] == '14e4:4331' and ref['message'] == 97, ref
-assert run(mac.replace('device=0x4331', 'device=0x43a0'))['matched'] == []
+# the firmware entry (0.1.43) is the model's alone: it stays when the Wi-Fi card is another one, the Wi-Fi entry does not
+assert [e['id'] for e in run(mac.replace('device=0x4331', 'device=0x43a0'))['matched']] == ['apple-macbookpro9-2-firmware']
+assert [c['id'] for c in result['corrections']] == ['mbp92-gfx0'] and result['changes'] == []
 assert run(mac.replace('MacBookPro9,2', 'MacBookPro9,1'))['matched'] == []
-print('PASS MacBookPro9,2 with the BCM4331 matched, its Wi-Fi reference read; another card or model is not')
+print('PASS MacBookPro9,2 with the BCM4331 matched, its Wi-Fi reference read; another card keeps only the firmware entry, another model nothing')

@@ -19,36 +19,93 @@ def emit(kind, value):
     print(f"{kind}\t{value}")
 
 
+# What a person reads in the plan window is in their language. The plan stays in English, for the log and for the code
+# that reads it; a line the window shows as a sentence is followed by "say<TAB>KEY<TAB>FIELD<TAB>ARG...": the sentence's
+# key, the tab field of the line's value it stands for, and its arguments, in the order the English has them (the
+# setup's plan_for_person puts the key's message, from the language files, in that field). A line of names and numbers
+# only (a rig's name and its USB ID) has no sentence and is shown as it is.
+TEXT = {
+    "laptop": "Laptop (laptop-detect)",
+    "desktop": "Desktop (laptop-detect)",
+    "cpu": "CPU {0}",
+    "no-cpu": "No x86 CPU vendor",
+    "firmware": "isenkram missing firmware: {0}",
+    "nvidia": "NVIDIA display {0}",
+    "nvidia-580": "NVIDIA {0}: a Maxwell, Pascal or Volta card, which the edition's open modules with HDMI 3D (Turing and newer) "
+                  "do not run; NVIDIA's 580 driver, the last for these cards, runs it",
+    "nvidia-unsupported": "NVIDIA {0}: not supported by the edition's NVIDIA driver with HDMI 3D, which needs a Turing card or "
+                          "newer for every NVIDIA card of the machine, on amd64; nothing is installed for it, and the card keeps nouveau",
+    "nvidia-cards": "NVIDIA cards: {0}; one NVIDIA driver runs all the cards of a machine, so they keep nouveau",
+    "nvidia-reason-open": "{0} runs on the edition's open modules",
+    "nvidia-reason-580": "{0} runs on NVIDIA's 580 driver",
+    "nvidia-reason-older": "{0}: NVIDIA's last driver for it is its legacy {1} branch, which the edition does not build",
+    "nvidia-reason-none": "{0} is in none of NVIDIA's 615.71.09 tables",
+    "no-nvidia": "No NVIDIA display controller",
+    "xbox-usb": "Xbox USB {0}; xpadneo available for Bluetooth pairing",
+    "pad": "Game controller",
+    "no-pad": "No game controller",
+    "v3-base": "x86-64-v3 processor: the baseline kernel was chosen for this machine (sparky-stereo-hardware --kernel v3 undoes it)",
+    "v3": "x86-64-v3 processor: the kernel built for x86-64-v3 (the baseline kernel stays installed and in GRUB)",
+    "lact": "AMD graphics cards {0}: LACT",
+    "drives": "{0} drives {1}",
+    "smbus": "Desktop board {0}: the SMBus for OpenRGB (i2c-dev, i2c-tools)",
+    "network": "Network {0} {1}: firmware {2}",
+    "partner-ollama": "NVIDIA {0}: the CUDA 13 runner of the local partner engine, installed with it from the Partners page, never "
+                      "by this setup",
+    "choice-580": "default: NVIDIA's 580 driver: full clocks, hardware video decoding (NVDEC), CUDA 12; NVIDIA's display code is "
+                  "closed, so no HDMI 3D modes (the television does not switch itself, no frame packing); Stereo KWin's anaglyph, "
+                  "interleaved, side by side and top and bottom for a screen switched by hand, and output pairs work",
+    "choice-nouveau": "the edition's HDMI 3D modes (the television switches itself into 3D, frame packing), at the card's boot "
+                      "clocks (nouveau does not reclock Pascal and Volta), without hardware video decoding",
+    "candidate-rig": "{0}: {1}; keep the current driver until selected",
+    "candidate-broadcom": "{0}: closed Broadcom wl driver (Debian non-free, Broadcom licence); a licence must be shown to the user "
+                          "before it is installed; it is installed only when the person says yes after reading it",
+    "owner-not": "not {0}",
+}
+
+
+def say(kind, key, *args, keep=(), after=()):
+    """A line the window shows with a sentence: KIND, the fields KEEP, the sentence, the fields AFTER; then its key."""
+    emit(kind, "\t".join([*keep, TEXT[key].format(*args), *after]))
+    emit("say", "\t".join([key, str(len(keep) + 1), *args]))
+
+
 packages = set()
 
 
-def match(reason, *names):
+def match(key, args, *names):
+    say("found", key, *args)
+    packages.update(names)
+
+
+def match_named(reason, *names):
+    """a reason made of names and numbers only, shown as it is"""
     emit("found", reason)
     packages.update(names)
 
 
 laptop = read("laptop").strip()
 if laptop == "0":
-    match("Laptop (laptop-detect)", "task-laptop", "power-profiles-daemon")
+    match("laptop", (), "task-laptop", "power-profiles-daemon")
 elif laptop == "1":
-    emit("found", "Desktop (laptop-detect)")
+    say("found", "desktop")
 else:
     raise SystemExit("Invalid laptop-detect result")
 
 vendors = set(re.findall(r"^vendor_id\s*:\s*(\S+)", read("cpuinfo"), re.M))
 for vendor, package in (("AuthenticAMD", "amd64-microcode"), ("GenuineIntel", "intel-microcode")):
     if vendor in vendors:
-        match(f"CPU {vendor}", package)
+        match("cpu", (vendor,), package)
         if vendor == "GenuineIntel":
             # thermald exits on any other vendor ("Unsupported cpu model or platform"), so only an Intel machine gets it
             packages.add("thermald")
 if not vendors:
-    emit("found", "No x86 CPU vendor")
+    say("found", "no-cpu")
 
 for package in read("firmware-packages").split():
     if not re.fullmatch(r"[a-z0-9][a-z0-9+.-]+", package):
         raise SystemExit("Invalid isenkram package name")
-    match(f"isenkram missing firmware: {package}", package)
+    match("firmware", (package,), package)
 
 gpus = []
 amd_display = False
@@ -72,7 +129,7 @@ for line in read("lspci").splitlines():
         current_gpu = len(gpus)
         gpus.append([device])
     if vendor == "1102" and device in {"0010", "0011", "0012"}:
-        match(f"Creative CA0132 {vendor}:{device}", "firmware-creative-stereo")
+        match_named(f"Creative CA0132 {vendor}:{device}", "firmware-creative-stereo")
         emit("action", "creative-msi")
 
 def nvidia_table(name):
@@ -85,7 +142,8 @@ def listed(gpu, table):
 
 
 if gpus:
-    match("NVIDIA display " + ", ".join(gpu[0] for gpu in gpus), "firmware-nvidia-graphics")
+    nvidia_ids = ", ".join(gpu[0] for gpu in gpus)
+    match("nvidia", (nvidia_ids,), "firmware-nvidia-graphics")
     supported = nvidia_table("nvidia-open.ids")
     # NVIDIA's 580 branch, the last for Maxwell, Pascal and Volta (the "legacy_580.xx" table of NVIDIA's 615.71.09 README):
     # the edition builds its kernel modules (nvidia-legacy-580xx-kernel-dkms) for the cards the open modules do not run.
@@ -97,45 +155,37 @@ if gpus:
             emit("action", "nvidia-runtime-pm")
         # The local partner engine's runner for these cards (Turing and newer run CUDA 13). The setup never installs it: the
         # Partners page installs it with the engine, when the person turns the engine on (ORDER 70).
-        emit("partner", "ollama-cuda\tNVIDIA " + ", ".join(gpu[0] for gpu in gpus) + ": the CUDA 13 runner of the local partner "
-             "engine, installed with it from the Partners page, never by this setup")
+        say("partner", "partner-ollama", nvidia_ids, keep=("ollama-cuda",))
     elif all(listed(gpu, legacy) for gpu in gpus) and amd64:
         # Two drivers give these cards different results, so both are the person's choice (Daniel, 2026-10-14: "where two
         # paths appear differ, make sure it's a user option then and do both"). NVIDIA's runtime power management needs a
         # Turing card or newer (NVIDIA's 580.196.07 README, Dynamic Power Management), so no RTD3 action here.
         emit("action", "nvidia-legacy-580xx")
-        emit("found", "NVIDIA " + ", ".join(gpu[0] for gpu in gpus) + ": a Maxwell, Pascal or Volta card, which the edition's "
-             "open modules with HDMI 3D (Turing and newer) do not run; NVIDIA's 580 driver, the last for these cards, runs it")
-        emit("choice", "nvidia-580\tdefault: NVIDIA's 580 driver: full clocks, hardware video decoding (NVDEC), CUDA 12; "
-             "NVIDIA's display code is closed, so no HDMI 3D modes (the television does not switch itself, no frame packing); "
-             "Stereo KWin's anaglyph, interleaved, side by side and top and bottom for a screen switched by hand, and output "
-             "pairs work")
-        emit("choice", "nouveau\tthe edition's HDMI 3D modes (the television switches itself into 3D, frame packing), at the "
-             "card's boot clocks (nouveau does not reclock Pascal and Volta), without hardware video decoding")
+        say("found", "nvidia-580", nvidia_ids)
+        say("choice", "choice-580", keep=("nvidia-580",))
+        say("choice", "choice-nouveau", keep=("nouveau",))
     else:
         older = {}
         for line in (data / "nvidia-legacy-older.tsv").read_text().splitlines():
             device, branch = line.split("\t")
             older[device] = branch
-        reasons = []
+        reasons = []   # (key, arguments...) for each card
         for gpu in gpus:
             if listed(gpu, supported):
-                reasons.append(f"{gpu[0]} runs on the edition's open modules")
+                reasons.append(("nvidia-reason-open", gpu[0]))
             elif listed(gpu, legacy):
-                reasons.append(f"{gpu[0]} runs on NVIDIA's 580 driver")
+                reasons.append(("nvidia-reason-580", gpu[0]))
             elif gpu[0] in older:
-                reasons.append(f"{gpu[0]}: NVIDIA's last driver for it is its legacy {older[gpu[0]]} branch, which the "
-                               "edition does not build")
+                reasons.append(("nvidia-reason-older", gpu[0], older[gpu[0]]))
             else:
-                reasons.append(f"{gpu[0]} is in none of NVIDIA's 615.71.09 tables")
-        emit("found", "NVIDIA " + ", ".join(gpu[0] for gpu in gpus) + ": not supported by the edition's NVIDIA driver with "
-             "HDMI 3D, which needs a Turing card or newer for every NVIDIA card of the machine, on amd64; nothing is installed "
-             "for it, and the card keeps nouveau")
+                reasons.append(("nvidia-reason-none", gpu[0]))
+        say("found", "nvidia-unsupported", nvidia_ids)
         if amd64:
-            emit("found", "NVIDIA cards: " + "; ".join(reasons) + "; one NVIDIA driver runs all the cards of a machine, so "
-                 "they keep nouveau")
+            # one sentence made of one per card: each card's reason travels as "KEY|ARG|ARG" and the window joins them
+            emit("found", TEXT["nvidia-cards"].format("; ".join(TEXT[key].format(*args) for key, *args in reasons)))
+            emit("say", "\t".join(["nvidia-cards", "1", *("|".join(reason) for reason in reasons)]))
 else:
-    emit("found", "No NVIDIA display controller")
+    say("found", "no-nvidia")
 
 # PPD 0.30 probes its AMD actions by CPU vendor, not by the Radeon PCI ID alone.
 if amd_display and "AuthenticAMD" in vendors:
@@ -153,28 +203,28 @@ for vendor, product in re.findall(r"\bID ([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b", r
     vendor, product = vendor.lower(), product.lower()
     if (vendor, product) in rig_ids:
         rig = rig_ids[vendor, product]
-        match(f"{rig['name']} {vendor}:{product}", "sparky-sim-hidraw")
+        match_named(f"{rig['name']} {vendor}:{product}", "sparky-sim-hidraw")
         if rig.get("driver"):
             if rig["policy"] == "stable":
                 packages.add(rig["driver"])
             else:
-                emit("candidate", f"{rig['driver']}\t{vendor}:{product}: {rig['policy']}; keep the current driver until selected")
+                say("candidate", "candidate-rig", f"{vendor}:{product}", rig["policy"], keep=(rig["driver"],))
     if vendor == "17e9":
-        match(f"DisplayLink USB {vendor}:{product}", "evdi-dkms")
+        match_named(f"DisplayLink USB {vendor}:{product}", "evdi-dkms")
     if vendor == "045e" and product in xbox_usb:
-        match(f"Xbox USB {vendor}:{product}; xpadneo available for Bluetooth pairing", "xpadneo-dkms")
+        match("xbox-usb", (f"{vendor}:{product}",), "xpadneo-dkms")
         pad = True
     if (vendor, product) in {("054c", "05c4"), ("054c", "09cc"), ("054c", "0ce6"), ("057e", "2009")}:
         pad = True
 for bus, vendor, product in re.findall(r"HID_ID=([0-9A-Fa-f]+):([0-9A-Fa-f]+):([0-9A-Fa-f]+)", read("hid-uevents")):
     if int(bus, 16) == 5 and ((int(vendor, 16) == 0x045e and f"{int(product, 16):04x}" in xbox_bt)
                             or (int(vendor, 16), int(product, 16)) == (0x0b05, 0x1abd)):
-        match(f"xpadneo Bluetooth HID {vendor}:{product}", "xpadneo-dkms")
+        match_named(f"xpadneo Bluetooth HID {vendor}:{product}", "xpadneo-dkms")
         pad = True
 if pad:
-    match("Game controller", "steam-devices")
+    match("pad", (), "steam-devices")
 else:
-    emit("found", "No game controller")
+    say("found", "no-pad")
 
 
 def read_optional(name):
@@ -220,10 +270,9 @@ if new_facts:
     if loader_level >= 3 and read("architecture").strip() == "amd64":
         choice = (read_optional("kernel-choice") or "").strip()
         if choice == "base":
-            emit("found", "x86-64-v3 processor: the baseline kernel was chosen for this machine (sparky-stereo-hardware --kernel v3 undoes it)")
+            say("found", "v3-base")
         else:
-            match("x86-64-v3 processor: the kernel built for x86-64-v3 (the baseline kernel stays installed and in GRUB)",
-                  "linux-image-sparky-stereo-v3", "linux-headers-sparky-stereo-v3")
+            match("v3", (), "linux-image-sparky-stereo-v3", "linux-headers-sparky-stereo-v3")
     if flag_level != loader_level:
         emit("fact", f"cpu-level-disagreement\tloader v{loader_level}, cpuinfo flags v{flag_level}; the loader's answer is used")
 
@@ -252,10 +301,10 @@ if amd_cards:
     if own_tool:
         emit("fact", f"peripheral\tlact-not-planned\t{cards}")
     else:
-        match(f"AMD graphics cards {cards}: LACT", "lact")
+        match("lact", (cards,), "lact")
         emit("fact", f"peripheral\tlact\t{cards}")
         for card in sorted(set(amd_cards)):
-            emit("owner", f"{card}\tlact\tnot CoreCtrl\tAMD graphics card")
+            say("owner", "owner-not", "CoreCtrl", keep=(card, "lact"), after=("AMD graphics card",))
 
 # Lights and peripherals (ORDER 108, milestone 6). A device seen on USB leads to its tool, installed without a question, from the
 # tool's own list of the devices it drives (share/peripherals/*.ids, made by tools/make-peripheral-ids.py from the package's udev
@@ -297,12 +346,12 @@ for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar
         if ident not in table:
             continue
         if ident in owned and tool in owned[ident][1]:
-            emit("owner", f"{ident}\t{owned[ident][0]}\tnot {name}\t{owned[ident][2] or table[ident] or ident}")
+            say("owner", "owner-not", name, keep=(ident, owned[ident][0]), after=(owned[ident][2] or table[ident] or ident,))
             continue
         # liquidctl's own name for the device says "LED": a lights-only controller that OpenRGB drives too is left to OpenRGB (liquidctl adds
         # coolers, pumps and fans, not lights; the two would only meet on the same node)
         if tool == "liquidctl" and re.search(r"\bLED\b|Lighting", table[ident]) and ident in device_table("openrgb.ids"):
-            emit("owner", f"{ident}\topenrgb\tnot {name}\t{table[ident]}")
+            say("owner", "owner-not", name, keep=(ident, "openrgb"), after=(table[ident],))
             continue
         seen.append(ident)
     if seen and tool == "headsetcontrol" and (read_optional("headsetcontrol-local") or "").strip() == "yes":
@@ -311,7 +360,7 @@ for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar
     elif seen and tool == "openlinkhub" and olh_upstream:
         emit("fact", f"peripheral\topenlinkhub-upstream\t{' '.join(seen)}")
     elif seen:
-        match(f"{name} drives {', '.join(seen)}", *tool_packages)
+        match("drives", (name, ", ".join(seen)), *tool_packages)
         emit("fact", f"peripheral\t{tool}\t{' '.join(seen)}")
         if tool == "openrgb":
             openrgb_devices = seen
@@ -331,7 +380,7 @@ for ident in usb_ids:
     if label is None or re.search(r"\bLED\b|Lighting|RGB Fusion|\bHUE\b", label):
         continue
     if ident in owned and "liquidctl" in owned[ident][1]:
-        emit("owner", f"{ident}\t{owned[ident][0]}\tnot CoolerControl\t{owned[ident][2] or label}")
+        say("owner", "owner-not", "CoolerControl", keep=(ident, owned[ident][0]), after=(owned[ident][2] or label,))
         continue
     cc_devices.append(ident)
 cc_fans = {}
@@ -347,7 +396,7 @@ if cc_devices or cc_fans:
     if (read_optional("coolercontrol-local") or "").strip() == "yes":
         emit("fact", f"peripheral\tcoolercontrol-local\t{' '.join(seen_cc)}")
     else:
-        match(f"CoolerControl drives {', '.join(seen_cc)}", "coolercontrold", "coolercontrol")
+        match("drives", ("CoolerControl", ", ".join(seen_cc)), "coolercontrold", "coolercontrol")
         emit("fact", f"peripheral\tcoolercontrol\t{' '.join(seen_cc)}")
 # Motherboard and memory lights over the SMBus cannot be seen from USB: a desktop whose board maker is one OpenRGB's detectors
 # name (its sources check "Micro-Star International Co., Ltd." and "Gigabyte Technology Co., Ltd."; ASUS Aura, ASRock Polychrome and EVGA
@@ -357,7 +406,7 @@ if cc_devices or cc_fans:
 SMBUS_BOARD_MAKERS = ("asustek", "gigabyte", "micro-star", "asrock", "evga", "biostar")
 board_maker = (board_vendor or "").strip().lower()
 if laptop == "1" and any(board_maker.startswith(maker) for maker in SMBUS_BOARD_MAKERS):
-    match(f"Desktop board {board_vendor.strip()}: the SMBus for OpenRGB (i2c-dev, i2c-tools)", "i2c-tools", "openrgb")
+    match("smbus", (board_vendor.strip(),), "i2c-tools", "openrgb")
     # OpenRGB's own SMBusAccess.md (in its package): i2c-tools, the i2c-dev module, and the chipset's driver (i2c-i801 on Intel, i2c-piix4 on AMD)
     smbus = ["i2c-dev"] + (["i2c-i801"] if "GenuineIntel" in vendors else ["i2c-piix4"] if "AuthenticAMD" in vendors else [])
     emit("action", "i2c-dev")
@@ -402,8 +451,7 @@ for line in read("lspci").splitlines() if new_facts else []:
         # installed only for a matching card, with its licence shown. This tool only plans: the
         # candidate line stays, and a licence line names the file the action layer must show first
         # (the package's own copyright file, Broadcom's Software License Agreement) and the card that needs it.
-        emit("candidate", f"broadcom-sta-dkms\t{pci_id}: closed Broadcom wl driver (Debian non-free, Broadcom licence); "
-                          "a licence must be shown to the user before it is installed; it is installed only when the person says yes after reading it")
+        say("candidate", "candidate-broadcom", pci_id, keep=("broadcom-sta-dkms",))
         emit("licence", f"broadcom-sta-dkms\t{pci_id}\tBroadcom Software License Agreement\tusr/share/doc/broadcom-sta-dkms/copyright")
         if driver.startswith("wl"):
             emit("fact", f"network-no-kernel-driver\t{pci_id}")
@@ -421,7 +469,7 @@ for line in read("lspci").splitlines() if new_facts else []:
                 actions.append("broadcom-wl-swap")
                 emit("action", "broadcom-wl-swap")
     elif package != "-":
-        match(f"Network {pci_id} {note}: firmware {package}", package)
+        match("network", (pci_id, note, package), package)
 if network_seen:
     emit("fact", "network-pci\t" + " ".join(sorted(set(network_seen))))
 

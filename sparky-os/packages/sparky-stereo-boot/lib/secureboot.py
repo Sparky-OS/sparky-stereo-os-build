@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/03
+# Last update 2026/11/25
 """The Sparky Stereo OS key and this computer's DKMS key on an installed system, for Secure Boot.
 
   secureboot.py esp       keep the edition's public certificate, and this computer's DKMS certificate, next to every
@@ -37,6 +37,14 @@ enroll this computer's DKMS key", in the system's language, shown when the certi
 for it when the menu is read, so a key DKMS makes later needs no update-grub). Under Secure Boot, a DKMS key that is
 not enrolled while modules signed with it are installed for the running kernel is said and kept, naming that entry,
 until it is enrolled.
+The entries are written only where they can be used (0.1.15, ORDER 666): a firmware that has no Secure Boot (its
+variables can be read and there is no SecureBoot variable: mokutil's "This system doesn't support Secure Boot", Apple's
+firmware before the T2 chip among them) gets none, and update-grub says so; an iMac14,1 listed "Secure Boot: enroll
+this computer's DKMS key" although nothing there can ever ask for a key. With Secure Boot switched off the entries
+stay: a key enrolled before Secure Boot is turned on is what lets the system start afterwards. Where the variables
+cannot be read (a BIOS start, a chroot) the entries are written as before. What the menu was written for is kept in
+/var/lib/sparky-stereo-boot/secureboot-menu, and the check at every boot writes the menu again when the firmware no
+longer matches it (the disk moved to another computer, a firmware update).
 Environment: SPARKY_STEREO_ESP (default /boot/efi), SPARKY_STEREO_CERT (default the packaged certificate),
 SPARKY_STEREO_LANG_DIR (default /usr/share/sparky/sparky-stereo-boot), SPARKY_STEREO_FSTAB (default /etc/fstab),
 SPARKY_STEREO_DKMS_CERT (default dkms's mok_certificate), SPARKY_STEREO_EFI (default /sys/firmware/efi),
@@ -69,6 +77,9 @@ DKMS_STEP = 'esp-dkms-certificate'
 ENROL_STEP = 'dkms-key-enrolment'
 EFI = os.environ.get('SPARKY_STEREO_EFI', '/sys/firmware/efi')
 EFI_GLOBAL = '8be4df61-93ca-11d2-aa0d-00e098032b8c'
+ROOT = os.environ.get('SPARKY_STEREO_ROOT', '')
+MENU_RECORD = ROOT + '/var/lib/sparky-stereo-boot/secureboot-menu'
+MENU_STEP = 'secureboot-menu'
 SHIM_LOCK = '605dab50-e046-4300-abb6-3dd810dd8b23'
 CERT_X509 = UUID('a5c059a1-94e4-4aa7-87b5-ab155c2bf072').bytes_le   # EFI_CERT_X509_GUID
 LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW']
@@ -240,6 +251,51 @@ def secure_boot():
     return bool(value) and value[0] == 1
 
 
+def firmware_secure_boot():
+    """What the firmware itself says, as mokutil --sb-state reads it: 'on' or 'off' (it has Secure Boot), 'unsupported'
+    (its variables can be read and it has no SecureBoot variable), 'unknown' (no variables to read: a BIOS start, a
+    chroot without efivarfs)."""
+    value = efivar('SecureBoot', EFI_GLOBAL)
+    if value is not None:
+        return 'on' if value[:1] == b'\x01' else 'off'
+    try:
+        readable = bool(os.listdir(os.path.join(EFI, 'efivars')))
+    except OSError:
+        readable = False
+    return 'unsupported' if readable else 'unknown'
+
+
+def menu_kind(state):
+    """What GRUB's menu holds for a firmware state: 'none' where no key can ever be asked for, else 'entries'."""
+    return 'none' if state == 'unsupported' else 'entries'
+
+
+def menu_follows_firmware():
+    """At every boot: the menu was written for a firmware with, or without, Secure Boot; when this firmware is the
+    other kind, the menu is written again. Nothing is done while the state cannot be read or the menu was never
+    written by this version (the package's configure step writes it)."""
+    state = firmware_secure_boot()
+    if state == 'unknown':
+        return False
+    try:
+        was = open(MENU_RECORD, encoding='utf-8').read().strip()
+    except OSError:
+        return False
+    if was == menu_kind(state) or not os.path.exists(ROOT + '/boot/grub/grub.cfg'):
+        problems.clear(MENU_STEP)
+        return False
+    try:
+        out = subprocess.run(['update-grub'], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
+        status = out.returncode
+    except (OSError, subprocess.SubprocessError) as error:
+        status = str(error)
+    if status != 0:
+        problems.record(MENU_STEP, 'LOCAL104', [str(status)], repair=[['update-grub']])
+        return True
+    problems.clear(MENU_STEP)
+    return False
+
+
 def mok_list():
     """The DER certificates in shim's MokListRT, or None when it cannot be read: the kernel's copy of shim's MOK
     configuration table (/sys/firmware/efi/mok-variables, drivers/firmware/efi/mokvar-table.c), else the runtime
@@ -355,7 +411,7 @@ def dkms_key():
     """At every boot and when DKMS makes its key: the certificates on the EFI system partition, then the enrolment."""
     failed = esp()[1]
     enrolment()
-    return failed
+    return menu_follows_firmware() or failed
 
 
 def strings(lang):
@@ -446,6 +502,19 @@ def grub():
     held, _ = esp(quiet=True)
     if not held:
         return   # no shim on an EFI system partition here (a BIOS boot, or another boot loader)
+    # only where a key can be asked for (0.1.15): a firmware without Secure Boot gets no enrolment entry, said once per
+    # update-grub; what the menu was written for is kept for the check at every boot
+    state = firmware_secure_boot()
+    try:
+        os.makedirs(os.path.dirname(MENU_RECORD), exist_ok=True)
+        with open(MENU_RECORD + '.new', 'w', encoding='utf-8') as f:
+            f.write(menu_kind(state) + '\n')
+        os.replace(MENU_RECORD + '.new', MENU_RECORD)
+    except OSError as error:
+        print('sparky-stereo-boot: %s could not be written: %s' % (MENU_RECORD, error.strerror or error), file=sys.stderr)
+    if state == 'unsupported':
+        problems.say('LOCAL103', [])
+        return
     # the system's own folder (os-release ID, as grub-install names it), else the first that is not EFI/BOOT;
     # the certificate is in each of them
     names = [os.path.basename(d) for d in held]

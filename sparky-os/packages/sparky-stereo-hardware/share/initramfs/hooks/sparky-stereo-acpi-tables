@@ -1,0 +1,37 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/17
+# Copyright 2026 under the GNU GPL3 License
+# initramfs-tools hook: the firmware tables that the known-machines table has on for this computer go into the boot
+# image's early part (kernel/firmware/acpi), where the kernel adds or upgrades them before it reads the firmware's own
+# tables (Documentation/admin-guide/acpi/initrd_table_override.rst; CONFIG_ACPI_TABLE_UPGRADE). A computer that is not
+# in the table gets nothing. What went into each kernel's image is recorded, so sparky-stereo-known-machines --apply
+# knows which images are behind (ORDER 665).
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case ${1:-} in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+[ -x /usr/bin/sparky-stereo-known-machines ] || exit 0
+STATE=/var/lib/sparky-stereo-hardware/known-machines-boot-images
+record=$STATE/${version:-unknown}
+if ! tables=$(/usr/bin/sparky-stereo-known-machines --acpi-tables); then
+	# said; the image is written without a table, and no record is left, so --apply keeps the problem
+	echo "sparky-stereo-hardware: the known-machines table could not be read, so no firmware table was added to the boot image of ${version:-this kernel}" >&2
+	rm -f "$record"
+	exit 0
+fi
+mkdir -p "$STATE"
+if [ -z "$tables" ]; then
+	: > "$record"
+	exit 0
+fi
+T=$(mktemp -d "${TMPDIR:-/var/tmp}/sparky-acpi-tables.XXXXXX") || exit 1
+mkdir -p "$T/d/kernel/firmware/acpi"
+names=
+for table in $tables; do
+	cp "$table" "$T/d/kernel/firmware/acpi/" || { rm -rf "$T"; exit 1; }
+	names="$names ${table##*/}"
+done
+(cd "$T/d" && find . | LC_ALL=C sort | cpio --quiet -H newc -o > "$T/early.cpio") || { rm -rf "$T"; exit 1; }
+prepend_earlyinitramfs "$T/early.cpio"
+rm -rf "$T"
+printf '%s\n' $names > "$record"

@@ -22,7 +22,6 @@ kmod
 laptop-detect
 libnotify-bin
 lm-sensors
-nvidia-detect
 pciutils
 power-profiles-daemon >= 0.30
 python3
@@ -136,6 +135,7 @@ su
 
 Use:
 -------------
+The plan window shows the plan in the person's language (since 0.1.45): each line's kind and each of the planner's sentences come from the language files, while the plan in the log and the file the setup reads stay as the planner wrote them, in English (`lib/detect.py` writes a `say` line, a sentence key with its arguments, after each line it gives a sentence; `plan_for_person` in `lib/actions.sh` shows it).
 Start Hardware Setup from the menu, or run `sparky-stereo-hardware --auto` as root from the installer/first-boot workflow. Repeat the command when hardware changes. On a machine whose NVIDIA card the edition's driver supports, the plan window offers "Install matched support" (with the edition's NVIDIA driver: its open modules with [HDMI®](https://www.hdmi.org/resource/brand) 3D on Turing and newer, NVIDIA's 580 driver on Maxwell, Pascal and Volta) and "Install matched support, keep nouveau"; in a terminal, `--nvidia edition` (the default) or `--nvidia nouveau`. A run with errors ends with their list and exit status 1. The package enables one boot service, the OpenGL stereo default below, and a live-session notification (since 0.1.8); hardware setup itself runs only when asked.
 
 `--dry-run` prints matched packages and actions without installing, editing configuration, or probing sensors. To reproduce the supplied example inside a container: `sparky-stereo-hardware --auto --dry-run --fixture tests/fixtures/creative-nvidia-laptop`. Fixtures are plain text and require every fact file; `laptop` contains laptop-detect's exit code, 0 for laptop or 1 for desktop. Fixture mode cannot apply changes. Container execution without fixtures is rejected.
@@ -275,9 +275,24 @@ the cause. After repairing it, reconnect the USB device or start the service.
 The vendor's existing USB add script starts it again. A successful start clears
 the record. Nothing disables, masks, removes or enables the vendor service.
 
+## NVIDIA's driver only where an NVIDIA card is (ORDER 675)
+
+Daniel, 2026-11-18: "I agree on removing nvidia from macs that do not have it".
+The image carries NVIDIA's driver, so a live session and an installed system with such a card work at once.
+On a machine without the card it was installed for nothing, its kernel module was built at every kernel update, and a MacBookPro9,2 signed it at its first start (ORDER 666).
+`/usr/lib/sparky-stereo-hardware/nvidia-card` (unit `sparky-stereo-hardware-nvidia-card.service`: at every start, when the package is configured, and from udev when an NVIDIA display controller appears) settles it:
+- **Once per installed system, at its first start** (not in the installer: one step then serves the machines that are already installed, a disk installed on one computer and started on another is settled on the computer that runs it, and the installation is not made longer): with no NVIDIA display controller on the PCI bus, the driver's packages are purged, said in the journal and to the session ("NVIDIA's driver was removed (N packages) ... installs the driver again by itself"). With a card nothing changes. The start and the login do not wait for it.
+- **What leaves:** the driver's own packages by name (the driver, its kernel modules, the decoding libraries, the 32-bit libraries, both driver locks and `sparky-stereo-cuda-repo`, which are the driver's apt configuration and come back first), then what is left of it: NVIDIA's by name, installed automatically and removable alone. apt's plan is read first, every kind of line: if it would take anything that is not NVIDIA's, or an NVIDIA package the person installed by name, or would install anything at all, nothing is removed and the problem is kept, naming the package. A purge that installs is not a removal (since 0.1.45): on a machine with i386 enabled and Debian's glx-diversions (left by a Debian NVIDIA driver installed once), purging nvidia-installer-cleanup put its i386 copy in its place, because glx-diversions pre-depends on it and it is Multi-Arch: foreign; it now stays as it is. The count in the notice is of the packages that left, by name. Never an autoremove. `firmware-nvidia-graphics` (nouveau's firmware) stays, so a card that appears has a picture at once; a compiler or library that only the driver had brought stays too.
+- **A card that appears later** (one the machine has not shown before, with no NVIDIA driver installed and nouveau not chosen) gets the edition's driver through `sparky-stereo-hardware --auto --nvidia-only`, kept and said by the engine, with "Restart the computer to use it". On a metered connection nothing is downloaded: the problem is kept with its Repair (`sparky-stereo-hardware --nvidia-card`). The person's choice of nouveau (`--nvidia nouveau`, or the plan window's button) is kept in `/var/lib/sparky-stereo-hardware/nvidia-choice`.
+- **Afterwards nothing is removed again:** a card that leaves (an external one, a repair) takes nothing with it.
+- A PCI bus that cannot be read is never "no card": nothing is decided.
+`nvidia-i386` asks for a card first too: without one it keeps no problem and installs nothing.
+Every other plan the package runs is read the same way (since 0.1.45): the setup's purge of the previous driver branch's lock and of a switch's leftovers may install nothing, the driver's own plan may remove only NVIDIA's packages, the 32-bit libraries' plan may remove nothing (and their installation runs with `--no-remove`), and thermald leaves a processor that is not Intel's only when removing it brings nothing in.
+`nvidia-detect` is no longer a dependency: the plan never read its answer (which driver a card gets comes from NVIDIA's own tables, `share/nvidia-open.ids` and `share/nvidia-legacy-580xx.ids`), and with NVIDIA's package gone the dependency brought Debian's 550 edition, which recommends a driver the edition does not ship. Its report is still printed when the tool is there.
+
 ## Known machines
 
-`sparky-stereo-known-machines --list` prints the matching entries as JSON.
+`sparky-stereo-known-machines --list` prints the matching entries as JSON, and each correction with its state (on or off, in effect in the running system).
 The boot service runs the same scan with `--apply`. The versioned table is
 `/usr/share/sparky/sparky-stereo-hardware/known-machines.json`. Match fields
 are DMI product patterns, USB vendor:product and PCI vendor:device; fields
@@ -291,9 +306,29 @@ belongs to the kernel, and ORDER 572 owns the panel-size policy (344 x 193 mm
 in timing blocks versus 29 x 17 cm in the base size field). This table documents
 those owners and does not repeat their work. No setting or file is changed and
 no problem is invented for this machine. Unknown machines remain untouched.
-A nonempty correction list is rejected until a reviewed, idempotent handler
-and a problems-engine record for its actual changes accompany it. The table
-never executes a command supplied by a device or by a string in the table.
+A correction is one of two reviewed kinds (since 0.1.43), each of a fixed shape; anything else is refused by name
+("no reviewed handler"). The table never executes a command supplied by a device or by a string in the table.
+- `acpi-table`: a firmware table of the package, compiled at build time (iasl) from its source beside it
+  (`/usr/share/sparky/sparky-stereo-hardware/acpi-tables/NAME.asl` and `NAME.aml`). The initramfs hook
+  `sparky-stereo-acpi-tables` puts the tables that are on for this computer into the early part of every boot image
+  (`kernel/firmware/acpi`), where the kernel adds them before it reads the firmware's own tables
+  (Documentation/admin-guide/acpi/initrd_table_override.rst), and records per kernel what it put in.
+- `kernel-option`: one option `name=value`, added to the kernel line of every Linux entry by the package's own boot
+  option file, `/etc/default/grub.d/zz-sparky-stereo-known-machines.cfg`.
+`--apply` writes the boot images (`update-initramfs -u -k all`) or the menu (`update-grub`) only when they do not
+hold what is on now, through the engine (a failure is kept with `--apply` as its repair), and tells the session that
+the correction takes effect at the next restart. Nothing is written on a computer that is not in the table.
+`--off ID` and `--on ID` are the person's switch (asked for through polkit when not root); the state is kept in
+`/etc/sparky-stereo-hardware/known-machines.off`. Hardware Setup's window lists each correction of this computer in
+the person's language, with what it does, and has the switch as a button.
+The entries with a correction:
+- **MacBookPro9,2** (`mbp92-gfx0`, ORDER 665): the firmware's EC query `_Q80` ends in a Notify to `\_SB.PCI0.P0P2.GFX0`,
+  the discrete GPU of the 15 inch MacBookPro9,1; Linux aborts the method and logs two ACPI errors per event, 15 to 21
+  a second. The table gives the name a device that is not present. The 15 inch model, which has the device, gets nothing.
+- **iMac14,1** (`imac141-gpe06`, ORDER 669): GPE 06 fires about 4,600 times a second and keeps about half a
+  processor core busy; `acpi_mask_gpe=0x06` masks it (Documentation/admin-guide/kernel-parameters.txt).
+The kernel has no quirk for either (searched in 7.3.4 and in mainline 7.4-rc4: both models appear only in
+`drivers/acpi/video_detect.c`, for the backlight).
 ## A computer with a touch screen of its own gets its on-screen keyboard (ORDER 567)
 
 Daniel, 2026-11-14, after an install on a convertible notebook: "addition to our script is detect this type of thing to enable on screen keyboard on tablet mode".

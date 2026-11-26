@@ -21,8 +21,13 @@ TAG=sparky-stereo-hardware
 intel() { grep -qs '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' /proc/cpuinfo; }
 installed() { [[ $(dpkg-query -W -f='${db:Status-Status}' thermald 2>/dev/null) == installed ]]; }
 automatic() { [[ -n $(apt-mark showauto thermald 2>/dev/null) ]]; }
-# nothing else installed needs it: removing it removes it alone
-alone() { [[ $(apt-get -s remove thermald 2>/dev/null | grep '^Remv' | awk '{print $2}' | tr '\n' ' ') == 'thermald ' ]]; }
+# nothing else installed needs it: removing it removes it alone and brings nothing in (a plan is read by every kind of
+# line: a removal that installs something in its place is not "alone")
+alone() {
+	local plan
+	plan=$(apt-get -s remove thermald 2>/dev/null) || return 1
+	[[ $(grep '^Remv' <<<"$plan" | awk '{print $2}' | tr '\n' ' ') == 'thermald ' ]] && ! grep -q '^Inst ' <<<"$plan"
+}
 say() { logger -t "$TAG" -- "$1" 2>/dev/null || true; echo "$TAG: $1" >&2; }
 stamp() { mkdir -p "${STAMP%/*}" && : >"$STAMP"; }
 # what to do now: mark, remove, or nothing (a final "nothing" writes the stamp)

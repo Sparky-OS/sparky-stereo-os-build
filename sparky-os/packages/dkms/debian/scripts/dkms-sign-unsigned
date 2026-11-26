@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/03
 # Copyright 2026 under the GNU GPL2 License
-# Last update 2026/11/03
+# Last update 2026/11/25
 #
 # DKMS modules built without a signature while dkms could not sign them are built again, so DKMS signs them.
 # Before 3.4.4-1+sparky2 the edition's dkms named openssl in no field; without openssl, dkms said "openssl not found,
@@ -13,13 +13,25 @@
 # (try_sign_modules, dkms-project/dkms #574 and #575), so every machine installed from the image makes its own key. The
 # installed system signs them once, at its first boot (dkms-sign-unsigned.service, ORDER 374).
 #
+# A signature is needed only where a module without one can be refused: with Secure Boot on in the firmware, or on a
+# kernel that enforces module signatures by itself (module.sig_enforce=1). On a machine without EFI, with a firmware that
+# has no Secure Boot, or with Secure Boot switched off, a rebuild only to sign is work for nothing: a MacBookPro9,2 built
+# four modules again at its first start, 13 minutes at full processor (ORDER 666, 2026-11-17). So the state is asked
+# first, from the firmware itself (the SecureBoot variable, as mokutil --sb-state reads it), never from the presence of a
+# key or of a boot entry; when it cannot be read, the modules are signed as before.
+#
 # dkms-sign-unsigned
-#     every installed module that has a file without a signature, on a kernel built with module signing, is built
-#     again through "sparky-stereo-problems run": a failure is said and kept with its repair, a success clears it;
-#     then the boot image of each kernel whose modules were signed is written again when it holds a copy of them
+#     where a signature is needed: every installed module that has a file without a signature, on a kernel built with
+#     module signing, is built again through "sparky-stereo-problems run": a failure is said and kept with its repair,
+#     a success clears it; then the boot image of each kernel whose modules were signed is written again when it holds
+#     a copy of them. Where none is needed: it says why, builds nothing and clears what it kept before
 # dkms-sign-unsigned first-boot
 #     the same, once, at the installed system's first boot: then it marks itself done (STAMP), whatever each module's
-#     outcome, since a failure is kept by the engine with its repair (dkms-sign-unsigned.service)
+#     outcome, since a failure is kept by the engine with its repair (dkms-sign-unsigned.service). Where no signature
+#     is needed it writes no mark, so the first start after Secure Boot is turned on signs the modules
+# dkms-sign-unsigned state
+#     prints the firmware's Secure Boot state (on, off, unsupported, bios, unknown; enforced when the kernel enforces
+#     signatures without it) and "needed" or "not-needed"
 # dkms-sign-unsigned check
 #     only lists those modules, one per line: MODULE VERSION KERNEL ARCH
 # dkms-sign-unsigned rebuild MODULE VERSION KERNEL ARCH
@@ -36,6 +48,10 @@ STORE=/var/lib/sparky-stereo-problems
 SELF=/usr/lib/dkms/dkms-sign-unsigned
 STAMP=/var/lib/dkms/dkms-sign-unsigned.first-boot
 BOOT=${SPARKY_DKMS_BOOT:-/boot}
+EFI=${SPARKY_DKMS_EFI:-/sys/firmware/efi}
+SIG_ENFORCE=${SPARKY_DKMS_SIG_ENFORCE:-/sys/module/module/parameters/sig_enforce}
+STATE=
+NOT_NEEDED=
 
 say() { "$PROBLEMS" say dkms "$@"; }
 
@@ -54,6 +70,46 @@ framework() {
 		printf '%s\n' "$dkms_tree" "$install_tree" "$try_sign_modules" "${mok_signing_key:-/var/lib/dkms/mok.key}" \
 			"${mok_certificate:-/var/lib/dkms/mok.pub}"
 	)
+}
+
+# The firmware's own Secure Boot state, as mokutil --sb-state reads it: the SecureBoot variable of the EFI global
+# variable GUID (UEFI 2.10, 3.3; efivarfs puts the variable's 4 attribute bytes before its data). on, off, unsupported
+# (the firmware's variables can be read and it has no such variable: mokutil's "This system doesn't support Secure
+# Boot", Apple's firmware before the T2 chip among them), bios (the system started without EFI), unknown (EFI, and
+# the variables cannot be read).
+secure_boot_state() {
+	local var=$EFI/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c value
+	[ -d "$EFI" ] || { echo bios; return; }
+	if [ -e "$var" ]; then
+		value=$(od -An -tu1 -j4 -N1 "$var" 2>/dev/null | tr -d ' \n') || value=
+		case $value in
+		1) echo on ;;
+		0) echo off ;;
+		*) echo unknown ;;
+		esac
+		return
+	fi
+	if [ -n "$(find "$EFI/efivars" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+		echo unsupported
+	else
+		echo unknown
+	fi
+}
+
+# Whether a module without a signature can be refused on this machine. Sets STATE. The kernel turns its own
+# enforcement on under Secure Boot (security/integrity/ima/ima_efi.c, arch_get_ima_policy: set_module_sig_enforced)
+# and a person can turn it on without it (module.sig_enforce=1); /sys/module/module/parameters/sig_enforce says Y then.
+# A state that cannot be read counts as needed: the signed path is never weakened by a failed read.
+signature_needed() {
+	STATE=$(secure_boot_state)
+	case $STATE in
+	on | unknown) return 0 ;;
+	esac
+	if [ "$(cat "$SIG_ENFORCE" 2>/dev/null)" = Y ]; then
+		STATE=enforced
+		return 0
+	fi
+	return 1
 }
 
 # dkms's own running_in_chroot (dkms 3.4.4, dkms.in), unchanged: a port of the Linux part of Debian's ischroot.
@@ -272,6 +328,22 @@ sign_unsigned() {
 	local todo line m v k a conf policy key cert failed=0 off=0 chroot=0 key_record
 	local -A current=() signed=()
 	local -a files
+	if ! signature_needed; then
+		# nothing is listed, built or signed; what was kept before for a module without a signature is over
+		NOT_NEEDED=1
+		case $STATE in
+		off) say LOCAL13 ;;
+		unsupported) say LOCAL14 ;;
+		bios) say LOCAL15 ;;
+		esac
+		if compgen -G "$STORE/dkms_*.json" >/dev/null; then
+			while read -r key_record; do
+				"$PROBLEMS" clear --machine dkms "$key_record" || :
+			done < <("$PROBLEMS" list --json dkms 2>/dev/null | grep -o '"key":"\(unsigned\|boot-image\):[^"]*"' |
+				sed 's/^"key":"//; s/"$//')
+		fi
+		return 0
+	fi
 	mapfile -t todo < <(check)
 	for line in "${todo[@]}"; do
 		read -r m v k a <<<"$line"
@@ -331,6 +403,9 @@ sign_unsigned() {
 # would only slow every boot.
 first_boot() {
 	sign_unsigned
+	# no mark where no signature is needed: this step looks again at every start (it reads one variable) and signs at
+	# the first start after Secure Boot is turned on
+	[ -z "$NOT_NEEDED" ] || return 0
 	: >"$STAMP"
 }
 
@@ -338,6 +413,9 @@ case ${1:-} in
 "") sign_unsigned ;;
 first-boot) first_boot ;;
 check) check ;;
+state)
+	if signature_needed; then echo "$STATE needed"; else echo "$STATE not-needed"; fi
+	;;
 rebuild)
 	[ $# = 5 ] || { echo "usage: $SELF rebuild MODULE VERSION KERNEL ARCH" >&2; exit 2; }
 	rebuild "$2" "$3" "$4" "$5"
@@ -346,5 +424,5 @@ boot-image)
 	[ $# = 2 ] || { echo "usage: $SELF boot-image KERNEL" >&2; exit 2; }
 	boot_image "$2"
 	;;
-*) echo "usage: $SELF [first-boot | check | rebuild MODULE VERSION KERNEL ARCH | boot-image KERNEL]" >&2; exit 2 ;;
+*) echo "usage: $SELF [first-boot | check | state | rebuild MODULE VERSION KERNEL ARCH | boot-image KERNEL]" >&2; exit 2 ;;
 esac

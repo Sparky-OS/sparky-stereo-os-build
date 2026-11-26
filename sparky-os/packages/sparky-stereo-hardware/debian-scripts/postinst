@@ -16,11 +16,16 @@ if [ "$1" = configure ]; then
 	deb-systemd-helper enable sparky-stereo-hardware-peripheral-owner.service >/dev/null || true
 	deb-systemd-helper enable sparky-stereo-known-machines.service >/dev/null
 	deb-systemd-helper enable sparky-stereo-hardware-broadcom-wl.service >/dev/null || true
+	# NVIDIA's driver only where an NVIDIA card is (0.1.43, ORDER 675): at every start, and now for this machine
+	deb-systemd-helper enable sparky-stereo-hardware-nvidia-card.service >/dev/null || true
 	if [ -d /run/udev ]; then udevadm control --reload-rules || true; fi
 	# NVIDIA's services wait for NVIDIA's driver (sparky-stereo-hardware.conf); one that failed on a machine
 	# without the driver is no longer counted as failed
 	if [ -d /run/systemd/system ]; then
 		systemctl daemon-reload || true
+		# after this apt run has ended (the step waits for dpkg's locks): the image's NVIDIA driver leaves a machine without
+		# the card, once; then a known machine's corrections are put into its boot images and menu
+		systemctl --no-block start sparky-stereo-hardware-nvidia-card.service || true
 		systemctl --no-block start sparky-stereo-known-machines.service
 		if [ ! -e /sys/module/nvidia ]; then systemctl reset-failed nvidia-persistenced.service nvidia-powerd.service >/dev/null 2>&1 || true; fi
 		# thermald from an earlier image: kept on Intel, removed on other CPUs where it is unused and automatic, once, after this apt run

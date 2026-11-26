@@ -1,4 +1,22 @@
 -------------------------------------------------------------------------------
+  Version 0.1.15 (2026-11-25)
+-------------------------------------------------------------------------------
+  * ORDER 666: GRUB's menu has the Secure Boot enrolment entries only where they can be used. A firmware that has no
+    Secure Boot (its variables can be read and there is no SecureBoot variable, mokutil's "This system doesn't support
+    Secure Boot": Apple's firmware before the T2 chip among them) gets neither "Secure Boot: enroll the Sparky Stereo
+    OS key" nor "Secure Boot: enroll this computer's DKMS key", and update-grub says so (LOCAL103, ten languages). An
+    iMac14,1 listed the DKMS entry although nothing there can ask for a key. With Secure Boot switched off the
+    entries stay (a key enrolled before it is turned on is what lets the system start afterwards), and where the
+    firmware's variables cannot be read (a BIOS start, a chroot) the menu is written as before.
+  * What the menu was written for is kept in /var/lib/sparky-stereo-boot/secureboot-menu; the check at every boot
+    (sparky-stereo-boot-secureboot.service) writes the menu again when the firmware no longer matches it (the disk in
+    another computer, a firmware update); an update-grub that fails there is said and kept with its repair (LOCAL104).
+  * The postinst writes the menu again at an upgrade from 0.1.14, so the entries leave a computer without Secure Boot
+    at once.
+  * Tests: tests/secureboot-tests.sh, ten more rows (a firmware without the variable, Secure Boot off, on, variables
+    that cannot be read, the record, the check at boot).
+
+-------------------------------------------------------------------------------
   Version 0.1.14 (2026-11-21)
 -------------------------------------------------------------------------------
   * Rows 629/802: when a start cannot be recorded because the person set GRUB_GFXPAYLOAD_LINUX=text (Debian's 10_linux

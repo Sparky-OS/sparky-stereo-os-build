@@ -1,12 +1,22 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/14
 # Copyright 2026 under the GNU GPL3 License
+# A correction that is not yet in the boot images or GRUB's menu is put there (ORDER 665, 669): that writes every boot
+# image, and it runs after the step that may remove NVIDIA's driver, which writes boot images too. The start does not
+# wait for it: no default dependencies, because a target waits for every unit it wants that has them, and this unit
+# waits for the NVIDIA step (measured in a guest with 0.1.43's form: multi-user.target was reached only when the
+# removal had ended). Not in a live session or a container.
 [Unit]
 Description=Apply documented corrections for known machines
 Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
-After=systemd-udev-settle.service
+DefaultDependencies=no
+After=basic.target systemd-udev-settle.service sparky-stereo-hardware-nvidia-card.service
+Conflicts=shutdown.target
+Before=shutdown.target
+ConditionKernelCommandLine=!boot=live
+ConditionVirtualization=!container
 
 [Service]
-Type=oneshot
+Type=exec
 ExecStart=/usr/bin/sparky-stereo-known-machines --apply
 
 [Install]

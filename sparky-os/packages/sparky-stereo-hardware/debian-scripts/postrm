@@ -11,6 +11,12 @@ if [ "$1" = remove ] && command -v deb-systemd-helper > /dev/null; then
 	deb-systemd-helper disable sparky-stereo-known-machines.service >/dev/null || true
 	deb-systemd-helper disable sparky-stereo-hardware-bt-voice.service >/dev/null || true
 	deb-systemd-helper disable sparky-stereo-hardware-broadcom-wl.service >/dev/null || true
+	deb-systemd-helper disable sparky-stereo-hardware-nvidia-card.service >/dev/null || true
+fi
+# a known machine's kernel option leaves GRUB's menu with the package (the boot option file adds it only while the
+# package's tool is there); the boot images are written again by the package's own trigger, without the table
+if [ "$1" = remove ] && [ -x /usr/sbin/update-grub ] && grep -qs 'acpi_mask_gpe=' /boot/grub/grub.cfg; then
+	update-grub || echo 'sparky-stereo-hardware: update-grub failed; the kernel option of this computer'"'"'s correction leaves the menu at the next update-grub' >&2
 fi
 # the per-boot Wi-Fi settings this package wrote go with it (a file of that name without its first line is not ours)
 f=/run/NetworkManager/conf.d/sparky-stereo-broadcom-wl.conf
@@ -26,6 +32,7 @@ if [ "$1" = purge ]; then
 		deb-systemd-helper purge sparky-stereo-known-machines.service >/dev/null || true
 		deb-systemd-helper purge sparky-stereo-hardware-bt-voice.service >/dev/null || true
 		deb-systemd-helper purge sparky-stereo-hardware-broadcom-wl.service >/dev/null || true
+		deb-systemd-helper purge sparky-stereo-hardware-nvidia-card.service >/dev/null || true
 	fi
 	weather=/etc/xdg/sparky-stereo-weatherrc
 	receipt=/var/lib/sparky-stereo-hardware/weather-default.sha256
@@ -35,6 +42,10 @@ if [ "$1" = purge ]; then
 	fi
 	rm -f "$receipt" /var/lib/sparky-stereo-hardware/weather-default.lock
 	rm -f /var/lib/sparky-stereo-hardware/broadcom-wl-cards
+	rm -f /var/lib/sparky-stereo-hardware/nvidia-card-settled /var/lib/sparky-stereo-hardware/nvidia-cards-seen /var/lib/sparky-stereo-hardware/nvidia-choice
+	rm -rf /var/lib/sparky-stereo-hardware/known-machines-boot-images
+	rm -f /etc/sparky-stereo-hardware/known-machines.off
+	rmdir /etc/sparky-stereo-hardware 2>/dev/null || true
 	rm -f /etc/sparky-stereo/opengl-stereo.conf
 	rmdir /etc/sparky-stereo 2>/dev/null || true
 fi

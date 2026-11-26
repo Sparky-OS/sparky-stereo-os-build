@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/03
+# Last update 2026/11/25
 # NVIDIA's i386 libraries for 32-bit programs (Steam, Wine and 32-bit games): nvidia-driver-libs:i386 and libcuda1:i386
 # at the version of NVIDIA's driver installed for amd64. Hardware Setup installs them with the driver where dpkg has i386;
 # this covers i386 enabled later (ORDER 363), and installs them by themselves after the apt run that needs them (ORDER
@@ -29,9 +29,17 @@
 #            person's own.
 #   install  installs them at the driver's version, after apt-get update (the i386 indices arrive with it after
 #            dpkg --add-architecture), then checks again (sparky-stereo-hardware --nvidia-i386 runs this)
+# Since 0.1.43 (ORDER 675) every step asks for an NVIDIA graphics card first: on a machine without one nothing is
+# kept, started or installed, and a problem kept before is cleared (the driver itself leaves such a machine,
+# /usr/lib/sparky-stereo-hardware/nvidia-card). A PCI bus that cannot be read is not "no card": the steps go on.
 set -uo pipefail
 PKG=sparky-stereo-hardware
 KEY=nvidia-i386
+# true only when the PCI bus was read and has no NVIDIA display controller
+no_nvidia_card() {
+	/usr/lib/sparky-stereo-hardware/nvidia-card present >/dev/null 2>&1
+	(($? == 1))
+}
 NOTICE=nvidia-i386-installed
 UNIT=sparky-stereo-hardware-nvidia-i386.service
 REPAIR='["sparky-stereo-hardware","--nvidia-i386"]'
@@ -106,6 +114,11 @@ keep_problem() {
 }
 check() {
 	local version need list why out first=false
+	if no_nvidia_card; then
+		clear_problem
+		clear_notice
+		return 0
+	fi
 	read_versions
 	version=${VERSIONS[nvidia-driver-libs:amd64]:-}
 	if [[ -z $version ]] || ! has_i386; then
@@ -178,6 +191,11 @@ stopped_waiting() {
 auto() {
 	local version need list out status waited waiter
 	local -a pkgs
+	if no_nvidia_card; then
+		clear_problem
+		clear_notice
+		return 0
+	fi
 	out=$(mktemp)
 	# apt prints one "Waiting for cache lock" line a second while it waits; the journal gets the first and their count
 	apt-get -q -o DPkg::Lock::Timeout=-1 check >"$out" 2>&1 &
@@ -221,9 +239,18 @@ auto() {
 		rm -f "$out"
 		return "$status"
 	fi
+	# the plan is read by every kind of line, not by its exit status alone: installing libraries removes nothing
+	local taken
+	taken=$(removals "$out")
+	if [[ -n $taken ]]; then
+		sparky-stereo-problems keep --repair "$REPAIR" --output "$(grep -E '^(Inst|Remv|Purg) ' "$out" | tail -n 40)" \
+			"$PKG" "$KEY" LOCAL128 "$list" "$version" "$taken" >/dev/null 2>&1 || true
+		rm -f "$out"
+		return 1
+	fi
 	rm -f "$out"
 	sparky-stereo-problems run --repair "$REPAIR" "$PKG" "$KEY" LOCAL10 -- \
-		apt-get -y -q --no-install-suggests -o DPkg::Lock::Timeout=-1 install "${pkgs[@]}"
+		apt-get -y -q --no-install-suggests --no-remove -o DPkg::Lock::Timeout=-1 install "${pkgs[@]}"
 	status=$?
 	((status == 0)) || return "$status"
 	read_versions
@@ -235,11 +262,21 @@ auto() {
 	sparky-stereo-problems keep --boot --severity notice --quiet "$PKG" "$NOTICE" LOCAL11 "$list" "$version" || true
 	return 0
 }
+# removals PLAN_FILE: what an apt plan (apt-get --simulate) would remove or purge, space separated; installing the 32-bit
+# libraries removes nothing, so anything here stops it (apt-get -y would remove without asking; --no-remove on the real
+# installation is the second guard: apt-get(8), "If any packages are to be removed apt-get immediately aborts")
+removals() { sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' "$1" | sort -u | paste -sd' ' -; }
 install() {
-	local version need status out step
+	local version need status out step taken
 	if ((EUID != 0)); then
 		echo 'Run as root: sudo sparky-stereo-hardware --nvidia-i386' >&2
 		return 1
+	fi
+	if no_nvidia_card; then
+		sparky-stereo-problems say "$PKG" LOCAL126 >&2 || true
+		clear_problem
+		clear_notice
+		return 0
 	fi
 	read_versions
 	version=${VERSIONS[nvidia-driver-libs:amd64]:-}
@@ -259,9 +296,20 @@ install() {
 		DEBIAN_FRONTEND=noninteractive apt-get -y update 2>&1 | tee "$out"
 		status=${PIPESTATUS[0]}
 		if ((status == 0)); then
+			# the plan first, read by every kind of line: a removal stops it, kept and said
+			# shellcheck disable=SC2046,SC2086 # the package names, one word each
+			apt-get -s -q -o Debug::NoLocking=true --no-install-suggests install $(printf '%s\n' $need | sed "s/\$/=$version/") >"$out" 2>&1
+			taken=$(removals "$out")
+			if [[ -n $taken ]]; then
+				sparky-stereo-problems keep --repair "$REPAIR" --output "$(grep -E '^(Inst|Remv|Purg) ' "$out" | tail -n 40)" \
+					"$PKG" "$KEY" LOCAL128 "$(listed "$need")" "$version" "$taken" >/dev/null 2>&1 || true
+				sparky-stereo-problems say "$PKG" LOCAL128 "$(listed "$need")" "$version" "$taken" >&2 || true
+				rm -f "$out"
+				return 1
+			fi
 			sparky-stereo-problems say "$PKG" LOCAL16 >&2 || true
 			# shellcheck disable=SC2046,SC2086 # the package names, one word each
-			SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests -o DPkg::Lock::Timeout=-1 install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
+			SPARKY_STEREO_HARDWARE_NVIDIA_I386=installing DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --no-remove -o DPkg::Lock::Timeout=-1 install $(printf '%s\n' $need | sed "s/\$/=$version/") 2>&1 | tee "$out"
 			status=${PIPESTATUS[0]}
 			step='apt-get install'
 		else
