@@ -23,7 +23,7 @@ cp /work/src/"${SOURCE}"_*.dsc /work/src/"${SOURCE}"_*.debian.tar.* /work/src/"$
 cd /work/lc
 dpkg-source -x "${SOURCE}"_*.dsc /work/lc/source
 if [[ "$SOURCE" == krdp ]]; then
-    apt-get -y --no-install-recommends install /pipewire/{libkpipewire-data,libkpipewire-dev,libkpipewire6,libkpipewiredmabuf6,libkpipewirerecord6}_*.deb
+    apt-get -y --no-install-recommends install /pipewire/{libkpipewire-data,libkpipewire-dev,libkpipewire-dev-lc-hr,libkpipewire6,libkpipewiredmabuf6,libkpipewirerecord6,qml6-module-org-kde-pipewire}_*.deb
 fi
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 chown -R builder:builder /work
