@@ -266,11 +266,14 @@ problem_set() {
 	fi
 	text_into english en "$key" "$@"
 	PROBLEM_BODY[$code]=$body
-	log_err "$english"
+	if ((DRY_RUN)) || [[ $code != no-area ]]; then
+		log_err "$english"
+	fi
 	((DRY_RUN)) && return 0
 	case $effect in no) severity=failed ;; degraded) severity=degraded ;; *) severity=notice ;; esac
 	if ! "$PROBLEMS_BIN" keep --boot --quiet --severity "$severity" "${repair[@]}" "$PROBLEM_PKG" "$code" "$key" \
 		--details "{\"args\":[$args],\"data\":{\"body\":\"$hash\"}}" 2>/dev/null; then
+		[[ $code != no-area ]] || log_err "$english"
 		log_err "cannot keep the problem $code ($PROBLEMS_BIN keep failed): the journal line above is all there is"
 	fi
 	STATUS_TEXT=""
