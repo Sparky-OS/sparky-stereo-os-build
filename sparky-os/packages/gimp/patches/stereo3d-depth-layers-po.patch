@@ -1,0 +1,859 @@
+Description: the depth layers' strings in nine languages
+ Eighteen strings (the layer type, its actions and their tooltips, the
+ Layers dock's Depth, the undo steps, the messages) in Polish, Brazilian
+ Portuguese, French, German, Spanish, Japanese, Korean and Chinese
+ (simplified and traditional), additions only, in GIMP's own terms (layer
+ group: Ebenengruppe, grupo de camadas, groupe de calques...); the four new
+ source files in POTFILES.in.  For GIMP's translators to take over upstream.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137 with row 148, the stereo GIMP's milestone 2)
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff --git a/po/POTFILES.in b/po/POTFILES.in
+index bd85500..74bb44b 100644
+--- a/po/POTFILES.in
++++ b/po/POTFILES.in
+@@ -6,10 +6,14 @@ desktop/gimp.desktop.in.in
+ 
+ app/about.h
+ app/app.c
++app/core/gimpdepthlayer.c
++app/core/gimpeyeprojectable.c
++app/display/gimpdisplayshell-depth.c
+ app/gimp-update.c
+ app/gimp-version.c
+ app/language.c
+ app/main.c
++app/pdb/depth-layer-cmds.c
+ app/sanity.c
+ 
+ app/actions/actions.c
+diff --git a/po/de.po b/po/de.po
+index b759284..07ee6c1 100644
+--- a/po/de.po
++++ b/po/de.po
+@@ -32313,3 +32313,87 @@ msgstr "Die Leinwand kann hier nicht in 3D gezeigt werden, daher wird das linke
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "Die Anzeigeeinstellungen konnten nicht geöffnet werden: %s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "Tiefenebene"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "Tiefenebene umbenennen"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "Tiefenebene bewegen"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "Tiefe festlegen"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "Die Tiefe der Ebenengruppe „%s“ kann nicht gelesen werden („%s“): Sie wird als einfache Ebenengruppe geöffnet, in der Bildschirmebene."
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "Die Effekte der Ebenengruppe „%s“ werden in 3D nicht gezeigt: Sie enthält Ebenen in einer anderen Tiefe."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "Dieses Bild ist in einem Stereo-Bearbeitungsmodus, der seine zwei Ansichten zeigt: Seine Tiefenebenen werden in der Bildschirmebene gezeigt."
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "Um eine Tiefenebene hervorzuholen oder zu versenken, wählen Sie sie oder eine Ebene darin aus."
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "Neue _Tiefenebene"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "Die ausgewählten Ebenen in eine neue Tiefenebene legen, die sie in einer Tiefe hält"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "Tiefenebene _hervorholen"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "Taste halten und den Zeiger über die Leinwand bewegen, um die Tiefenebene nach vorn zu holen; aus dem Menü um ein Pixel"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "Tiefenebene _versenken"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "Taste halten und den Zeiger über die Leinwand bewegen, um die Tiefenebene nach hinten zu versenken; aus dem Menü um ein Pixel"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "Tiefe"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "Die Tiefe der Tiefenebene in Pixeln Abstand: positiv hinter dem Bildschirm, negativ davor"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "Neue Tiefenebene"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "Die Ebenengruppe „%s“ (%d) ist keine Tiefenebene"
+diff --git a/po/es.po b/po/es.po
+index 439d7ad..65fd84d 100644
+--- a/po/es.po
++++ b/po/es.po
+@@ -34781,3 +34781,87 @@ msgstr "El lienzo no se puede mostrar en 3D aquí, así que se muestra el ojo iz
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "No se pudo abrir la configuración de pantalla: %s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "Capa de profundidad"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "Renombrar la capa de profundidad"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "Mover la capa de profundidad"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "Establecer la profundidad"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "No se puede leer la profundidad del grupo de capas «%s» («%s»): se abre como un grupo de capas normal, en el plano de la pantalla."
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "Los efectos del grupo de capas «%s» no se muestran en 3D: contiene capas a otra profundidad."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "Esta imagen está en un modo de edición estéreo, que muestra sus dos vistas: sus capas de profundidad se muestran en el plano de la pantalla."
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "Para sacar o hundir una capa de profundidad, selecciónela o una capa dentro de ella."
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "Capa de _profundidad nueva"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "Pone las capas seleccionadas en una capa de profundidad nueva, que las mantiene a una misma profundidad"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "_Sacar la capa de profundidad"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "Mantenga la tecla pulsada y mueva el puntero sobre el lienzo para traer la capa de profundidad hacia delante; desde el menú, un píxel"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "_Hundir la capa de profundidad"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "Mantenga la tecla pulsada y mueva el puntero sobre el lienzo para llevar la capa de profundidad hacia atrás; desde el menú, un píxel"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "Profundidad"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "La profundidad de la capa de profundidad, en píxeles de separación: positiva detrás de la pantalla, negativa delante de ella"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "Capa de profundidad nueva"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "El grupo de capas «%s» (%d) no es una capa de profundidad"
+diff --git a/po/fr.po b/po/fr.po
+index 6ca41e9..9212645 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -29934,3 +29934,87 @@ msgstr "Le canevas ne peut pas être affiché en 3D ici, l’œil gauche est don
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "Impossible d’ouvrir les paramètres d’affichage : %s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "Calque de profondeur"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "Renommer le calque de profondeur"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "Déplacer le calque de profondeur"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "Définir la profondeur"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "La profondeur du groupe de calques « %s » ne peut pas être lue (« %s ») : il est ouvert comme un simple groupe de calques, au plan de l'écran."
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "Les effets du groupe de calques « %s » ne sont pas affichés en 3D : il contient des calques à une autre profondeur."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "Cette image est dans un mode d'édition stéréo, qui affiche ses deux vues : ses calques de profondeur sont affichés au plan de l'écran."
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "Pour avancer ou enfoncer un calque de profondeur, sélectionnez-le ou un calque qu'il contient."
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "Nouveau calque de _profondeur"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "Place les calques sélectionnés dans un nouveau calque de profondeur, qui les tient à une même profondeur"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "_Avancer le calque de profondeur"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "Maintenez la touche et déplacez le pointeur sur le canevas pour avancer le calque de profondeur ; depuis le menu, d'un pixel"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "_Enfoncer le calque de profondeur"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "Maintenez la touche et déplacez le pointeur sur le canevas pour enfoncer le calque de profondeur ; depuis le menu, d'un pixel"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "Profondeur"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "La profondeur du calque de profondeur, en pixels de séparation : positive derrière l'écran, négative devant"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "Nouveau calque de profondeur"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "Le groupe de calques « %s » (%d) n'est pas un calque de profondeur"
+diff --git a/po/ja.po b/po/ja.po
+index 906b45a..73cdb9d 100644
+--- a/po/ja.po
++++ b/po/ja.po
+@@ -33021,3 +33021,87 @@ msgstr "ここではキャンバスを 3D で表示できないため、左眼
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "ディスプレイの設定を開けませんでした: %s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "奥行きレイヤー"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "奥行きレイヤー名の変更"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "奥行きレイヤーの移動"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "奥行きの設定"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "レイヤーグループ '%s' の奥行きを読み取れません ('%s')。通常のレイヤーグループとして画面の位置で開きます。"
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "レイヤーグループ '%s' のエフェクトは 3D では表示されません。別の奥行きのレイヤーを含んでいます。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "この画像は 2 つのビューを表示するステレオ編集モードです。奥行きレイヤーは画面の位置に表示されます。"
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "奥行きレイヤーを手前へ出したり奥へ沈めたりするには、そのレイヤーかその中のレイヤーを選択してください。"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "新しい奥行きレイヤー(_D)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "選択したレイヤーを、1 つの奥行きに保つ新しい奥行きレイヤーに入れます"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "奥行きレイヤーを手前へ(_P)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "キーを押したままキャンバス上でポインターを動かすと奥行きレイヤーが手前に来ます。メニューからは 1 ピクセル"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "奥行きレイヤーを奥へ(_S)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "キーを押したままキャンバス上でポインターを動かすと奥行きレイヤーが奥へ下がります。メニューからは 1 ピクセル"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "奥行き"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "奥行きレイヤーの奥行き (視差のピクセル数)。正の値は画面の奥、負の値は画面の手前"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "新しい奥行きレイヤー"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "レイヤーグループ '%s' (%d) は奥行きレイヤーではありません"
+diff --git a/po/ko.po b/po/ko.po
+index e553f54..d23ad66 100644
+--- a/po/ko.po
++++ b/po/ko.po
+@@ -31149,3 +31149,87 @@ msgstr "여기서는 캔버스를 3D로 표시할 수 없어 왼쪽 눈의 그
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "디스플레이 설정을 열 수 없습니다: %s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "깊이 레이어"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "깊이 레이어 이름 바꾸기"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "깊이 레이어 이동"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "깊이 설정"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "레이어 그룹 '%s'의 깊이를 읽을 수 없습니다('%s'). 일반 레이어 그룹으로 화면 위치에서 엽니다."
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "레이어 그룹 '%s'의 효과는 3D로 표시되지 않습니다. 다른 깊이의 레이어를 담고 있습니다."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "이 그림은 두 시점을 보여 주는 스테레오 편집 모드입니다. 깊이 레이어는 화면 위치에 표시됩니다."
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "깊이 레이어를 앞으로 내거나 뒤로 보내려면 그 레이어나 그 안의 레이어를 선택하십시오."
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "새 깊이 레이어(_D)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "선택한 레이어를 하나의 깊이에 두는 새 깊이 레이어에 넣습니다"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "깊이 레이어를 앞으로(_P)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "키를 누른 채 캔버스 위에서 포인터를 움직이면 깊이 레이어가 앞으로 옵니다. 메뉴에서는 1픽셀"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "깊이 레이어를 뒤로(_S)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "키를 누른 채 캔버스 위에서 포인터를 움직이면 깊이 레이어가 뒤로 갑니다. 메뉴에서는 1픽셀"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "깊이"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "깊이 레이어의 깊이(시차 픽셀): 양수는 화면 뒤, 음수는 화면 앞"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "새 깊이 레이어"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "레이어 그룹 '%s'(%d)은(는) 깊이 레이어가 아닙니다"
+diff --git a/po/pl.po b/po/pl.po
+index 0b60b1d..670e1c9 100644
+--- a/po/pl.po
++++ b/po/pl.po
+@@ -28301,3 +28301,87 @@ msgstr "Płótna nie można tu pokazać w 3D, więc pokazano lewe oko; przyczyna
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "Nie można otworzyć ustawień ekranu: %s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "Warstwa głębi"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "Zmiana nazwy warstwy głębi"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "Przesunięcie warstwy głębi"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "Ustawienie głębi"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "Nie można odczytać głębi grupy warstw „%s” („%s”): zostaje otwarta jako zwykła grupa warstw, na płaszczyźnie ekranu."
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "Efekty grupy warstw „%s” nie są pokazywane w 3D: zawiera ona warstwy na innej głębi."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "Ten obraz jest w trybie edycji stereo, który pokazuje jego dwa widoki: jego warstwy głębi są pokazywane na płaszczyźnie ekranu."
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "Aby wysunąć lub zagłębić warstwę głębi, zaznacz ją lub warstwę w niej."
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "Nowa warstwa _głębi"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "Umieść zaznaczone warstwy w nowej warstwie głębi, która utrzymuje je na jednej głębi"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "_Wysuń warstwę głębi"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "Przytrzymaj klawisz i przesuwaj wskaźnik nad płótnem, aby przybliżyć warstwę głębi; z menu o jeden piksel"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "_Zagłęb warstwę głębi"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "Przytrzymaj klawisz i przesuwaj wskaźnik nad płótnem, aby oddalić warstwę głębi; z menu o jeden piksel"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "Głębia"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "Głębia warstwy głębi w pikselach separacji: dodatnia za ekranem, ujemna przed nim"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "Nowa warstwa głębi"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "Grupa warstw „%s” (%d) nie jest warstwą głębi"
+diff --git a/po/pt_BR.po b/po/pt_BR.po
+index a3ec1f4..7fea118 100644
+--- a/po/pt_BR.po
++++ b/po/pt_BR.po
+@@ -31499,3 +31499,87 @@ msgstr "A tela de pintura não pode ser mostrada em 3D aqui, então o olho esque
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "Não foi possível abrir as configurações de tela: %s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "Camada de profundidade"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "Renomear camada de profundidade"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "Mover camada de profundidade"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "Definir profundidade"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "A profundidade do grupo de camadas \"%s\" não pode ser lida (\"%s\"): ele é aberto como um grupo de camadas comum, no plano da tela."
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "Os efeitos do grupo de camadas \"%s\" não são mostrados em 3D: ele contém camadas em outra profundidade."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "Esta imagem está em um modo de edição estéreo, que mostra suas duas vistas: suas camadas de profundidade são mostradas no plano da tela."
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "Para projetar ou afundar uma camada de profundidade, selecione-a ou uma camada dentro dela."
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "Nova camada de _profundidade"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "Coloca as camadas selecionadas em uma nova camada de profundidade, que as mantém em uma só profundidade"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "_Projetar a camada de profundidade"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "Mantenha a tecla pressionada e mova o ponteiro sobre a tela de pintura para trazer a camada de profundidade para a frente; pelo menu, um pixel"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "_Afundar a camada de profundidade"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "Mantenha a tecla pressionada e mova o ponteiro sobre a tela de pintura para levar a camada de profundidade para trás; pelo menu, um pixel"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "Profundidade"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "A profundidade da camada de profundidade, em pixels de separação: positiva atrás da tela, negativa à frente dela"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "Nova camada de profundidade"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "O grupo de camadas \"%s\" (%d) não é uma camada de profundidade"
+diff --git a/po/zh_CN.po b/po/zh_CN.po
+index 9bd1754..e531f9d 100644
+--- a/po/zh_CN.po
++++ b/po/zh_CN.po
+@@ -32345,3 +32345,87 @@ msgstr "此处无法以 3D 显示画布，因此显示左眼画面；原因见
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "无法打开显示设置：%s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "深度图层"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "重命名深度图层"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "移动深度图层"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "设置深度"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "无法读取图层组“%s”的深度（“%s”）：它将作为普通图层组在屏幕平面上打开。"
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "图层组“%s”的效果不在 3D 中显示：它包含处于另一深度的图层。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "此图片处于显示其两个视图的立体编辑模式：其深度图层显示在屏幕平面上。"
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "要前移或后移深度图层，请选择它或其中的图层。"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "新建深度图层(_D)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "将所选图层放入新的深度图层，使它们处于同一深度"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "前移深度图层(_P)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "按住此键并在画布上移动指针可将深度图层前移；从菜单则移动一个像素"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "后移深度图层(_S)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "按住此键并在画布上移动指针可将深度图层后移；从菜单则移动一个像素"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "深度"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "深度图层的深度，以视差像素计：正值在屏幕之后，负值在屏幕之前"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "新建深度图层"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "图层组“%s”（%d）不是深度图层"
+diff --git a/po/zh_TW.po b/po/zh_TW.po
+index 2977c10..8a1415e 100644
+--- a/po/zh_TW.po
++++ b/po/zh_TW.po
+@@ -29411,3 +29411,87 @@ msgstr "此處無法以 3D 顯示畫布，因此顯示左眼畫面；原因請
+ #, c-format
+ msgid "Display Settings could not be opened: %s"
+ msgstr "無法開啟顯示設定：%s"
++
++#: app/core/gimpdepthlayer.c
++msgid "Depth Layer"
++msgstr "深度圖層"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Rename Depth Layer"
++msgstr "更改深度圖層名稱"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Move Depth Layer"
++msgstr "移動深度圖層"
++
++#: app/core/gimpdepthlayer.c
++msgctxt "undo-type"
++msgid "Set Depth"
++msgstr "設定深度"
++
++#: app/core/gimpdepthlayer.c
++#, c-format
++msgid "The depth of the layer group '%s' cannot be read ('%s'): it is opened as a plain layer group, at the screen."
++msgstr "無法讀取圖層群組「%s」的深度（「%s」）：它會以一般圖層群組在螢幕平面上開啟。"
++
++#: app/core/gimpeyeprojectable.c
++#, c-format
++msgid "The effects of the layer group '%s' are not shown in 3D: it holds layers at another depth."
++msgstr "圖層群組「%s」的效果不會以 3D 顯示：它包含位於另一個深度的圖層。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgid "This picture is in a stereo editing mode, which shows its two views: its depth layers are shown at the screen."
++msgstr "此圖片處於顯示其兩個視圖的立體編輯模式：其深度圖層顯示在螢幕平面上。"
++
++#: app/display/gimpdisplayshell-depth.c
++msgid "To pop or sink a depth layer, select it or a layer in it."
++msgstr "要前移或後移深度圖層，請選取它或其中的圖層。"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "New _Depth Layer"
++msgstr "新增深度圖層(_D)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Put the selected layers into a new depth layer, which holds them at one depth"
++msgstr "將所選圖層放入新的深度圖層，使它們位於同一深度"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Pop the Depth Layer"
++msgstr "前移深度圖層(_P)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to bring the depth layer forward; from the menu, one pixel"
++msgstr "按住此鍵並在畫布上移動指標可將深度圖層前移；從選單則移動一個像素"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "_Sink the Depth Layer"
++msgstr "後移深度圖層(_S)"
++
++#: app/actions/layers-actions.c
++msgctxt "layers-action"
++msgid "Hold the key and move the pointer over the canvas to send the depth layer back; from the menu, one pixel"
++msgstr "按住此鍵並在畫布上移動指標可將深度圖層後移；從選單則移動一個像素"
++
++#: app/widgets/gimplayertreeview.c
++msgid "Depth"
++msgstr "深度"
++
++#: app/widgets/gimplayertreeview.c
++msgid "The depth of the depth layer, in pixels of separation: positive behind the screen, negative in front of it"
++msgstr "深度圖層的深度，以視差像素計：正值在螢幕之後，負值在螢幕之前"
++
++#: app/actions/layers-commands.c
++msgid "New Depth Layer"
++msgstr "新增深度圖層"
++
++#: app/pdb/depth-layer-cmds.c
++#, c-format
++msgid "Layer group '%s' (%d) is not a depth layer"
++msgstr "圖層群組「%s」（%d）不是深度圖層"

@@ -148,3 +148,9 @@ A settings read/write failure is visible in the banner, with the file named; med
 - Software-decoded frames, a multiview stream, a format the passes do not read and a converter that refuses the DMA-BUF still take the wl_shm copy, said in the presenter's log; `QT_MM_STEREO_LAYER_SHM=1` still asks for it.
 - Build as for +stereo3d15 (`next-source.sh qt6-multimedia PUBLISHED_+14.dsc OUT`, then `build.sh`).
 
+
+## Queue row 148: stereo-layer 1.24.0, the depth layers' model
+
+- stereo-layer 1.24.0 (`stereo-layer-source.sh FORK COMMIT OUT` from Sparky-OS/stereo-layer branch `order148`, on 1.23.4 of row 63): libstereo-policy gains `stereo-depth.h`, the depth layers' value as text with three decimals in the C locale, each eye's move by half the value (positive behind the screen) and the move of an RGBA picture (a copy for a whole move, a Lanczos window of three lobes for a fractional one), with `autotests/depthlayertest.c`.
+- Build: `build.sh stereo-layer WORK SOURCE PREVIOUS REPO ARCHIVE "" SIBLINGS` with `SPARKY_BUILD_PROFILES=nocheck` (the suite needs the KImageFormats plugin, built later), the published 1.22.0 of round r1123a as the gate's previous set (the staged 1.23.4 is the source this one follows, not a published build: with it the gate refused "conflicting supplied package"), the published round's packages as the siblings, and this tree's gimp `archive-sources.json` as the archive list; the suite of the depth model runs apart from the installed packages. gimp 3.2.8-1+stereo3d2 builds against it.
+- Credits: the stereo layer's own (Daniel Ramos (Capitain Jack); code derived from Gwenview and the Marble and Krita window pattern keeps its original credits, as the layer's README says); the Lanczos window is Cornelius Lanczos's.

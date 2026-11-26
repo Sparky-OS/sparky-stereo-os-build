@@ -1,0 +1,3733 @@
+Description: depth layers: a layer group at one depth, each eye's picture, the pop and sink keys
+ A depth layer (GimpDepthLayer, a layer group) holds its layers at one depth
+ the artist sets, in pixels of separation with three decimals: positive
+ behind the screen, negative in front of it, never clamped.  Layers in no
+ depth layer are at the screen, so a 2D document is unchanged; a depth layer
+ inside another is at its own value, never the sum.  The value is the
+ group's persistent parasite "gimp-depth-layer" (the stereo policy library's
+ text), so an XCF file keeps it and a GIMP without depth layers opens a plain
+ layer group and loses nothing; xcf-load turns such a group into a depth
+ layer again.
+ .
+ Each eye's picture (GimpEyeProjectable) composites the image's layers with
+ copies of their mode nodes over the eye's own picture of what lies below,
+ the layers' content and masks taken from the image's graph as they are and
+ moved by the eye's half of the depth (gimp:depth-shift: a copy of the
+ samples for a whole move, the stereo policy library's Lanczos resampling of
+ premultiplied samples for a fractional one).  The stereo canvas shows it as
+ a third kind of image; with the eye layers too, each eye shows its own eye
+ layer under the depth layers; a packed picture in an editing mode keeps its
+ depth layers at the screen and the status bar says so.
+ .
+ Layer > New Depth Layer puts the selected layers into a new depth layer.
+ The Layers dock shows and edits the depth of the selected layer's depth
+ layer (the row is hidden otherwise).  The actions layers-depth-pop (8) and
+ layers-depth-sink (7), held over the canvas, turn the pointer's movement into
+ depth, 0.1 pixel of separation for each pixel moved, one undo step for each
+ gesture; from the menu each moves the depth by one pixel.  The PDB gains
+ gimp-depth-layer-new, -get-depth, -set-depth and -new-from-eye, for the
+ core only (pdb/groups/depth_layer.pdb exports nothing to libgimp).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137 with row 148, the stereo GIMP's milestone 2)
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff --git a/app/actions/layers-actions.c b/app/actions/layers-actions.c
+index 4b03def..bf7372a 100644
+--- a/app/actions/layers-actions.c
++++ b/app/actions/layers-actions.c
+@@ -27,6 +27,7 @@
+ #include "operations/layer-modes/gimp-layer-modes.h"
+ 
+ #include "core/gimpchannel.h"
++#include "core/gimpdepthlayer.h"
+ #include "core/gimpimage.h"
+ #include "core/gimplayer.h"
+ #include "core/gimplayer-floating-selection.h"
+@@ -100,6 +101,30 @@ static const GimpActionEntry layers_actions[] =
+     layers_new_group_cmd_callback,
+     GIMP_HELP_LAYER_NEW },
+ 
++  { "layers-new-depth-layer", GIMP_ICON_FOLDER_NEW,
++    NC_("layers-action", "New _Depth Layer"), NULL, { NULL },
++    NC_("layers-action",
++        "Put the selected layers into a new depth layer, which holds them "
++        "at one depth"),
++    layers_new_depth_layer_cmd_callback,
++    GIMP_HELP_LAYER_NEW },
++
++  { "layers-depth-pop", NULL,
++    NC_("layers-action", "_Pop the Depth Layer"), NULL, { "8", NULL },
++    NC_("layers-action",
++        "Hold the key and move the pointer over the canvas to bring the "
++        "depth layer forward; from the menu, one pixel"),
++    layers_depth_pop_cmd_callback,
++    GIMP_HELP_LAYER_DIALOG },
++
++  { "layers-depth-sink", NULL,
++    NC_("layers-action", "_Sink the Depth Layer"), NULL, { "7", NULL },
++    NC_("layers-action",
++        "Hold the key and move the pointer over the canvas to send the "
++        "depth layer back; from the menu, one pixel"),
++    layers_depth_sink_cmd_callback,
++    GIMP_HELP_LAYER_DIALOG },
++
+   { "layers-duplicate", GIMP_ICON_OBJECT_DUPLICATE,
+     NC_("layers-action", "D_uplicate Layers"), NULL, { "<primary><shift>D", NULL },
+     NC_("layers-action",
+@@ -1037,6 +1062,9 @@ layers_actions_update (GimpActionGroup *group,
+   SET_SENSITIVE ("layers-new-last-values",  image);
+   SET_SENSITIVE ("layers-new-from-visible", image);
+   SET_SENSITIVE ("layers-new-group",        image && !indexed && !fs);
++  SET_SENSITIVE ("layers-new-depth-layer",  image && !indexed && !fs);
++  SET_SENSITIVE ("layers-depth-pop",        image && layers && gimp_item_get_depth_layer (layers->data));
++  SET_SENSITIVE ("layers-depth-sink",       image && layers && gimp_item_get_depth_layer (layers->data));
+   SET_SENSITIVE ("layers-duplicate",        n_selected_layers > 0 && !fs && !ac);
+   SET_SENSITIVE ("layers-delete",           n_selected_layers > 0 && !ac);
+ 
+diff --git a/app/actions/layers-commands.c b/app/actions/layers-commands.c
+index aa60fe9..0d38a0d 100644
+--- a/app/actions/layers-commands.c
++++ b/app/actions/layers-commands.c
+@@ -39,6 +39,7 @@
+ #include "core/gimpcontainer.h"
+ #include "core/gimpcontext.h"
+ #include "core/gimpdrawable-fill.h"
++#include "core/gimpdepthlayer.h"
+ #include "core/gimpgrouplayer.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-merge.h"
+@@ -76,6 +77,7 @@
+ 
+ #include "display/gimpdisplay.h"
+ #include "display/gimpdisplayshell.h"
++#include "display/gimpdisplayshell-depth.h"
+ #include "display/gimpimagewindow.h"
+ 
+ #include "tools/gimppathtool.h"
+@@ -589,6 +591,135 @@ layers_new_from_visible_cmd_callback (GimpAction *action,
+   gimp_image_flush (image);
+ }
+ 
++/*  A depth layer takes the place of the topmost selected layer and holds
++ *  the selected layers, in their order; with nothing selected, an empty
++ *  depth layer goes on top.  It starts at the screen (0.000).
++ */
++void
++layers_new_depth_layer_cmd_callback (GimpAction *action,
++                                     GVariant   *value,
++                                     gpointer    data)
++{
++  GimpImage *image;
++  GimpLayer *depth_layer;
++  GimpLayer *parent   = NULL;
++  gint       position = 0;
++  GList     *selected;
++  GList     *ordered  = NULL;
++  GList     *all;
++  GList     *iter;
++  gint       index    = 0;
++  return_if_no_image (image, data);
++
++  selected = gimp_image_get_selected_layers (image);
++
++  /*  the selected layers top first, leaving out those whose group is
++   *  selected too
++   */
++  all = gimp_image_get_layer_list (image);
++
++  for (iter = all; iter; iter = iter->next)
++    {
++      GimpItem *item = iter->data;
++      GimpItem *ancestor;
++      gboolean  inside = FALSE;
++
++      if (! g_list_find (selected, item))
++        continue;
++
++      for (ancestor = gimp_item_get_parent (item);
++           ancestor;
++           ancestor = gimp_item_get_parent (ancestor))
++        if (g_list_find (selected, ancestor))
++          inside = TRUE;
++
++      if (! inside)
++        ordered = g_list_append (ordered, item);
++    }
++
++  g_list_free (all);
++
++  if (ordered)
++    {
++      parent   = GIMP_LAYER (gimp_item_get_parent (ordered->data));
++      position = gimp_item_get_index (ordered->data);
++    }
++
++  gimp_image_undo_group_start (image, GIMP_UNDO_GROUP_LAYER_ADD,
++                               _("New Depth Layer"));
++
++  depth_layer = gimp_depth_layer_new (image);
++
++  gimp_image_add_layer (image, depth_layer, parent, position, TRUE);
++
++  for (iter = ordered; iter; iter = iter->next)
++    gimp_image_reorder_item (image, iter->data, GIMP_ITEM (depth_layer),
++                             index++, TRUE, NULL);
++
++  gimp_image_set_selected_layers (image, g_list_prepend (NULL, depth_layer));
++
++  gimp_image_undo_group_end (image);
++  gimp_image_flush (image);
++
++  g_list_free (ordered);
++}
++
++/*  A pop or sink key pressed starts the gesture over the canvas; from the
++ *  menu (or with no image window) the depth moves by one pixel.
++ */
++static void
++layers_depth_key (gpointer data,
++                  gint     direction)
++{
++  GimpImage      *image;
++  GimpDisplay    *display;
++  GdkEvent       *event;
++  GimpDepthLayer *layer;
++  GList          *layers;
++  return_if_no_image (image, data);
++
++  display = action_data_get_display (data);
++  event   = gtk_get_current_event ();
++
++  if (display && event && event->type == GDK_KEY_PRESS)
++    {
++      gimp_display_shell_depth_key_press (gimp_display_get_shell (display),
++                                          direction, event->key.keyval);
++      gdk_event_free (event);
++      return;
++    }
++
++  if (event)
++    gdk_event_free (event);
++
++  layers = gimp_image_get_selected_layers (image);
++  layer  = layers ? gimp_item_get_depth_layer (layers->data) : NULL;
++
++  if (! layer)
++    return;
++
++  gimp_depth_layer_set_depth (layer,
++                              gimp_depth_layer_get_depth (layer) + direction,
++                              TRUE);
++  gimp_image_flush (image);
++}
++
++void
++layers_depth_pop_cmd_callback (GimpAction *action,
++                               GVariant   *value,
++                               gpointer    data)
++{
++  layers_depth_key (data, -1);
++}
++
++void
++layers_depth_sink_cmd_callback (GimpAction *action,
++                                GVariant   *value,
++                                gpointer    data)
++{
++  layers_depth_key (data, 1);
++}
++
+ void
+ layers_new_group_cmd_callback (GimpAction *action,
+                                GVariant   *value,
+diff --git a/app/actions/layers-commands.h b/app/actions/layers-commands.h
+index 4a105b4..cf5bce3 100644
+--- a/app/actions/layers-commands.h
++++ b/app/actions/layers-commands.h
+@@ -41,6 +41,15 @@ void   layers_new_from_visible_cmd_callback   (GimpAction *action,
+                                                GVariant   *value,
+                                                gpointer    data);
+ 
++void   layers_new_depth_layer_cmd_callback    (GimpAction *action,
++                                               GVariant   *value,
++                                               gpointer    data);
++void   layers_depth_pop_cmd_callback          (GimpAction *action,
++                                               GVariant   *value,
++                                               gpointer    data);
++void   layers_depth_sink_cmd_callback         (GimpAction *action,
++                                               GVariant   *value,
++                                               gpointer    data);
+ void   layers_new_group_cmd_callback          (GimpAction *action,
+                                                GVariant   *value,
+                                                gpointer    data);
+diff --git a/app/core/gimpdepthlayer.c b/app/core/gimpdepthlayer.c
+new file mode 100644
+index 0000000..a384a76
+--- /dev/null
++++ b/app/core/gimpdepthlayer.c
+@@ -0,0 +1,512 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * GimpDepthLayer
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  A depth layer is a layer group that holds its layers at one depth the
++ *  artist sets, in pixels of separation with three decimals: positive
++ *  behind the screen, negative in front of it, never clamped.  Layers in
++ *  no depth layer are at the screen, so a 2D document is unchanged, and a
++ *  depth layer inside another is at its own value, never the sum.  Each
++ *  eye sees the layer moved by half the value (gimpeyeprojectable.c).
++ *
++ *  The value is kept as the group's persistent parasite "gimp-depth-layer"
++ *  (the text of stereo_depth_format()), so an XCF file keeps it and a GIMP
++ *  without depth layers opens a plain layer group and loses nothing.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include <stereo-depth.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "core-types.h"
++
++#include "gimp.h"
++#include "gimpcontainer.h"
++#include "gimpdepthlayer.h"
++#include "gimpimage.h"
++#include "gimpimage-undo.h"
++#include "gimpitemstack.h"
++#include "gimpitemundo.h"
++
++#include "gimp-intl.h"
++
++
++enum
++{
++  DEPTH_CHANGED,
++  LAST_SIGNAL
++};
++
++enum
++{
++  PROP_0,
++  PROP_DEPTH
++};
++
++
++struct _GimpDepthLayer
++{
++  GimpGroupLayer  parent_instance;
++
++  gdouble         depth;
++};
++
++
++static void       gimp_depth_layer_set_property (GObject      *object,
++                                                 guint         property_id,
++                                                 const GValue *value,
++                                                 GParamSpec   *pspec);
++static void       gimp_depth_layer_get_property (GObject      *object,
++                                                 guint         property_id,
++                                                 GValue       *value,
++                                                 GParamSpec   *pspec);
++
++static GimpItem * gimp_depth_layer_duplicate    (GimpItem     *item,
++                                                 GType         new_type);
++
++static void       gimp_depth_layer_store        (GimpDepthLayer *layer);
++
++
++G_DEFINE_TYPE (GimpDepthLayer, gimp_depth_layer, GIMP_TYPE_GROUP_LAYER)
++
++#define parent_class gimp_depth_layer_parent_class
++
++static guint depth_layer_signals[LAST_SIGNAL] = { 0 };
++
++
++/*  the undo of a depth: the value before the change  */
++
++#define GIMP_TYPE_DEPTH_LAYER_UNDO  (gimp_depth_layer_undo_get_type ())
++#define GIMP_DEPTH_LAYER_UNDO(obj)  (G_TYPE_CHECK_INSTANCE_CAST ((obj), GIMP_TYPE_DEPTH_LAYER_UNDO, GimpDepthLayerUndo))
++
++typedef struct _GimpDepthLayerUndo      GimpDepthLayerUndo;
++typedef struct _GimpDepthLayerUndoClass GimpDepthLayerUndoClass;
++
++struct _GimpDepthLayerUndo
++{
++  GimpItemUndo  parent_instance;
++
++  gdouble       depth;
++};
++
++struct _GimpDepthLayerUndoClass
++{
++  GimpItemUndoClass  parent_class;
++};
++
++static GType gimp_depth_layer_undo_get_type (void) G_GNUC_CONST;
++
++G_DEFINE_TYPE (GimpDepthLayerUndo, gimp_depth_layer_undo, GIMP_TYPE_ITEM_UNDO)
++
++static void
++gimp_depth_layer_undo_constructed (GObject *object)
++{
++  GimpDepthLayerUndo *undo = GIMP_DEPTH_LAYER_UNDO (object);
++
++  G_OBJECT_CLASS (gimp_depth_layer_undo_parent_class)->constructed (object);
++
++  undo->depth =
++    gimp_depth_layer_get_depth (GIMP_DEPTH_LAYER (GIMP_ITEM_UNDO (object)->item));
++}
++
++static void
++gimp_depth_layer_undo_pop (GimpUndo            *undo,
++                           GimpUndoMode         undo_mode,
++                           GimpUndoAccumulator *accum)
++{
++  GimpDepthLayerUndo *depth_undo = GIMP_DEPTH_LAYER_UNDO (undo);
++  GimpDepthLayer     *layer;
++  gdouble             depth;
++
++  GIMP_UNDO_CLASS (gimp_depth_layer_undo_parent_class)->pop (undo, undo_mode,
++                                                              accum);
++
++  layer = GIMP_DEPTH_LAYER (GIMP_ITEM_UNDO (undo)->item);
++
++  depth = gimp_depth_layer_get_depth (layer);
++  gimp_depth_layer_set_depth (layer, depth_undo->depth, FALSE);
++  depth_undo->depth = depth;
++}
++
++static void
++gimp_depth_layer_undo_class_init (GimpDepthLayerUndoClass *klass)
++{
++  GObjectClass  *object_class = G_OBJECT_CLASS (klass);
++  GimpUndoClass *undo_class   = GIMP_UNDO_CLASS (klass);
++
++  object_class->constructed = gimp_depth_layer_undo_constructed;
++
++  undo_class->pop           = gimp_depth_layer_undo_pop;
++}
++
++static void
++gimp_depth_layer_undo_init (GimpDepthLayerUndo *undo)
++{
++}
++
++
++/*  the layer  */
++
++static void
++gimp_depth_layer_class_init (GimpDepthLayerClass *klass)
++{
++  GObjectClass      *object_class   = G_OBJECT_CLASS (klass);
++  GimpViewableClass *viewable_class = GIMP_VIEWABLE_CLASS (klass);
++  GimpItemClass     *item_class     = GIMP_ITEM_CLASS (klass);
++
++  depth_layer_signals[DEPTH_CHANGED] =
++    g_signal_new ("depth-changed",
++                  G_TYPE_FROM_CLASS (klass),
++                  G_SIGNAL_RUN_FIRST,
++                  0,
++                  NULL, NULL, NULL,
++                  G_TYPE_NONE, 0);
++
++  object_class->set_property    = gimp_depth_layer_set_property;
++  object_class->get_property    = gimp_depth_layer_get_property;
++
++  viewable_class->default_name  = _("Depth Layer");
++
++  item_class->duplicate         = gimp_depth_layer_duplicate;
++
++  item_class->rename_desc       = C_("undo-type", "Rename Depth Layer");
++  item_class->translate_desc    = C_("undo-type", "Move Depth Layer");
++
++  g_object_class_install_property (object_class, PROP_DEPTH,
++                                   g_param_spec_double ("depth", NULL, NULL,
++                                                        -G_MAXDOUBLE,
++                                                        G_MAXDOUBLE,
++                                                        0.0,
++                                                        GIMP_PARAM_READWRITE));
++}
++
++static void
++gimp_depth_layer_init (GimpDepthLayer *layer)
++{
++  layer->depth = 0.0;
++}
++
++static void
++gimp_depth_layer_set_property (GObject      *object,
++                               guint         property_id,
++                               const GValue *value,
++                               GParamSpec   *pspec)
++{
++  GimpDepthLayer *layer = GIMP_DEPTH_LAYER (object);
++
++  switch (property_id)
++    {
++    case PROP_DEPTH:
++      gimp_depth_layer_set_depth (layer, g_value_get_double (value), FALSE);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_depth_layer_get_property (GObject    *object,
++                               guint       property_id,
++                               GValue     *value,
++                               GParamSpec *pspec)
++{
++  GimpDepthLayer *layer = GIMP_DEPTH_LAYER (object);
++
++  switch (property_id)
++    {
++    case PROP_DEPTH:
++      g_value_set_double (value, layer->depth);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static GimpItem *
++gimp_depth_layer_duplicate (GimpItem *item,
++                            GType     new_type)
++{
++  GimpItem *new_item;
++
++  new_item = GIMP_ITEM_CLASS (parent_class)->duplicate (item, new_type);
++
++  if (GIMP_IS_DEPTH_LAYER (new_item))
++    {
++      GIMP_DEPTH_LAYER (new_item)->depth = GIMP_DEPTH_LAYER (item)->depth;
++    }
++  else if (new_item)
++    {
++      /*  a plain group made from a depth layer is at the screen  */
++      gimp_item_parasite_detach (new_item, GIMP_DEPTH_LAYER_PARASITE, FALSE);
++    }
++
++  return new_item;
++}
++
++/*  the value as the group's persistent parasite, never with an undo of its
++ *  own: the depth's own undo restores the value, and the parasite with it
++ */
++static void
++gimp_depth_layer_store (GimpDepthLayer *layer)
++{
++  GimpParasite *parasite;
++  gchar         text[STEREO_DEPTH_TEXT_SIZE];
++
++  if (stereo_depth_format (layer->depth, text, sizeof (text)) < 0)
++    return;
++
++  parasite = gimp_parasite_new (GIMP_DEPTH_LAYER_PARASITE,
++                                GIMP_PARASITE_PERSISTENT,
++                                strlen (text), text);
++  gimp_item_parasite_attach (GIMP_ITEM (layer), parasite, FALSE);
++  gimp_parasite_free (parasite);
++}
++
++
++/*  public functions  */
++
++GimpLayer *
++gimp_depth_layer_new (GimpImage *image)
++{
++  GimpDepthLayer *layer;
++  const Babl     *format;
++
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), NULL);
++
++  format = gimp_image_get_layer_format (image, TRUE);
++
++  layer = GIMP_DEPTH_LAYER (gimp_drawable_new (GIMP_TYPE_DEPTH_LAYER,
++                                               image, NULL,
++                                               0, 0, 1, 1,
++                                               format));
++
++  gimp_layer_set_mode (GIMP_LAYER (layer),
++                       gimp_image_get_default_new_layer_mode (image),
++                       FALSE);
++
++  gimp_depth_layer_store (layer);
++
++  return GIMP_LAYER (layer);
++}
++
++gdouble
++gimp_depth_layer_get_depth (GimpDepthLayer *layer)
++{
++  g_return_val_if_fail (GIMP_IS_DEPTH_LAYER (layer), 0.0);
++
++  return layer->depth;
++}
++
++/*  Sets the depth, rounded to three decimals and never clamped; the
++ *  image's eyes follow through the layer's update.
++ */
++void
++gimp_depth_layer_set_depth (GimpDepthLayer *layer,
++                            gdouble         depth,
++                            gboolean        push_undo)
++{
++  GimpItem *item;
++
++  g_return_if_fail (GIMP_IS_DEPTH_LAYER (layer));
++
++  if (! isfinite (depth))
++    return;
++
++  depth = stereo_depth_round (depth);
++
++  if (depth == layer->depth)
++    {
++      /*  the parasite may still be missing on a new layer  */
++      if (! gimp_item_parasite_find (GIMP_ITEM (layer), GIMP_DEPTH_LAYER_PARASITE))
++        gimp_depth_layer_store (layer);
++      return;
++    }
++
++  item = GIMP_ITEM (layer);
++
++  if (push_undo && gimp_item_is_attached (item))
++    {
++      GimpImage *image = gimp_item_get_image (item);
++
++      gimp_image_undo_push (image, GIMP_TYPE_DEPTH_LAYER_UNDO,
++                            GIMP_UNDO_PARASITE_ATTACH,
++                            C_("undo-type", "Set Depth"),
++                            GIMP_DIRTY_ITEM_META,
++                            "item", item,
++                            NULL);
++    }
++
++  layer->depth = depth;
++
++  gimp_depth_layer_store (layer);
++
++  g_object_notify (G_OBJECT (layer), "depth");
++  g_signal_emit (layer, depth_layer_signals[DEPTH_CHANGED], 0);
++
++  if (gimp_item_is_attached (item))
++    gimp_drawable_update_all (GIMP_DRAWABLE (layer));
++}
++
++/*  The depth layer an item is at: itself or its nearest enclosing depth
++ *  layer, or NULL for an item at the screen.
++ */
++GimpDepthLayer *
++gimp_item_get_depth_layer (GimpItem *item)
++{
++  g_return_val_if_fail (item == NULL || GIMP_IS_ITEM (item), NULL);
++
++  for (; item; item = gimp_item_get_parent (item))
++    {
++      if (GIMP_IS_DEPTH_LAYER (item))
++        return GIMP_DEPTH_LAYER (item);
++    }
++
++  return NULL;
++}
++
++static gboolean
++gimp_depth_layers_in (GimpContainer *container)
++{
++  GList *list;
++
++  for (list = gimp_item_stack_get_item_iter (GIMP_ITEM_STACK (container));
++       list;
++       list = g_list_next (list))
++    {
++      GimpContainer *children;
++
++      if (GIMP_IS_DEPTH_LAYER (list->data))
++        return TRUE;
++
++      children = gimp_viewable_get_children (list->data);
++
++      if (children && gimp_depth_layers_in (children))
++        return TRUE;
++    }
++
++  return FALSE;
++}
++
++gboolean
++gimp_image_has_depth_layers (GimpImage *image)
++{
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
++
++  return gimp_depth_layers_in (gimp_image_get_layers (image));
++}
++
++/*  Whether a group holds a depth layer anywhere below it.  */
++gboolean
++gimp_item_has_depth_layers_below (GimpItem *item)
++{
++  GimpContainer *children;
++
++  g_return_val_if_fail (GIMP_IS_ITEM (item), FALSE);
++
++  children = gimp_viewable_get_children (GIMP_VIEWABLE (item));
++
++  return children && gimp_depth_layers_in (children);
++}
++
++/*  Called by the XCF loader after a layer's properties are read: a layer
++ *  group carrying the depth parasite becomes a depth layer.  A parasite
++ *  that does not read as a value is told and the group is kept as it is.
++ */
++gboolean
++gimp_depth_layer_xcf_load_hack (GimpLayer **layer)
++{
++  const GimpParasite *parasite;
++  GimpImage          *image;
++  GimpLayer          *group;
++  GimpDepthLayer     *depth_layer;
++  const gchar        *data;
++  guint32             size;
++  gchar              *text;
++  gdouble             depth;
++
++  g_return_val_if_fail (layer != NULL, FALSE);
++  g_return_val_if_fail (GIMP_IS_LAYER (*layer), FALSE);
++
++  if (! GIMP_IS_GROUP_LAYER (*layer) || GIMP_IS_DEPTH_LAYER (*layer))
++    return FALSE;
++
++  parasite = gimp_item_parasite_find (GIMP_ITEM (*layer),
++                                      GIMP_DEPTH_LAYER_PARASITE);
++  if (! parasite)
++    return FALSE;
++
++  group = *layer;
++  image = gimp_item_get_image (GIMP_ITEM (group));
++
++  data = gimp_parasite_get_data (parasite, &size);
++  text = g_strndup (data, size);
++
++  if (stereo_depth_parse (text, &depth) < 0)
++    {
++      gimp_message (image->gimp, NULL, GIMP_MESSAGE_WARNING,
++                    _("The depth of the layer group '%s' cannot be read "
++                      "('%s'): it is opened as a plain layer group, at the "
++                      "screen."),
++                    gimp_object_get_name (group), text);
++      g_free (text);
++      return FALSE;
++    }
++
++  g_free (text);
++
++  depth_layer = GIMP_DEPTH_LAYER (gimp_depth_layer_new (image));
++
++  /*  the group's name, ID, tattoo, parasites, offsets, size, visibility
++   *  and locks
++   */
++  gimp_item_replace_item (GIMP_ITEM (depth_layer), GIMP_ITEM (group));
++
++  gimp_layer_set_opacity         (GIMP_LAYER (depth_layer),
++                                  gimp_layer_get_opacity (group), FALSE);
++  gimp_layer_set_mode            (GIMP_LAYER (depth_layer),
++                                  gimp_layer_get_mode (group), FALSE);
++  gimp_layer_set_blend_space     (GIMP_LAYER (depth_layer),
++                                  gimp_layer_get_blend_space (group), FALSE);
++  gimp_layer_set_composite_space (GIMP_LAYER (depth_layer),
++                                  gimp_layer_get_composite_space (group), FALSE);
++  gimp_layer_set_composite_mode  (GIMP_LAYER (depth_layer),
++                                  gimp_layer_get_composite_mode (group), FALSE);
++  gimp_layer_set_lock_alpha      (GIMP_LAYER (depth_layer),
++                                  gimp_layer_get_lock_alpha (group), FALSE);
++
++  depth_layer->depth = stereo_depth_round (depth);
++
++  g_object_ref_sink (group);
++  g_object_unref (group);
++
++  *layer = GIMP_LAYER (depth_layer);
++
++  return TRUE;
++}
+diff --git a/app/core/gimpdepthlayer.h b/app/core/gimpdepthlayer.h
+new file mode 100644
+index 0000000..1624c74
+--- /dev/null
++++ b/app/core/gimpdepthlayer.h
+@@ -0,0 +1,46 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * GimpDepthLayer
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "gimpgrouplayer.h"
++
++
++#define GIMP_DEPTH_LAYER_PARASITE "gimp-depth-layer"
++
++
++#define GIMP_TYPE_DEPTH_LAYER (gimp_depth_layer_get_type ())
++G_DECLARE_FINAL_TYPE (GimpDepthLayer,
++                      gimp_depth_layer,
++                      GIMP, DEPTH_LAYER,
++                      GimpGroupLayer)
++
++
++GimpLayer      * gimp_depth_layer_new             (GimpImage       *image);
++
++gdouble          gimp_depth_layer_get_depth       (GimpDepthLayer  *layer);
++void             gimp_depth_layer_set_depth       (GimpDepthLayer  *layer,
++                                                   gdouble          depth,
++                                                   gboolean         push_undo);
++
++GimpDepthLayer * gimp_item_get_depth_layer        (GimpItem        *item);
++gboolean         gimp_image_has_depth_layers      (GimpImage       *image);
++gboolean         gimp_item_has_depth_layers_below (GimpItem        *item);
++
++gboolean         gimp_depth_layer_xcf_load_hack   (GimpLayer      **layer);
+diff --git a/app/core/gimpeyeprojectable.c b/app/core/gimpeyeprojectable.c
+new file mode 100644
+index 0000000..6009055
+--- /dev/null
++++ b/app/core/gimpeyeprojectable.c
+@@ -0,0 +1,715 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpeyeprojectable.c
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  One eye's picture of an image with depth layers.
++ *
++ *  The image's own graph composites each layer over the layers below it.
++ *  An eye's graph does the same with a copy of each layer's mode node,
++ *  fed by the eye's own picture of what lies below, while the layer's own
++ *  content and its mask come from the image's graph as they are: so every
++ *  layer mode, opacity, mask and effect is GIMP's own.  The content and
++ *  mask of a layer at a depth are moved by the eye's half of the depth
++ *  (gimp:depth-shift).  A group whose layers are all at one depth is moved
++ *  as one picture, its projection; a group that holds layers at another
++ *  depth, and every pass-through group, is composited again from its
++ *  layers.  Layers in no depth layer stay where they are, and a depth
++ *  layer inside another is at its own value, never the sum.
++ *
++ *  An image with the top-level layers "Left eye" and "Right eye" (the
++ *  stereo pictures plug-in's eye layers) shows each eye only its own.
++ *
++ *  The eye's graph is made again whenever what it depends on changes;
++ *  every change of the image's picture reaches the eye widened by the
++ *  largest move, the reach of the resampling window included.
++ */
++
++#include "config.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++
++#include <stereo-depth.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "core-types.h"
++
++#include "gimpcontainer.h"
++#include "gimpdepthlayer.h"
++#include "gimpdrawable-filters.h"
++#include "gimpeyeprojectable.h"
++#include "gimpimage.h"
++#include "gimpimage-private.h"
++#include "gimpitemstack.h"
++#include "gimpitemtree.h"
++#include "gimplayer.h"
++#include "gimpprojectable.h"
++
++#include "gimp-intl.h"
++
++
++#define LEFT_EYE_LAYER  "Left eye"
++#define RIGHT_EYE_LAYER "Right eye"
++
++/*  how far the resampling window reaches beyond a moved picture  */
++#define WINDOW_REACH    4
++
++
++struct _GimpEyeProjectable
++{
++  GimpViewable parent_instance;
++
++  GimpImage *image;
++  GimpEye    eye;
++
++  GeglNode  *graph;
++  GeglNode  *body;
++  gchar     *signature;
++  gint       margin;
++  gchar     *problem;
++};
++
++typedef struct
++{
++  GimpEyeProjectable *self;
++  GeglNode           *body;       /*  NULL: only describe  */
++  GString            *signature;
++  gdouble             widest;
++  gboolean            eye_layers;
++  gchar              *problem;
++} Walk;
++
++
++static void          gimp_eye_projectable_iface_init (GimpProjectableInterface *iface);
++
++static void          gimp_eye_projectable_finalize   (GObject            *object);
++
++static GimpImage   * gimp_eye_projectable_get_image  (GimpProjectable    *projectable);
++static const Babl  * gimp_eye_projectable_get_format (GimpProjectable    *projectable);
++static void          gimp_eye_projectable_get_offset (GimpProjectable    *projectable,
++                                                      gint               *x,
++                                                      gint               *y);
++static GeglRectangle gimp_eye_projectable_get_bounding_box
++                                                     (GimpProjectable    *projectable);
++static GeglNode    * gimp_eye_projectable_get_graph  (GimpProjectable    *projectable);
++
++static void          gimp_eye_projectable_walk       (GimpEyeProjectable *self,
++                                                      Walk               *walk);
++static gboolean      gimp_eye_projectable_check      (GimpEyeProjectable *self);
++
++static void          gimp_eye_projectable_image_invalidate
++                                                     (GimpProjectable    *image,
++                                                      gint                x,
++                                                      gint                y,
++                                                      gint                width,
++                                                      gint                height,
++                                                      GimpEyeProjectable *self);
++static void          gimp_eye_projectable_image_flush
++                                                     (GimpProjectable    *image,
++                                                      gboolean            invalidate_preview,
++                                                      GimpEyeProjectable *self);
++static void          gimp_eye_projectable_image_structure_changed
++                                                     (GimpProjectable    *image,
++                                                      GimpEyeProjectable *self);
++static void          gimp_eye_projectable_image_bounds_changed
++                                                     (GimpProjectable    *image,
++                                                      gint                old_x,
++                                                      gint                old_y,
++                                                      GimpEyeProjectable *self);
++
++
++G_DEFINE_TYPE_WITH_CODE (GimpEyeProjectable, gimp_eye_projectable, GIMP_TYPE_VIEWABLE,
++                         G_IMPLEMENT_INTERFACE (GIMP_TYPE_PROJECTABLE,
++                                                gimp_eye_projectable_iface_init))
++
++#define parent_class gimp_eye_projectable_parent_class
++
++
++static void
++gimp_eye_projectable_class_init (GimpEyeProjectableClass *klass)
++{
++  GObjectClass *object_class = G_OBJECT_CLASS (klass);
++
++  object_class->finalize = gimp_eye_projectable_finalize;
++}
++
++static void
++gimp_eye_projectable_iface_init (GimpProjectableInterface *iface)
++{
++  iface->get_image        = gimp_eye_projectable_get_image;
++  iface->get_format       = gimp_eye_projectable_get_format;
++  iface->get_offset       = gimp_eye_projectable_get_offset;
++  iface->get_bounding_box = gimp_eye_projectable_get_bounding_box;
++  iface->get_graph        = gimp_eye_projectable_get_graph;
++}
++
++static void
++gimp_eye_projectable_init (GimpEyeProjectable *self)
++{
++}
++
++static void
++gimp_eye_projectable_finalize (GObject *object)
++{
++  GimpEyeProjectable *self = GIMP_EYE_PROJECTABLE (object);
++
++  if (self->image)
++    {
++      g_signal_handlers_disconnect_by_data (self->image, self);
++      g_object_remove_weak_pointer (G_OBJECT (self->image),
++                                    (gpointer *) &self->image);
++    }
++
++  g_clear_object (&self->graph);
++  g_free (self->signature);
++  g_free (self->problem);
++
++  G_OBJECT_CLASS (parent_class)->finalize (object);
++}
++
++static GimpImage *
++gimp_eye_projectable_get_image (GimpProjectable *projectable)
++{
++  return GIMP_EYE_PROJECTABLE (projectable)->image;
++}
++
++static const Babl *
++gimp_eye_projectable_get_format (GimpProjectable *projectable)
++{
++  GimpEyeProjectable *self = GIMP_EYE_PROJECTABLE (projectable);
++
++  return gimp_projectable_get_format (GIMP_PROJECTABLE (self->image));
++}
++
++static void
++gimp_eye_projectable_get_offset (GimpProjectable *projectable,
++                                 gint            *x,
++                                 gint            *y)
++{
++  *x = 0;
++  *y = 0;
++}
++
++static GeglRectangle
++gimp_eye_projectable_get_bounding_box (GimpProjectable *projectable)
++{
++  GimpEyeProjectable *self = GIMP_EYE_PROJECTABLE (projectable);
++
++  return gimp_projectable_get_bounding_box (GIMP_PROJECTABLE (self->image));
++}
++
++static GeglNode *
++gimp_eye_projectable_get_graph (GimpProjectable *projectable)
++{
++  GimpEyeProjectable *self = GIMP_EYE_PROJECTABLE (projectable);
++
++  if (! self->graph)
++    {
++      self->graph = gegl_node_new ();
++
++      gimp_eye_projectable_check (self);
++    }
++
++  return self->graph;
++}
++
++
++/*  the eye's graph  */
++
++static const gchar *
++gimp_eye_projectable_pad (gchar *name)
++{
++  const gchar *pad = g_intern_string (name ? name : "output");
++
++  g_free (name);
++
++  return pad;
++}
++
++/*  the producer of one of a node's inputs, moved by shift  */
++static GeglNode *
++gimp_eye_projectable_moved (Walk         *walk,
++                            GeglNode     *node,
++                            const gchar  *input,
++                            gdouble       shift,
++                            const gchar **pad)
++{
++  GeglNode *producer;
++  GeglNode *moved;
++  gchar    *name = NULL;
++
++  producer = gegl_node_get_producer (node, input, &name);
++  *pad     = gimp_eye_projectable_pad (name);
++
++  if (walk->signature)
++    g_string_append_printf (walk->signature, "%s<%p:%s ", input,
++                            (gpointer) producer, *pad);
++
++  if (! producer || shift == 0.0 || ! walk->body)
++    return producer;
++
++  moved = gegl_node_new_child (walk->body,
++                               "operation", "gimp:depth-shift",
++                               "shift",     shift,
++                               NULL);
++  gegl_node_connect (producer, *pad, moved, "input");
++  *pad = "output";
++
++  return moved;
++}
++
++/*  a copy of a node with its properties, over the eye's picture below  */
++static GeglNode *
++gimp_eye_projectable_copy (Walk        *walk,
++                           GeglNode    *original,
++                           GeglNode    *below,
++                           const gchar *below_pad)
++{
++  const gchar  *operation = gegl_node_get_operation (original);
++  GParamSpec  **specs;
++  guint         n_specs;
++  guint         i;
++  GeglNode     *node = NULL;
++
++  if (! operation)
++    return below;
++
++  if (walk->signature)
++    g_string_append_printf (walk->signature, "[%s", operation);
++
++  if (walk->body)
++    node = gegl_node_new_child (walk->body, "operation", operation, NULL);
++
++  specs = gegl_operation_list_properties (operation, &n_specs);
++
++  for (i = 0; i < n_specs; i++)
++    {
++      GValue value = G_VALUE_INIT;
++
++      if ((specs[i]->flags & G_PARAM_READWRITE) != G_PARAM_READWRITE ||
++          (specs[i]->flags & G_PARAM_CONSTRUCT_ONLY))
++        continue;
++
++      g_value_init (&value, G_PARAM_SPEC_VALUE_TYPE (specs[i]));
++      gegl_node_get_property (original, specs[i]->name, &value);
++
++      if (walk->signature)
++        {
++          gchar *contents = g_strdup_value_contents (&value);
++
++          g_string_append_printf (walk->signature, " %s=%s",
++                                  specs[i]->name, contents);
++          g_free (contents);
++        }
++
++      if (node)
++        gegl_node_set_property (node, specs[i]->name, &value);
++
++      g_value_unset (&value);
++    }
++
++  g_free (specs);
++
++  if (walk->signature)
++    g_string_append (walk->signature, "] ");
++
++  if (node && below)
++    gegl_node_connect (below, below_pad, node, "input");
++
++  return node;
++}
++
++static GeglNode *
++gimp_eye_projectable_stack (Walk          *walk,
++                            GimpContainer *stack,
++                            GeglNode      *below,
++                            gdouble        shift,
++                            gboolean       top_level)
++{
++  GimpEye  eye = walk->self->eye;
++  GList   *list;
++
++  /*  the stack's list is top first: composite from the bottom  */
++  for (list = g_list_last (gimp_item_stack_get_item_iter (GIMP_ITEM_STACK (stack)));
++       list;
++       list = g_list_previous (list))
++    {
++      GimpLayer     *layer    = list->data;
++      GimpContainer *children = gimp_viewable_get_children (GIMP_VIEWABLE (layer));
++      GeglNode      *mode;
++      GeglNode      *node;
++      GeglNode      *aux;
++      GeglNode      *aux2;
++      const gchar   *aux_pad;
++      const gchar   *aux2_pad;
++      gdouble        layer_shift = shift;
++      gboolean       pass_through;
++
++      g_string_append_printf (walk->signature, "{%p ", (gpointer) layer);
++
++      if (! gimp_filter_get_active (GIMP_FILTER (layer)))
++        {
++          g_string_append (walk->signature, "hidden} ");
++          continue;
++        }
++
++      if (top_level && walk->eye_layers)
++        {
++          const gchar *name = gimp_object_get_name (layer);
++
++          if ((eye == GIMP_EYE_LEFT  && ! g_strcmp0 (name, RIGHT_EYE_LAYER)) ||
++              (eye == GIMP_EYE_RIGHT && ! g_strcmp0 (name, LEFT_EYE_LAYER)))
++            {
++              g_string_append (walk->signature, "other-eye} ");
++              continue;
++            }
++        }
++
++      if (GIMP_IS_DEPTH_LAYER (layer))
++        {
++          gdouble depth = gimp_depth_layer_get_depth (GIMP_DEPTH_LAYER (layer));
++
++          layer_shift = stereo_depth_eye_shift (depth,
++                                                eye == GIMP_EYE_LEFT ?
++                                                STEREO_DEPTH_EYE_LEFT :
++                                                STEREO_DEPTH_EYE_RIGHT);
++        }
++
++      walk->widest = MAX (walk->widest, fabs (layer_shift));
++
++      g_string_append_printf (walk->signature, "shift=%.6f ", layer_shift);
++
++      mode = gimp_drawable_get_mode_node (GIMP_DRAWABLE (layer));
++
++      if (! mode)
++        {
++          g_string_append (walk->signature, "no-node} ");
++          continue;
++        }
++
++      pass_through = (children &&
++                      gimp_layer_get_mode (layer) == GIMP_LAYER_MODE_PASS_THROUGH);
++
++      if (children &&
++          (pass_through ||
++           gimp_item_has_depth_layers_below (GIMP_ITEM (layer))))
++        {
++          GeglNode *content;
++
++          g_string_append_printf (walk->signature, "group%s(",
++                                  pass_through ? "-pass-through" : "");
++
++          /*  the group's layers again, over the eye's picture below for a
++           *  pass-through group, over nothing for an isolated one
++           */
++          content = gimp_eye_projectable_stack (walk, children,
++                                                pass_through ? below : NULL,
++                                                layer_shift, FALSE);
++
++          g_string_append (walk->signature, ") ");
++
++          if (gimp_container_get_n_children (gimp_drawable_get_filters (GIMP_DRAWABLE (layer))) > 0 &&
++              ! walk->problem)
++            {
++              walk->problem =
++                g_strdup_printf (_("The effects of the layer group '%s' are "
++                                   "not shown in 3D: it holds layers at "
++                                   "another depth."),
++                                 gimp_object_get_name (layer));
++            }
++
++          node = gimp_eye_projectable_copy (walk, mode, below, "output");
++
++          aux2 = gimp_eye_projectable_moved (walk, mode, "aux2", layer_shift,
++                                             &aux2_pad);
++
++          if (node && content)
++            gegl_node_connect (content, "output", node, "aux");
++          if (node && aux2)
++            gegl_node_connect (aux2, aux2_pad, node, "aux2");
++        }
++      else
++        {
++          /*  the layer's own content and mask, as the image's graph has
++           *  them, moved together
++           */
++          node = gimp_eye_projectable_copy (walk, mode, below, "output");
++
++          aux  = gimp_eye_projectable_moved (walk, mode, "aux",  layer_shift,
++                                             &aux_pad);
++          aux2 = gimp_eye_projectable_moved (walk, mode, "aux2", layer_shift,
++                                             &aux2_pad);
++
++          if (node && aux)
++            gegl_node_connect (aux, aux_pad, node, "aux");
++          if (node && aux2)
++            gegl_node_connect (aux2, aux2_pad, node, "aux2");
++        }
++
++      g_string_append (walk->signature, "} ");
++
++      if (node)
++        below = node;
++    }
++
++  return below;
++}
++
++static void
++gimp_eye_projectable_walk (GimpEyeProjectable *self,
++                           Walk               *walk)
++{
++  GimpImagePrivate *private = GIMP_IMAGE_GET_PRIVATE (self->image);
++  GeglNode         *below;
++  GList            *list;
++  gboolean          left  = FALSE;
++  gboolean          right = FALSE;
++
++  for (list = gimp_image_get_layer_iter (self->image); list; list = g_list_next (list))
++    {
++      const gchar *name = gimp_object_get_name (list->data);
++
++      left  = left  || ! g_strcmp0 (name, LEFT_EYE_LAYER);
++      right = right || ! g_strcmp0 (name, RIGHT_EYE_LAYER);
++    }
++
++  walk->eye_layers = left && right;
++
++  g_string_append_printf (walk->signature, "eye=%d eye-layers=%d ",
++                          self->eye, walk->eye_layers);
++
++  below = gimp_eye_projectable_stack (walk,
++                                      gimp_image_get_layers (self->image),
++                                      NULL, 0.0, TRUE);
++
++  /*  the components shown, and the visible channels, as the image has them  */
++  if (private->visible_mask)
++    {
++      GeglNode *node = gimp_eye_projectable_copy (walk, private->visible_mask,
++                                                  below, "output");
++      if (node)
++        below = node;
++    }
++
++  for (list = g_list_last (gimp_item_stack_get_item_iter (GIMP_ITEM_STACK (gimp_image_get_channels (self->image))));
++       list;
++       list = g_list_previous (list))
++    {
++      GimpDrawable *channel = list->data;
++      GeglNode     *mode;
++      GeglNode     *node;
++      GeglNode     *aux;
++      GeglNode     *aux2;
++      const gchar  *aux_pad;
++      const gchar  *aux2_pad;
++
++      if (! gimp_filter_get_active (GIMP_FILTER (channel)))
++        continue;
++
++      mode = gimp_drawable_get_mode_node (channel);
++
++      if (! mode)
++        continue;
++
++      g_string_append_printf (walk->signature, "{channel %p ", (gpointer) channel);
++
++      node = gimp_eye_projectable_copy (walk, mode, below, "output");
++      aux  = gimp_eye_projectable_moved (walk, mode, "aux",  0.0, &aux_pad);
++      aux2 = gimp_eye_projectable_moved (walk, mode, "aux2", 0.0, &aux2_pad);
++
++      if (node && aux)
++        gegl_node_connect (aux, aux_pad, node, "aux");
++      if (node && aux2)
++        gegl_node_connect (aux2, aux2_pad, node, "aux2");
++
++      g_string_append (walk->signature, "} ");
++
++      if (node)
++        below = node;
++    }
++
++  if (walk->body && below)
++    {
++      GeglNode *output = gegl_node_get_output_proxy (walk->body, "output");
++
++      gegl_node_connect (below, "output", output, "input");
++    }
++}
++
++/*  Describes what the eye's graph depends on, and makes the graph again
++ *  when that changed.  Returns TRUE when it was made again.
++ */
++static gboolean
++gimp_eye_projectable_check (GimpEyeProjectable *self)
++{
++  Walk walk = { self, NULL, g_string_new (NULL), 0.0, FALSE, NULL };
++
++  if (! self->image)
++    {
++      g_string_free (walk.signature, TRUE);
++      return FALSE;
++    }
++
++  gimp_eye_projectable_walk (self, &walk);
++
++  g_free (walk.problem);
++
++  if (self->body && ! g_strcmp0 (walk.signature->str, self->signature))
++    {
++      g_string_free (walk.signature, TRUE);
++      return FALSE;
++    }
++
++  g_free (self->signature);
++  self->signature = g_string_free (walk.signature, FALSE);
++
++  if (! self->graph)
++    return TRUE;
++
++  /*  a new body under the same graph: the projection keeps its graph  */
++  if (self->body)
++    gegl_node_remove_child (self->graph, self->body);
++
++  self->body = gegl_node_new ();
++  gegl_node_add_child (self->graph, self->body);
++  g_object_unref (self->body);
++
++  walk.body      = self->body;
++  walk.signature = g_string_new (NULL);
++  walk.widest    = 0.0;
++  walk.problem   = NULL;
++
++  gimp_eye_projectable_walk (self, &walk);
++
++  g_string_free (walk.signature, TRUE);
++
++  g_free (self->problem);
++  self->problem = walk.problem;
++
++  self->margin = (gint) ceil (walk.widest) + (walk.widest > 0.0 ? WINDOW_REACH : 0);
++
++  gegl_node_connect (self->body, "output",
++                     gegl_node_get_output_proxy (self->graph, "output"), "input");
++
++  return TRUE;
++}
++
++
++/*  the image's changes, carried to the eye  */
++
++static void
++gimp_eye_projectable_image_invalidate (GimpProjectable    *image,
++                                       gint                x,
++                                       gint                y,
++                                       gint                width,
++                                       gint                height,
++                                       GimpEyeProjectable *self)
++{
++  if (gimp_eye_projectable_check (self))
++    {
++      gimp_projectable_structure_changed (GIMP_PROJECTABLE (self));
++      return;
++    }
++
++  gimp_projectable_invalidate (GIMP_PROJECTABLE (self),
++                               x - self->margin, y,
++                               width + 2 * self->margin, height);
++}
++
++static void
++gimp_eye_projectable_image_flush (GimpProjectable    *image,
++                                  gboolean            invalidate_preview,
++                                  GimpEyeProjectable *self)
++{
++  gimp_projectable_flush (GIMP_PROJECTABLE (self), invalidate_preview);
++}
++
++static void
++gimp_eye_projectable_image_structure_changed (GimpProjectable    *image,
++                                              GimpEyeProjectable *self)
++{
++  gimp_eye_projectable_check (self);
++  gimp_projectable_structure_changed (GIMP_PROJECTABLE (self));
++}
++
++static void
++gimp_eye_projectable_image_bounds_changed (GimpProjectable    *image,
++                                           gint                old_x,
++                                           gint                old_y,
++                                           GimpEyeProjectable *self)
++{
++  gimp_eye_projectable_check (self);
++  gimp_projectable_bounds_changed (GIMP_PROJECTABLE (self), old_x, old_y);
++}
++
++
++/*  public functions  */
++
++GimpEyeProjectable *
++gimp_eye_projectable_new (GimpImage *image,
++                          GimpEye    eye)
++{
++  GimpEyeProjectable *self;
++
++  g_return_val_if_fail (GIMP_IS_IMAGE (image), NULL);
++
++  self = g_object_new (GIMP_TYPE_EYE_PROJECTABLE, NULL);
++
++  self->image = image;
++  self->eye   = eye;
++
++  g_object_add_weak_pointer (G_OBJECT (image), (gpointer *) &self->image);
++
++  g_signal_connect (image, "invalidate",
++                    G_CALLBACK (gimp_eye_projectable_image_invalidate),
++                    self);
++  g_signal_connect (image, "flush",
++                    G_CALLBACK (gimp_eye_projectable_image_flush),
++                    self);
++  g_signal_connect (image, "structure-changed",
++                    G_CALLBACK (gimp_eye_projectable_image_structure_changed),
++                    self);
++  g_signal_connect (image, "bounds-changed",
++                    G_CALLBACK (gimp_eye_projectable_image_bounds_changed),
++                    self);
++
++  return self;
++}
++
++GimpEye
++gimp_eye_projectable_get_eye (GimpEyeProjectable *projectable)
++{
++  g_return_val_if_fail (GIMP_IS_EYE_PROJECTABLE (projectable), GIMP_EYE_LEFT);
++
++  return projectable->eye;
++}
++
++/*  What the eye cannot show as the image has it, in the person's language,
++ *  or NULL.
++ */
++const gchar *
++gimp_eye_projectable_get_problem (GimpEyeProjectable *projectable)
++{
++  g_return_val_if_fail (GIMP_IS_EYE_PROJECTABLE (projectable), NULL);
++
++  return projectable->problem;
++}
+diff --git a/app/core/gimpeyeprojectable.h b/app/core/gimpeyeprojectable.h
+new file mode 100644
+index 0000000..347551b
+--- /dev/null
++++ b/app/core/gimpeyeprojectable.h
+@@ -0,0 +1,44 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpeyeprojectable.h
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "gimpviewable.h"
++
++
++#define GIMP_TYPE_EYE_PROJECTABLE (gimp_eye_projectable_get_type ())
++G_DECLARE_FINAL_TYPE (GimpEyeProjectable,
++                      gimp_eye_projectable,
++                      GIMP, EYE_PROJECTABLE,
++                      GimpViewable)
++
++
++typedef enum
++{
++  GIMP_EYE_LEFT  = 0,
++  GIMP_EYE_RIGHT = 1
++} GimpEye;
++
++
++GimpEyeProjectable * gimp_eye_projectable_new         (GimpImage          *image,
++                                                       GimpEye             eye);
++
++GimpEye              gimp_eye_projectable_get_eye     (GimpEyeProjectable *projectable);
++
++const gchar        * gimp_eye_projectable_get_problem (GimpEyeProjectable *projectable);
+diff --git a/app/core/meson.build b/app/core/meson.build
+index 2c8db3b..27bc8e9 100644
+--- a/app/core/meson.build
++++ b/app/core/meson.build
+@@ -137,6 +137,7 @@ libappcore_sources = [
+   'gimpgradient-save.c',
+   'gimpgradient.c',
+   'gimpgrid.c',
++  'gimpdepthlayer.c',
+   'gimpgrouplayer.c',
+   'gimpgrouplayerundo.c',
+   'gimpguide.c',
+@@ -171,6 +172,7 @@ libappcore_sources = [
+   'gimpimage-transform.c',
+   'gimpimage-undo-push.c',
+   'gimpimage-undo.c',
++  'gimpeyeprojectable.c',
+   'gimpimage.c',
+   'gimpimagefile.c',
+   'gimpimageproxy.c',
+@@ -287,5 +289,6 @@ libappcore = static_library('appcore',
+     dl,
+     libunwind,
+     pango,
++    stereo_policy,
+   ],
+ )
+diff --git a/app/display/gimpdisplayshell-depth.c b/app/display/gimpdisplayshell-depth.c
+new file mode 100644
+index 0000000..026bd5e
+--- /dev/null
++++ b/app/display/gimpdisplayshell-depth.c
+@@ -0,0 +1,301 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  The pop and sink keys of depth layers (queue row 148): while one of
++ *  the two is held over the canvas, the pointer's movement, with the
++ *  tool's drag or without it, moves the depth layer of the selected layer
++ *  forward (pop) or back (sink), and the tool does not see that movement.
++ *  The keys are the actions "layers-depth-pop" and "layers-depth-sink"
++ *  (8 and 7 by default, rebindable); a key press starts the gesture and
++ *  its release ends it, with one undo step for the whole gesture.
++ */
++
++#include "config.h"
++
++#include <math.h>
++
++#include <gegl.h>
++#include <gtk/gtk.h>
++
++#include "libgimpbase/gimpbase.h"
++
++#include "display-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpdepthlayer.h"
++#include "core/gimpimage.h"
++
++#include "gimpdisplay.h"
++#include "gimpdisplayshell.h"
++#include "gimpdisplayshell-depth.h"
++
++#include "gimp-intl.h"
++
++
++static gboolean gimp_display_shell_depth_key_window_event (GtkWidget        *window,
++                                                           GdkEvent         *event,
++                                                           GimpDisplayShell *shell);
++
++
++/*  While a tool's drag holds the keyboard, a key press reaches the canvas
++ *  and no accelerator: the two actions' accelerators, as the person has
++ *  them now, are matched here too.  Returns -1 (pop), 1 (sink) or 0.
++ */
++static gint
++gimp_display_shell_depth_key_of (const GdkEventKey *kevent)
++{
++  static const gchar *actions[] = { "app.layers-depth-pop", "app.layers-depth-sink" };
++  GApplication       *app       = g_application_get_default ();
++  GdkModifierType     mask      = gtk_accelerator_get_default_mod_mask ();
++  gint                i;
++
++  if (! GTK_IS_APPLICATION (app))
++    return 0;
++
++  for (i = 0; i < G_N_ELEMENTS (actions); i++)
++    {
++      gchar **accels = gtk_application_get_accels_for_action (GTK_APPLICATION (app),
++                                                              actions[i]);
++      gint    j;
++      gint    found  = 0;
++
++      for (j = 0; accels && accels[j] && ! found; j++)
++        {
++          guint           key;
++          GdkModifierType mods;
++
++          gtk_accelerator_parse (accels[j], &key, &mods);
++
++          if (key &&
++              gdk_keyval_to_lower (key) == gdk_keyval_to_lower (kevent->keyval) &&
++              (kevent->state & mask) == mods)
++            found = i == 0 ? -1 : 1;
++        }
++
++      g_strfreev (accels);
++
++      if (found)
++        return found;
++    }
++
++  return 0;
++}
++
++static GimpDepthLayer *
++gimp_display_shell_depth_layer (GimpDisplayShell *shell)
++{
++  GimpImage *image = gimp_display_get_image (shell->display);
++  GList     *layers;
++
++  if (! image)
++    return NULL;
++
++  layers = gimp_image_get_selected_layers (image);
++
++  return layers ? gimp_item_get_depth_layer (layers->data) : NULL;
++}
++
++/*  Starts the gesture of a key held over the canvas (direction -1 pops,
++ *  1 sinks).  Returns FALSE, after telling the person why, when the
++ *  selected layer is in no depth layer.
++ */
++gboolean
++gimp_display_shell_depth_key_press (GimpDisplayShell *shell,
++                                    gint              direction,
++                                    guint             keyval)
++{
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), FALSE);
++
++  keyval = gdk_keyval_to_lower (keyval);
++
++  /*  the key's own repeats  */
++  if (shell->depth_key_direction == direction &&
++      shell->depth_key_keyval    == keyval)
++    return TRUE;
++
++  if (! gimp_display_shell_depth_layer (shell))
++    {
++      gimp_message_literal (shell->display->gimp, G_OBJECT (shell),
++                            GIMP_MESSAGE_WARNING,
++                            _("To pop or sink a depth layer, select it or "
++                              "a layer in it."));
++      return FALSE;
++    }
++
++  /*  the movement counts from the pointer's last place on the canvas,
++   *  which the canvas's own events keep (depth_key_last_x and _y)
++   */
++  shell->depth_key_direction   = direction;
++  shell->depth_key_keyval      = keyval;
++  shell->depth_key_undo_pushed = FALSE;
++  /*  the movement counts from where the pointer is when the key goes
++   *  down, in root coordinates as the motion events give them (the canvas
++   *  sees no motion of a hovering pointer before the gesture)
++   */
++  {
++    GdkDisplay *display = gtk_widget_get_display (GTK_WIDGET (shell));
++    GdkDevice  *pointer = gdk_seat_get_pointer (gdk_display_get_default_seat (display));
++    gdouble     x, y;
++
++    gdk_device_get_position_double (pointer, NULL, &x, &y);
++
++    shell->depth_key_have_last = TRUE;
++    shell->depth_key_last_x    = x;
++    shell->depth_key_last_y    = y;
++  }
++
++  /*  the key's release may reach another widget of the window than the
++   *  canvas: the window itself is watched until the gesture ends
++   */
++  g_signal_connect (gtk_widget_get_toplevel (GTK_WIDGET (shell)),
++                    "key-release-event",
++                    G_CALLBACK (gimp_display_shell_depth_key_window_event),
++                    shell);
++  g_signal_connect (gtk_widget_get_toplevel (GTK_WIDGET (shell)),
++                    "focus-out-event",
++                    G_CALLBACK (gimp_display_shell_depth_key_window_event),
++                    shell);
++
++  return TRUE;
++}
++
++static gboolean
++gimp_display_shell_depth_key_window_event (GtkWidget        *window,
++                                           GdkEvent         *event,
++                                           GimpDisplayShell *shell)
++{
++  if (event->type == GDK_FOCUS_CHANGE ||
++      (event->type == GDK_KEY_RELEASE &&
++       gdk_keyval_to_lower (event->key.keyval) == shell->depth_key_keyval))
++    gimp_display_shell_depth_key_end (shell);
++
++  return FALSE;
++}
++
++void
++gimp_display_shell_depth_key_end (GimpDisplayShell *shell)
++{
++  g_return_if_fail (GIMP_IS_DISPLAY_SHELL (shell));
++
++  g_signal_handlers_disconnect_by_func (gtk_widget_get_toplevel (GTK_WIDGET (shell)),
++                                        gimp_display_shell_depth_key_window_event,
++                                        shell);
++
++  shell->depth_key_direction   = 0;
++  shell->depth_key_keyval      = 0;
++  shell->depth_key_undo_pushed = FALSE;
++}
++
++/*  Called first by the canvas's event handler.  Returns TRUE for an event
++ *  the gesture took (the key's release, the pointer's movement).
++ */
++gboolean
++gimp_display_shell_depth_key_event (GimpDisplayShell *shell,
++                                    const GdkEvent   *event)
++{
++  g_return_val_if_fail (GIMP_IS_DISPLAY_SHELL (shell), FALSE);
++
++  if (event->type == GDK_KEY_PRESS)
++    {
++      gint direction = gimp_display_shell_depth_key_of (&event->key);
++
++      if (direction)
++        return gimp_display_shell_depth_key_press (shell, direction, event->key.keyval) || TRUE;
++    }
++
++  /*  the pointer's last place, for the next gesture's start; in root
++   *  coordinates, the same whichever of the canvas's windows (the stereo
++   *  area's own, for one) the event came through
++   */
++  if (! shell->depth_key_direction)
++    {
++      gdouble x, y;
++
++      if ((event->type == GDK_MOTION_NOTIFY  ||
++           event->type == GDK_BUTTON_PRESS   ||
++           event->type == GDK_ENTER_NOTIFY) &&
++          gdk_event_get_root_coords (event, &x, &y))
++        {
++          shell->depth_key_have_last = TRUE;
++          shell->depth_key_last_x    = x;
++          shell->depth_key_last_y    = y;
++        }
++
++      return FALSE;
++    }
++
++  switch (event->type)
++    {
++    case GDK_KEY_RELEASE:
++      if (gdk_keyval_to_lower (event->key.keyval) == shell->depth_key_keyval)
++        {
++          gimp_display_shell_depth_key_end (shell);
++          return TRUE;
++        }
++      break;
++
++    case GDK_FOCUS_CHANGE:
++      if (! event->focus_change.in)
++        gimp_display_shell_depth_key_end (shell);
++      break;
++
++    case GDK_MOTION_NOTIFY:
++      {
++        GimpDepthLayer *layer = gimp_display_shell_depth_layer (shell);
++        gdouble         x     = event->motion.x_root;
++        gdouble         y     = event->motion.y_root;
++        gdouble         travel;
++
++        if (! layer)
++          {
++            gimp_display_shell_depth_key_end (shell);
++            return FALSE;
++          }
++
++        if (shell->depth_key_have_last)
++          {
++            travel = hypot (x - shell->depth_key_last_x,
++                            y - shell->depth_key_last_y);
++
++            if (travel > 0.0)
++              {
++                gdouble depth = gimp_depth_layer_get_depth (layer);
++
++                depth += shell->depth_key_direction * travel *
++                         GIMP_DISPLAY_SHELL_DEPTH_PER_PIXEL;
++
++                gimp_depth_layer_set_depth (layer, depth,
++                                            ! shell->depth_key_undo_pushed);
++                shell->depth_key_undo_pushed = TRUE;
++
++                gimp_image_flush (gimp_display_get_image (shell->display));
++              }
++          }
++
++        shell->depth_key_have_last = TRUE;
++        shell->depth_key_last_x    = x;
++        shell->depth_key_last_y    = y;
++
++        return TRUE;
++      }
++
++    default:
++      break;
++    }
++
++  return FALSE;
++}
+diff --git a/app/display/gimpdisplayshell-depth.h b/app/display/gimpdisplayshell-depth.h
+new file mode 100644
+index 0000000..5a788da
+--- /dev/null
++++ b/app/display/gimpdisplayshell-depth.h
+@@ -0,0 +1,32 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++
++/*  one pixel of the pointer's movement over the canvas moves the depth by
++ *  this many pixels of separation
++ */
++#define GIMP_DISPLAY_SHELL_DEPTH_PER_PIXEL 0.1
++
++
++gboolean   gimp_display_shell_depth_key_press (GimpDisplayShell *shell,
++                                               gint              direction,
++                                               guint             keyval);
++gboolean   gimp_display_shell_depth_key_event (GimpDisplayShell *shell,
++                                               const GdkEvent   *event);
++void       gimp_display_shell_depth_key_end   (GimpDisplayShell *shell);
+diff --git a/app/display/gimpdisplayshell-stereo.c b/app/display/gimpdisplayshell-stereo.c
+index e756fa0..df2e4d4 100644
+--- a/app/display/gimpdisplayshell-stereo.c
++++ b/app/display/gimpdisplayshell-stereo.c
+@@ -45,6 +45,13 @@
+  *  X11 the renderer is read first, on a window of its own: with Mesa's
+  *  zink, GTK 3 draws an X11 window that holds an OpenGL area black, so
+  *  the canvas's window is never given one there.
++ *
++ *  A third kind is an image with depth layers (queue row 148): each eye
++ *  is the image's own picture with every depth layer moved by its half of
++ *  the depth (core/gimpeyeprojectable.c).  With eye layers too, each eye
++ *  shows its own eye layer under the depth layers; a packed picture in an
++ *  editing mode is shown as above, with its depth layers at the screen,
++ *  and the person is told.
+  */
+ 
+ #include "config.h"
+@@ -69,11 +76,15 @@
+ #include "display-types.h"
+ 
+ #include "core/gimp.h"
++#include "core/gimpdepthlayer.h"
+ #include "core/gimpdrawable.h"
++#include "core/gimpeyeprojectable.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpitem.h"
+ #include "core/gimplayer.h"
+ #include "core/gimppickable.h"
++#include "core/gimpprojectable.h"
++#include "core/gimpprojection.h"
+ 
+ #include "gimpcanvas.h"
+ #include "gimpdisplay.h"
+@@ -94,7 +105,8 @@ typedef enum
+ {
+   STEREO_NONE,
+   STEREO_EYE_LAYERS,
+-  STEREO_PACKED
++  STEREO_PACKED,
++  STEREO_DEPTH_LAYERS
+ } StereoKind;
+ 
+ typedef struct
+@@ -103,6 +115,8 @@ typedef struct
+   GimpLayer  *layers[2];      /*  STEREO_EYE_LAYERS: left, right        */
+   gboolean    top_bottom;     /*  STEREO_PACKED: the views' packing     */
+   gboolean    left_first;
++  gboolean    depth;          /*  the image has depth layers            */
++  GimpImage  *image;
+ } StereoModel;
+ 
+ struct _GimpDisplayShellStereo
+@@ -139,6 +153,13 @@ struct _GimpDisplayShellStereo
+   guint             apply_idle_id;
+   guint             tell_idle_id;
+   gchar            *told;
++
++  /*  STEREO_DEPTH_LAYERS: each eye's picture of the image  */
++  GimpEyeProjectable *eyes[2];
++  GimpProjection     *eye_projection[2];
++
++  guint             note_idle_id;
++  gchar            *noted;
+ };
+ 
+ 
+@@ -150,6 +171,18 @@ static gboolean gimp_display_shell_stereo_same_model (const StereoModel      *a,
+ static void     gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
+                                                       StereoModel            *model);
+ static gboolean gimp_display_shell_stereo_apply      (gpointer                data);
++static void     gimp_display_shell_stereo_make_eyes  (GimpDisplayShellStereo *stereo,
++                                                      GimpImage              *image);
++static void     gimp_display_shell_stereo_clear_eyes (GimpDisplayShellStereo *stereo);
++static void     gimp_display_shell_stereo_eye_update (GimpProjection         *projection,
++                                                      gboolean                now,
++                                                      gint                    x,
++                                                      gint                    y,
++                                                      gint                    width,
++                                                      gint                    height,
++                                                      GimpDisplayShellStereo *stereo);
++static void     gimp_display_shell_stereo_want_note  (GimpDisplayShellStereo *stereo);
++static gboolean gimp_display_shell_stereo_note       (gpointer                data);
+ 
+ #ifdef HAVE_GTK_GL_AREA_STEREO
+ static void     gimp_display_shell_stereo_make_area  (GimpDisplayShellStereo *stereo);
+@@ -193,6 +226,9 @@ gimp_display_shell_stereo_free (GimpDisplayShellStereo *stereo)
+ 
+   g_clear_handle_id (&stereo->apply_idle_id, g_source_remove);
+   g_clear_handle_id (&stereo->tell_idle_id, g_source_remove);
++  g_clear_handle_id (&stereo->note_idle_id, g_source_remove);
++
++  gimp_display_shell_stereo_clear_eyes (stereo);
+ 
+   if (stereo->area)
+     {
+@@ -209,6 +245,7 @@ gimp_display_shell_stereo_free (GimpDisplayShellStereo *stereo)
+     }
+ 
+   g_free (stereo->told);
++  g_free (stereo->noted);
+   g_free (stereo->refused);
+   g_free (stereo);
+ }
+@@ -577,6 +614,16 @@ gimp_display_shell_stereo_get_sources (GimpDisplayShell          *shell,
+ 
+       return 2;
+     }
++  else if (stereo->model.kind == STEREO_DEPTH_LAYERS &&
++           stereo->eye_projection[e])
++    {
++      /*  the eye's own picture of the whole image  */
++      sources[0].buffer =
++        g_object_ref (gimp_pickable_get_buffer (GIMP_PICKABLE (stereo->eye_projection[e])));
++      sources[0].abyss_policy = abyss_policy;
++
++      return 1;
++    }
+ 
+   return 0;
+ }
+@@ -618,6 +665,8 @@ gimp_display_shell_stereo_same_model (const StereoModel *a,
+                                       const StereoModel *b)
+ {
+   return (a->kind       == b->kind       &&
++          a->image      == b->image      &&
++          a->depth      == b->depth      &&
+           a->layers[0]  == b->layers[0]  &&
+           a->layers[1]  == b->layers[1]  &&
+           a->top_bottom == b->top_bottom &&
+@@ -658,6 +707,9 @@ gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
+   if (! stereo->enabled || ! image || gimp_image_get_converting (image))
+     return;
+ 
++  model->image = image;
++  model->depth = gimp_image_has_depth_layers (image);
++
+   /*  the layer names are the plug-in's identifiers, the same in every
+    *  language
+    */
+@@ -673,7 +725,18 @@ gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
+ 
+   if (model->layers[0] && model->layers[1])
+     {
+-      model->kind = STEREO_EYE_LAYERS;
++      /*  with depth layers, each eye is the whole image with its own eye
++       *  layer under them
++       */
++      if (model->depth)
++        {
++          model->kind      = STEREO_DEPTH_LAYERS;
++          model->layers[0] = model->layers[1] = NULL;
++        }
++      else
++        {
++          model->kind = STEREO_EYE_LAYERS;
++        }
+       return;
+     }
+ 
+@@ -713,6 +776,9 @@ gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
+     }
+ 
+   g_free (mode);
++
++  if (model->kind == STEREO_NONE && model->depth)
++    model->kind = STEREO_DEPTH_LAYERS;
+ }
+ 
+ static gboolean
+@@ -732,6 +798,13 @@ gimp_display_shell_stereo_apply (gpointer data)
+ 
+   stereo->model = wanted;
+ 
++  if (wanted.kind == STEREO_DEPTH_LAYERS)
++    gimp_display_shell_stereo_make_eyes (stereo, wanted.image);
++  else
++    gimp_display_shell_stereo_clear_eyes (stereo);
++
++  gimp_display_shell_stereo_want_note (stereo);
++
+   for (i = 0; i < 2; i++)
+     {
+       g_clear_pointer (&stereo->render_cache_valid[i], cairo_region_destroy);
+@@ -774,6 +847,113 @@ gimp_display_shell_stereo_apply (gpointer data)
+   return G_SOURCE_REMOVE;
+ }
+ 
++/*  Each eye's picture of an image with depth layers: a projection of its
++ *  own, whose updates redraw the canvas as the image's own do.
++ */
++static void
++gimp_display_shell_stereo_make_eyes (GimpDisplayShellStereo *stereo,
++                                     GimpImage              *image)
++{
++  gint e;
++
++  if (stereo->eyes[0] &&
++      gimp_projectable_get_image (GIMP_PROJECTABLE (stereo->eyes[0])) == image)
++    return;
++
++  gimp_display_shell_stereo_clear_eyes (stereo);
++
++  for (e = 0; e < 2; e++)
++    {
++      stereo->eyes[e] = gimp_eye_projectable_new (image,
++                                                  e ? GIMP_EYE_RIGHT :
++                                                      GIMP_EYE_LEFT);
++      stereo->eye_projection[e] =
++        gimp_projection_new (GIMP_PROJECTABLE (stereo->eyes[e]));
++
++      g_signal_connect (stereo->eye_projection[e], "update",
++                        G_CALLBACK (gimp_display_shell_stereo_eye_update),
++                        stereo);
++    }
++}
++
++static void
++gimp_display_shell_stereo_clear_eyes (GimpDisplayShellStereo *stereo)
++{
++  gint e;
++
++  for (e = 0; e < 2; e++)
++    {
++      if (stereo->eye_projection[e])
++        g_signal_handlers_disconnect_by_data (stereo->eye_projection[e], stereo);
++
++      g_clear_object (&stereo->eye_projection[e]);
++      g_clear_object (&stereo->eyes[e]);
++    }
++}
++
++static void
++gimp_display_shell_stereo_eye_update (GimpProjection         *projection,
++                                      gboolean                now,
++                                      gint                    x,
++                                      gint                    y,
++                                      gint                    width,
++                                      gint                    height,
++                                      GimpDisplayShellStereo *stereo)
++{
++  gimp_display_update_area (stereo->shell->display, now, x, y, width, height);
++
++  gimp_display_shell_stereo_want_note (stereo);
++}
++
++static void
++gimp_display_shell_stereo_want_note (GimpDisplayShellStereo *stereo)
++{
++  if (! stereo->note_idle_id)
++    stereo->note_idle_id = g_idle_add (gimp_display_shell_stereo_note, stereo);
++}
++
++/*  What the canvas shows otherwise than the image has it is told once,
++ *  in the person's language, and in English in the log.
++ */
++static gboolean
++gimp_display_shell_stereo_note (gpointer data)
++{
++  GimpDisplayShellStereo *stereo = data;
++  const gchar            *note   = NULL;
++  const gchar            *log    = NULL;
++
++  stereo->note_idle_id = 0;
++
++  if (stereo->model.kind == STEREO_PACKED && stereo->model.depth)
++    {
++      note = _("This picture is in a stereo editing mode, which shows its "
++               "two views: its depth layers are shown at the screen.");
++      log  = "a packed picture in an editing mode: its depth layers are shown at the screen";
++    }
++  else if (stereo->model.kind == STEREO_DEPTH_LAYERS && stereo->eyes[0])
++    {
++      note = gimp_eye_projectable_get_problem (stereo->eyes[0]);
++      log  = note;
++    }
++
++  if (! g_strcmp0 (stereo->noted, note))
++    return G_SOURCE_REMOVE;
++
++  g_free (stereo->noted);
++  stereo->noted = g_strdup (note);
++
++  if (note)
++    {
++      g_printerr ("GIMP: depth layers: %s\n", log);
++
++      gimp_message_literal (stereo->shell->display->gimp,
++                            G_OBJECT (stereo->shell), GIMP_MESSAGE_WARNING,
++                            note);
++    }
++
++  return G_SOURCE_REMOVE;
++}
++
+ #ifdef HAVE_GTK_GL_AREA_STEREO
+ 
+ static void
+diff --git a/app/display/gimpdisplayshell-tool-events.c b/app/display/gimpdisplayshell-tool-events.c
+index 40d8bb7..49b9025 100644
+--- a/app/display/gimpdisplayshell-tool-events.c
++++ b/app/display/gimpdisplayshell-tool-events.c
+@@ -67,6 +67,7 @@
+ #include "gimpdisplay-foreach.h"
+ #include "gimpdisplayshell.h"
+ #include "gimpdisplayshell-autoscroll.h"
++#include "gimpdisplayshell-depth.h"
+ #include "gimpdisplayshell-cursor.h"
+ #include "gimpdisplayshell-grab.h"
+ #include "gimpdisplayshell-layer-select.h"
+@@ -375,10 +376,22 @@ gimp_display_shell_canvas_tool_events (GtkWidget        *canvas,
+   if (! shell->display || ! gimp_display_get_shell (shell->display))
+     return TRUE;
+ 
++  /*  the pop and sink keys of depth layers, before the shell's own key
++   *  handling, which swallows most keys while button 1 is down
++   */
++  if ((event->type == GDK_KEY_PRESS || event->type == GDK_KEY_RELEASE) &&
++      gimp_display_shell_depth_key_event (shell, event))
++    return TRUE;
++
+   /*  set the active display before doing any other canvas event processing  */
+   if (gimp_display_shell_events (canvas, event, shell))
+     return TRUE;
+ 
++  /*  a held pop or sink key takes the pointer's movement  */
++  if (event->type != GDK_KEY_PRESS && event->type != GDK_KEY_RELEASE &&
++      gimp_display_shell_depth_key_event (shell, event))
++    return TRUE;
++
+   /*  events on overlays have a different window, but these windows'
+    *  user_data can still be the canvas, we need to check manually if
+    *  the event's window and the canvas' window are different.
+diff --git a/app/display/gimpdisplayshell.h b/app/display/gimpdisplayshell.h
+index 82706c0..9a6e7a7 100644
+--- a/app/display/gimpdisplayshell.h
++++ b/app/display/gimpdisplayshell.h
+@@ -211,6 +211,13 @@ struct _GimpDisplayShell
+    * for button1 to be released as well.
+    */
+   gboolean           space_release_pending;
++
++  gint               depth_key_direction;  /*  -1 pop, 1 sink, 0 none      */
++  guint              depth_key_keyval;
++  gboolean           depth_key_have_last;
++  gdouble            depth_key_last_x;
++  gdouble            depth_key_last_y;
++  gboolean           depth_key_undo_pushed;
+   gboolean           button1_release_pending;
+   const gchar       *space_shaded_tool;
+ 
+diff --git a/app/display/meson.build b/app/display/meson.build
+index d20073a..82c942d 100644
+--- a/app/display/meson.build
++++ b/app/display/meson.build
+@@ -79,6 +79,7 @@ libappdisplay_sources = [
+   'gimpdisplayshell-scroll.c',
+   'gimpdisplayshell-scrollbars.c',
+   'gimpdisplayshell-selection.c',
++  'gimpdisplayshell-depth.c',
+   'gimpdisplayshell-stereo.c',
+   'gimpdisplayshell-title.c',
+   'gimpdisplayshell-tool-events.c',
+diff --git a/app/meson.build b/app/meson.build
+index 758ca45..9e6cae6 100644
+--- a/app/meson.build
++++ b/app/meson.build
+@@ -78,6 +78,7 @@ libapp = static_library('app',
+ 
+ gimpconsole_deps = [
+   cairo,
++  stereo_policy,
+   dbghelp,
+   drmingw,
+   gdk_pixbuf,
+diff --git a/app/operations/gimp-operations.c b/app/operations/gimp-operations.c
+index 6a8c2a9..80a723c 100644
+--- a/app/operations/gimp-operations.c
++++ b/app/operations/gimp-operations.c
+@@ -35,6 +35,7 @@
+ #include "gimpoperationcagecoefcalc.h"
+ #include "gimpoperationcagetransform.h"
+ #include "gimpoperationcomposecrop.h"
++#include "gimpoperationdepthshift.h"
+ #include "gimpoperationequalize.h"
+ #include "gimpoperationfillsource.h"
+ #include "gimpoperationflood.h"
+@@ -131,6 +132,7 @@ gimp_operations_init (Gimp *gimp)
+   g_type_class_ref (GIMP_TYPE_OPERATION_CAGE_COEF_CALC);
+   g_type_class_ref (GIMP_TYPE_OPERATION_CAGE_TRANSFORM);
+   g_type_class_ref (GIMP_TYPE_OPERATION_COMPOSE_CROP);
++  g_type_class_ref (GIMP_TYPE_OPERATION_DEPTH_SHIFT);
+   g_type_class_ref (GIMP_TYPE_OPERATION_EQUALIZE);
+   g_type_class_ref (GIMP_TYPE_OPERATION_FILL_SOURCE);
+   g_type_class_ref (GIMP_TYPE_OPERATION_FLOOD);
+diff --git a/app/operations/gimpoperationdepthshift.c b/app/operations/gimpoperationdepthshift.c
+new file mode 100644
+index 0000000..7b402e5
+--- /dev/null
++++ b/app/operations/gimpoperationdepthshift.c
+@@ -0,0 +1,317 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoperationdepthshift.c
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*  One eye's picture of a depth layer: its content moved by "shift"
++ *  pixels to the right (to the left when negative).  A whole move is a
++ *  copy of the samples in their own format; a fractional move is the
++ *  stereo policy library's own resampling (stereo_depth_shift_rgba(), a
++ *  Lanczos window of three lobes on premultiplied float samples), so the
++ *  canvas and an export of the pair give the same numbers.
++ */
++
++#include "config.h"
++
++#include <math.h>
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++#include <gegl.h>
++#include <gegl-plugin.h>
++
++#include <stereo-depth.h>
++
++#include "operations-types.h"
++
++#include "gimpoperationdepthshift.h"
++
++#include "gimp-intl.h"
++
++
++/*  the six taps of the window reach two samples before the place a sample
++ *  is read from and three after it
++ */
++#define TAPS_BEFORE 3
++#define TAPS_AFTER  4
++
++
++enum
++{
++  PROP_0,
++  PROP_SHIFT
++};
++
++
++static void          gimp_operation_depth_shift_set_property  (GObject             *object,
++                                                               guint                property_id,
++                                                               const GValue        *value,
++                                                               GParamSpec          *pspec);
++static void          gimp_operation_depth_shift_get_property  (GObject             *object,
++                                                               guint                property_id,
++                                                               GValue              *value,
++                                                               GParamSpec          *pspec);
++
++static void          gimp_operation_depth_shift_prepare       (GeglOperation       *operation);
++static GeglRectangle gimp_operation_depth_shift_get_bounding_box
++                                                              (GeglOperation       *operation);
++static GeglRectangle gimp_operation_depth_shift_get_required_for_output
++                                                              (GeglOperation       *operation,
++                                                               const gchar         *input_pad,
++                                                               const GeglRectangle *roi);
++static GeglRectangle gimp_operation_depth_shift_get_invalidated_by_change
++                                                              (GeglOperation       *operation,
++                                                               const gchar         *input_pad,
++                                                               const GeglRectangle *input_roi);
++static gboolean      gimp_operation_depth_shift_process       (GeglOperation       *operation,
++                                                               GeglBuffer          *input,
++                                                               GeglBuffer          *output,
++                                                               const GeglRectangle *roi,
++                                                               gint                 level);
++
++
++G_DEFINE_TYPE (GimpOperationDepthShift, gimp_operation_depth_shift,
++               GEGL_TYPE_OPERATION_FILTER)
++
++#define parent_class gimp_operation_depth_shift_parent_class
++
++
++static void
++gimp_operation_depth_shift_class_init (GimpOperationDepthShiftClass *klass)
++{
++  GObjectClass             *object_class    = G_OBJECT_CLASS (klass);
++  GeglOperationClass       *operation_class = GEGL_OPERATION_CLASS (klass);
++  GeglOperationFilterClass *filter_class    = GEGL_OPERATION_FILTER_CLASS (klass);
++
++  object_class->set_property                 = gimp_operation_depth_shift_set_property;
++  object_class->get_property                 = gimp_operation_depth_shift_get_property;
++
++  operation_class->prepare                   = gimp_operation_depth_shift_prepare;
++  operation_class->get_bounding_box          = gimp_operation_depth_shift_get_bounding_box;
++  operation_class->get_required_for_output   = gimp_operation_depth_shift_get_required_for_output;
++  operation_class->get_invalidated_by_change = gimp_operation_depth_shift_get_invalidated_by_change;
++
++  operation_class->threaded                  = TRUE;
++  operation_class->cache_policy              = GEGL_CACHE_POLICY_NEVER;
++
++  filter_class->process                      = gimp_operation_depth_shift_process;
++
++  gegl_operation_class_set_keys (operation_class,
++                                 "name",        "gimp:depth-shift",
++                                 "categories",  "transform",
++                                 "description", "One eye's picture of a depth layer",
++                                 NULL);
++
++  g_object_class_install_property (object_class, PROP_SHIFT,
++                                   g_param_spec_double ("shift",
++                                                        "Shift",
++                                                        "Pixels to the right",
++                                                        -G_MAXDOUBLE,
++                                                        G_MAXDOUBLE,
++                                                        0.0,
++                                                        G_PARAM_READWRITE |
++                                                        G_PARAM_CONSTRUCT));
++}
++
++static void
++gimp_operation_depth_shift_init (GimpOperationDepthShift *self)
++{
++}
++
++static void
++gimp_operation_depth_shift_set_property (GObject      *object,
++                                         guint         property_id,
++                                         const GValue *value,
++                                         GParamSpec   *pspec)
++{
++  GimpOperationDepthShift *self = GIMP_OPERATION_DEPTH_SHIFT (object);
++
++  switch (property_id)
++    {
++    case PROP_SHIFT:
++      self->shift = g_value_get_double (value);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++static void
++gimp_operation_depth_shift_get_property (GObject    *object,
++                                         guint       property_id,
++                                         GValue     *value,
++                                         GParamSpec *pspec)
++{
++  GimpOperationDepthShift *self = GIMP_OPERATION_DEPTH_SHIFT (object);
++
++  switch (property_id)
++    {
++    case PROP_SHIFT:
++      g_value_set_double (value, self->shift);
++      break;
++
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
++      break;
++    }
++}
++
++/*  the samples keep their own format, so a whole move is exact  */
++static void
++gimp_operation_depth_shift_prepare (GeglOperation *operation)
++{
++  const Babl *format = gegl_operation_get_source_format (operation, "input");
++
++  if (! format)
++    format = babl_format ("RaGaBaA float");
++
++  gegl_operation_set_format (operation, "input",  format);
++  gegl_operation_set_format (operation, "output", format);
++}
++
++/*  the columns an input span reaches, moved by shift  */
++static void
++gimp_operation_depth_shift_span (gdouble  shift,
++                                 gint     x,
++                                 gint     width,
++                                 gint    *out_x,
++                                 gint    *out_width)
++{
++  if (stereo_depth_shift_is_whole (shift))
++    {
++      *out_x     = x + (gint) llrint (shift);
++      *out_width = width;
++    }
++  else
++    {
++      *out_x     = (gint) floor (x + shift) - TAPS_BEFORE;
++      *out_width = width + TAPS_BEFORE + TAPS_AFTER;
++    }
++}
++
++static GeglRectangle
++gimp_operation_depth_shift_get_bounding_box (GeglOperation *operation)
++{
++  GimpOperationDepthShift *self   = GIMP_OPERATION_DEPTH_SHIFT (operation);
++  GeglRectangle            result = { 0, };
++  GeglRectangle           *in;
++
++  in = gegl_operation_source_get_bounding_box (operation, "input");
++
++  if (! in || gegl_rectangle_is_empty (in))
++    return result;
++
++  if (gegl_rectangle_is_infinite_plane (in))
++    return *in;
++
++  result = *in;
++  gimp_operation_depth_shift_span (self->shift, in->x, in->width,
++                                   &result.x, &result.width);
++
++  return result;
++}
++
++static GeglRectangle
++gimp_operation_depth_shift_get_required_for_output (GeglOperation       *operation,
++                                                    const gchar         *input_pad,
++                                                    const GeglRectangle *roi)
++{
++  GimpOperationDepthShift *self   = GIMP_OPERATION_DEPTH_SHIFT (operation);
++  GeglRectangle            result = *roi;
++
++  gimp_operation_depth_shift_span (-self->shift, roi->x, roi->width,
++                                   &result.x, &result.width);
++
++  return result;
++}
++
++static GeglRectangle
++gimp_operation_depth_shift_get_invalidated_by_change (GeglOperation       *operation,
++                                                      const gchar         *input_pad,
++                                                      const GeglRectangle *input_roi)
++{
++  GimpOperationDepthShift *self   = GIMP_OPERATION_DEPTH_SHIFT (operation);
++  GeglRectangle            result = *input_roi;
++
++  gimp_operation_depth_shift_span (self->shift, input_roi->x, input_roi->width,
++                                   &result.x, &result.width);
++
++  return result;
++}
++
++static gboolean
++gimp_operation_depth_shift_process (GeglOperation       *operation,
++                                    GeglBuffer          *input,
++                                    GeglBuffer          *output,
++                                    const GeglRectangle *roi,
++                                    gint                 level)
++{
++  GimpOperationDepthShift *self = GIMP_OPERATION_DEPTH_SHIFT (operation);
++  gdouble                  shift;
++  const Babl              *format;
++  GeglRectangle            frame;
++  gint                     margin;
++  gfloat                  *samples;
++
++  /*  a picture at a lower level of detail is smaller by its level  */
++  shift = self->shift / (gdouble) (1 << level);
++
++  if (stereo_depth_shift_is_whole (shift))
++    {
++      GeglRectangle source = *roi;
++
++      source.x -= (gint) llrint (shift);
++
++      gegl_buffer_copy (input, &source, GEGL_ABYSS_NONE, output, roi);
++
++      return TRUE;
++    }
++
++  format = babl_format_with_space ("RaGaBaA float",
++                                   gegl_buffer_get_format (input));
++
++  margin = (gint) ceil (fabs (shift)) + TAPS_AFTER;
++
++  frame.x      = roi->x - margin;
++  frame.y      = roi->y;
++  frame.width  = roi->width + 2 * margin;
++  frame.height = roi->height;
++
++  samples = g_try_new (gfloat, (gsize) frame.width * frame.height * 4);
++
++  if (! samples)
++    return FALSE;
++
++  gegl_buffer_get (input, &frame, 1.0, format, samples,
++                   GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
++
++  if (stereo_depth_shift_rgba (samples, frame.width, frame.height,
++                               frame.width * 4 * sizeof (gfloat),
++                               sizeof (gfloat), TRUE, shift, samples) < 0)
++    {
++      g_free (samples);
++      return FALSE;
++    }
++
++  gegl_buffer_set (output, roi, 0, format, samples + margin * 4,
++                   frame.width * 4 * sizeof (gfloat));
++
++  g_free (samples);
++
++  return TRUE;
++}
+diff --git a/app/operations/gimpoperationdepthshift.h b/app/operations/gimpoperationdepthshift.h
+new file mode 100644
+index 0000000..774006a
+--- /dev/null
++++ b/app/operations/gimpoperationdepthshift.h
+@@ -0,0 +1,47 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995 Spencer Kimball and Peter Mattis
++ *
++ * gimpoperationdepthshift.h
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++
++#define GIMP_TYPE_OPERATION_DEPTH_SHIFT            (gimp_operation_depth_shift_get_type ())
++#define GIMP_OPERATION_DEPTH_SHIFT(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), GIMP_TYPE_OPERATION_DEPTH_SHIFT, GimpOperationDepthShift))
++#define GIMP_OPERATION_DEPTH_SHIFT_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass),  GIMP_TYPE_OPERATION_DEPTH_SHIFT, GimpOperationDepthShiftClass))
++#define GIMP_IS_OPERATION_DEPTH_SHIFT(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), GIMP_TYPE_OPERATION_DEPTH_SHIFT))
++#define GIMP_IS_OPERATION_DEPTH_SHIFT_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass),  GIMP_TYPE_OPERATION_DEPTH_SHIFT))
++#define GIMP_OPERATION_DEPTH_SHIFT_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),  GIMP_TYPE_OPERATION_DEPTH_SHIFT, GimpOperationDepthShiftClass))
++
++
++typedef struct _GimpOperationDepthShift      GimpOperationDepthShift;
++typedef struct _GimpOperationDepthShiftClass GimpOperationDepthShiftClass;
++
++struct _GimpOperationDepthShift
++{
++  GeglOperationFilter  parent_instance;
++
++  gdouble              shift;
++};
++
++struct _GimpOperationDepthShiftClass
++{
++  GeglOperationFilterClass  parent_class;
++};
++
++
++GType   gimp_operation_depth_shift_get_type (void) G_GNUC_CONST;
+diff --git a/app/operations/meson.build b/app/operations/meson.build
+index 7b6194d..9244f15 100644
+--- a/app/operations/meson.build
++++ b/app/operations/meson.build
+@@ -34,6 +34,7 @@ libappoperations_sources = [
+   'gimpoperationcolorbalance.c',
+   'gimpoperationcolorize.c',
+   'gimpoperationcomposecrop.c',
++  'gimpoperationdepthshift.c',
+   'gimpoperationcurves.c',
+   'gimpoperationdesaturate.c',
+   'gimpoperationequalize.c',
+@@ -66,7 +67,7 @@ libappoperations = static_library('appoperations',
+   include_directories: [ rootInclude, rootAppInclude, ],
+   c_args: '-DG_LOG_DOMAIN="Gimp-Operations"',
+   dependencies: [
+-    cairo, gegl, gdk_pixbuf, gexiv2
++    cairo, gegl, gdk_pixbuf, gexiv2, stereo_policy
+   ],
+ )
+ 
+diff --git a/app/pdb/depth-layer-cmds.c b/app/pdb/depth-layer-cmds.c
+new file mode 100644
+index 0000000..7b2734e
+--- /dev/null
++++ b/app/pdb/depth-layer-cmds.c
+@@ -0,0 +1,392 @@
++/* GIMP - The GNU Image Manipulation Program
++ * Copyright (C) 1995-2003 Spencer Kimball and Peter Mattis
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/* NOTE: This file is auto-generated by pdbgen.pl. */
++
++#include "config.h"
++
++#include "stamp-pdbgen.h"
++
++#include <cairo.h>
++
++#include <gegl.h>
++
++#include <gdk-pixbuf/gdk-pixbuf.h>
++
++#include "libgimpbase/gimpbase.h"
++#include "libgimpcolor/gimpcolor.h"
++
++#include "libgimpbase/gimpbase.h"
++
++#include "pdb-types.h"
++
++#include "core/gimp.h"
++#include "core/gimpdepthlayer.h"
++#include "core/gimpeyeprojectable.h"
++#include "core/gimpgrouplayer.h"
++#include "core/gimpimage.h"
++#include "core/gimplayer-new.h"
++#include "core/gimplayer.h"
++#include "core/gimpparamspecs.h"
++#include "core/gimppickable.h"
++#include "core/gimpprojectable.h"
++#include "core/gimpprojection.h"
++
++#include "gimppdb.h"
++#include "gimppdberror.h"
++#include "gimpprocedure.h"
++#include "internal-procs.h"
++
++#include "gimp-intl.h"
++
++
++static GimpValueArray *
++depth_layer_new_invoker (GimpProcedure         *procedure,
++                         Gimp                  *gimp,
++                         GimpContext           *context,
++                         GimpProgress          *progress,
++                         const GimpValueArray  *args,
++                         GError               **error)
++{
++  gboolean success = TRUE;
++  GimpValueArray *return_vals;
++  GimpImage *image;
++  const gchar *name;
++  gdouble depth;
++  GimpGroupLayer *depth_layer = NULL;
++
++  image = g_value_get_object (gimp_value_array_index (args, 0));
++  name = g_value_get_string (gimp_value_array_index (args, 1));
++  depth = g_value_get_double (gimp_value_array_index (args, 2));
++
++  if (success)
++    {
++      depth_layer = GIMP_GROUP_LAYER (gimp_depth_layer_new (image));
++
++      if (! depth_layer)
++        {
++          success = FALSE;
++        }
++      else
++        {
++          if (name != NULL && strlen (name) > 0)
++            gimp_item_rename (GIMP_ITEM (depth_layer), name, error);
++
++          gimp_depth_layer_set_depth (GIMP_DEPTH_LAYER (depth_layer), depth, FALSE);
++        }
++    }
++
++  return_vals = gimp_procedure_get_return_values (procedure, success,
++                                                  error ? *error : NULL);
++
++  if (success)
++    g_value_set_object (gimp_value_array_index (return_vals, 1), depth_layer);
++
++  return return_vals;
++}
++
++static GimpValueArray *
++depth_layer_get_depth_invoker (GimpProcedure         *procedure,
++                               Gimp                  *gimp,
++                               GimpContext           *context,
++                               GimpProgress          *progress,
++                               const GimpValueArray  *args,
++                               GError               **error)
++{
++  gboolean success = TRUE;
++  GimpValueArray *return_vals;
++  GimpGroupLayer *depth_layer;
++  gdouble depth = 0.0;
++
++  depth_layer = g_value_get_object (gimp_value_array_index (args, 0));
++
++  if (success)
++    {
++      if (GIMP_IS_DEPTH_LAYER (depth_layer))
++        {
++          depth = gimp_depth_layer_get_depth (GIMP_DEPTH_LAYER (depth_layer));
++        }
++      else
++        {
++          g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
++                       _("Layer group '%s' (%d) is not a depth layer"),
++                       gimp_object_get_name (depth_layer),
++                       gimp_item_get_id (GIMP_ITEM (depth_layer)));
++          success = FALSE;
++        }
++    }
++
++  return_vals = gimp_procedure_get_return_values (procedure, success,
++                                                  error ? *error : NULL);
++
++  if (success)
++    g_value_set_double (gimp_value_array_index (return_vals, 1), depth);
++
++  return return_vals;
++}
++
++static GimpValueArray *
++depth_layer_set_depth_invoker (GimpProcedure         *procedure,
++                               Gimp                  *gimp,
++                               GimpContext           *context,
++                               GimpProgress          *progress,
++                               const GimpValueArray  *args,
++                               GError               **error)
++{
++  gboolean success = TRUE;
++  GimpGroupLayer *depth_layer;
++  gdouble depth;
++
++  depth_layer = g_value_get_object (gimp_value_array_index (args, 0));
++  depth = g_value_get_double (gimp_value_array_index (args, 1));
++
++  if (success)
++    {
++      if (GIMP_IS_DEPTH_LAYER (depth_layer))
++        {
++          gimp_depth_layer_set_depth (GIMP_DEPTH_LAYER (depth_layer), depth, TRUE);
++        }
++      else
++        {
++          g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
++                       _("Layer group '%s' (%d) is not a depth layer"),
++                       gimp_object_get_name (depth_layer),
++                       gimp_item_get_id (GIMP_ITEM (depth_layer)));
++          success = FALSE;
++        }
++    }
++
++  return gimp_procedure_get_return_values (procedure, success,
++                                           error ? *error : NULL);
++}
++
++static GimpValueArray *
++depth_layer_new_from_eye_invoker (GimpProcedure         *procedure,
++                                  Gimp                  *gimp,
++                                  GimpContext           *context,
++                                  GimpProgress          *progress,
++                                  const GimpValueArray  *args,
++                                  GError               **error)
++{
++  gboolean success = TRUE;
++  GimpValueArray *return_vals;
++  GimpImage *image;
++  GimpImage *dest_image;
++  gint eye;
++  const gchar *name;
++  GimpLayer *layer = NULL;
++
++  image = g_value_get_object (gimp_value_array_index (args, 0));
++  dest_image = g_value_get_object (gimp_value_array_index (args, 1));
++  eye = g_value_get_int (gimp_value_array_index (args, 2));
++  name = g_value_get_string (gimp_value_array_index (args, 3));
++
++  if (success)
++    {
++      GimpEyeProjectable *projectable;
++      GimpProjection     *projection;
++      GimpColorProfile   *profile;
++
++      /*  the eye's picture the canvas shows, rendered whole  */
++      projectable = gimp_eye_projectable_new (image,
++                                              eye ? GIMP_EYE_RIGHT : GIMP_EYE_LEFT);
++      projection  = gimp_projection_new (GIMP_PROJECTABLE (projectable));
++
++      gimp_pickable_flush (GIMP_PICKABLE (projection));
++
++      profile = gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
++
++      layer = gimp_layer_new_from_gegl_buffer (gimp_pickable_get_buffer (GIMP_PICKABLE (projection)),
++                                               dest_image,
++                                               gimp_image_get_layer_format (dest_image,
++                                                                            TRUE),
++                                               name,
++                                               GIMP_OPACITY_OPAQUE,
++                                               gimp_image_get_default_new_layer_mode (dest_image),
++                                               profile);
++
++      g_object_unref (projection);
++      g_object_unref (projectable);
++
++      if (! layer)
++        success = FALSE;
++    }
++
++  return_vals = gimp_procedure_get_return_values (procedure, success,
++                                                  error ? *error : NULL);
++
++  if (success)
++    g_value_set_object (gimp_value_array_index (return_vals, 1), layer);
++
++  return return_vals;
++}
++
++void
++register_depth_layer_procs (GimpPDB *pdb)
++{
++  GimpProcedure *procedure;
++
++  /*
++   * gimp-depth-layer-new
++   */
++  procedure = gimp_procedure_new (depth_layer_new_invoker, FALSE);
++  gimp_object_set_static_name (GIMP_OBJECT (procedure),
++                               "gimp-depth-layer-new");
++  gimp_procedure_set_static_help (procedure,
++                                  "Create a new depth layer.",
++                                  "This procedure creates a new depth layer: a layer group that holds its layers at one depth, in pixels of separation with three decimals, positive behind the screen and negative in front of it, never clamped. Each eye sees the layer moved by half the depth.\n"
++                                  "\n"
++                                  "The new depth layer still needs to be added to the image, as this is not automatic. Add the new layer with the [method@Image.insert_layer] method.",
++                                  NULL);
++  gimp_procedure_set_static_attribution (procedure,
++                                         "Daniel Ramos",
++                                         "Daniel Ramos",
++                                         "2026");
++  gimp_procedure_add_argument (procedure,
++                               gimp_param_spec_image ("image",
++                                                      "image",
++                                                      "The image to which to add the depth layer",
++                                                      FALSE,
++                                                      GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (procedure,
++                               gimp_param_spec_string ("name",
++                                                       "name",
++                                                       "The depth layer name",
++                                                       FALSE, TRUE, FALSE,
++                                                       NULL,
++                                                       GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (procedure,
++                               g_param_spec_double ("depth",
++                                                    "depth",
++                                                    "The depth in pixels of separation",
++                                                    -G_MAXDOUBLE, G_MAXDOUBLE, 0,
++                                                    GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (procedure,
++                                   gimp_param_spec_group_layer ("depth-layer",
++                                                                "depth layer",
++                                                                "The newly created depth layer",
++                                                                FALSE,
++                                                                GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, procedure);
++  g_object_unref (procedure);
++
++  /*
++   * gimp-depth-layer-get-depth
++   */
++  procedure = gimp_procedure_new (depth_layer_get_depth_invoker, FALSE);
++  gimp_object_set_static_name (GIMP_OBJECT (procedure),
++                               "gimp-depth-layer-get-depth");
++  gimp_procedure_set_static_help (procedure,
++                                  "Get the depth of a depth layer.",
++                                  "This procedure returns the depth of a depth layer, in pixels of separation with three decimals: positive behind the screen, negative in front of it. It fails for a layer group that is not a depth layer.",
++                                  NULL);
++  gimp_procedure_set_static_attribution (procedure,
++                                         "Daniel Ramos",
++                                         "Daniel Ramos",
++                                         "2026");
++  gimp_procedure_add_argument (procedure,
++                               gimp_param_spec_group_layer ("depth-layer",
++                                                            "depth layer",
++                                                            "The depth layer",
++                                                            FALSE,
++                                                            GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (procedure,
++                                   g_param_spec_double ("depth",
++                                                        "depth",
++                                                        "The depth in pixels of separation",
++                                                        -G_MAXDOUBLE, G_MAXDOUBLE, 0,
++                                                        GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, procedure);
++  g_object_unref (procedure);
++
++  /*
++   * gimp-depth-layer-set-depth
++   */
++  procedure = gimp_procedure_new (depth_layer_set_depth_invoker, FALSE);
++  gimp_object_set_static_name (GIMP_OBJECT (procedure),
++                               "gimp-depth-layer-set-depth");
++  gimp_procedure_set_static_help (procedure,
++                                  "Set the depth of a depth layer.",
++                                  "This procedure sets the depth of a depth layer, in pixels of separation rounded to three decimals: positive behind the screen, negative in front of it, never clamped. It fails for a layer group that is not a depth layer.",
++                                  NULL);
++  gimp_procedure_set_static_attribution (procedure,
++                                         "Daniel Ramos",
++                                         "Daniel Ramos",
++                                         "2026");
++  gimp_procedure_add_argument (procedure,
++                               gimp_param_spec_group_layer ("depth-layer",
++                                                            "depth layer",
++                                                            "The depth layer",
++                                                            FALSE,
++                                                            GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (procedure,
++                               g_param_spec_double ("depth",
++                                                    "depth",
++                                                    "The depth in pixels of separation",
++                                                    -G_MAXDOUBLE, G_MAXDOUBLE, 0,
++                                                    GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, procedure);
++  g_object_unref (procedure);
++
++  /*
++   * gimp-depth-layer-new-from-eye
++   */
++  procedure = gimp_procedure_new (depth_layer_new_from_eye_invoker, FALSE);
++  gimp_object_set_static_name (GIMP_OBJECT (procedure),
++                               "gimp-depth-layer-new-from-eye");
++  gimp_procedure_set_static_help (procedure,
++                                  "Create a new layer from one eye's picture of an image with depth layers.",
++                                  "This procedure creates a new layer from what one eye sees of the image (0 the left eye, 1 the right eye): every depth layer moved by its half of the depth, as the canvas shows it. With the top-level layers \"Left eye\" and \"Right eye\", each eye sees only its own. The new layer still needs to be added to the destination image.",
++                                  NULL);
++  gimp_procedure_set_static_attribution (procedure,
++                                         "Daniel Ramos",
++                                         "Daniel Ramos",
++                                         "2026");
++  gimp_procedure_add_argument (procedure,
++                               gimp_param_spec_image ("image",
++                                                      "image",
++                                                      "The source image",
++                                                      FALSE,
++                                                      GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (procedure,
++                               gimp_param_spec_image ("dest-image",
++                                                      "dest image",
++                                                      "The destination image to which to add the layer",
++                                                      FALSE,
++                                                      GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (procedure,
++                               g_param_spec_int ("eye",
++                                                 "eye",
++                                                 "The eye: 0 left, 1 right",
++                                                 0, 1, 0,
++                                                 GIMP_PARAM_READWRITE));
++  gimp_procedure_add_argument (procedure,
++                               gimp_param_spec_string ("name",
++                                                       "name",
++                                                       "The layer name",
++                                                       FALSE, TRUE, FALSE,
++                                                       NULL,
++                                                       GIMP_PARAM_READWRITE));
++  gimp_procedure_add_return_value (procedure,
++                                   gimp_param_spec_layer ("layer",
++                                                          "layer",
++                                                          "The newly created layer",
++                                                          FALSE,
++                                                          GIMP_PARAM_READWRITE));
++  gimp_pdb_register_procedure (pdb, procedure);
++  g_object_unref (procedure);
++}
+diff --git a/app/pdb/internal-procs.c b/app/pdb/internal-procs.c
+index 5ae707b..1247528 100644
+--- a/app/pdb/internal-procs.c
++++ b/app/pdb/internal-procs.c
+@@ -30,7 +30,7 @@
+ #include "internal-procs.h"
+ 
+ 
+-/* 786 procedures registered total */
++/* 790 procedures registered total */
+ 
+ void
+ internal_procs_init (GimpPDB *pdb)
+@@ -62,6 +62,7 @@ internal_procs_init (GimpPDB *pdb)
+   register_gradient_select_procs (pdb);
+   register_gradient_procs (pdb);
+   register_gradients_procs (pdb);
++  register_depth_layer_procs (pdb);
+   register_group_layer_procs (pdb);
+   register_help_procs (pdb);
+   register_image_autocrop_procs (pdb);
+diff --git a/app/pdb/internal-procs.h b/app/pdb/internal-procs.h
+index 6a32d96..3d790c4 100644
+--- a/app/pdb/internal-procs.h
++++ b/app/pdb/internal-procs.h
+@@ -49,6 +49,7 @@ void   register_gimprc_procs              (GimpPDB *pdb);
+ void   register_gradient_select_procs     (GimpPDB *pdb);
+ void   register_gradient_procs            (GimpPDB *pdb);
+ void   register_gradients_procs           (GimpPDB *pdb);
++void   register_depth_layer_procs         (GimpPDB *pdb);
+ void   register_group_layer_procs         (GimpPDB *pdb);
+ void   register_help_procs                (GimpPDB *pdb);
+ void   register_image_autocrop_procs      (GimpPDB *pdb);
+diff --git a/app/pdb/meson.build b/app/pdb/meson.build
+index 2bb52b9..4379bdd 100644
+--- a/app/pdb/meson.build
++++ b/app/pdb/meson.build
+@@ -16,6 +16,7 @@ libappinternalprocs_sources = [
+   'context-cmds.c',
+   'debug-cmds.c',
+   'display-cmds.c',
++  'depth-layer-cmds.c',
+   'drawable-cmds.c',
+   'drawable-color-cmds.c',
+   'drawable-edit-cmds.c',
+diff --git a/app/widgets/gimplayertreeview.c b/app/widgets/gimplayertreeview.c
+index 2af1d7f..13cb985 100644
+--- a/app/widgets/gimplayertreeview.c
++++ b/app/widgets/gimplayertreeview.c
+@@ -39,6 +39,7 @@
+ #include "core/gimp.h"
+ #include "core/gimpchannel.h"
+ #include "core/gimpcontainer.h"
++#include "core/gimpdepthlayer.h"
+ #include "core/gimpcontext.h"
+ #include "core/gimpimage-undo.h"
+ #include "core/gimpimage-undo-push.h"
+@@ -78,6 +79,9 @@ struct _GimpLayerTreeViewPrivate
+ {
+   GtkWidget       *layer_mode_box;
+   GtkAdjustment   *opacity_adjustment;
++  GtkAdjustment   *depth_adjustment;
++  GtkWidget       *depth_box;
++  GimpDepthLayer  *depth_layer;
+   GtkWidget       *anchor_button;
+   GtkWidget       *delete_mask_button;
+ 
+@@ -151,6 +155,12 @@ static void       gimp_layer_tree_view_floating_selection_changed (GimpImage
+ static void       gimp_layer_tree_view_layer_mode_box_callback    (GtkWidget                  *widget,
+                                                                    const GParamSpec           *pspec,
+                                                                    GimpLayerTreeView          *view);
++static void       gimp_layer_tree_view_depth_changed              (GtkAdjustment              *adj,
++                                                                   GimpLayerTreeView          *view);
++static void       gimp_layer_tree_view_set_depth_layer            (GimpLayerTreeView          *view,
++                                                                   GimpDepthLayer             *layer);
++static void       gimp_layer_tree_view_depth_layer_changed        (GimpDepthLayer             *layer,
++                                                                   GimpLayerTreeView          *view);
+ static void       gimp_layer_tree_view_opacity_scale_changed      (GtkAdjustment              *adj,
+                                                                    GimpLayerTreeView          *view);
+ static void       gimp_layer_tree_view_layer_signal_handler       (GimpLayer                  *layer,
+@@ -308,6 +318,40 @@ gimp_layer_tree_view_init (GimpLayerTreeView *view)
+                     G_CALLBACK (gimp_layer_tree_view_opacity_scale_changed),
+                     view);
+ 
++  /*  Depth of the depth layer the selected layer is in: pixels of
++   *  separation, positive behind the screen, never clamped
++   */
++  {
++    GtkWidget *label;
++    GtkWidget *spin;
++
++    view->priv->depth_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
++
++    label = gtk_label_new (_("Depth"));
++    gtk_box_pack_start (GTK_BOX (view->priv->depth_box), label, FALSE, FALSE, 0);
++    gtk_widget_show (label);
++
++    view->priv->depth_adjustment = gtk_adjustment_new (0.0, -1e9, 1e9,
++                                                       0.1, 1.0, 0.0);
++    spin = gimp_spin_button_new (view->priv->depth_adjustment, 0.1, 3);
++    gtk_box_pack_start (GTK_BOX (view->priv->depth_box), spin, TRUE, TRUE, 0);
++    gtk_widget_show (spin);
++
++    gimp_help_set_help_data (view->priv->depth_box,
++                             _("The depth of the depth layer, in pixels of "
++                               "separation: positive behind the screen, "
++                               "negative in front of it"),
++                             NULL);
++
++    gimp_item_tree_view_add_options (GIMP_ITEM_TREE_VIEW (view),
++                                     NULL, view->priv->depth_box);
++    gtk_widget_set_visible (view->priv->depth_box, FALSE);
++
++    g_signal_connect (view->priv->depth_adjustment, "value-changed",
++                      G_CALLBACK (gimp_layer_tree_view_depth_changed),
++                      view);
++  }
++
+   view->priv->italic_attrs = pango_attr_list_new ();
+   attr = pango_attr_style_new (PANGO_STYLE_ITALIC);
+   attr->start_index = 0;
+@@ -438,6 +482,16 @@ gimp_layer_tree_view_finalize (GObject *object)
+ {
+   GimpLayerTreeView *layer_view = GIMP_LAYER_TREE_VIEW (object);
+ 
++  if (layer_view->priv->depth_layer)
++    {
++      g_signal_handlers_disconnect_by_func (layer_view->priv->depth_layer,
++                                            gimp_layer_tree_view_depth_layer_changed,
++                                            layer_view);
++      g_object_remove_weak_pointer (G_OBJECT (layer_view->priv->depth_layer),
++                                    (gpointer *) &layer_view->priv->depth_layer);
++      layer_view->priv->depth_layer = NULL;
++    }
++
+   if (layer_view->priv->italic_attrs)
+     {
+       pango_attr_list_unref (layer_view->priv->italic_attrs);
+@@ -1266,6 +1320,74 @@ gimp_layer_tree_view_update_options (GimpLayerTreeView *view,
+       UNBLOCK (view->priv->opacity_adjustment,
+                gimp_layer_tree_view_opacity_scale_changed);
+     }
++
++  gimp_layer_tree_view_set_depth_layer (view,
++                                        layers ?
++                                        gimp_item_get_depth_layer (layers->data) :
++                                        NULL);
++}
++
++static void
++gimp_layer_tree_view_depth_layer_changed (GimpDepthLayer    *layer,
++                                          GimpLayerTreeView *view)
++{
++  gdouble depth = layer ? gimp_depth_layer_get_depth (layer) : 0.0;
++
++  g_signal_handlers_block_by_func (view->priv->depth_adjustment,
++                                   gimp_layer_tree_view_depth_changed, view);
++  gtk_adjustment_set_value (view->priv->depth_adjustment, depth);
++  g_signal_handlers_unblock_by_func (view->priv->depth_adjustment,
++                                     gimp_layer_tree_view_depth_changed, view);
++
++  /*  shown only for a layer in a depth layer: a 2D document's dock is as
++   *  it was
++   */
++  gtk_widget_set_visible (view->priv->depth_box, layer != NULL);
++}
++
++static void
++gimp_layer_tree_view_set_depth_layer (GimpLayerTreeView *view,
++                                      GimpDepthLayer    *layer)
++{
++  if (view->priv->depth_layer != layer)
++    {
++      if (view->priv->depth_layer)
++        {
++          g_signal_handlers_disconnect_by_func (view->priv->depth_layer,
++                                                gimp_layer_tree_view_depth_layer_changed,
++                                                view);
++          g_object_remove_weak_pointer (G_OBJECT (view->priv->depth_layer),
++                                        (gpointer *) &view->priv->depth_layer);
++        }
++
++      view->priv->depth_layer = layer;
++
++      if (layer)
++        {
++          g_object_add_weak_pointer (G_OBJECT (layer),
++                                     (gpointer *) &view->priv->depth_layer);
++          g_signal_connect (layer, "depth-changed",
++                            G_CALLBACK (gimp_layer_tree_view_depth_layer_changed),
++                            view);
++        }
++    }
++
++  if (view->priv->depth_adjustment)
++    gimp_layer_tree_view_depth_layer_changed (layer, view);
++}
++
++static void
++gimp_layer_tree_view_depth_changed (GtkAdjustment     *adjustment,
++                                    GimpLayerTreeView *view)
++{
++  GimpDepthLayer *layer = view->priv->depth_layer;
++
++  if (! layer || ! gimp_item_is_attached (GIMP_ITEM (layer)))
++    return;
++
++  gimp_depth_layer_set_depth (layer, gtk_adjustment_get_value (adjustment),
++                              TRUE);
++  gimp_image_flush (gimp_item_get_image (GIMP_ITEM (layer)));
+ }
+ 
+ #undef BLOCK
+diff --git a/app/xcf/xcf-load.c b/app/xcf/xcf-load.c
+index 63e2a71..a6ccf9c 100644
+--- a/app/xcf/xcf-load.c
++++ b/app/xcf/xcf-load.c
+@@ -47,6 +47,7 @@
+ #include "core/gimpfilloptions.h"
+ #include "core/gimpfilterstack.h"
+ #include "core/gimpgrid.h"
++#include "core/gimpdepthlayer.h"
+ #include "core/gimpgrouplayer.h"
+ #include "core/gimpimage.h"
+ #include "core/gimpimage-color-profile.h"
+@@ -3963,6 +3964,21 @@ xcf_load_layer (XcfInfo    *info,
+         info->floating_sel = layer;
+     }
+ 
++  /* a layer group carrying a depth becomes a depth layer */
++  if (gimp_depth_layer_xcf_load_hack (&layer))
++    {
++      if (selected)
++        {
++          info->selected_layers = g_list_delete_link (info->selected_layers, selected);
++          info->selected_layers = g_list_prepend (info->selected_layers, layer);
++        }
++      if (linked)
++        {
++          info->linked_layers = g_list_delete_link (info->linked_layers, linked);
++          info->linked_layers = g_list_prepend (info->linked_layers, layer);
++        }
++    }
++
+   /* if this is not the floating selection, we can fix the layer's
+    * space already now, the function will do nothing if we already
+    * created the layer with the right format
+diff --git a/menus/image-menu.ui.in.in b/menus/image-menu.ui.in.in
+index 3d9ad80..b0412c2 100644
+--- a/menus/image-menu.ui.in.in
++++ b/menus/image-menu.ui.in.in
+@@ -429,12 +429,18 @@
+         <item><attribute name="action">app.layers-new</attribute></item>
+         <item><attribute name="action">app.layers-new-from-visible</attribute></item>
+         <item><attribute name="action">app.layers-new-group</attribute></item>
++        <item><attribute name="action">app.layers-new-depth-layer</attribute></item>
+         <item><attribute name="action">app.layers-duplicate</attribute></item>
+         <item><attribute name="action">app.layers-anchor</attribute></item>
+         <item><attribute name="action">app.layers-merge-down</attribute></item>
+         <item><attribute name="action">app.layers-merge-group</attribute></item>
+         <item><attribute name="action">app.layers-delete</attribute></item>
+       </section>
++      <section>
++        <attribute name="section-name" translatable="no">Depth</attribute>
++        <item><attribute name="action">app.layers-depth-pop</attribute></item>
++        <item><attribute name="action">app.layers-depth-sink</attribute></item>
++      </section>
+       <section>
+         <attribute name="section-name" translatable="no">Non-Raster</attribute>
+ 
+diff --git a/menus/layers-menu.ui b/menus/layers-menu.ui
+index 11535fe..e58261c 100644
+--- a/menus/layers-menu.ui
++++ b/menus/layers-menu.ui
+@@ -47,6 +47,7 @@
+         <item><attribute name="action">app.layers-new</attribute></item>
+         <item><attribute name="action">app.layers-new-from-visible</attribute></item>
+         <item><attribute name="action">app.layers-new-group</attribute></item>
++        <item><attribute name="action">app.layers-new-depth-layer</attribute></item>
+     <!--
+         <item><attribute name="action">app.layers-raise</attribute></item>
+         <item><attribute name="action">app.layers-raise-to-top</attribute></item>
+diff --git a/meson.build b/meson.build
+index c87d2d0..9ab3015 100644
+--- a/meson.build
++++ b/meson.build
+@@ -508,6 +508,9 @@ have_gtk_gl_area_stereo = cc.has_function('gtk_gl_area_set_stereo',
+                                           dependencies: gtk3)
+ conf.set('HAVE_GTK_GL_AREA_STEREO', have_gtk_gl_area_stereo)
+ epoxy             = dependency('epoxy', required: have_gtk_gl_area_stereo)
++# depth layers: the model and each eye's move, shared with Krita, in
++# Sparky Stereo OS's stereo policy library
++stereo_policy     = dependency('stereo-policy',      version: '>=1.24.0')
+ gdk_specific_name = platform_osx ? 'gdk-quartz-3.0' : 'gdk-3.0'
+ gdk_specific      = dependency(gdk_specific_name, required: false)
+ gtk_version_split = gtk3_minver.split('.')
+diff --git a/pdb/groups.pl b/pdb/groups.pl
+index e521e04..e2ec900 100644
+--- a/pdb/groups.pl
++++ b/pdb/groups.pl
+@@ -25,6 +25,7 @@
+     gradient_select
+     gradient
+     gradients
++    depth_layer
+     group_layer
+     help
+     image_autocrop
+diff --git a/pdb/groups/depth_layer.pdb b/pdb/groups/depth_layer.pdb
+new file mode 100644
+index 0000000..d99a1ad
+--- /dev/null
++++ b/pdb/groups/depth_layer.pdb
+@@ -0,0 +1,241 @@
++# GIMP - The GNU Image Manipulation Program
++# Copyright (C) 1995 Spencer Kimball and Peter Mattis
++
++# This program is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3 of the License, or
++# (at your option) any later version.
++
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++
++# You should have received a copy of the GNU General Public License
++# along with this program.  If not, see <https://www.gnu.org/licenses/>.
++
++# Depth layers (queue row 148 of Sparky Stereo OS): the procedures are the
++# core's only; plug-ins reach them by name through the PDB.
++
++sub depth_layer_new {
++    $blurb = 'Create a new depth layer.';
++
++    $help = <<'HELP';
++This procedure creates a new depth layer: a layer group that holds its
++layers at one depth, in pixels of separation with three decimals, positive
++behind the screen and negative in front of it, never clamped. Each eye sees
++the layer moved by half the depth.
++
++
++The new depth layer still needs to be added to the image, as this is not
++automatic. Add the new layer with the [method@Image.insert_layer] method.
++HELP
++
++    &contrib_pdb_misc('Daniel Ramos', '', '2026', '3.2');
++
++    @inargs = (
++	{ name => 'image', type => 'image',
++	  desc => 'The image to which to add the depth layer' },
++	{ name => 'name', type => 'string', none_ok => 1,
++	  desc => "The depth layer name" },
++	{ name => 'depth', type => 'double',
++	  desc => 'The depth in pixels of separation' }
++    );
++
++    @outargs = (
++	{ name => 'depth_layer', type => 'group_layer',
++	  desc => 'The newly created depth layer' }
++    );
++
++    %invoke = (
++	code => <<'CODE'
++{
++  depth_layer = GIMP_GROUP_LAYER (gimp_depth_layer_new (image));
++
++  if (! depth_layer)
++    {
++      success = FALSE;
++    }
++  else
++    {
++      if (name != NULL && strlen (name) > 0)
++        gimp_item_rename (GIMP_ITEM (depth_layer), name, error);
++
++      gimp_depth_layer_set_depth (GIMP_DEPTH_LAYER (depth_layer), depth, FALSE);
++    }
++}
++CODE
++    );
++}
++
++sub depth_layer_get_depth {
++    $blurb = 'Get the depth of a depth layer.';
++
++    $help = <<'HELP';
++This procedure returns the depth of a depth layer, in pixels of separation
++with three decimals: positive behind the screen, negative in front of it.
++It fails for a layer group that is not a depth layer.
++HELP
++
++    &contrib_pdb_misc('Daniel Ramos', '', '2026', '3.2');
++
++    @inargs = (
++	{ name => 'depth_layer', type => 'group_layer',
++	  desc => 'The depth layer' }
++    );
++
++    @outargs = (
++	{ name => 'depth', type => 'double',
++	  desc => 'The depth in pixels of separation' }
++    );
++
++    %invoke = (
++	code => <<'CODE'
++{
++  if (GIMP_IS_DEPTH_LAYER (depth_layer))
++    {
++      depth = gimp_depth_layer_get_depth (GIMP_DEPTH_LAYER (depth_layer));
++    }
++  else
++    {
++      g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
++                   _("Layer group '%s' (%d) is not a depth layer"),
++                   gimp_object_get_name (depth_layer),
++                   gimp_item_get_id (GIMP_ITEM (depth_layer)));
++      success = FALSE;
++    }
++}
++CODE
++    );
++}
++
++sub depth_layer_set_depth {
++    $blurb = 'Set the depth of a depth layer.';
++
++    $help = <<'HELP';
++This procedure sets the depth of a depth layer, in pixels of separation
++rounded to three decimals: positive behind the screen, negative in front of
++it, never clamped. It fails for a layer group that is not a depth layer.
++HELP
++
++    &contrib_pdb_misc('Daniel Ramos', '', '2026', '3.2');
++
++    @inargs = (
++	{ name => 'depth_layer', type => 'group_layer',
++	  desc => 'The depth layer' },
++	{ name => 'depth', type => 'double',
++	  desc => 'The depth in pixels of separation' }
++    );
++
++    %invoke = (
++	code => <<'CODE'
++{
++  if (GIMP_IS_DEPTH_LAYER (depth_layer))
++    {
++      gimp_depth_layer_set_depth (GIMP_DEPTH_LAYER (depth_layer), depth, TRUE);
++    }
++  else
++    {
++      g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
++                   _("Layer group '%s' (%d) is not a depth layer"),
++                   gimp_object_get_name (depth_layer),
++                   gimp_item_get_id (GIMP_ITEM (depth_layer)));
++      success = FALSE;
++    }
++}
++CODE
++    );
++}
++
++sub depth_layer_new_from_eye {
++    $blurb = "Create a new layer from one eye's picture of an image with depth layers.";
++
++    $help = <<'HELP';
++This procedure creates a new layer from what one eye sees of the image (0 the
++left eye, 1 the right eye): every depth layer moved by its half of the depth,
++as the canvas shows it. With the top-level layers "Left eye" and "Right eye",
++each eye sees only its own. The new layer still needs to be added to the
++destination image.
++HELP
++
++    &contrib_pdb_misc('Daniel Ramos', '', '2026', '3.2');
++
++    @inargs = (
++	{ name => 'image', type => 'image',
++	  desc => 'The source image' },
++	{ name => 'dest_image', type => 'image',
++	  desc => 'The destination image to which to add the layer' },
++	{ name => 'eye', type => '0 <= int32 <= 1',
++	  desc => 'The eye: 0 left, 1 right' },
++	{ name => 'name', type => 'string', none_ok => 1,
++	  desc => 'The layer name' }
++    );
++
++    @outargs = (
++	{ name => 'layer', type => 'layer',
++	  desc => 'The newly created layer' }
++    );
++
++    %invoke = (
++	code => <<'CODE'
++{
++  GimpEyeProjectable *projectable;
++  GimpProjection     *projection;
++  GimpColorProfile   *profile;
++
++  /*  the eye's picture the canvas shows, rendered whole  */
++  projectable = gimp_eye_projectable_new (image,
++                                          eye ? GIMP_EYE_RIGHT : GIMP_EYE_LEFT);
++  projection  = gimp_projection_new (GIMP_PROJECTABLE (projectable));
++
++  gimp_pickable_flush (GIMP_PICKABLE (projection));
++
++  profile = gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
++
++  layer = gimp_layer_new_from_gegl_buffer (gimp_pickable_get_buffer (GIMP_PICKABLE (projection)),
++                                           dest_image,
++                                           gimp_image_get_layer_format (dest_image,
++                                                                        TRUE),
++                                           name,
++                                           GIMP_OPACITY_OPAQUE,
++                                           gimp_image_get_default_new_layer_mode (dest_image),
++                                           profile);
++
++  g_object_unref (projection);
++  g_object_unref (projectable);
++
++  if (! layer)
++    success = FALSE;
++}
++CODE
++    );
++}
++
++
++@headers = qw(<cairo.h>
++              "libgimpbase/gimpbase.h"
++              "libgimpcolor/gimpcolor.h"
++              "core/gimp.h"
++              "core/gimpdepthlayer.h"
++              "core/gimpeyeprojectable.h"
++              "core/gimpimage.h"
++              "core/gimplayer-new.h"
++              "core/gimppickable.h"
++              "core/gimpprojectable.h"
++              "core/gimpprojection.h"
++              "gimppdberror.h"
++              "gimp-intl.h");
++
++@procs = qw(depth_layer_new
++            depth_layer_get_depth
++            depth_layer_set_depth
++            depth_layer_new_from_eye);
++
++%exports = (app => [@procs], lib => []);
++
++$desc = 'Depth Layer';
++$doc_title = 'gimpdepthlayer';
++$doc_short_desc = 'Operations on a depth layer.';
++$doc_long_desc = 'Operations on a depth layer.';
++
++1;
+diff --git a/pdb/meson.build b/pdb/meson.build
+index be32f9a..d0fd8c8 100644
+--- a/pdb/meson.build
++++ b/pdb/meson.build
+@@ -27,6 +27,7 @@ pdb_names = [
+   'gradient_select',
+   'gradient',
+   'gradients',
++  'depth_layer',
+   'group_layer',
+   'help',
+   'image_autocrop',
