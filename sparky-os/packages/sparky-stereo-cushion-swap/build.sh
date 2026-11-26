@@ -1,12 +1,12 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/10
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/26
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.3.7
+VERSION=0.3.8
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
@@ -36,6 +36,7 @@ done
 install -Dm755 -t "$D/usr/lib/systemd/system-generators" "$HERE/lib/systemd/system-generators/cushion-swap-hibernate-generator"
 install -Dm644 -t "$D/usr/lib/tmpfiles.d" "$HERE/lib/tmpfiles.d/cushion-swap.conf"
 install -Dm755 -t "$D/usr/share/initramfs-tools/hooks" "$HERE/share/initramfs-tools/hooks/cushion-swap-resume-offset"
+install -Dm644 -t "$D/usr/lib/dracut/dracut.conf.d" "$HERE/lib/dracut/dracut.conf.d/50-cushion-swap.conf"
 install -Dm644 -t "$D/etc/logrotate.d" "$HERE/etc/logrotate.d/sparky-stereo-cushion-swap"
 # what is wrong, why and what to do, in the nine languages (0.3.1); the edition's one engine keeps each problem and
 # its session notifier shows it (ORDER 350), from these messages built word for word into journal catalogs
@@ -44,7 +45,7 @@ python3 "$HERE/sbin/repair-swap" --feedback > "$D/usr/share/sparky/$PACKAGE/repa
 sparky-stereo-problems catalog $PACKAGE "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 install -m644 "$HERE/copyright" "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/"
 GLIBC=$(objdump -T "$D/usr/libexec/cushion-swap/psi-wake" "$D/usr/libexec/cushion-swap/alloc-rate" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n 1)
-DEPENDS="bash, libc6 (>= $GLIBC), btrfs-progs (>= 6.1), e2fsprogs, initramfs-tools, logrotate, mount, python3, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
+DEPENDS="bash, libc6 (>= $GLIBC), btrfs-progs (>= 6.1), e2fsprogs, initramfs-tools | dracut, logrotate, mount, python3, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -63,7 +64,8 @@ Description: Cushion Swap File: swap only under memory pressure
   where present. Pacing uses the idle-measured allocation rate. Problems
   are logged by default, with weekly rotation; cycle logging is optional.
   Hibernate stays offered with the area off, to the device named in
-  /etc/initramfs-tools/conf.d/resume.
+  /etc/initramfs-tools/conf.d/resume, or with dracut on the kernel
+  command line.
 EOF
 printf '%s\n' /etc/default/cushion-swap /etc/logrotate.d/sparky-stereo-cushion-swap >"$D/DEBIAN/conffiles"
 echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
@@ -177,6 +179,18 @@ Description: Cushion Swap File: swap only under memory pressure
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Work with the initramfs generator the system has: Depends on
+    initramfs-tools | dracut. With dracut, hibernation resumes from resume=
+    and resume_offset= on the kernel command line, which the hibernation
+    repair writes through a GRUB defaults file, and dracut's resume module
+    is always in the image.
+  * The repair and the resume problems name the generator present, and say
+    plainly when neither generator, or no update-grub for dracut, is there.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 18:21:20 +0000
+
+$PACKAGE (0.3.7) unstable; urgency=medium
 
   * Repair swap on Btrfs with a separate subvolume and a measured resume offset.
   * Report each repair outcome in the edition's ten languages.

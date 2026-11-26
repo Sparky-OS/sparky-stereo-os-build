@@ -31,12 +31,15 @@
 # is gone. A running service is never taken for working protection.
 #
 # Settings: /etc/default/cushion-swap (every value can be set there).
-# Hibernation: /etc/initramfs-tools/conf.d/resume (RESUME=, RESUME_OFFSET=),
+# Hibernation, read where this system's initramfs generator reads it: with initramfs-tools
+# /etc/initramfs-tools/conf.d/resume (RESUME=, RESUME_OFFSET=); with dracut the resume line that
+# /etc/default/grub.d/zz-cushion-swap-resume.cfg puts on the kernel command line (the same two names);
 # else resume= and resume_offset= on the kernel command line.
 # Test hooks (production never sets them): MEMINFO_PATH SWAPS_PATH FSTAB_PATH
 # STATE_DIR NOW_EPOCH NOW_EPOCH_MS PSI_PATH PSI_WAKE RUN_USER_DIR PROC_DIR
 # CUSHION_SWAP_CONFIG CUSHION_SWAP_AREA SWAPON_BIN SWAPOFF_BIN
-# INITRAMFS_RESUME_PATH CMDLINE_PATH DEV_DISK_DIR SYS_BLOCK_DIR SYS_POWER_DIR
+# INITRAMFS_RESUME_PATH DRACUT_RESUME_PATH INITRAMFS_GENERATOR DPKG_QUERY_BIN
+# CMDLINE_PATH DEV_DISK_DIR SYS_BLOCK_DIR SYS_POWER_DIR
 # FINDMNT_BIN FILEFRAG_BIN BTRFS_BIN CUSHION_SWAP_LANG_DIR SYSTEMCTL_BIN BUSCTL_BIN.
 set -u
 # Not set -e: a long-running daemon must survive one failed command
@@ -123,6 +126,8 @@ PSI_WAKE=${PSI_WAKE:-/usr/libexec/cushion-swap/psi-wake}
 RUN_USER_DIR=${RUN_USER_DIR:-/run/user}
 PROC_DIR=${PROC_DIR:-/proc}
 INITRAMFS_RESUME_PATH=${INITRAMFS_RESUME_PATH:-/etc/initramfs-tools/conf.d/resume}
+DRACUT_RESUME_PATH=${DRACUT_RESUME_PATH:-/etc/default/grub.d/zz-cushion-swap-resume.cfg}
+DPKG_QUERY_BIN=${DPKG_QUERY_BIN:-dpkg-query}
 CMDLINE_PATH=${CMDLINE_PATH:-/proc/cmdline}
 DEV_DISK_DIR=${DEV_DISK_DIR:-/dev/disk}
 SYS_BLOCK_DIR=${SYS_BLOCK_DIR:-/sys/class/block}
@@ -1106,17 +1111,42 @@ print_thresholds() {
 		"$DEPLOY_HARD_KIB" "$DEPLOY_SOFT_KIB" "$RATE_KIB" "$RETRACT_MARGIN_KIB" "${AREA:-none}"
 }
 
+# The generator that builds this system's boot images, which decides where the
+# resume area is read: initramfs-tools or dracut (the kernel package depends on
+# one of them; Debian's dracut Conflicts with initramfs-tools, so at most one is
+# installed), else none.
+initramfs_generator() {
+	[[ -n ${INITRAMFS_GENERATOR:-} ]] && return 0
+	local package status
+	INITRAMFS_GENERATOR=none
+	while read -r package status; do
+		[[ $status == installed ]] || continue
+		INITRAMFS_GENERATOR=$package
+		[[ $package == initramfs-tools ]] && break
+	done < <("$DPKG_QUERY_BIN" -W -f='${Package} ${db:Status-Status}\n' initramfs-tools dracut 2>/dev/null)
+}
+
 # Where the hibernation image goes (Daniel, 2026-10-10: "pointing to the
-# file"). First the installer's /etc/initramfs-tools/conf.d/resume:
-# RESUME= names the device (initramfs.conf(5)), RESUME_OFFSET= the swap
-# file's first page on it; RESUME=none means no hibernation. Without a
+# file"). With initramfs-tools, first the installer's
+# /etc/initramfs-tools/conf.d/resume: RESUME= names the device
+# (initramfs.conf(5)), RESUME_OFFSET= the swap file's first page on it;
+# RESUME=none means no hibernation. With dracut, whose initramfs resumes only
+# from resume= and resume_offset= on the kernel command line
+# (systemd-hibernate-resume-generator(8) in a systemd initramfs; dracut's
+# /etc/cmdline.d is not read by systemd's generators), the same two names in
+# the GRUB defaults file that repair-swap writes to put them there. Without a
 # RESUME= line there, resume= and resume_offset= on the kernel command line
-# (initramfs-tools(7)). The initramfs takes the command line's resume_offset=
-# over the file's, so that one wins for the offset too. Returns 1 when no
-# device is named; RESUME_NOTE says why.
+# (initramfs-tools(7), dracut.cmdline(7)). The initramfs takes the command
+# line's resume_offset= over the file's, so that one wins for the offset too.
+# Returns 1 when no device is named; RESUME_NOTE says why.
 resume_config() {
-	local line word words=() from_file=0 cmd_resume="" cmd_offset="" file_offset="" noresume=0
+	local line word words=() from_file=0 cmd_resume="" cmd_offset="" file_offset="" noresume=0 config=""
 	RESUME_SOURCE="" RESUME_SPEC="" RESUME_OFFSET_VALUE="" RESUME_NOTE=""
+	initramfs_generator
+	case $INITRAMFS_GENERATOR in
+	initramfs-tools) config=$INITRAMFS_RESUME_PATH ;;
+	dracut) config=$DRACUT_RESUME_PATH ;;
+	esac
 	if [[ -r $CMDLINE_PATH ]]; then
 		read -r -a words <"$CMDLINE_PATH"
 		for word in "${words[@]}"; do
@@ -1127,17 +1157,17 @@ resume_config() {
 			esac
 		done
 	fi
-	if [[ -r $INITRAMFS_RESUME_PATH ]]; then
+	if [[ -n $config && -r $config ]]; then
 		while IFS= read -r line || [[ -n $line ]]; do
 			if [[ $line =~ ^[[:space:]]*RESUME=[\"\']?([^\"\'[:space:]#]*) ]]; then
 				RESUME_SPEC=${BASH_REMATCH[1]} from_file=1
 			elif [[ $line =~ ^[[:space:]]*RESUME_OFFSET=[\"\']?([0-9]*) ]]; then
 				file_offset=${BASH_REMATCH[1]}
 			fi
-		done <"$INITRAMFS_RESUME_PATH"
+		done <"$config"
 	fi
 	if ((from_file)); then
-		RESUME_SOURCE=$INITRAMFS_RESUME_PATH
+		RESUME_SOURCE=$config
 		RESUME_OFFSET_VALUE=${cmd_offset:-$file_offset}
 		if [[ -n $cmd_resume && $cmd_resume != "$RESUME_SPEC" ]]; then
 			RESUME_NOTE="the kernel command line's resume=$cmd_resume differs, and the initramfs takes that one"
@@ -1147,7 +1177,11 @@ resume_config() {
 		RESUME_SPEC=$cmd_resume RESUME_OFFSET_VALUE=$cmd_offset
 	else
 		RESUME_SOURCE=none
-		RESUME_NOTE="no RESUME= in $INITRAMFS_RESUME_PATH and no resume= on the kernel command line"
+		case $INITRAMFS_GENERATOR in
+		initramfs-tools) RESUME_NOTE="no RESUME= in $INITRAMFS_RESUME_PATH and no resume= on the kernel command line" ;;
+		dracut) RESUME_NOTE="no RESUME= in $DRACUT_RESUME_PATH and no resume= on the kernel command line, the only place dracut resumes from" ;;
+		*) RESUME_NOTE="neither initramfs-tools nor dracut is installed, and no resume= is on the kernel command line" ;;
+		esac
 		return 1
 	fi
 	if ((noresume)); then
@@ -1260,9 +1294,9 @@ resume_target() {
 print_resume_target() {
 	local rc=0
 	resume_target || rc=1
-	printf 'SOURCE=%s\nRESUME=%s\nRESUME_OFFSET=%s\nKIND=%s\nTARGET=%s\nSTATE=%s\nSIZE_KIB=%s\nNOTE=%s\n' \
+	printf 'SOURCE=%s\nRESUME=%s\nRESUME_OFFSET=%s\nKIND=%s\nTARGET=%s\nSTATE=%s\nSIZE_KIB=%s\nNOTE=%s\nGENERATOR=%s\n' \
 		"$RESUME_SOURCE" "$RESUME_SPEC" "$RESUME_OFFSET_VALUE" "${TARGET_KIND:-}" "${TARGET:-}" "${TARGET_STATE:-}" \
-		"${TARGET_SIZE_KIB:-}" "${TARGET_NOTE:-$RESUME_NOTE}"
+		"${TARGET_SIZE_KIB:-}" "${TARGET_NOTE:-$RESUME_NOTE}" "$INITRAMFS_GENERATOR"
 	exit $rc
 }
 
@@ -1289,8 +1323,14 @@ kernel_resume_check() {
 	fi
 	wanted=$(device_number "$TARGET")
 	if [[ $kernel != "$wanted" ]] || [[ $TARGET_KIND == file && $offset != "$RESUME_OFFSET_VALUE" ]]; then
-		log_err "hibernation: the kernel resumes from $kernel offset ${offset:-0} (set by the initramfs at boot), but $RESUME_SOURCE names $TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0}); systemd-sleep will refuse until the initramfs is rebuilt (update-initramfs -u) and the system restarted"
-		problem_set hibernate-mismatch notice LOCAL13 "$kernel offset ${offset:-0}" "$RESUME_SOURCE" "$TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0})"
+		if [[ $INITRAMFS_GENERATOR == initramfs-tools ]]; then
+			log_err "hibernation: the kernel resumes from $kernel offset ${offset:-0} (set by the initramfs at boot), but $RESUME_SOURCE names $TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0}); systemd-sleep will refuse until the initramfs is rebuilt (update-initramfs -u) and the system restarted"
+			problem_set hibernate-mismatch notice LOCAL13 "$kernel offset ${offset:-0}" "$RESUME_SOURCE" "$TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0})"
+		else
+			# dracut, or no initramfs: the kernel command line names the resume area, so the boot menu is what is rebuilt
+			log_err "hibernation: the kernel resumes from $kernel offset ${offset:-0} (set from the kernel command line at boot), but $RESUME_SOURCE names $TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0}); systemd-sleep will refuse until the boot menu is rebuilt (update-grub) and the system restarted"
+			problem_set hibernate-mismatch notice LOCAL46 "$kernel offset ${offset:-0}" "$RESUME_SOURCE" "$TARGET ($wanted offset ${RESUME_OFFSET_VALUE:-0})"
+		fi
 		return 1
 	fi
 	problem_clear hibernate-mismatch

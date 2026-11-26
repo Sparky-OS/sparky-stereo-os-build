@@ -6,8 +6,9 @@
 # Offers Hibernate while the swap area is off. Where the image goes is set by
 # the installer in /etc/initramfs-tools/conf.d/resume: RESUME= the device
 # (initramfs.conf(5)), RESUME_OFFSET= a swap file's first page on it,
-# RESUME=none no hibernation. Without a RESUME= line there, resume= and
-# resume_offset= on the kernel command line (initramfs-tools(7)).
+# RESUME=none no hibernation; with dracut, the same names in
+# /etc/default/grub.d/zz-cushion-swap-resume.cfg. Without a RESUME= line there,
+# resume= and resume_offset= on the kernel command line (initramfs-tools(7)).
 # "cushion-swap --resume-target" reads both and names the area.
 # logind reports CanHibernate=yes only with an active swap area that can hold
 # the image (systemd src/shared/hibernate-util.c, hibernation_is_safe()),
