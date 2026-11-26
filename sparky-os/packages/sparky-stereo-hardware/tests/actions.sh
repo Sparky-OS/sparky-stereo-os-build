@@ -216,7 +216,7 @@ echo 'PASS NVIDIA driver version follows the module (a new version, a Lean Code 
 # stopped before installing anything, are said as what they are (ORDER 675, continuation 3)
 fail_install=1 audit='The following packages are only half configured, probably due to problems configuring them'
 fails_with 'NVIDIA: the driver.s installation stopped part way' setup_nvidia
-audit= fetch_fail=1
+audit='' fetch_fail=1
 fails_with 'NVIDIA: the driver.s packages could not be downloaded' setup_nvidia
 refute grep -q 'half done' "$T/out"
 fetch_fail=0
