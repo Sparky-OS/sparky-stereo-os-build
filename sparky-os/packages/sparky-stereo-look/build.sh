@@ -23,7 +23,7 @@ OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 sparky_provenance_init "$IMAGE" "$HERE"
 TREE=$(cd "$HERE/../../.." && pwd)
-VERSION=${VERSION:-20261125.2~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261126~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -96,7 +96,8 @@ install -D -m 644 "$HERE/default/konsole/Breeze.colorscheme" "$D/usr/share/konso
 # KDE's original Breeze stays selectable under its own name, "Breeze (KDE's original colours)" (the file above shadows the
 # built-in one of the same name; Daniel, 2026-10-08: "do not remove functionality")
 install -D -m 644 "$HERE/default/konsole/BreezeKDEOriginal.colorscheme" "$D/usr/share/konsole/BreezeKDEOriginal.colorscheme"
-# Sparky Stereo Oxygen: Oxygen's Plasma style with every background at 91 % alpha, foreground inherited from Oxygen
+# Sparky Stereo Oxygen: Oxygen's Plasma style with its backgrounds at Sparky Black's levels (queue row 125; solid and
+# opaque variants at 91 %), foreground inherited from Oxygen
 cp -a "$HERE/default/desktoptheme/sparky-stereo-oxygen" "$D/usr/share/plasma/desktoptheme/"
 cp "$HERE/default/kglobalaccel/org.sparkystereo.systemmonitor.desktop" "$D/usr/share/kglobalaccel/"
 cp "$HERE/default/org.sparkystereo.desktop/metadata.json" "$T/"
@@ -128,7 +129,8 @@ control "$D" sparky-stereo-look \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
 	"Plasma style (Sparky Stereo Oxygen: Oxygen's, with widget, panel, tooltip and" \
-	"dialog backgrounds at 91 % alpha, the background only, blur and contrast off)," \
+	"dialog backgrounds at Sparky Black's translucency, the background only, blur" \
+	"and contrast off)," \
 	"Plasma style, icons, cursor and the Oxygen application style, with" \
 	"Plastik's square, Windows-like window buttons. Also sets the default KWin effects: translucency" \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
@@ -168,7 +170,7 @@ Copyright 2014 Juliette Taka Belin and Aurelien Couderc (Debian 8 "Jessie" lines
 wordmark.png, the SparkyOS logo (SPARKYOS / POWERED BY DEBIAN / STEREO 3D EDITION), Copyright 2026
 Daniel Ramos (Capitain Jack), GPL-2+.
 Sparky Stereo Oxygen Plasma style: derived from KDE's Oxygen Plasma style (plasma-theme-oxygen),
-Copyright The Oxygen Project, GPL; only its background SVGs are changed (91 % alpha), its
+Copyright The Oxygen Project, GPL; only its background SVGs are changed (Sparky Black's alpha), its
 foreground artwork is inherited; licence texts in /usr/share/plasma/desktoptheme/sparky-stereo-oxygen/.
 Konsole's Breeze colour scheme (/usr/share/konsole/Breeze.colorscheme): Konsole 26.08.3's
 data/color-schemes/Breeze.colorscheme, Copyright the Konsole developers (KDE), GPL-2.0-or-later, Konsole's

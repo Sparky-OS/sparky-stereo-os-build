@@ -1,6 +1,7 @@
 # Attributions
 
 Sparky Black look and loading screen: Daniel Campos Ramos, 2019.
+Sparky Stereo Oxygen's translucency: the levels of Daniel Campos Ramos's Sparky Black Plasma style (2019), transplanted.
 Original KDE loading screen: Marco Martin, 2014.
 Oxygen: the Oxygen team.
 Oxygen Dark colour scheme: Filip Fila (KDE Oxygen, merge request 122).
