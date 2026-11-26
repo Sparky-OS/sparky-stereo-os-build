@@ -24,6 +24,9 @@ def read(directory, case, name="measure.json"):
 
 
 def marks(data, kind):
+    if kind == "desk" and data.get("desk"):
+        shift = data["desk"]["shift"]
+        return [shift] if shift is not None else []
     return [page[kind]["shift"] for page in data["measures"] if page.get(kind) and page[kind]["shift"] is not None]
 
 

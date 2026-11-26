@@ -151,19 +151,38 @@ def shadow_rows(px0, px1, py1):
     return found
 
 
-def words_desk(px0, px1, py0, py1):
-    # Words paints the whole comment strip cyan. Use its outside edge as a desk mark.
-    a, b = max(y0, py0 + 8), min(y1, py1 - 8)
-    x = min(px1 + 1, x1)
-    if b <= a or x >= x1:
-        return None
-    strip = left[a:b, x:x1]
-    cyan = (strip[:, :, 0] < 20) & (strip[:, :, 1:] >= 235).all(axis=2)
-    columns = np.flatnonzero(cyan.sum(axis=0) > (b - a) // 4)
-    if not len(columns):
-        return None
-    edge = x + int(columns[-1])
-    return disparity([edge - 8, a, edge + 8, b - 1])
+def words_pages_and_desk():
+    # The proof's style supplies a patterned brush to KWCanvas. It reaches the
+    # painted gap between pages through Words' ordinary eraseRect() call.
+    canvas_area = left[y0:y1, x0:x1]
+    ink = (canvas_area[:, :, 1] == 24) & (canvas_area[:, :, 2] == 140)
+    rows, columns = np.nonzero(ink)
+    if not len(rows):
+        return [], None
+    cx0, cx1 = x0 + int(columns.min()), x0 + int(columns.max())
+    cy0, cy1 = y0 + int(rows.min()), y0 + int(rows.max())
+    desk = disparity([cx0 + 24, cy0, cx1 - 24, cy1])
+
+    # Keep white page runs inside the canvas width. Blank white around the
+    # canvas may also form a run, but has no shift that can be measured.
+    top = y0 + 84
+    stripe = left[top:y1 - 60, cx0 + 8:cx1 - 8]
+    visible = np.flatnonzero(is_paper(stripe).mean(axis=1) > 0.8)
+    page_boxes = []
+    for band in np.split(visible, np.nonzero(np.diff(visible) > 1)[0] + 1):
+        if len(band) <= 45:
+            continue
+        a, b = top + int(band[0]), top + int(band[-1])
+        box = [cx0, a, cx1, b]
+        measured = disparity([cx0 + 8, a + 4, cx1 - 8, b - 4])
+        if measured and measured["shift"] is not None:
+            page_boxes.append(box)
+    return page_boxes, desk
+
+
+if kind == "words":
+    pages, result["desk"] = words_pages_and_desk()
+    result["pages"] = pages
 
 
 def cut_at_top(px0, px1, py0):
@@ -178,12 +197,11 @@ for i, (px0, py0, px1, py1) in enumerate(pages):
     entry = {"page": i, "box": [px0, py0, px1, py1]}
     entry["paper"] = disparity([px0 + 8, py0 + 8, px1 - 8, py1 - 8])
     rows_below = [] if kind == "words" else shadow_rows(px0, px1, py1)
-    if kind == "words":
-        entry["desk"] = words_desk(px0, px1, py0, py1)
     if rows_below:
         entry["shadow_rows"] = [rows_below[0], rows_below[-1]]
         entry["desk"] = disparity([px0 - 40, rows_below[0], px0 + 60, rows_below[-1]])
-    if cut_at_top(px0, px1, py0):
+    cut = py0 <= y0 + 87 if kind == "words" else cut_at_top(px0, px1, py0)
+    if cut:
         entry["paper_at_cut"] = disparity([px0 + 8, py0, px1 - 8, py0 + 20])
         edges = []
         for eye in (left, right):
