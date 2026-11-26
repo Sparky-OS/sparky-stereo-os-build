@@ -93,13 +93,18 @@ stop_run() {
 # An unexpected failure of a command stops the setup (set -e); it is said, with where, and the log's place. set -E carries
 # the trap into functions, where set -e alone would end the setup without a word; in a subshell (a command substitution)
 # the trap only ends that subshell, so the command that used it fails and is said once, by the setup itself.
-trap 'if ((BASHPID != $$)); then exit 1; fi; trap - ERR; err 50 "$LINENO" "$BASH_COMMAND" "${LOG:-the output above}"; stop_run' ERR
+# The trap says it on the run's own output (kept as descriptor 8), not where the failing command's output was pointed: the
+# facts are gathered as "run COMMAND >FILE", and a command that failed there (lsusb on a machine with no USB controller)
+# took the whole error text into its facts file, so the log of a run started by the card's step held one line (0.1.44).
+exec 8>&1
+trap 'if ((BASHPID != $$)); then exit 1; fi; trap - ERR; exec >&8 2>&8; err 50 "$LINENO" "$BASH_COMMAND" "${LOG:-the output above}"; stop_run' ERR
 if ! $dry; then
 	mkdir -p /var/log/sparky-stereo-hardware /run/lock
 	exec 9>/run/lock/sparky-stereo-hardware.lock
 	flock -n 9 || { echo 'Hardware setup is already running'; exit 1; }
 	LOG=/var/log/sparky-stereo-hardware/$(date +%Y%m%d-%H%M%S)-$$.log
 	exec > >(tee -a "$LOG") 2>&1
+	exec 8>&1
 	log "Log: $LOG"
 fi
 KERNEL_MARK=/var/lib/sparky-stereo-hardware/kernel-base

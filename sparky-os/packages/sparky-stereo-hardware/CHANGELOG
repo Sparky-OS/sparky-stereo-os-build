@@ -5,6 +5,7 @@
   * Two shellcheck warnings in shipped scripts (three empty assignments on one line in sparky-stereo-hardware, a variable nvidia-card never used).
   * The start no longer waits for the first settling. Found in a guest under a real systemd: with 0.1.43's units multi-user.target was reached only when NVIDIA's driver had been removed, because sparky-stereo-known-machines.service (wanted by the target, with default dependencies) is ordered after the NVIDIA step. It has no default dependencies now, as the NVIDIA step has; dkms 3.4.4-1+sparky6 does the same for its signing unit.
   * A card that appears at an early start: the step waits for NetworkManager (nm-online, a minute at most) before it asks whether the connection is metered.
+  * A fact-gathering command that fails no longer ends the setup without a word. The error trap printed to wherever the failing command's output was pointed, and the facts are gathered as "run COMMAND >FILE": in a guest with no USB controller lsusb failed, the error text went into its facts file, and the log of the run the card's step had started held one line, while the kept problem said "its output says why". The trap prints on the run's own output now.
 
 -------------------------------------------------------------------------------
   Version 0.1.43 (2026-11-25)
