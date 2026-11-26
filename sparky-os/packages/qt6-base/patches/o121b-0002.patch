@@ -57,17 +57,22 @@ diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
      wd->drawWidget(context->pdev, toBePainted, context->offset, context->flags,
                     context->sharedPainter, context->repaintManager);
  }
-@@ -6252,6 +6267,14 @@
+@@ -6252,6 +6267,19 @@
      pixmap.setDevicePixelRatio(dpr);
  
      pixmap.fill(Qt::transparent);
-+    QWidgetPrivate *wd = qt_widget_private(m_widget);
-+    QRegion sourceRegion(m_widget->rect());
-+    if (wd->extra && wd->extra->hasMask)
-+        sourceRegion &= wd->extra->mask;
-+    if (context && context->repaintManager && !context->sharedPainter
-+        && wd->paintStereoDepthRects(&pixmap, sourceRegion, pixmapOffset, QWidgetPrivate::DrawRecursive, nullptr, nullptr)) {
-+        return pixmap;
++    if (context && context->repaintManager && !context->sharedPainter && qt_widget_stereo_eye()) {
++        QWidgetPrivate *wd = qt_widget_private(m_widget);
++        QRegion sourceRegion(m_widget->rect());
++        if (wd->extra && wd->extra->hasMask)
++            sourceRegion &= wd->extra->mask;
++        // Match the backing-store flags and origin of render(..., DrawChildren).
++        const auto sourceFlags = QWidgetPrivate::DrawPaintOnScreen | QWidgetPrivate::DrawInvisible
++            | QWidgetPrivate::DrawRecursive | QWidgetPrivate::DontSetCompositionMode;
++        const QPoint sourceOffset = pixmapOffset - sourceRegion.boundingRect().topLeft();
++        if (wd->paintStereoDepthRects(&pixmap, sourceRegion, sourceOffset, sourceFlags, nullptr, nullptr)) {
++            return pixmap;
++        }
 +    }
      m_widget->render(&pixmap, pixmapOffset, QRegion(), QWidget::DrawChildren);
      return pixmap;
