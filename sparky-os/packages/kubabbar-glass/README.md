@@ -16,9 +16,13 @@ The sync recognizes `SparkyStereoOxygen`, `SparkyStereoOxygenDark`, the legacy `
 The window buttons keep KDE’s layout and functions: the window menu and the all-desktops pin on the left; help, minimize, maximize or restore, and close on the right.
 Only their drawing follows the look: square boxes with a small sign, the modernised Platinum form, drawn again from scratch.
 Cursors, the splash, the SDDM login screen and the Look and Feel package are included; the Look and Feel applies everything in one step.
+The splash draws the clean background of the boot splash and, in its window (the menu bar look: in the middle of the screen), the Sparky logo when the system has it (`/usr/share/pixmaps/sparkyos.png`, from sparkyos-artwork; the theme never carries it), the theme's name and the system's name and version from os-release; without the logo the theme's name stands in its place, and without os-release the theme's name alone.
+On a 3D screen the background stays at the screen and the window, or the middle, stands at the person's popped limit.
 The 3D icon pilot is the Trash, empty and full, as stereo pairs in 16 bits per channel; `tools/icons3d` is the pipeline that makes the rest of the set.
 
-Both Kubabbar Glass and Sparky Stereo Oxygen render widget backgrounds at 91 % alpha, leaving text, icons and controls unchanged.
+Both Kubabbar Glass and Sparky Stereo Oxygen draw the panel, pop-ups, notifications, tooltips and widget backgrounds at Sparky Black's levels, each look in its own colours, leaving text, icons and controls unchanged (Daniel, 2026-10-15: "Sparky Black transluscent levels transplanted to both sparky stereo themes").
+The levels, as KSvg draws Sparky Black's Plasma style (8-bit alpha): the panel 129 at the bottom edge, 44 at the top and the sides, 164 without an edge; pop-ups, notifications and tooltips 157; widget backgrounds 80, translucent ones 60.
+A panel the person sets to Opaque (and an Adaptive one beside a maximized window) keeps 232, 91 %.
 KWin applies the edition’s translucency settings to windows: inactive windows and dialogs at 91 %, existing menu values, full screen excluded, blur and contrast off.
 The active caption has a plain backing sized to its text, surrounded by original horizontal stripes.
 There is no extra collapse box: rolling a window up is the title-bar wheel and the window menu, once our KWin shades Wayland windows.
@@ -37,7 +41,7 @@ SparkyLinux names its releases after the sky and its oldest stories, and two of 
 Sparky Stereo OS 9 is "Mashtabba", the Twins of the Babylonian star lists.
 This look follows the same line: kù-babbar is the Sumerian word for silver, written with the signs for metal and shining.
 The Mac OS 8 look it recalls was called Platinum, a metal the Sumerians never knew; its name comes from the Spanish platina, "little silver", so the Sumerian word for silver is the nearest homage.
-Glass is for the translucency the whole edition shares: inactive windows, dialogs and widget backgrounds at 91 % alpha.
+Glass is for the translucency the whole edition shares: inactive windows and dialogs at 91 % alpha, and the panel, pop-ups, tooltips and widget backgrounds at Sparky Black's levels.
 Niels van Mourik (Platinum for Aurorae and Look and Feel) and Zinjanthr0pus (QPlatinum) made the KDE themes that inspired it; their names stay theirs, and the artwork here is original.
 
 Sources: [SparkyLinux code names](https://wiki.sparkylinux.org/doku.php/code_names) and [kù-babbar, ePSD2 lemma kugbabbar](https://en.wiktionary.org/wiki/%F0%92%86%AC%F0%92%8C%93).

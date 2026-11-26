@@ -8,7 +8,7 @@ The original source remains available in KDE's Oxygen project: https://invent.kd
 
 Modifications, 2026: Daniel Ramos and EchoSystems AI studios.
 Only background frame surfaces are derived here.
-The named frame slices have 91 percent opacity; centre gradients are made opaque before applying that alpha, preserving their RGB stops.
+The named frame slices take Sparky Black's levels, surface by surface (8-bit alpha: panel 129 at the bottom edge, 44 at the top and sides, 164 elsewhere; dialogs and tooltips 157; applet backgrounds 80; translucent applet backgrounds 60); the solid and opaque variants keep 232 (91 percent). Centre gradients are made opaque before applying that alpha, preserving their RGB stops.
 Masks and shadows retain the source geometry and alpha.
 Plasma's foreground artwork and controls come from the installed Oxygen fallback theme.
 No icons or other local theme assets are copied into this package.

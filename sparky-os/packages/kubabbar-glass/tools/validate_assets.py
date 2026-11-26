@@ -29,8 +29,12 @@ def main():
                     assert image.getpixel((20, 114)) == image.getpixel((20, 115)), "Inactive title is striped"
                     assert image.getpixel((20, 40))[3] == 0, "Decoration covers client contents"
                     assert {f"decoration{state}-{piece}" for state in ("", "-inactive") for piece in ("top", "topleft", "topright", "left", "center", "right", "bottom", "bottomleft", "bottomright")} <= set(ids)
-                if path.name == "panel-background.svg" and "kubabbar-glass" in path.parts:
-                    assert image.getpixel((20, 20))[3] == round(.91 * 255), "Panel centre alpha is not 91 percent"
+                rel = path.relative_to(ROOT).parts
+                if path.name == "panel-background.svg" and rel[:4] == ("share", "plasma", "desktoptheme", "kubabbar-glass"):
+                    # Sparky Black's level for the centre without a prefix (164/255, queue row 125); the solid and
+                    # opaque variants keep 91 percent (232/255)
+                    want = 232 if {"solid", "opaque"} & set(rel) else 164
+                    assert image.getpixel((20, 20))[3] == want, f"Panel centre alpha is not {want}/255: {path}"
             results.append(str(path.relative_to(ROOT)))
     config = configparser.ConfigParser()
     config.optionxform = str
@@ -40,7 +44,7 @@ def main():
     assert config["Effect-translucency"]["ExcludeFullScreen"] == "true"
     assert config["Plugins"]["blurEnabled"] == "false"
     assert config["Plugins"]["contrastEnabled"] == "false"
-    result = {"rendered_svg_files": results, "checks": ["Unique SVG IDs", "Nonempty librsvg renders", "Active stripes and plain inactive title", "Transparent decoration centre", "All Aurorae frame slices", "Panel centre alpha 232/255", "91 percent inactive and dialog settings", "Full screen exclusion and blur/contrast disabled"], "limitation": "These are asset and configuration checks, not evidence that KWin applies glass or stereo depth."}
+    result = {"rendered_svg_files": results, "checks": ["Unique SVG IDs", "Nonempty librsvg renders", "Active stripes and plain inactive title", "Transparent decoration centre", "All Aurorae frame slices", "Panel centre alpha 164/255 (Sparky Black's level), 232/255 in solid/ and opaque/", "91 percent inactive and dialog settings", "Full screen exclusion and blur/contrast disabled"], "limitation": "These are asset and configuration checks, not evidence that KWin applies glass or stereo depth."}
     (ROOT / "evidence/asset-validation.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
 

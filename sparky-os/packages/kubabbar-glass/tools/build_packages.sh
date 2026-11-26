@@ -148,6 +148,15 @@ Files: usr/share/Kvantum/KubabbarGlass/*
     Derived from KvGnome, Copyright Tsu Jan (Kvantum themes), GPL-3.0+; recoloured by Daniel Ramos and EchoSystems AI studios.
     License: GPL-3
 
+Files: usr/share/plasma/look-and-feel/kubabbar-glass/contents/splash/images/background.png
+    The boot splash's background without its logo (sparky-stereo-plymouth, sparky-stereo-lines/background.png):
+    Copyright 2014 Juliette Taka Belin and Aurélien Couderc (Debian 8 "Jessie" lines theme)
+    Copyright 2018-2020 Paweł "pavroo" Pijanowski and Daniel Ramos (sparky-lines, the Sparky black set)
+    License: GPL-2+
+
+The splash shows the Sparky logo from the edition's artwork package (/usr/share/pixmaps/sparkyos.png) where it is
+installed; this package does not carry it.
+
 The look is inspired by the KDE themes Platinum (Niels van Mourik, kde-aurorae-platinum and kde-look-and-feel-platinum) and QPlatinum
 (Zinjanthr0pus, pling.com/u/zinjanthr0pus); none of their files is used, the artwork here is original.
 Mac OS 8 (Apple, 1997) is an inspiration only; no Apple artwork, font, logo or name is used.
@@ -171,8 +180,11 @@ fi
 POSTRM
 chmod 755 "$k/DEBIAN/postrm"
 cp "$repo/README.md" "$repo/ABOUT.md" "$k/usr/share/doc/sparky-stereo-look-kubabbar-glass/"
-control "$k" sparky-stereo-look-kubabbar-glass "dbus-bin, kde-style-breeze, kwin-style-aurorae, libkf6config-bin, oxygen-icon-theme, sparky-stereo-gtk (>= $gtk_min), sparky-stereo-look, sparky-stereo-problems" \
-	"kde-style-oxygen-qt6, qt6-style-kvantum, qt5-style-kvantum, sddm" "" \
+# The splash imports QtQuick, QtQuick.Effects (the logo drawn in the window's text colour), org.kde.coreaddons (KOSRelease,
+# the system's name) and org.sparky.stereo (StereoDepth); a module that fails to load makes KSplash show nothing of it.
+# The Sparky logo is the artwork package's and is shown only where it is installed: a Recommends (queue row 125).
+control "$k" sparky-stereo-look-kubabbar-glass "dbus-bin, kde-style-breeze, kwin-style-aurorae, libkf6config-bin, oxygen-icon-theme, sparky-stereo-gtk (>= $gtk_min), sparky-stereo-look, sparky-stereo-problems, qml6-module-qtquick, qml6-module-qtquick-effects, qml6-module-org-kde-coreaddons, libstereo-layer1 (>= 1.20.0)" \
+	"kde-style-oxygen-qt6, qt6-style-kvantum, qt5-style-kvantum, sddm, sparkyos-artwork" "" \
 	"Kubabbar Glass, the classic Sparky Stereo OS look" \
 	"Kubabbar Glass is our own name for this look, chosen by Daniel Ramos on 14 October 2026." \
 	"Look and Feel, colours, window decoration, Plasma style, cursors, splash, SDDM theme and the 3D icon pilot (the Trash)." \

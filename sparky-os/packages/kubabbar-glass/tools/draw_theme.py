@@ -8,8 +8,29 @@ ROOT = Path(__file__).resolve().parents[1] / "share"
 DECO = ROOT / "aurorae/themes/kubabbar-glass"
 PLASMA = ROOT / "plasma/desktoptheme/kubabbar-glass"
 NS = 'xmlns="http://www.w3.org/2000/svg"'
-# Qt's 256-step painter opacity must render the nearest 8-bit alpha to 91%: 232.
+# Qt's 256-step painter opacity must render the nearest 8-bit alpha to 91%: 232. The solid/ and opaque/ variants keep
+# it: Plasma draws them for a panel the person set to Opaque (or Adaptive beside a maximized window) and without
+# compositing.
 BACKGROUND_ALPHA = 233 / 256
+# Sparky Black's levels, transplanted (Daniel, 2026-10-15: "both, kubabbar glass and stereo oxygen must carry the same
+# transluscent configs every where (Sparky Black transluscent levels transplanted to both sparky stereo themes)"):
+# the 8-bit alpha of each surface's centre as KSvg draws Sparky Black's Plasma style (QSvgRenderer, by element id;
+# queue row 125). Each look keeps its own colours and drawing; only the level comes from Sparky Black. A panel's
+# level depends on its edge, as in Sparky Black; "" is the centre without a prefix.
+SPARKY_BLACK_ALPHA = {
+    "widgets/panel-background": {"": 164, "north": 44, "south": 129, "east": 44, "west": 44},
+    "dialogs/background": {"": 157},
+    "widgets/tooltip": {"": 157},
+    "widgets/background": {"": 80},
+    "widgets/translucentbackground": {"": 60},
+}
+
+
+def painter_opacity(alpha):
+    """The opacity Qt's 256-step painter turns into this 8-bit alpha: the smallest k/256 that it rounds to alpha,
+    (255 * k + 128) // 256 == alpha (233/256 gives 232; checked by rendering with QSvgRenderer)."""
+    k = next(k for k in range(257) if (255 * k + 128) // 256 == alpha)
+    return k / 256
 
 
 def save(path, content):
@@ -113,9 +134,12 @@ def main():
         prefixes = [""]
         if "panel" in path:
             prefixes = ["", "north", "south", "east", "west"]
-        body = "".join(frame(p, i * 80, alpha=BACKGROUND_ALPHA) for i, p in enumerate(prefixes))
-        body += '<rect id="hint-stretch-borders" width="1" height="1" x="90" fill="#000"/>'
+        levels = SPARKY_BLACK_ALPHA[path[:-len(".svg")]]
         for variant in ("", "translucent", "solid", "opaque"):
+            def alpha(prefix):
+                return BACKGROUND_ALPHA if variant in ("solid", "opaque") else painter_opacity(levels[prefix])
+            body = "".join(frame(p, i * 80, alpha=alpha(p)) for i, p in enumerate(prefixes))
+            body += '<rect id="hint-stretch-borders" width="1" height="1" x="90" fill="#000"/>'
             save(PLASMA / variant / path, f'<svg {NS} width="100" height="{len(prefixes)*80}">{body}</svg>\n')
     vertical = "".join(f"M{x} 0v1080" for x in range(0, 1920, 8))
     horizontal = "".join(f"M0 {y}h1920" for y in range(0, 1080, 8))

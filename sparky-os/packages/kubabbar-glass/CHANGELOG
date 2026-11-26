@@ -1,3 +1,32 @@
+sparky-stereo-look-kubabbar-glass 20261126~sparky9~0 (2026-11-26)
+  * The loading screen (queue row 125; Daniel, 2026-10-15: "The loading screen for our Kubabbar Glass should have Sparky
+    logo instead of the theme name, make sense? and we sould use the same background as pymouth"; "and the os name
+    underneath with the logo as well, so we don't loose identity"; "and in the allowed distribuition the theme name
+    instead of sparky logo"): the boot splash's clean background (sparky-stereo-plymouth's sparky-stereo-lines background,
+    without its logo), covering the screen and never stretched out of shape, and inside the window with the striped title
+    bar and the boxes that fill, one under the other: the Sparky logo (the edition's artwork package's
+    /usr/share/pixmaps/sparkyos.png, drawn in the window's text colour, shown only where it is installed; the theme never
+    carries it), the theme's name, and the system's name and version read from os-release (KCoreAddons' KOSRelease).
+    Without the logo the theme's name stands in its place; when os-release cannot be read, the theme's name alone. On a 3D
+    screen the background stays at the screen, as at boot, and the window with everything in it stands at the person's
+    popped limit (StereoDepth). Depends on the QML modules the splash imports; Recommends sparkyos-artwork.
+  * Sparky Black's translucency (Daniel, 2026-10-15: "both, kubabbar glass and stereo oxygen must carry the same
+    transluscent configs every where (Sparky Black transluscent levels transplanted to both sparky stereo themes)"): the
+    Plasma style's panel, pop-ups, notifications, tooltips and widget backgrounds take Sparky Black's levels as KSvg draws
+    Sparky Black's style (8-bit alpha: the panel 129 at the bottom edge, 44 at the top and the sides, 164 without an edge;
+    pop-ups and tooltips 157; widget backgrounds 80, translucent ones 60), each in the look's own colours; a panel set to
+    Opaque keeps 232. For these surfaces this replaces the 91 % of 2026-10-14 ("same as sunk windows"); KWin's values for
+    windows (inactive windows and dialogs at 91 %) stay. tools/draw_theme.py writes the levels.
+  * The Plasma style's texts read at 4.5:1 or more over these surfaces as seen over the look's own wallpaper (Daniel,
+    2026-11-25: "yes, fix them. bring them to a readable level"): 25 colours of its Window, View, Button and Tooltip groups
+    darkened, lightness only, hues kept, the meaningful pairs at least 5 (CIEDE2000) apart.
+
+sparky-stereo-look-kubabbar-glass-menubar 20261126~sparky9~0 (2026-11-26)
+  * The loading screen (queue row 125): the boot splash's clean background, the menu bar strip with the launcher star,
+    and in the middle the Sparky logo where it is installed, the theme's name and the system's name from os-release, in
+    light text that reads on the dark background, standing at the person's popped limit on a 3D screen. Depends on the QML
+    modules the splash imports. Built as a source closure (.buildinfo, .changes and build record), as the look's.
+
 sparky-stereo-look-kubabbar-glass 20261125~sparky9~0 (2026-11-25)
   * Every text of Kubabbar Glass reads at 4.5:1 or more on its group's normal and alternate background, in focused and
     unfocused windows (its scheme and its Plasma style's colours), as KColorScheme gives them, hues kept (queue row 68;

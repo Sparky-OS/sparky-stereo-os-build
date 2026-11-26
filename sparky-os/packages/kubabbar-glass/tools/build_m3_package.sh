@@ -39,7 +39,16 @@ Files: *
     Copyright 2026 Daniel Ramos and EchoSystems AI studios
     License: GPL-3
 
-The launcher logo and the splash are original drawings (an eight-pointed star, an ancient Mesopotamian sign, in a silver glass disc).
+The launcher logo is an original drawing (an eight-pointed star, an ancient Mesopotamian sign, in a silver glass disc).
+
+Files: usr/share/plasma/look-and-feel/kubabbar-glass-menubar/contents/splash/images/background.png
+    The boot splash's background without its logo (sparky-stereo-plymouth, sparky-stereo-lines/background.png):
+    Copyright 2014 Juliette Taka Belin and Aurélien Couderc (Debian 8 "Jessie" lines theme)
+    Copyright 2018-2020 Paweł "pavroo" Pijanowski and Daniel Ramos (sparky-lines, the Sparky black set)
+    License: GPL-2+
+
+The splash shows the Sparky logo from the edition's artwork package (/usr/share/pixmaps/sparkyos.png) where it is
+installed; this package does not carry it.
 The layout (a menu bar on top and a dock) is an idea, not artwork.
 The KDE Store was searched for a Mac OS 8 style splash and icon pack; none was clean, so none is used.
 No Apple artwork, font, logo or name is used.
@@ -68,7 +77,8 @@ chmod 755 "$k/DEBIAN/postrm"
 	echo "Architecture: all"
 	echo "Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>"
 	echo "Installed-Size: $(du -sk "$k" | cut -f1)"
-	echo "Depends: sparky-stereo-look-kubabbar-glass (>= $base), plasma-workspace, plasma-desktop, kwin-wayland, libkf6config-bin, dbus-bin, sparky-stereo-problems"
+	# the splash imports QtQuick, org.kde.coreaddons (KOSRelease) and org.sparky.stereo (StereoDepth) (queue row 125)
+	echo "Depends: sparky-stereo-look-kubabbar-glass (>= $base), plasma-workspace, plasma-desktop, kwin-wayland, libkf6config-bin, dbus-bin, sparky-stereo-problems, qml6-module-qtquick, qml6-module-org-kde-coreaddons, libstereo-layer1 (>= 1.20.0)"
 	# Earlier base packages accidentally included this optional variant's files.
 	# Allow their ownership to move here in either unpack order.
 	echo "Breaks: sparky-stereo-look-kubabbar-glass (<< 20261014.6~sparky9~1+lc1)"
@@ -85,6 +95,10 @@ chmod 755 "$k/DEBIAN/postrm"
 (cd "$k" && find . -type f ! -path './DEBIAN/*' -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' md5sum > DEBIAN/md5sums)
 chmod -R go-w "$k"
 PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$k" "$dest" --authoring "$RECIPE" --build-dependency sparky-stereo-problems
+# the source closure, as build_packages.sh makes it (queue row 125): the genuine .buildinfo and .changes from a rebuild of
+# the retained source, then the gate that writes the build record (the provenance facts come from build-provenance.sh)
+python3 "$RECIPE/../../repo/rebuild-script-source.py" "$dest/${p}_$version.dsc"
+(cd "$dest" && PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-debs ./"$p"_"$version"_all.deb ./"$p"-lc-hr_"$version"_all.deb)
 (cd "$dest" && sha256sum ./*.deb | sed 's|\./||' > SHA256SUMS)
-printf "%s\n" "${SOURCE_COMMIT:-unknown}" > "$dest/SOURCE-COMMIT"
+printf "%s\n" "${SOURCE_COMMIT:-${SPARKY_BUILD_COMMIT:-unknown}}" > "$dest/SOURCE-COMMIT"
 cat "$dest/SHA256SUMS"
