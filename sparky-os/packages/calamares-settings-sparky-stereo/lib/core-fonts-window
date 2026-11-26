@@ -18,15 +18,17 @@ app = QApplication(sys.argv)
 app.setQuitOnLastWindowClosed(False)
 root = Path(sys.argv[1])
 title = os.environ['CORE_FONTS_TITLE']
+PACKAGE = 'ttf-mscorefonts-installer'
 busy = QProgressDialog(title, '', 0, 0)
 busy.setCancelButton(None)
 busy.setWindowTitle(title)
 busy.setMinimumDuration(0)
+busy.reset()
 frontend = None
 
 
 def message(text, question=False):
-    busy.hide()
+    busy.reset()
     box = QMessageBox()
     box.setWindowTitle(title)
     box.setText(text)
@@ -77,11 +79,12 @@ def run(command, environment=None):
     if not process.waitForStarted(5000):
         raise RuntimeError('could not start ' + command[0])
     busy.show()
-    loop.exec()
+    if process.state() != QProcess.ProcessState.NotRunning:
+        loop.exec()
     timer.stop()
     process.waitForFinished(5000)
     drain()
-    busy.hide()
+    busy.reset()
     if frontend is not None and frontend.poll() is not None:
         raise RuntimeError('the KDE debconf frontend stopped')
     if process.exitStatus() != QProcess.ExitStatus.NormalExit or process.exitCode():
@@ -89,59 +92,124 @@ def run(command, environment=None):
     return output.decode('utf-8', errors='replace')
 
 
-status = 1
-socket_dir = None
-try:
-    run([str(Path(__file__).with_name('core-fonts-contrib')), str(root)])
-    run(['chroot', str(root), 'apt-get', '--error-on=any', 'update'])
-    record = run(['chroot', str(root), 'apt-cache', 'show', '--no-all-versions', 'ttf-mscorefonts-installer'])
+
+def skipped(reason, description, error=None):
+    print('core-fonts: outcome=' + reason, flush=True)
+    if error is not None:
+        print('Microsoft core fonts: ' + str(error), file=sys.stderr, flush=True)
+    message(description + '\n\n' + os.environ['CORE_FONTS_SKIPPED'])
+    return 0
+
+
+def download_record():
+    record = run(['chroot', str(root), 'apt-cache', 'show', '--no-all-versions', PACKAGE])
     section = dict(line.split(': ', 1) for line in record.splitlines() if ': ' in line and not line.startswith(' '))
     declaration = downloads.declaration(section)
     if declaration is None:
-        raise RuntimeError('the edition install-time download declaration is missing')
-    setting = subprocess.check_output(['apt-config', 'shell', 'MODE', downloads.OPTION], text=True)
-    mode, problem = downloads.announce_mode(setting.removeprefix("MODE='").removesuffix("'\n"))
-    if problem:
-        print(problem, file=sys.stderr)
-    notice = downloads.assess([dict(declaration, package='ttf-mscorefonts-installer', version=section['Version'])], mode)
-    # The shared reader supplies the size, source, metering decision and words.
-    # Its final terminal instruction is replaced by this frontend's buttons.
-    if notice['announce']:
-        print('core-fonts: shared download notice state=' + notice['state'], flush=True)
-    if notice['announce'] and not message('\n'.join(notice['text'][:-1]), question=True):
-        message(os.environ['CORE_FONTS_SKIPPED'])
-        status = 0
-    else:
-        (root / 'run').mkdir(exist_ok=True)
-        socket_dir = Path(tempfile.mkdtemp(prefix='core-fonts-', dir=root / 'run'))
-        socket = socket_dir / 'debconf'
-        frontend = subprocess.Popen(['/usr/libexec/sparky-core-fonts-dialog', str(socket)])
-        for _ in range(100):
-            if socket.exists() or frontend.poll() is not None:
-                break
-            loop = QEventLoop()
-            QTimer.singleShot(50, loop.quit)
-            loop.exec()
-        if not socket.exists() or frontend.poll() is not None:
-            raise RuntimeError('the KDE debconf socket could not be started')
-        run(['chroot', str(root), 'apt-get', '-y', '-o', 'Dpkg::Use-Pty=0',
-             '-o', downloads.OPTION + '=never', 'install', 'ttf-mscorefonts-installer'],
-            {'DEBIAN_FRONTEND': 'passthrough', 'DEBIAN_PRIORITY': 'critical',
-             'DEBCONF_PIPE': '/run/' + socket_dir.name + '/debconf'})
-        if not (root / 'usr/share/fonts/truetype/msttcorefonts/Arial.ttf').is_file():
-            message(os.environ['CORE_FONTS_REFUSED'])
-        status = 0
-except Exception as error:
-    print('Microsoft core fonts: ' + str(error), file=sys.stderr)
-    message(os.environ['CORE_FONTS_DOWNLOAD_ERROR'])
-finally:
-    if frontend is not None:
+        raise ValueError('the edition install-time download declaration is missing')
+    return dict(declaration, package=PACKAGE, version=section['Version'])
+
+
+def package_status():
+    result = subprocess.run(
+        ['chroot', str(root), 'dpkg-query', '-W', '-f=${db:Status-Status}', PACKAGE],
+        capture_output=True, text=True,
+    )
+    if result.returncode not in (0, 1):
+        raise RuntimeError(result.stderr.strip() or 'could not read the target package status')
+    return result.stdout.strip() if result.returncode == 0 else 'not-installed'
+
+
+def install_fonts():
+    global frontend, socket_dir
+    (root / 'run').mkdir(exist_ok=True)
+    socket_dir = Path(tempfile.mkdtemp(prefix='core-fonts-', dir=root / 'run'))
+    socket = socket_dir / 'debconf'
+    frontend = subprocess.Popen(['/usr/libexec/sparky-core-fonts-dialog', str(socket)])
+    for _ in range(100):
+        if socket.exists() or frontend.poll() is not None:
+            break
+        loop = QEventLoop()
+        QTimer.singleShot(50, loop.quit)
+        loop.exec()
+    if not socket.exists() or frontend.poll() is not None:
+        raise RuntimeError('the KDE debconf socket could not be started')
+    run(['chroot', str(root), 'apt-get', '-y', '-o', 'Dpkg::Use-Pty=0',
+         '-o', downloads.OPTION + '=never', 'install', PACKAGE],
+        {'DEBIAN_FRONTEND': 'passthrough', 'DEBIAN_PRIORITY': 'critical',
+         'DEBCONF_PIPE': '/run/' + socket_dir.name + '/debconf'})
+
+
+def stop_frontend():
+    global frontend
+    if frontend is None:
+        return
+    if frontend.poll() is None:
         frontend.terminate()
-        try:
-            frontend.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            frontend.kill()
-            frontend.wait()
+    try:
+        frontend.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        frontend.kill()
+        frontend.wait()
+    frontend = None
+
+
+def main():
+    state = downloads.metered()
+    if state[0] == 'yes':
+        return skipped('metered', downloads.messages()['metered'].format(detail=state[1]))
+
+    try:
+        run([str(Path(__file__).with_name('core-fonts-contrib')), str(root)])
+        run(['chroot', str(root), 'apt-get', '--error-on=any', '-o', 'Acquire::Retries=0', 'update'])
+    except RuntimeError as error:
+        return skipped('repository-unavailable', os.environ['CORE_FONTS_REPOSITORY_ERROR'], error)
+
+    try:
+        declaration = download_record()
+    except (KeyError, RuntimeError, ValueError) as error:
+        return skipped('declaration-unavailable', os.environ['CORE_FONTS_DECLARATION_ERROR'], error)
+
+    notice = downloads.assess([declaration], 'always', state=state)
+    print('core-fonts: shared download notice state=' + notice['state'], flush=True)
+    if not message('\n'.join(notice['text'][:-1]), question=True):
+        print('core-fonts: outcome=declined-download', flush=True)
+        message(os.environ['CORE_FONTS_SKIPPED'])
+        return 0
+
+    original = package_status()
+    try:
+        install_fonts()
+    except (OSError, RuntimeError) as error:
+        stop_frontend()
+        if original in ('not-installed', 'config-files'):
+            try:
+                if package_status() not in ('not-installed', 'config-files'):
+                    run(['chroot', str(root), 'dpkg', '--remove', PACKAGE])
+            except RuntimeError as cleanup_error:
+                print('Microsoft core fonts: ' + str(error), file=sys.stderr, flush=True)
+                print('Microsoft core fonts: ' + str(cleanup_error), file=sys.stderr, flush=True)
+                message(os.environ['CORE_FONTS_DOWNLOAD_ERROR'])
+                return 1
+            return skipped('transfer-failed', os.environ['CORE_FONTS_TRANSFER_ERROR'], error)
+        print('core-fonts: outcome=transfer-failed', flush=True)
+        print('Microsoft core fonts: ' + str(error), file=sys.stderr, flush=True)
+        message(os.environ['CORE_FONTS_DOWNLOAD_ERROR'])
+        return 0
+
+    if not (root / 'usr/share/fonts/truetype/msttcorefonts/Arial.ttf').is_file():
+        print('core-fonts: outcome=licence-refused', flush=True)
+        message(os.environ['CORE_FONTS_REFUSED'])
+    else:
+        print('core-fonts: outcome=installed', flush=True)
+    return 0
+
+
+socket_dir = None
+try:
+    status = main()
+finally:
+    stop_frontend()
     if socket_dir:
         shutil.rmtree(socket_dir)
 sys.exit(status)

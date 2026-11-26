@@ -74,6 +74,7 @@ Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: dash, sparky-stereo-language-tasks (>= 1.0.6), calamares, os-prober, util-linux, sparky-stereo-kernel-settings (>= 20261111.1~sparky9~0), sparky-stereo-cushion-swap (>= 0.3.5), debconf-i18n, python3, python3-pyqt6, qt6-wayland, sparky-core-fonts-dialog (>= 1.0), sparky-stereo-apt (>= 20261104.3), sparky-stereo-calamares-branding (>= 20261125~sparky9~0+lc1), sparky-stereo-storage-kcm (>= 0.1.1+lc1)
+Sparky-Install-Download-Requires: ttf-mscorefonts-installer
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

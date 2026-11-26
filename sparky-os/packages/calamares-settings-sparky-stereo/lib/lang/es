@@ -10,15 +10,18 @@ LANGPACKS_ERROR='No se pudieron añadir los paquetes de idioma elegidos para el 
 CORE_FONTS='Fuentes básicas de Microsoft: lea la licencia y responda a la pregunta en esta terminal.'
 CORE_FONTS_ERROR='Las fuentes de Microsoft no se han instalado. Para leer y aceptar la licencia, ejecute:
 dpkg-reconfigure ttf-mscorefonts-installer
-dpkg --configure ttf-mscorefonts-installer'
+sudo dpkg --configure ttf-mscorefonts-installer'
 CORE_FONTS_PAUSE='Pulse Intro para volver al instalador.'
 CORE_FONTS_TITLE='Fuentes principales de Microsoft'
 CORE_FONTS_ACCEPT='Aceptar'
 CORE_FONTS_DECLINE='Rechazar'
 CORE_FONTS_CONTINUE='Continuar'
 CORE_FONTS_REFUSED='Se rechazó la licencia de Microsoft o se cerró su ventana. No se instalaron las fuentes de Microsoft. Para leer y aceptar la licencia más tarde, ejecute:
-dpkg-reconfigure ttf-mscorefonts-installer'
+sudo dpkg-reconfigure ttf-mscorefonts-installer'
 CORE_FONTS_DOWNLOAD_ERROR='No se pudieron descargar o configurar las fuentes de Microsoft. Revise la conexión y el registro del instalador y vuelva a intentar este paso. Si el paquete quedó sin configurar, ejecute:
-dpkg --configure ttf-mscorefonts-installer'
-CORE_FONTS_SKIPPED='Se omitieron las fuentes de Microsoft antes de instalar el paquete. Para instalarlas más tarde y leer la licencia, ejecute:
-apt install ttf-mscorefonts-installer'
+sudo dpkg --configure ttf-mscorefonts-installer'
+CORE_FONTS_SKIPPED='Las fuentes principales de Microsoft no están disponibles. Para instalarlas más adelante y leer la licencia, ejecute este comando en un terminal.
+sudo apt install ttf-mscorefonts-installer'
+CORE_FONTS_REPOSITORY_ERROR='El instalador no pudo actualizar las listas de paquetes. Compruebe la conexión antes de volver a intentarlo.'
+CORE_FONTS_DECLARATION_ERROR='El instalador no pudo verificar el tamaño y el origen de la descarga de las fuentes principales de Microsoft. Compruebe el repositorio de la edición antes de volver a intentarlo.'
+CORE_FONTS_TRANSFER_ERROR='No se pudo completar la descarga o la configuración de las fuentes principales de Microsoft. Compruebe la conexión antes de volver a intentarlo.'
