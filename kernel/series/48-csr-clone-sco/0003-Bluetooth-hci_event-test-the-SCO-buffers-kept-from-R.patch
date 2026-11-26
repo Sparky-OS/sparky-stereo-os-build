@@ -1,4 +1,4 @@
-From 94e14a7cca406373c76ac57edf0b1f41097fbf69 Mon Sep 17 00:00:00 2001
+From 67e15c452f3a155fd2e7eeb3198329bd09085777 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Thu, 26 Nov 2026 18:22:05 -0300
 Subject: [PATCH 3/3] Bluetooth: hci_event: test the SCO buffers kept from Read
@@ -18,17 +18,17 @@ reached without exporting them.
 
 Assisted-by: Claude:claude-opus-5-5
 ---
- net/bluetooth/Kconfig          |   9 ++
+ net/bluetooth/Kconfig          |  12 ++
  net/bluetooth/hci_event.c      |   4 +
- net/bluetooth/hci_event_test.c | 234 +++++++++++++++++++++++++++++++++
- 3 files changed, 247 insertions(+)
+ net/bluetooth/hci_event_test.c | 232 +++++++++++++++++++++++++++++++++
+ 3 files changed, 248 insertions(+)
  create mode 100644 net/bluetooth/hci_event_test.c
 
 diff --git a/net/bluetooth/Kconfig b/net/bluetooth/Kconfig
-index 1cda01614..270a83453 100644
+index 1cda01614..349320ecf 100644
 --- a/net/bluetooth/Kconfig
 +++ b/net/bluetooth/Kconfig
-@@ -138,6 +138,15 @@ config BT_SELFTEST_SMP
+@@ -138,6 +138,18 @@ config BT_SELFTEST_SMP
  	  Run test cases for SMP cryptographic functionality, including both
  	  legacy SMP as well as the Secure Connections features.
  
@@ -37,9 +37,12 @@ index 1cda01614..270a83453 100644
 +	depends on BT=y && KUNIT=y
 +	default KUNIT_ALL_TESTS
 +	help
-+	  Check the SCO buffers kept from HCI_Read_Buffer_Size and the voice
-+	  setting stored from HCI_Write_Voice_Setting, with the parameters a
-+	  controller sends and no controller.
++	  Check the SCO buffers hci_cc_read_buffer_size() keeps from the
++	  HCI_Read_Buffer_Size reply: with and without a readable voice
++	  setting, HCI_QUIRK_FIXUP_BUFFER_SIZE and
++	  HCI_QUIRK_VOICE_SETTING_BY_DRIVER, and the voice setting stored
++	  from HCI_Write_Voice_Setting. The handlers are called with the
++	  parameters a controller sends; no controller is needed.
 +
  config BT_FEATURE_DEBUG
  	bool "Enable runtime option for debugging statements"
@@ -58,10 +61,10 @@ index d5eea0d41..53c5be040 100644
 +#endif
 diff --git a/net/bluetooth/hci_event_test.c b/net/bluetooth/hci_event_test.c
 new file mode 100644
-index 000000000..85ef4277c
+index 000000000..54a070edf
 --- /dev/null
 +++ b/net/bluetooth/hci_event_test.c
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,232 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * KUnit tests for the SCO buffers hci_cc_read_buffer_size() keeps and the
@@ -90,8 +93,7 @@ index 000000000..85ef4277c
 +	struct hci_dev *hdev = hci_alloc_dev_priv(sizeof(unsigned int));
 +
 +	KUNIT_ASSERT_NOT_NULL(test, hdev);
-+	KUNIT_ASSERT_EQ(test, 0, kunit_add_action_or_reset(test,
-+				hci_event_test_free_dev, hdev));
++	KUNIT_ASSERT_EQ(test, 0, kunit_add_action_or_reset(test, hci_event_test_free_dev, hdev));
 +	return hdev;
 +}
 +
@@ -237,8 +239,7 @@ index 000000000..85ef4277c
 +
 +	skb = alloc_skb(HCI_COMMAND_HDR_SIZE + 2, GFP_KERNEL);
 +	KUNIT_ASSERT_NOT_NULL(test, skb);
-+	KUNIT_ASSERT_EQ(test, 0, kunit_add_action_or_reset(test,
-+				hci_event_test_free_skb, skb));
++	KUNIT_ASSERT_EQ(test, 0, kunit_add_action_or_reset(test, hci_event_test_free_skb, skb));
 +	hdr = skb_put(skb, HCI_COMMAND_HDR_SIZE);
 +	hdr->opcode = cpu_to_le16(HCI_OP_WRITE_VOICE_SETTING);
 +	hdr->plen = 2;

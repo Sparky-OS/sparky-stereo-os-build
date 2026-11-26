@@ -1,0 +1,68 @@
+diff --git a/emulator/btdev.c b/emulator/btdev.c
+index 7a8d8a4..d8c69b0 100644
+--- a/emulator/btdev.c
++++ b/emulator/btdev.c
+@@ -174,6 +174,7 @@ struct btdev {
+         uint16_t manufacturer;
+         uint8_t  version;
+ 	uint16_t revision;
++	uint16_t lmp_subver;
+ 	uint8_t  commands[64];
+ 	uint8_t  max_page;
+ 	uint8_t  features[8];
+@@ -655,6 +656,30 @@ static void btdev_init_param(struct btdev *btdev)
+ 	btdev->country_code = 0x00;
+ }
+ 
++/* Test aid: BTDEV_IDENTITY=VER:MANUFACTURER:HCI_REV:LMP_SUBVER:SCO_MTU:SCO_PKTS
++ * (hexadecimal) makes a BR/EDR device answer Read Local Version and Read
++ * Buffer Size as that controller does, also after HCI_Reset.
++ */
++static void btdev_apply_identity(struct btdev *btdev)
++{
++	const char *id = getenv("BTDEV_IDENTITY");
++	unsigned int ver, manufacturer, rev, subver, mtu, pkts;
++
++	btdev->lmp_subver = btdev->revision;
++
++	if (btdev->type != BTDEV_TYPE_BREDR || !id ||
++	    sscanf(id, "%x:%x:%x:%x:%x:%x", &ver, &manufacturer, &rev,
++				&subver, &mtu, &pkts) != 6)
++		return;
++
++	btdev->version = ver;
++	btdev->manufacturer = manufacturer;
++	btdev->revision = rev;
++	btdev->lmp_subver = subver;
++	btdev->sco_mtu = mtu;
++	btdev->sco_max_pkt = pkts;
++}
++
+ static void btdev_reset(struct btdev *btdev)
+ {
+ 	/* FIXME: include here clearing of all states that should be
+@@ -674,6 +699,7 @@ static void btdev_reset(struct btdev *btdev)
+ 	memset(&btdev->reset_group, 0, sizeof(btdev->reset_group));
+ 
+ 	btdev_init_param(btdev);
++	btdev_apply_identity(btdev);
+ 
+ 	al_clear(btdev);
+ 	rl_clear(btdev);
+@@ -708,7 +734,7 @@ static int cmd_read_local_version(struct btdev *dev, const void *data,
+ 	rsp.hci_rev = cpu_to_le16(dev->revision);
+ 	rsp.lmp_ver = dev->version;
+ 	rsp.manufacturer = cpu_to_le16(dev->manufacturer);
+-	rsp.lmp_subver = cpu_to_le16(dev->revision);
++	rsp.lmp_subver = cpu_to_le16(dev->lmp_subver);
+ 
+ 	cmd_complete(dev, BT_HCI_CMD_READ_LOCAL_VERSION, &rsp, sizeof(rsp));
+ 
+@@ -8403,6 +8429,7 @@ struct btdev *btdev_create(enum btdev_type type, uint16_t id)
+ 	}
+ 
+ 	btdev_init_param(btdev);
++	btdev_apply_identity(btdev);
+ 
+ 	index = add_btdev(btdev);
+ 	if (index < 0) {
