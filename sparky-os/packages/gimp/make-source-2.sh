@@ -28,14 +28,14 @@ docker run --rm --pull=never --name "${SPARKY_CONTAINER_PREFIX:-gimp}-source2-$$
 	cd "$W"
 	cp /prev/gimp_3.2.8-1+stereo3d1+lc1.dsc /prev/gimp_3.2.8-1+stereo3d1+lc1.debian.tar.xz /prev/gimp_3.2.8.orig.tar.xz .
 	dpkg-source -x --skip-patches gimp_3.2.8-1+stereo3d1+lc1.dsc prev >/dev/null
-	mkdir -p overlay/debian/patches
+	mkdir -p overlay/patches
 	for p in stereo3d-depth-layers.patch stereo3d-depth-layers-po.patch; do
-		cp "/recipe/patches/$p" overlay/debian/patches/
+		cp "/recipe/patches/$p" overlay/patches/
 	done
-	cp prev/debian/patches/series overlay/debian/patches/series
-	[ -z "$(tail -c1 overlay/debian/patches/series)" ] || echo >> overlay/debian/patches/series
-	printf "%s\n" stereo3d-depth-layers.patch stereo3d-depth-layers-po.patch >> overlay/debian/patches/series
-	python3 - prev/debian/control overlay/debian/control <<"CONTROL"
+	cp prev/debian/patches/series overlay/patches/series
+	[ -z "$(tail -c1 overlay/patches/series)" ] || echo >> overlay/patches/series
+	printf "%s\n" stereo3d-depth-layers.patch stereo3d-depth-layers-po.patch >> overlay/patches/series
+	python3 - prev/debian/control overlay/control <<"CONTROL"
 import sys
 from pathlib import Path
 s = Path(sys.argv[1]).read_text()
@@ -50,7 +50,7 @@ sub("               libgtk-3-dev (>= 3.24.52-3+stereo3d1~),\n",
 sub("         kscreen,\nRecommends: ghostscript,\n", "         kscreen,\nRecommends: ghostscript,\n            gimp-stereo-pictures,\n")
 Path(sys.argv[2]).write_text(s)
 CONTROL
-	python3 - prev/debian/copyright overlay/debian/copyright <<"COPYRIGHT"
+	python3 - prev/debian/copyright overlay/copyright <<"COPYRIGHT"
 import sys
 from pathlib import Path
 s = Path(sys.argv[1]).read_text()
@@ -63,7 +63,7 @@ License: GPL-3+
 """
 Path(sys.argv[2]).write_text(s.replace(anchor, stanza + anchor))
 COPYRIGHT
-	grep -q "^License: GPL-3+$" overlay/debian/copyright
+	grep -q "^License: GPL-3+$" overlay/copyright
 	mkdir -p "$W/successor"
 	PYTHONPATH=/toolkit python3 /toolkit/repo/lc-successor.py --work "$W/successor" --in-place --overlay overlay --reapply-patches --next 3.2.8-1+stereo3d2 \
 		--item "Sparky Stereo OS: depth layers (queue row 148, the stereo GIMP'"'"'s milestone 2; stereo3d-depth-layers). A depth layer is a layer group that holds its layers at one depth the artist sets, in pixels of separation with three decimals, positive behind the screen, never clamped; each eye sees it moved by half the depth (a copy for a whole move, the stereo policy library'"'"'s resampling for a fractional one) and the stereo canvas shows each eye'"'"'s picture. Layers in no depth layer are at the screen and a 2D image is drawn as before; depth layers inside each other are each at their own value. Layer > New Depth Layer; the Depth row of the Layers dock; the keys 8 (pop) and 7 (sink) held over the canvas while the pointer moves, rebindable; the PDB procedures gimp-depth-layer-new, -get-depth, -set-depth and -new-from-eye. An XCF keeps the depth as the group'"'"'s parasite gimp-depth-layer, so another GIMP opens a plain layer group." \
