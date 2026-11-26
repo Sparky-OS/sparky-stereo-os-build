@@ -44,9 +44,11 @@ def depth(case):
     img = np.asarray(Image.open(os.path.join(case, "apps.png")).convert("L")).astype(float)
     half = img.shape[1] // 2
     L, R = img[:, :half], img[:, half:]
+    # KWin's stacking order, bottom to top: each window is measured only where no window above it covers it, every
+    # covering frame widened by 24 pixels (more than the largest shift searched, and its shadow)
     wins = json.load(open(os.path.join(case, "win-apps.json")))
     rows = []
-    for w in wins:
+    for i, w in enumerate(wins):
         if not (w.get("normal") or w.get("dock")) or w["w"] < 100:
             continue
         x0, y0 = int(w["x"]) + 8, int(w["y"]) + 8
@@ -54,15 +56,27 @@ def depth(case):
         x0, x1 = max(x0, 20), min(x1, half - 20)
         if x1 - x0 < 40 or y1 - y0 < 40:
             continue
+        mask = np.ones((y1 - y0, x1 - x0), bool)
+        for o in wins[i + 1:]:
+            if o.get("desktop") or o["w"] < 2:
+                continue
+            ox0, oy0 = int(o["x"]) - 24 - x0, int(o["y"]) - 24 - y0
+            ox1, oy1 = int(o["x"] + o["w"]) + 24 - x0, int(o["y"] + o["h"]) + 24 - y0
+            mask[max(oy0, 0):max(oy1, 0), max(ox0, 0):max(ox1, 0)] = False
+        visible = int(mask.sum())
+        if visible < 2000:
+            rows.append({"window": w.get("caption", "")[:60], "class": w.get("cls"), "active": w.get("active"),
+                         "dock": w.get("dock"), "visible_pixels": visible, "note": "covered by the windows above"})
+            continue
         errs = {}
         for d in range(-16, 17):
             a = L[y0:y1, x0:x1]
             b = R[y0:y1, x0 + d:x1 + d]
-            errs[d] = float(np.mean(np.abs(a - b)))
+            errs[d] = float(np.mean(np.abs(a - b)[mask]))
         best = sorted(errs, key=errs.get)
         rows.append({"window": w.get("caption", "")[:60], "class": w.get("cls"), "active": w.get("active"),
-                     "dock": w.get("dock"), "disparity": best[0], "residual": round(errs[best[0]], 2),
-                     "next_residual": round(errs[best[1]], 2)})
+                     "dock": w.get("dock"), "visible_pixels": visible, "disparity": best[0],
+                     "residual": round(errs[best[0]], 2), "next_residual": round(errs[best[1]], 2)})
     json.dump(rows, open(os.path.join(case, "depth.json"), "w"), indent=1)
     for r in rows:
         print(r)

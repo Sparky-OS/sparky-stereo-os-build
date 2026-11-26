@@ -82,10 +82,13 @@ def alpha_in(name, box):
 
 
 def widget():
-    """A desktop widget over black and white: its background's level as the screen shows it."""
+    """A desktop widget over black and white: its background's level as the screen shows it. Only a widget that draws
+    Plasma's standard background counts (System Monitor declares DefaultBackground; Folder View draws it as a widget):
+    the desktop clocks draw none, only shadowed text, so a reading counts only when the translucent pixels cover most
+    of the box."""
     walls = os.path.join(CASE, "walls")
     results = {}
-    for applet in ("org.kde.plasma.digitalclock", "org.kde.plasma.analogclock", "org.kde.plasma.calculator"):
+    for applet in ("org.kde.plasma.systemmonitor", "org.kde.plasma.folder"):
         out = evaluate("var d = desktops()[0]; var w = d.addWidget(%s, 640, 260, 420, 300);"
                        " print(JSON.stringify({id: w.id, x: w.geometry.x, y: w.geometry.y, w: w.geometry.width,"
                        " h: w.geometry.height}));" % json.dumps(applet))
@@ -100,11 +103,13 @@ def widget():
             shot(f"widget-{wall}")
         inset = 12
         box = [int(g["x"]) + inset, int(g["y"]) + inset, int(g["w"]) - 2 * inset, int(g["h"]) - 2 * inset]
-        results[applet] = dict(alpha_in("widget", box), frame=g)
+        r = dict(alpha_in("widget", box), frame=g)
+        r["coverage"] = round(r["drawn_pixels"] / float(box[2] * box[3]), 3)
+        results[applet] = r
         evaluate("var d = desktops()[0]; var ws = d.widgets(); for (var i = 0; i < ws.length; i++)"
                  " if (ws[i].id == %d) ws[i].remove();" % g["id"])
         time.sleep(1)
-        if results[applet].get("alpha_8bit_median") is not None:
+        if r.get("alpha_8bit_median") is not None and r["coverage"] >= 0.5:
             break
     json.dump(results, open(os.path.join(CASE, "widget.json"), "w"), indent=1)
     print("widget", json.dumps(results))
@@ -120,8 +125,10 @@ APPS = [("dolphin", ["dolphin", "/usr/share"], (30, 40, 760, 470)),
 
 def apps():
     env = session_env()
-    json.dump({k: env.get(k) for k in ("XDG_CONFIG_DIRS", "XDG_CURRENT_DESKTOP", "QT_QPA_PLATFORMTHEME", "DISPLAY",
-                                        "WAYLAND_DISPLAY", "LANG")}, open(os.path.join(CASE, "session-env.json"), "w"), indent=1)
+    keys = ("XDG_CONFIG_DIRS", "XDG_CURRENT_DESKTOP", "KDE_SESSION_VERSION", "QT_QPA_PLATFORMTHEME", "DISPLAY",
+            "WAYLAND_DISPLAY", "LANG")
+    json.dump({"session (plasmashell)": {k: env.get(k) for k in keys}, "probe's own shell": {k: os.environ.get(k) for k in keys}},
+              open(os.path.join(CASE, "session-env.json"), "w"), indent=1)
     only = os.environ.get("APPS", "").split()
     procs = []
     for name, argv, _ in APPS:
@@ -163,21 +170,30 @@ def apps():
 def fonts():
     env = session_env()
     report = {}
+    # Each Qt on the session's own platform, as a program started there (Qt 6 on Wayland, Qt 5 through Xwayland), so the
+    # platform theme loads as it does for a real program. Qt 6 has no MenuFont or ToolbarFont system font: the menu and
+    # tool bar fonts are what the application gives QMenu, QMenuBar and QToolButton (Qt hands the platform theme's tool
+    # button font to QToolButton; QToolBar itself takes the general font).
     code6 = ("from PyQt6.QtGui import QFontDatabase, QFontInfo; from PyQt6.QtWidgets import QApplication; import json;"
              "a = QApplication([]); T = QFontDatabase.SystemFont; r = {}\n"
-             "for n in ('GeneralFont', 'FixedFont', 'SmallestReadableFont', 'TitleFont', 'MenuFont', 'ToolbarFont'):\n"
-             "    f = QFontDatabase.systemFont(getattr(T, n)); i = QFontInfo(f)\n"
-             "    r[n] = {'asked': f.family(), 'size': f.pointSizeF(), 'weight': int(f.weight()), 'drawn': i.family(), 'drawn_weight': int(i.weight())}\n"
-             "r['style'] = a.style().name(); print(json.dumps(r))")
-    out = subprocess.run(["python3", "-c", code6], env=dict(env, QT_QPA_PLATFORM="offscreen"), capture_output=True, text=True)
+             "w = lambda v: getattr(v, 'value', v)\n"
+             "def row(f):\n"
+             "    i = QFontInfo(f)\n"
+             "    return {'asked': f.family(), 'size': f.pointSizeF(), 'weight': w(f.weight()), 'drawn': i.family(), 'drawn_weight': w(i.weight())}\n"
+             "for n in ('GeneralFont', 'FixedFont', 'SmallestReadableFont', 'TitleFont'):\n"
+             "    r[n] = row(QFontDatabase.systemFont(getattr(T, n)))\n"
+             "for c in ('QMenu', 'QMenuBar', 'QToolButton', 'QToolBar'):\n"
+             "    r[c] = row(QApplication.font(c))\n"
+             "r['style'] = a.style().name(); r['platform'] = a.platformName(); print(json.dumps(r))")
+    out = subprocess.run(["python3", "-c", code6], env=dict(env, QT_QPA_PLATFORM="wayland"), capture_output=True, text=True)
     report["qt6"] = json.loads(out.stdout.strip().splitlines()[-1]) if out.returncode == 0 else {"error": out.stderr[-400:]}
     code5 = ("from PyQt5.QtGui import QFontDatabase, QFontInfo; from PyQt5.QtWidgets import QApplication; import json;"
              "a = QApplication([]); r = {}\n"
              "for n in ('GeneralFont', 'FixedFont', 'SmallestReadableFont', 'TitleFont'):\n"
              "    f = QFontDatabase.systemFont(getattr(QFontDatabase, n)); i = QFontInfo(f)\n"
              "    r[n] = {'asked': f.family(), 'size': f.pointSizeF(), 'weight': f.weight(), 'drawn': i.family()}\n"
-             "r['style'] = a.style().objectName(); print(json.dumps(r))")
-    out = subprocess.run(["python3", "-c", code5], env=dict(env, QT_QPA_PLATFORM="offscreen"), capture_output=True, text=True)
+             "r['style'] = a.style().objectName(); r['platform'] = a.platformName(); print(json.dumps(r))")
+    out = subprocess.run(["python3", "-c", code5], env=dict(env, QT_QPA_PLATFORM="xcb"), capture_output=True, text=True)
     report["qt5"] = json.loads(out.stdout.strip().splitlines()[-1]) if out.returncode == 0 else {"error": out.stderr[-400:]}
     report["fc-match"] = {name: subprocess.run(["fc-match", "-f", "%{family[0]}:%{style[0]}", name], env=env,
                                                capture_output=True, text=True).stdout for name in
