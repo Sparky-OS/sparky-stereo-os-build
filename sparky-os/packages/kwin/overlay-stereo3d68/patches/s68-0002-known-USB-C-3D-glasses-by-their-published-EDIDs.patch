@@ -1,0 +1,65 @@
+From 0211ff62d4fd3ca6cb60c087cc5d071f74d373c3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 09:48:38 -0300
+Subject: [PATCH 2/2] Known USB-C 3D glasses: the XREAL Air 2 Pro, VITURE and
+ Rokid glasses, by their published EDIDs
+
+s_stereoGlasses gains the identities of the published EDIDs of other glasses
+(autotests/integration/data/usb-c-glasses-edids.txt names each source):
+the XREAL Air 2 Pro (MRG 0x3135) and the VITURE Pro XR (CVT 0x3132), whose
+Full SBS EDIDs keep their 2D identity and announce one 3840x1080 at 60 Hz,
+so they come up in the side by side (full) twin as the One Pro does; and
+the Nreal Light (MRG 0x3131), the XREAL Air (MRG 0x3132), the VITURE Beast
+(VIT 0x0120), the Rokid Air (LBT 0x4752), the Rokid Max (LBT 0x4753) and
+the TCL SmartGlasses (TCL 0x03D4, 0x03D5), whose 2D EDID only is public:
+their output's glasses option is on, and the twin follows when they
+announce a mode two eyes wide under the same identity. Nothing else of
+the store changes: a saved mode stays the person's, and the option stays
+theirs per output.
+
+Queue row 132.
+
+Assisted-by: Claude Opus 5.5
+---
+ src/outputconfigurationstore.cpp | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/outputconfigurationstore.cpp b/src/outputconfigurationstore.cpp
+index 639376f..402ed76 100644
+--- a/src/outputconfigurationstore.cpp
++++ b/src/outputconfigurationstore.cpp
+@@ -35,16 +35,30 @@ static bool isStereo3D(OutputModeline::Flags flags)
+     return flags & OutputModeline::AllStereo3D || flags.testFlag(OutputModeline::Flag::VirtualStereo);
+ }
+ 
+-// USB-C 3D glasses that take their 3D picture two eyes wide, by the EDID's manufacturer and product.
++// USB-C 3D glasses that take their 3D picture two eyes wide, by the EDID's manufacturer and product. Each entry is
++// the identity of a real EDID read from those glasses; the twin is taken only when the glasses announce a mode two
++// eyes wide under that identity, so in a 2D mode an entry only turns the output's glasses option on.
+ // XREAL One Pro: the EDID read from an owner's glasses on 24 Oct 2026 (PnP ID MRG, product 0x4100, the same
+ // in the 2D, half, full and Real 3D modes; autotests/integration/data/xreal-one-pro-*.bin). The One and the 1S
+ // are not identified yet; the USB product identifiers (0x0435 to 0x043e) belong to the IMU, not to the display.
++// XREAL Air 2 Pro and VITURE Pro XR: published EDIDs of both modes, the same identity in 2D and in Full SBS, which
++// is one 3840x1080 at 60 Hz. The others: published 2D EDIDs, their Full SBS EDID not published yet. Every source
++// is in autotests/integration/data/usb-c-glasses-edids.txt.
+ static const struct
+ {
+     const char *pnpId;
+     uint16_t product;
+ } s_stereoGlasses[] = {
+     {"MRG", 0x4100}, // XREAL One Pro
++    {"MRG", 0x3135}, // XREAL Air 2 Pro
++    {"CVT", 0x3132}, // VITURE Pro XR (the EDID's name is "VITURE")
++    {"MRG", 0x3131}, // Nreal Light
++    {"MRG", 0x3132}, // XREAL Air (Nreal Air)
++    {"VIT", 0x0120}, // VITURE Beast
++    {"LBT", 0x4752}, // Rokid Air
++    {"LBT", 0x4753}, // Rokid Max
++    {"TCL", 0x03d4}, // TCL "SmartGlasses" (RayNeo Air series)
++    {"TCL", 0x03d5}, // TCL "SmartGlasses", 120 Hz
+ };
+ 
+ static bool isStereoGlasses(const Edid &edid)
+-- 
+2.53.0
+
