@@ -66,7 +66,7 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
  
  #include <functional>
  
-@@ -483,45 +487,76 @@
+@@ -483,45 +487,77 @@
      QVERIFY(depth->sunk > 0 && depth->popped > 0);
  }
  
@@ -97,6 +97,8 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
 +    configuration.changeSet(television->backendOutput())->currentMode = stereo;
 +    workspace()->applyOutputConfiguration(configuration);
 +    QVERIFY(Test::waylandSync());
++    QVERIFY(monitor->hasStereoEyes());
++    QVERIFY(television->hasStereoEyes());
 +
 +    workspace()->setActiveOutput(QPoint(640, 512));
 +    auto window = createWindow(QPointF(100, 100));
@@ -106,13 +108,16 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
 -    QVERIFY(waitFor(depth.get(), [&depth]() {
 -        return depth->limits > 0;
 -    }));
-+    QTRY_VERIFY(depth->limits > 0);
++    QVERIFY(waitFor(depth.get(), [&depth] { return depth->limits > 0; }));
      QCOMPARE(depth->elementLimits, 1);
 -    QCOMPARE(depth->elementLimit, 1.0);
 +    QCOMPARE(depth->elementBehind, 1.0);
 +    QCOMPARE(depth->elementInFront, 1.0);
      QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
  
++    const auto waitForSteps = [&depth](qreal behind, qreal inFront) {
++        return waitFor(depth.get(), [&] { return depth->elementBehind == behind && depth->elementInFront == inFront; });
++    };
 -    // the person sets another element limit: it is sent again, and the group ends with depth_limits
 -    options->setStereoElementLimit(3);
 -    QVERIFY(waitFor(depth.get(), [&depth]() {
@@ -129,8 +134,7 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
 +    });
 +    settings.writeEntry("ElementLimit", 3.0);
 +    options->updateSettings();
-+    QTRY_COMPARE(depth->elementBehind, 3.0);
-+    QCOMPARE(depth->elementInFront, 3.0);
++    QVERIFY(waitForSteps(3.0, 3.0));
      QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
 -    QCOMPARE(depth->sunk, 10.0);
 -    QCOMPARE(depth->popped, 4.0);
@@ -152,15 +156,13 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
 +    };
 +    window->window->move(QPointF(s_outputSize.width() + 100, 100));
 +    QTRY_COMPARE(window->window->output(), television);
-+    QTRY_COMPARE(depth->elementBehind, wire(3 * televisionFactor));
-+    QCOMPARE(depth->elementInFront, depth->elementBehind);
++    QVERIFY(waitForSteps(wire(3 * televisionFactor), wire(3 * televisionFactor)));
 +    QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
 +
 +    // Change one display direction without moving the surface or changing the global ElementLimit.
 +    display.writeEntry("PoppedLimit", 8.0);
 +    options->updateSettings();
-+    QTRY_COMPARE(depth->elementInFront, 6.0);
-+    QCOMPARE(depth->elementBehind, wire(3 * televisionFactor));
++    QVERIFY(waitForSteps(wire(3 * televisionFactor), 6.0));
 +    QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
 +
 -    options->setStereoElementLimit(0);
@@ -170,8 +172,7 @@ diff --git a/autotests/integration/stereo_depth_exchange_test.cpp b/autotests/in
 -    QVERIFY(Test::waylandSync());
 +    settings.writeEntry("ElementLimit", 0.0);
 +    options->updateSettings();
-+    QTRY_COMPARE(depth->elementBehind, 0.0);
-+    QCOMPARE(depth->elementInFront, 0.0);
++    QVERIFY(waitForSteps(0.0, 0.0));
      QCOMPARE(depth->order, QByteArrayLiteral("ewl"));
  }
  
