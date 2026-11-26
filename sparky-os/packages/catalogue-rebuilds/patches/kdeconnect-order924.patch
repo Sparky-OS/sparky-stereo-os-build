@@ -1,11 +1,11 @@
 Description: Keep generic virtual monitors after authenticated KRdp startup
-Origin: vendor, kdeconnect-kde commit 840ad2ca358d2d3356a2befe880fd32078c24c88
+Origin: vendor, kdeconnect-kde commit b84e43cfe7eb88e5f47999681544898b89300004
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: no
 Last-Update: 2026-11-26
 
 diff --git a/plugins/virtualmonitor/virtualmonitorplugin.cpp b/plugins/virtualmonitor/virtualmonitorplugin.cpp
-index 9d11d846e..ad4ed39c9 100644
+index 9d11d846e..54f72057d 100644
 --- a/plugins/virtualmonitor/virtualmonitorplugin.cpp
 +++ b/plugins/virtualmonitor/virtualmonitorplugin.cpp
 @@ -28,6 +28,7 @@
@@ -73,7 +73,7 @@ index 9d11d846e..ad4ed39c9 100644
      }
      if (m_remoteResolution.isEmpty()) {
          addError(i18n("Cannot start a request without a resolution."));
-@@ -844,18 +852,36 @@ bool VirtualMonitorPlugin::startRdpSession(const SessionRequest &request)
+@@ -844,18 +852,37 @@ bool VirtualMonitorPlugin::startRdpSession(const SessionRequest &request)
                << m_tlsDirectory->filePath(QStringLiteral("server.crt")) << QStringLiteral("--certificate-key")
                << m_tlsDirectory->filePath(QStringLiteral("server.key"));
  
@@ -94,18 +94,19 @@ index 9d11d846e..ad4ed39c9 100644
 +    process->setProcessEnvironment(environment);
 +    const QByteArray sessionStarted = eventPrefix.toLatin1() + (plasma ? " org.kde.krdp debug Started Plasma session\n"
 +                                                                     : " org.kde.krdp debug Started Freedesktop Portal session\n");
++    const QByteArray sessionRecord = '\n' + sessionStarted;
 +
      process->setArguments(arguments);
      process->setProcessChannelMode(QProcess::SeparateChannels);
 -    connect(process, &QProcess::readyReadStandardError, this, [this, process]() {
-+    connect(process, &QProcess::readyReadStandardError, this, [this, process, generation, sessionStarted]() {
++    connect(process, &QProcess::readyReadStandardError, this, [this, process, generation, sessionStarted, sessionRecord]() {
          const QByteArray output = process->readAllStandardError();
          if (output.isEmpty()) {
              return;
          }
          m_serverErrors.append(output);
 +        if (generation == m_sessionGeneration && !m_clientConnected
-+            && (m_serverErrors.startsWith(sessionStarted) || m_serverErrors.contains('\n' + sessionStarted))) {
++            && (m_serverErrors.startsWith(sessionStarted) || m_serverErrors.contains(sessionRecord))) {
 +            m_clientConnected = true;
 +            sendStatus(QStringLiteral("connected"));
 +        }
