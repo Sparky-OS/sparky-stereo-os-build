@@ -127,6 +127,10 @@ group('image', 'On the image from first boot (our stereo programs everyone uses)
     # the edition's defaults (Daniel, 2026-11-18: "change sparky first run to our custom kde first run with all the elements
     # sparkylinux one has, since our native DE is kde, I would rather follow this path"; ORDER 63 and 720)
     'sparky-stereo-welcome',
+    # the video background for the desktop and the lock screen, where Wallpaper and Screen Locking list it (Daniel,
+    # 2026-11-24: "Also missing - our video wallpaper and screen lock plugin in the proper locatiosn as well"): org.kde.video
+    # by Jeromy Streets, his Plasma 6 port packaged unchanged under the name SparkyLinux gave it (queue row 96)
+    'qml-module-org-kde-video-wallpaper',
 ])
 
 # 1b. Film and visual effects: the studios' own open projects (Daniel, 2026-10-14: "follow those that have repos, orgs
