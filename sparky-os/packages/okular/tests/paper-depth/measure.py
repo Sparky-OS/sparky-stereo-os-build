@@ -200,8 +200,19 @@ for i, (px0, py0, px1, py1) in enumerate(pages):
     if rows_below:
         entry["shadow_rows"] = [rows_below[0], rows_below[-1]]
         entry["desk"] = disparity([px0 - 40, rows_below[0], px0 + 60, rows_below[-1]])
-    cut = py0 <= y0 + 87 if kind == "words" else cut_at_top(px0, px1, py0)
-    if cut:
+    if kind == "words" and i == 0:
+        # The page's vertical edge reaches the first canvas row only when
+        # scrolling has carried the page under the toolbar.
+        canvas_top = y0 + 85
+        edges = []
+        for eye in (left, right):
+            row = eye[canvas_top, px1 - 8:px1 + 16]
+            shadow = np.flatnonzero(row.max(axis=1) < 225)
+            edges.append(int(px1 - 8 + shadow[0]) if len(shadow) else None)
+        if edges[0] is not None:
+            entry["paper_at_cut"] = disparity([px0 + 8, canvas_top, px1 - 8, canvas_top + 31])
+            entry["right_edge_at_cut"] = edges
+    elif kind != "words" and cut_at_top(px0, px1, py0):
         entry["paper_at_cut"] = disparity([px0 + 8, py0, px1 - 8, py0 + 20])
         edges = []
         for eye in (left, right):

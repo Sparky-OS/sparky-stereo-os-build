@@ -62,6 +62,20 @@ int main(int argc, char **argv)
             org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
             org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
         }
+    } else if (argc == 6 && !strcmp(argv[1], "drag")) {
+        const double x = atof(argv[2]), y = atof(argv[3]);
+        const double dx = atof(argv[4]) - x, dy = atof(argv[5]) - y;
+        org_kde_kwin_fake_input_pointer_motion_absolute(input, wl_fixed_from_double(x), wl_fixed_from_double(y));
+        wl_display_roundtrip(display);
+        usleep(100000);
+        org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+        for (int step = 1; step <= 10; ++step) {
+            org_kde_kwin_fake_input_pointer_motion_absolute(input, wl_fixed_from_double(x + dx * step / 10),
+                                                           wl_fixed_from_double(y + dy * step / 10));
+            wl_display_roundtrip(display);
+            usleep(50000);
+        }
+        org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
     } else if (argc == 3 && !strcmp(argv[1], "scroll")) {
         org_kde_kwin_fake_input_axis(input, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_double(atof(argv[2])));
     } else if (!strcmp(argv[1], "keys")) {

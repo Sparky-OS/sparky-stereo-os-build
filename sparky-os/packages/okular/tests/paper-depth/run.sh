@@ -68,7 +68,7 @@ grep -q 'build rc=0' "$RESULTS/bin/build.log" || { cat "$RESULTS/bin/build.log";
 for case in $CASES; do
 	element=1
 	case $case in *-scale12) element=12 ;; *-limit0) element=0 ;; *-display|words-*) element=6 ;; probe-override) element=3 ;; esac
-	run "$case" "ELEMENT=$element" "M2=$M2" "KCM_FIELD_XY=${KCM_FIELD_XY:-650 417}" "KCM_APPLY_XY=${KCM_APPLY_XY:-1045 920}" -- timeout 180 bash /tests/case.sh "$case"
+	run "$case" "ELEMENT=$element" "M2=$M2" "KCM_FIELD_XY=${KCM_FIELD_XY:-655 409}" "KCM_APPLY_XY=${KCM_APPLY_XY:-1035 924}" -- timeout 180 bash /tests/case.sh "$case"
 	test -s "$RESULTS/$case/shot.png"
 	run "measure-$case" -- bash -c 'case "$1" in
         probe-*) python3 -I /tests/measure-probe.py "/out/$1/shot.png" ;;

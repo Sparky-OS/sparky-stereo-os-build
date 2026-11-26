@@ -88,9 +88,7 @@ words-*)
     sleep 8
     if [ "$CASE" = words-scrolled ]; then
         place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 575};'
-        input click 708 549
-        input click 708 549
-        input click 708 549
+        input drag 708 175 708 224 || exit 1
     else
         place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 960};'
     fi
@@ -119,11 +117,14 @@ if [ "$CASE" = okular-kcm ]; then
     place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 175, y: 95, width: 1000, height: 850};'
     python3 -I /tests/capture.py "$OUT/kcm.png" > "$OUT/kcm-capture.json" 2> "$OUT/kcm-capture.err"
     # Click the field in the stand-alone KCM, replace its value with 6, then Apply.
-    read -r field_x field_y <<< "${KCM_FIELD_XY:-650 417}"
-    read -r apply_x apply_y <<< "${KCM_APPLY_XY:-1045 920}"
-    input click "$field_x" "$field_y"
-    input keys +29 30 -29 7
-    input click "$apply_x" "$apply_y"
+    read -r field_x field_y <<< "${KCM_FIELD_XY:-655 409}"
+    read -r apply_x apply_y <<< "${KCM_APPLY_XY:-1035 924}"
+    input click "$field_x" "$field_y" || exit 1
+    sleep 0.5
+    input keys 107 14 7 || exit 1
+    sleep 0.5
+    python3 -I /tests/capture.py "$OUT/kcm-edited.png" > "$OUT/kcm-edited.json" 2> "$OUT/kcm-edited.err"
+    input click "$apply_x" "$apply_y" || exit 1
     sleep 2
     cp "$XDG_CONFIG_HOME/kwinrc" "$OUT/kwinrc"
     grep -qx 'ElementLimit=6' "$OUT/kwinrc" || { echo "KCM did not save ElementLimit=6" >&2; exit 1; }
