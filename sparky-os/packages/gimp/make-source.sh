@@ -43,10 +43,8 @@ def sub(old, new):
     global s
     assert s.count(old) == 1, old
     s = s.replace(old, new)
-# the stereo GtkGLArea of the edition'"'"'s GTK 3 (the canvas per eye) and OpenGL through epoxy; Debian'"'"'s libmypaint
-# (deb-multimedia'"'"'s epoch-1 package would win the build otherwise and link another soname than Debian'"'"'s GIMP)
+# the stereo GtkGLArea of the edition'"'"'s GTK 3 (the canvas per eye) and OpenGL through epoxy
 sub("               libgtk-3-dev,\n", "               libgtk-3-dev (>= 3.24.52-3+stereo3d1~),\n               libepoxy-dev,\n")
-sub("               libmypaint-dev,\n", "               libmypaint-dev (<< 1:0),\n")
 # View > Display Settings runs kcmshell6 (kde-cli-tools) with the display page (kscreen): a dependency a designed
 # feature needs is a Depends
 sub("         xdg-utils,\nRecommends: ghostscript,", "         xdg-utils,\n         kde-cli-tools,\n         kscreen,\nRecommends: ghostscript,")
