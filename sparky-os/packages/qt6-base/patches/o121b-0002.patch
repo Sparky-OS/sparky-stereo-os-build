@@ -10,16 +10,28 @@ Assisted-by: gpt-6.2-sol via Codex
 diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
 --- a/src/widgets/kernel/qwidget.cpp
 +++ b/src/widgets/kernel/qwidget.cpp
-@@ -5631,6 +5631,8 @@
+@@ -5631,6 +5631,10 @@
          QWidgetEffectSourcePrivate *sourced = static_cast<QWidgetEffectSourcePrivate *>
                                                           (source->d_func());
          if (!sourced->context) {
-+            if (repaintManager && qt_widget_stereo_eye() && q->property("_q_stereo_depth_rects").isValid())
-+                sourced->invalidateCache(); // a stereo effect source differs between eyes
++            const bool stereoSource = repaintManager && qt_widget_stereo_eye()
++                && q->property("_q_stereo_depth_rects").isValid();
++            if (stereoSource)
++                sourced->invalidateCache();
              const QRegion effectRgn((flags & UseEffectRegionBounds) ? rgn.boundingRect() : rgn);
              QWidgetPaintContext context(pdev, effectRgn, offset, flags, sharedPainter, repaintManager);
              sourced->context = &context;
-@@ -6068,8 +6070,11 @@
+@@ -5655,6 +5659,9 @@
+                 sharedPainter->restore();
+             }
+             sourced->context = nullptr;
++            // The next paint may be mono or for the other eye.
++            if (stereoSource)
++                sourced->invalidateCache();
+ 
+             if (repaintManager)
+                 repaintManager->markNeedsFlush(q, effectRgn, offset);
+@@ -6068,8 +6075,11 @@
      if (!eye || sharedPainter || rgn.isEmpty())
          return false;
  #if QT_CONFIG(graphicseffect)
@@ -33,7 +45,7 @@ diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
  #endif
      const QVariantList declared = q->property("_q_stereo_depth_rects").toList();
      if (declared.isEmpty())
-@@ -6206,6 +6211,11 @@
+@@ -6206,6 +6216,11 @@
      if (wd->extra && wd->extra->hasMask)
          toBePainted &= wd->extra->mask;
  
@@ -45,7 +57,7 @@ diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
      wd->drawWidget(context->pdev, toBePainted, context->offset, context->flags,
                     context->sharedPainter, context->repaintManager);
  }
-@@ -6252,6 +6262,14 @@
+@@ -6252,6 +6267,14 @@
      pixmap.setDevicePixelRatio(dpr);
  
      pixmap.fill(Qt::transparent);
