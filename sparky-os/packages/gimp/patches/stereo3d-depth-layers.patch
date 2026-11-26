@@ -1631,10 +1631,10 @@ index 2c8db3b..27bc8e9 100644
  )
 diff --git a/app/display/gimpdisplayshell-depth.c b/app/display/gimpdisplayshell-depth.c
 new file mode 100644
-index 0000000..534bb8d
+index 0000000..4057734
 --- /dev/null
 +++ b/app/display/gimpdisplayshell-depth.c
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,234 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -1741,13 +1741,16 @@ index 0000000..534bb8d
 +      GdkDevice  *pointer = gdk_seat_get_pointer (gdk_display_get_default_seat (display));
 +      gdouble     x, y;
 +
-+      if (gdk_window_get_device_position_double (gtk_widget_get_window (shell->canvas),
-+                                                 pointer, &x, &y, NULL))
-+        {
-+          shell->depth_key_have_last = TRUE;
-+          shell->depth_key_last_x    = x;
-+          shell->depth_key_last_y    = y;
-+        }
++      /*  the return value is the window under the pointer (another one
++       *  over the canvas, or none), not a failure: x and y are always the
++       *  pointer's place relative to the canvas's window
++       */
++      gdk_window_get_device_position_double (gtk_widget_get_window (shell->canvas),
++                                             pointer, &x, &y, NULL);
++
++      shell->depth_key_have_last = TRUE;
++      shell->depth_key_last_x    = x;
++      shell->depth_key_last_y    = y;
 +    }
 +
 +  /*  the key's release may reach another widget of the window than the
