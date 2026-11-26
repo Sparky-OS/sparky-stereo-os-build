@@ -25,7 +25,7 @@ zoom=0; [ "$CASE" = okular-scrolled ] && zoom=1
 printf '[General]\nShowOSD=false\n[PageView]\nUseCustomBackgroundColor=true\nBackgroundColor=255,0,255\n[Zoom]\nZoomMode=%s\n[Core General]\nContinueFromLastViewedPage=true\n' \
     "$zoom" > "$XDG_CONFIG_HOME/okularpartrc"
 # no notice over presentation mode (KMessageBox's "do not show again"), no wallet started by Okular
-printf '[Notification Messages]\npresentationInfo=false\n' > "$XDG_CONFIG_HOME/okularrc"
+printf '[General]\nShowSidebar=false\nShowBottomBar=false\n[Notification Messages]\npresentationInfo=false\n' > "$XDG_CONFIG_HOME/okularrc"
 printf '[Wallet]\nEnabled=false\n' > "$XDG_CONFIG_HOME/kwalletrc"
 pdf=/tmp/two-pages.pdf
 python3 -I /tests/make-pdf.py "$pdf" 300 200
@@ -58,7 +58,10 @@ place() { python3 -I /tests/kwin_script.py "$OUT/kwin.log" "$1"; sleep 1.5; }
 case $CASE in
 okular-presentation)
 	env "${env[@]}" WAYLAND_DEBUG=client okular --presentation /tmp/two-pages.pdf > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
-	sleep 9 ;;
+	sleep 9
+	# Okular's notice on how to leave presentation mode, closed as a person closes it
+	place 'var ws = workspace.stackingOrder; for (var i = 0; i < ws.length; i++) { if (ws[i].caption.indexOf("Information") === 0) ws[i].closeWindow(); }'
+	sleep 2 ;;
 okular-*)
 	env "${env[@]}" WAYLAND_DEBUG=client okular /tmp/two-pages.pdf > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
 	sleep 8
