@@ -99,9 +99,11 @@ if d:
     plain = os.path.join(d2m, "panels-shot.png") if d2m else ""
     if os.path.exists(pair) and os.path.exists(plain):
         # the panels touch the screen's edges, so they stand at the screen; they are translucent over the sunk wallpaper,
-        # so their pixels differ between the eyes, and their own parts (the launcher, the menu, the dock's icons) are
-        # matched against the same layout's 2D login (the clock is left out: the two logins differ by a minute)
-        res = regions(pair, plain, [{"name": "top bar (launcher and menu)", "box": [30, 4, 600, 27], "predicted": 0},
+        # so their pixels differ between the eyes, and only their own opaque parts are matched against the same layout's
+        # 2D login: the window list at the bar's right end and the dock's icons (the clock is left out, the logins differ
+        # by minutes; the bar's left part holds the launcher at the edge and an application menu only when a program has
+        # one, so a box there matches the wallpaper behind the glass, +10)
+        res = regions(pair, plain, [{"name": "top bar (the window list at its right end)", "box": [1786, 4, 1894, 27], "predicted": 0},
                                     {"name": "dock", "box": [600, 1004, 1320, 1074], "predicted": 0}], "menubar-3d")
         for name, v in res.items():
             if isinstance(v, dict):
