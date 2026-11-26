@@ -154,13 +154,17 @@ def swap_directory(path, btrfs):
             output("btrfs", "subvolume", "create", str(path))
     try:
         if btrfs:
+            if created:
+                path.chmod(0o700)
             try:
                 output("btrfs", "subvolume", "show", str(path))
             except subprocess.CalledProcessError as error:
                 raise Refusal(46, f"{path}: {error.output}") from error
             info = path.stat()
             if info.st_dev == path.parent.stat().st_dev or info.st_uid != 0 or info.st_mode & 0o022:
-                raise Refusal(46, f"{path} is not a root-owned, protected Btrfs subvolume")
+                raise Refusal(46, f"{path}: expected a root-owned Btrfs subvolume without group or other write "
+                                  f"access (UID={info.st_uid}, mode={stat.S_IMODE(info.st_mode):o}, "
+                                  f"device={info.st_dev}, parent device={path.parent.stat().st_dev})")
         yield
     finally:
         if created and not any(path.iterdir()):
@@ -241,6 +245,7 @@ if __name__ == "__main__":
         sys.exit(0)
     if os.geteuid() != 0 or sys.argv[1:] not in (["hibernate"], ["cushion"]):
         sys.exit(result(53, "This repair needs authorization and a hibernate or cushion request"))
+    os.umask(0o077)
     try:
         STATE.mkdir(parents=True, exist_ok=True)
         with (STATE / "swap-actions.lock").open("a") as lock:
