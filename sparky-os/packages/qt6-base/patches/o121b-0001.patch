@@ -1,0 +1,317 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Paint declared widget depths with both selected output steps
+
+Take the distances and width from the same complete Wayland event group.
+Negative depths use the behind step and positive depths use the in-front
+step, both converted at the selected output's pixel width.
+
+Assisted-by: gpt-6.2-sol via Codex
+
+diff --git a/src/3rdparty/wayland/protocols/kde-stereo-content/kde-stereo-content-v1.xml b/src/3rdparty/wayland/protocols/kde-stereo-content/kde-stereo-content-v1.xml
+--- a/src/3rdparty/wayland/protocols/kde-stereo-content/kde-stereo-content-v1.xml
++++ b/src/3rdparty/wayland/protocols/kde-stereo-content/kde-stereo-content-v1.xml
+@@ -151,11 +151,10 @@
+     depth on the same screen. Before version 5 the client reads the user's
+     settings itself.
+ 
+-    Since version 7 the compositor also tells the client the user's element
+-    limit (element_limit): how far an element drawn inside the surface may
+-    lie in front of or behind what it lies on, a pixel or so, where the
+-    depth limits above are for the desktop's own surfaces. A toolkit that
+-    draws a surface's elements at their own depths takes its steps from it.
++    Since version 7 the compositor also sends the element steps for the
++    surface's selected output (element_limit). A toolkit uses these for
++    elements inside its surface. The desktop depth limits above apply to
++    the desktop's own surfaces.
+ 
+     A surface may have any number of these objects. The depth state is sent
+     to each of them. The surface is marked as desktop depth while any of
+@@ -287,16 +286,15 @@
+       value changes; depth_limits ends the group, and all three describe the
+       same selected output.
+ 
+-      limit is how far an element drawn inside the surface (a button, a
+-      field, a page) may lie in front of or behind the surface it lies on,
+-      in pixels of a view 1920 wide: the user's element limit, one step of
+-      depth inside a window. Zero means the elements inside the surface lie
+-      flat. The compositor gives it as the user set it; a client converts
+-      it to its buffer's pixels as it converts the depth limits, through the
+-      shared stereo_depth_limits_for_buffer conversion, and never rescales
+-      it by the size of its window or of an element.
+-    </description>
+-    <arg name="limit" type="fixed" summary="the element limit, pixels of a view 1920 wide"/>
++      behind and in_front are the non-negative distances an element may lie
++      behind or in front of what it lies on. They are the user's element
++      limit multiplied by the selected output's sunk and popped factors,
++      respectively, in pixels of a view 1920 wide. Zero disables movement
++      in that direction. Clients convert the steps to buffer pixels the
++      same way as depth_limits, using the selected output width.
++    </description>
++    <arg name="behind" type="fixed" summary="distance behind, pixels of a view 1920 wide"/>
++    <arg name="in_front" type="fixed" summary="distance in front, pixels of a view 1920 wide"/>
+   </event>
+ 
+ </interface>
+diff --git a/src/plugins/platforms/wayland/qwaylandstereodepth.cpp b/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
+--- a/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
++++ b/src/plugins/platforms/wayland/qwaylandstereodepth.cpp
+@@ -61,10 +61,15 @@
+ 
+ protected:
+     void kde_stereo_depth_v1_depth_state(uint32_t awake, uint32_t output_edges) override;
+-    void kde_stereo_depth_v1_element_limit(wl_fixed_t limit) override;
++    void kde_stereo_depth_v1_element_limit(wl_fixed_t behind, wl_fixed_t in_front) override;
++    void kde_stereo_depth_v1_output_width(uint32_t width) override;
++    void kde_stereo_depth_v1_depth_limits(wl_fixed_t, wl_fixed_t) override;
+ 
+ private:
+     QWaylandWindow *m_window;
++    qreal m_elementBehind = 0;
++    qreal m_elementInFront = 0;
++    uint32_t m_outputWidth = 0;
+ };
+ 
+ struct WindowState
+@@ -112,7 +117,10 @@
+     if (!window)
+         return;
+     QWindow *target = window.data();
+-    QMetaObject::invokeMethod(target, [target] { tellWindow(target, "_q_stereo_awake", false); }, Qt::QueuedConnection);
++    QMetaObject::invokeMethod(target, [target] {
++        tellWindow(target, "_q_stereo_awake", false);
++        tellWindow(target, "_q_stereo_element_steps", QVariant());
++    }, Qt::QueuedConnection);
+ }
+ 
+ void forgetWindowsOf(QWaylandDisplay *display)
+@@ -151,8 +159,21 @@
+     tellWindow(target, "_q_stereo_awake", awake != 0);
+ }
+ 
+-void Depth::kde_stereo_depth_v1_element_limit(wl_fixed_t limit)
+-{
++void Depth::kde_stereo_depth_v1_element_limit(wl_fixed_t behind, wl_fixed_t in_front)
++{
++    m_elementBehind = qMax(0.0, wl_fixed_to_double(behind));
++    m_elementInFront = qMax(0.0, wl_fixed_to_double(in_front));
++}
++
++void Depth::kde_stereo_depth_v1_output_width(uint32_t width)
++{
++    m_outputWidth = width;
++}
++
++void Depth::kde_stereo_depth_v1_depth_limits(wl_fixed_t, wl_fixed_t)
++{
++    if (version() < s_elementLimitVersion)
++        return;
+     QPointer<QWindow> target;
+     {
+         QMutexLocker locker(&s_mutex);
+@@ -161,7 +182,8 @@
+             return;
+         target = it->second.window;
+     }
+-    tellWindow(target, "_q_stereo_element_limit", qMax(0.0, wl_fixed_to_double(limit)));
++    // depth_limits closes the group. Commit both directions with the width that belongs to them.
++    tellWindow(target, "_q_stereo_element_steps", QVariantList{m_elementBehind, m_elementInFront, m_outputWidth});
+ }
+ 
+ } // namespace
+diff --git a/src/plugins/platforms/wayland/qwaylandstereodepth_p.h b/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
+--- a/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
++++ b/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
+@@ -51,8 +51,9 @@
+ // Follows the window's depth for the elements inside it that declare their own (a widget's
+ // _q_stereo_depth_rects): while following, the compositor's word reaches the window as its
+ // _q_stereo_awake (whether the elements inside it may be shown in depth now) and its
+-// _q_stereo_element_limit (the person's element limit, pixels of a view 1920 wide, from version 7
+-// of kde_stereo_content_v1). The choice is the window's _q_stereo_follow_depth property, set
++// _q_stereo_element_steps (the behind and in-front distances in pixels of a view 1920 wide
++// and the selected output's width, from version 7 of kde_stereo_content_v1).
++// The choice is the window's _q_stereo_follow_depth property, set
+ // through the native interface; it holds for every surface the window gets.
+ Q_WAYLANDCLIENT_EXPORT void setFollowDepth(QWaylandWindow *window, bool follow);
+ // After the window got a new surface.
+diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
+--- a/src/widgets/kernel/qwidget.cpp
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -6022,7 +6022,7 @@
+     _q_stereo_depth_rects: a list of maps, each with a "rect" (QRect or QRectF, in the widget's
+     coordinates) and a "depth" (a fraction of one step of depth inside a window, from -1, one step
+     behind what the rectangle lies on, to 1, one step in front of it). The step is the person's
+-    element limit (qt_widget_stereo_element_step()); a program never gives pixels. A rectangle lies
++    element limit (qt_widget_stereo_element_steps()); a program never gives pixels. A rectangle lies
+     on the last rectangle before it in the list that holds it whole, else on the widget, whose own
+     plane is 0; what the widget paints outside every rectangle lies on that plane, and so do its
+     child widgets, which keep their own depth from there. A document viewer, for example, declares
+@@ -6030,7 +6030,7 @@
+     at the window's plane, its text and pictures with it, its shadow on the desk.
+ 
+     The declaring widget follows its window's depth with the compositor (the platform's
+-    _q_stereo_awake and _q_stereo_element_limit on the window), so the window is painted once per
++    _q_stereo_awake and _q_stereo_element_steps on the window), so the window is painted once per
+     eye while the compositor shows depth inside it, whatever style draws it.
+ */
+ void QWidgetPrivate::stereoDepthRectsChanged()
+@@ -6075,8 +6075,8 @@
+     if (declared.isEmpty())
+         return false;
+     const qreal dpr = pdev->devicePixelRatio() > 0 ? pdev->devicePixelRatio() : 1;
+-    const qreal step = qt_widget_stereo_element_step(q->window(), dpr);
+-    if (!(step > 0))
++    const auto [behind, inFront] = qt_widget_stereo_element_steps(q->window());
++    if (qMax(behind, inFront) <= 0)
+         return false;
+ 
+     auto eyeShift = [eye](int p) {
+@@ -6099,7 +6099,8 @@
+             continue;
+         Layer layer;
+         layer.rect = rect;
+-        layer.parallax = qRound(std::clamp(map.value(QStringLiteral("depth")).toReal(), qreal(-1), qreal(1)) * step);
++        const qreal depth = std::clamp(map.value(QStringLiteral("depth")).toReal(), qreal(-1), qreal(1));
++        layer.parallax = qRound(depth * (depth < 0 ? behind : inFront));
+         layer.shift = qRound((eyeShift(own + layer.parallax) - eyeShift(own)) / dpr);
+         for (qsizetype i = layers.size() - 1; i > 0; --i) {
+             if (layers.at(i).rect.contains(rect)) {
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -559,23 +559,17 @@
+ }
+ 
+ /*
+-    One step of depth inside a window, in the window's device pixels: the person's element limit,
+-    which the platform hears from the compositor for a window that follows its depth
+-    (_q_stereo_element_limit, pixels of a view 1920 wide, the unit of the desktop's depth settings),
+-    taken on this screen as that share of the screen's width, as the stereo layer gives a Qt Quick
+-    window its limits. It never follows the size of the window or of an element. 0 while the
+-    platform has said no limit, or when the person's limit is 0.
++    Resolve both element steps into device pixels using the output width sent with them.
++    The compositor has already applied the selected display's factors.
+ */
+-qreal qt_widget_stereo_element_step(const QWidget *tlw, qreal devicePixelRatio)
+-{
+-    const QWindow *window = tlw ? tlw->windowHandle() : nullptr;
+-    const QScreen *screen = window ? window->screen() : nullptr;
+-    if (!screen)
+-        return 0;
+-    const qreal limit = window->property("_q_stereo_element_limit").toReal();
+-    if (!(limit > 0))
+-        return 0;
+-    return limit * screen->geometry().width() * devicePixelRatio / 1920;
++std::pair<qreal, qreal> qt_widget_stereo_element_steps(const QWidget *tlw)
++{
++    const QWindow *window = tlw->windowHandle();
++    const QVariantList steps = window ? window->property("_q_stereo_element_steps").toList() : QVariantList{};
++    if (steps.size() != 3)
++        return {};
++    const qreal scale = steps.at(2).toUInt() / 1920.0;
++    return {steps.at(0).toReal() * scale, steps.at(1).toReal() * scale};
+ }
+ 
+ /*
+@@ -604,8 +598,10 @@
+ static bool declaredDepthShown(QWidget *tlw)
+ {
+     const QWindow *window = tlw->windowHandle();
+-    return window && window->property("_q_stereo_follow_depth").toBool() && window->property("_q_stereo_awake").toBool()
+-            && qt_widget_stereo_element_step(tlw, window->devicePixelRatio()) >= 0.5;
++    if (!window || !window->property("_q_stereo_follow_depth").toBool() || !window->property("_q_stereo_awake").toBool())
++        return false;
++    const auto [behind, inFront] = qt_widget_stereo_element_steps(tlw);
++    return qMax(behind, inFront) >= 0.5;
+ }
+ 
+ /*
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager_p.h b/src/widgets/kernel/qwidgetrepaintmanager_p.h
+--- a/src/widgets/kernel/qwidgetrepaintmanager_p.h
++++ b/src/widgets/kernel/qwidgetrepaintmanager_p.h
+@@ -17,6 +17,7 @@
+ //
+ 
+ #include <QtWidgets/private/qtwidgetsglobal_p.h>
++#include <utility>
+ #include <QtWidgets/qwidget.h>
+ #include <private/qwidget_p.h>
+ #include <QtGui/qbackingstore.h>
+@@ -124,9 +125,8 @@
+ // The eye a window drawn once per eye is being painted for while it is: 1 the left eye, 2 the
+ // right eye, else 0.
+ int qt_widget_stereo_eye();
+-// One step of depth inside the window, in device pixels at devicePixelRatio: the person's element
+-// limit for the window's screen; 0 when there is none.
+-qreal qt_widget_stereo_element_step(const QWidget *tlw, qreal devicePixelRatio);
++// Element steps behind and in front of a plane, in device pixels of the window's selected output.
++std::pair<qreal, qreal> qt_widget_stereo_element_steps(const QWidget *tlw);
+ // The window follows its depth for the elements inside it that declare their own.
+ void qt_widget_follow_stereo_depth(QWidget *tlw);
+ 
+diff --git a/src/widgets/kernel/qwidgetwindow.cpp b/src/widgets/kernel/qwidgetwindow.cpp
+--- a/src/widgets/kernel/qwidgetwindow.cpp
++++ b/src/widgets/kernel/qwidgetwindow.cpp
+@@ -393,7 +393,7 @@
+         // The platform says whether the elements that declare their own depth may be shown in
+         // depth now, and how far one step goes: the window is painted again, once or per eye.
+         const QByteArray &name = static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName();
+-        if (name == "_q_stereo_awake" || name == "_q_stereo_element_limit")
++        if (name == "_q_stereo_awake" || name == "_q_stereo_element_steps")
+             m_widget->update();
+         break;
+     }
+diff --git a/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp b/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
+--- a/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
++++ b/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
+@@ -1221,7 +1221,7 @@
+ /*
+     A widget declares rectangles inside it at their own depth (_q_stereo_depth_rects), in steps of
+     the person's element limit, which the platform gives the window with whether it is awake
+-    (_q_stereo_awake, _q_stereo_element_limit). Its window is then painted once per eye whatever
++    (_q_stereo_awake, _q_stereo_element_steps). Its window is then painted once per eye whatever
+     style draws it: here the desk one step down, the page at the view's plane with its mark, the
+     strip of desk beside the page that a shift uncovers continued from the desk next to it, a child
+     widget at the view's plane, nothing moved outside the view. With the limit at 0, or the window
+@@ -1259,9 +1259,8 @@
+ 
+     // awake, and one step is 2 device pixels on this screen: the desk 1 to the left in the left
+     // eye and 1 to the right in the right eye, as Stereo KWin splits a parallax of -2
+-    const int screenWidth = window.screen()->geometry().width();
+     window.windowHandle()->setProperty("_q_stereo_awake", true);
+-    window.windowHandle()->setProperty("_q_stereo_element_limit", 2.0 * 1920 / screenWidth);
++    window.windowHandle()->setProperty("_q_stereo_element_steps", QVariantList{2.0, 2.0, 1920u});
+     QTRY_COMPARE(store->toImage().width(), 240);
+     QVERIFY(window.windowHandle()->property("_q_stereo_pair").toBool());
+ 
+@@ -1292,14 +1291,27 @@
+     QCOMPARE(pair.copy(0, 0, 10, 60), flat.copy(0, 0, 10, 60));
+     QCOMPARE(pair.copy(120, 0, 10, 60), flat.copy(0, 0, 10, 60));
+ 
+-    // the person's element limit at 0: painted once, exactly as before
+-    window.windowHandle()->setProperty("_q_stereo_element_limit", 0.0);
++    // The desk uses the behind step while the page uses the in-front step. Width 960 halves both.
++    view->setProperty("_q_stereo_depth_rects", QVariantList{
++            QVariantMap{{QStringLiteral("rect"), view->rect()}, {QStringLiteral("depth"), -1.0}},
++            QVariantMap{{QStringLiteral("rect"), PaperView::page}, {QStringLiteral("depth"), 1.0}}});
++    window.windowHandle()->setProperty("_q_stereo_element_steps", QVariantList{4.0, 8.0, 960u});
++    const auto color = [store](int eye, int x) {
++        return store->toImage().pixelColor((eye == 2 ? 120 : 0) + 10 + x, 30);
++    };
++    QTRY_COMPARE(color(1, 52), QColor(Qt::green));
++    QCOMPARE(color(2, 48), QColor(Qt::green));
++    QCOMPARE(color(1, 9), QColor(Qt::red));
++    QCOMPARE(color(2, 11), QColor(Qt::red));
++
++    // Zero in both directions: one paint, identical to the flat control.
++    window.windowHandle()->setProperty("_q_stereo_element_steps", QVariantList{0.0, 0.0, 1920u});
+     QTRY_COMPARE(store->toImage().width(), 120);
+     QVERIFY(!window.windowHandle()->property("_q_stereo_pair").toBool());
+     QCOMPARE(store->toImage(), flat);
+ 
+-    // not awake (a window lying behind the active one): painted once
+-    window.windowHandle()->setProperty("_q_stereo_element_limit", 2.0 * 1920 / screenWidth);
++    // A background window is flat even with a positive step.
++    window.windowHandle()->setProperty("_q_stereo_element_steps", QVariantList{0.0, 4.0, 1920u});
+     QTRY_COMPARE(store->toImage().width(), 240);
+     window.windowHandle()->setProperty("_q_stereo_awake", false);
+     QTRY_COMPARE(store->toImage().width(), 120);
