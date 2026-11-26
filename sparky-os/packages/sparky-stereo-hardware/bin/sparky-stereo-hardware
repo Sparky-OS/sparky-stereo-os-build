@@ -338,7 +338,9 @@ if ! $auto; then
 	fi
 	answer=0
 	wl_choice=
-	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${explain[@]}" "${buttons[@]}" || answer=$?
+	# --wrap: a note is a whole sentence (a known machine's correction, the Wi-Fi driver's choice); without it the plan's
+	# window cut each long line at its right edge
+	yad --text-info --wrap --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${explain[@]}" "${buttons[@]}" || answer=$?
 	case $(plan_answer "$answer") in
 		edition) ;;
 		wl-again) wl_reset ;;
