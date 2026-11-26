@@ -56,10 +56,14 @@ if [ "$(dpkg-parsechangelog -S Version)" != "$DEBV+aac2" ]; then
 fi
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . "$DEBV+aac2+lc1" --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /work/source
+# the link and start gate of lean.debhelper runs in a bubblewrap root
+apt-get -y --no-install-recommends install bubblewrap
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 useradd --create-home --uid 1000 builder
+mkdir -p "${SPARKY_LC_SCRATCH:?}"
 chown -R builder:builder /work
-runuser -u builder -- dpkg-buildpackage -us -uc -j4
+runuser -u builder -- env SPARKY_LC_ARCHIVE_CONFIG="${SPARKY_LC_ARCHIVE_CONFIG:?}" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
+    ${SPARKY_LC_PREVIOUS_DIR:+SPARKY_LC_PREVIOUS_DIR="$SPARKY_LC_PREVIOUS_DIR"} dpkg-buildpackage -us -uc -j4
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
 cp .sparky-lc/source.json /out/native-source.json
 tar -cJf /out/native-authored-evidence.tar.xz .sparky-lc

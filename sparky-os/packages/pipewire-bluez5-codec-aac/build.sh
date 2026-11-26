@@ -2,6 +2,9 @@
 # Build the AAC plugin from verified upstream source with native Lean Code.
 # Usage: build.sh [PipeWire upstream version] [matching Debian version]
 # SPARKY_BUILD_CONTAINER names the build container (a lane gives its own prefix).
+# SPARKY_LC_ARCHIVE_DIR (required) is the link gate's folder, mounted at /archive: sources.json naming Debian testing's
+# main and non-free (libfdk-aac2) and the public keyring it names (sparky-os/lean/archive.md). SPARKY_LC_PREVIOUS_DIR
+# (optional) holds the predecessor .deb, so the gate checks that the new plugin resolves its libraries as that one did.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -9,6 +12,13 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 PWV=${1:-1.6.11}
 DEBV=${2:-1.6.11-2}
 OUT=${OUT:-${SPARKY_SCRATCH:?}/bt-aac}
+: "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate (sources.json and its keyrings); see sparky-os/lean/archive.md}"
+ARCHIVE=$(cd "$SPARKY_LC_ARCHIVE_DIR" && pwd)
+[ -f "$ARCHIVE/sources.json" ] || { echo "$ARCHIVE has no sources.json" >&2; exit 2; }
+PREV_ARGS=()
+if [ -n "${SPARKY_LC_PREVIOUS_DIR:-}" ]; then
+    PREV_ARGS=(-v "$(cd "$SPARKY_LC_PREVIOUS_DIR" && pwd)":/prev:ro -e SPARKY_LC_PREVIOUS_DIR=/prev)
+fi
 [[ $PWV =~ ^[0-9][0-9.]+$ && $DEBV == "$PWV"-* && $DEBV =~ ^[0-9A-Za-z.+~:-]+$ ]] ||
     { echo "Expected matching upstream and Debian versions" >&2; exit 2; }
 mkdir -p "$OUT"
@@ -19,7 +29,9 @@ sparky_provenance_init debian:testing
 NAME_ARGS=()
 [ -z "${SPARKY_BUILD_CONTAINER:-}" ] || NAME_ARGS=(--name "$SPARKY_BUILD_CONTAINER")
 docker run --ulimit core=1 --rm --cpus "${CPUS:-4}" "${NAME_ARGS[@]}" \
-    "${SPARKY_PROV_ARGS[@]}" \
+    --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+    "${SPARKY_PROV_ARGS[@]}" "${PREV_ARGS[@]}" \
+    -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
     -v "$OUT:/out" -v "$HERE:/recipe:ro" -v "$HERE/../..:/toolkit:ro" \
     -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
     -e PWV="$PWV" -e DEBV="$DEBV" -e HOSTID="$(id -u):$(id -g)" \
