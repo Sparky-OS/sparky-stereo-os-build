@@ -1,0 +1,73 @@
+Description: Move a cue's edge only where that takes quiet away
+ A cue's end was moved to the end of the last stretch of speech that lay mostly
+ inside it. A cue whose text went on after a pause, in speech that ran on into
+ the next cue, was so cut at that pause, and a cue that began inside the
+ speech of the cue before it lost its first words the same way. An edge now
+ moves to the edge of the cue's own speech only when the edge word reaches into
+ it, or when nothing sounds between it and that word. Clicks and breaths
+ shorter than 80 ms between two sentences no longer join their speech into one
+ stretch.
+Origin: vendor
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+Last-Update: 2026-11-26
+
+--- a/src/speech/vibetiming.cpp
++++ b/src/speech/vibetiming.cpp
+@@ -103,6 +103,16 @@
+                 if (energy.at(i) < threshold) {
+                     continue;
+                 }
++                // Isolated clicks (a lip or a breath between two sentences) can otherwise chain two
++                // spoken passages into one span. A frame counts as speech when three more frames
++                // of the 100 ms around it are active too.
++                int activeFrames = 0;
++                for (qsizetype nearby = std::max<qsizetype>(0, i - 2); nearby < std::min(energy.size(), i + 3); ++nearby) {
++                    activeFrames += energy.at(nearby) >= threshold;
++                }
++                if (activeFrames < 4) {
++                    continue;
++                }
+                 if (first < 0 || (i - last) * frameSeconds >= 0.45) {
+                     if (first >= 0) {
+                         append();
+@@ -133,6 +143,16 @@
+     return std::max(0.0, std::min(a.end, b.end) - std::max(a.start, b.start));
+ }
+ 
++bool activityBetween(const QList<Span> &activity, double from, double to)
++{
++    for (const auto &span : activity) {
++        if (intersection(span, {from, to}) > 0) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ void adjustEdges(VibeCues &cues, const QList<Span> &activity)
+ {
+     QList<QList<Span>> spansByCue(cues.size());
+@@ -166,12 +186,20 @@
+         const auto rough = extent(words);
+         double start = rough.start;
+         double end = rough.end;
++        // An edge moves to the edge of the cue's own activity only where that takes quiet away:
++        // the edge word reaches into the activity (its other side lies in quiet), or nothing sounds
++        // between the activity and that word (the recognizer placed the word in quiet). A cue whose
++        // text goes on after a pause, inside activity it shares with the next cue, keeps its words' end.
++        const double firstWordEnd = words.first().end;
++        const double lastWordStart = words.last().start;
+         if (spans.first().start >= rough.start - 0.30
+-            && (i == 0 || spans.first().start >= cues.at(i - 1).last().end)) {
++            && (i == 0 || spans.first().start >= cues.at(i - 1).last().end)
++            && (spans.first().start < firstWordEnd || !activityBetween(activity, firstWordEnd, spans.first().start))) {
+             start = spans.first().start;
+         }
+         if (spans.last().end <= rough.end + 0.30
+-            && (i + 1 == cues.size() || spans.last().end <= cues.at(i + 1).first().start + 0.30)) {
++            && (i + 1 == cues.size() || spans.last().end <= cues.at(i + 1).first().start + 0.30)
++            && (spans.last().end > lastWordStart || !activityBetween(activity, spans.last().end, lastWordStart))) {
+             end = spans.last().end;
+         }
+         if (start < end) {

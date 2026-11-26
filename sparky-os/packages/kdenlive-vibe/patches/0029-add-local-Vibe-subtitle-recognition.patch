@@ -1,0 +1,676 @@
+Description: Add Vibe to automatic subtitling and follow the Partners speech settings
+Origin: vendor
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+Last-Update: 2026-11-25
+
+--- a/src/dialogs/CMakeLists.txt
++++ b/src/dialogs/CMakeLists.txt
+@@ -16,6 +16,7 @@
+   dialogs/renderwidget.cpp
+   dialogs/renderpresetdialog.cpp
+   dialogs/speechdialog.cpp
++  speech/vibespeechjob.cpp
+   dialogs/subtitleedit.cpp
+   dialogs/subtitlestyleedit.cpp
+   dialogs/textbasededit.cpp
+--- a/src/dialogs/settings/pluginssettings.cpp
++++ b/src/dialogs/settings/pluginssettings.cpp
+@@ -12,6 +12,7 @@
+ #include "pythoninterfaces/saminterface.h"
+ #include "pythoninterfaces/speechtotextvosk.h"
+ #include "pythoninterfaces/speechtotextwhisper.h"
++#include "speech/vibespeechjob.h"
+ 
+ #include <KArchive>
+ #include <KArchiveDirectory>
+@@ -25,6 +26,7 @@
+ #include <QButtonGroup>
+ #include <QMimeData>
+ #include <QMimeDatabase>
++#include <QRadioButton>
+ #include <QTimer>
+ #include <QtConcurrent/QtConcurrentRun>
+ 
+@@ -113,16 +115,40 @@
+     QButtonGroup *speechEngineSelection = new QButtonGroup(this);
+     speechEngineSelection->addButton(engine_vosk);
+     speechEngineSelection->addButton(engine_whisper);
+-    connect(speechEngineSelection, &QButtonGroup::buttonClicked, this, [this](QAbstractButton *button) {
++    auto *engineSystem = new QRadioButton(i18n("Use the system default"), this);
++    auto *engineVibe = new QRadioButton(i18n("Vibe (local)"), this);
++    horizontalLayout->insertWidget(1, engineSystem);
++    horizontalLayout->insertWidget(2, engineVibe);
++    speechEngineSelection->addButton(engineSystem);
++    speechEngineSelection->addButton(engineVibe);
++    auto *systemHelp = new QLabel(i18n("Choose the speech interface, model and card in System Settings, Partners."), this);
++    systemHelp->setWordWrap(true);
++    speech_stack->addWidget(systemHelp);
++    auto *vibeHelp = new QLabel(i18n("Choose the model and language in Vibe."), this);
++    vibeHelp->setWordWrap(true);
++    speech_stack->addWidget(vibeHelp);
++    connect(speechEngineSelection, &QButtonGroup::buttonClicked, this, [this, engineSystem, engineVibe](QAbstractButton *button) {
+         if (button == engine_vosk) {
+             speech_stack->setCurrentIndex(0);
+             m_sttVosk->checkDependencies(false);
+         } else if (button == engine_whisper) {
+             speech_stack->setCurrentIndex(1);
+             m_sttWhisper->checkDependencies(false);
+-        }
+-    });
+-    if (KdenliveSettings::speechEngine() == QLatin1String("whisper")) {
++        } else {
++            speech_stack->setCurrentIndex(button == engineSystem ? 2 : 3);
++        }
++        check_config->setVisible(button != engineSystem && button != engineVibe);
++        kcfg_speech_system_python->setEnabled(button != engineSystem && button != engineVibe);
++    });
++    const QString savedEngine = KdenliveSettings::speechEngine();
++    const bool local = VibeSpeechJob::isVibeEngine(savedEngine);
++    check_config->setVisible(!local);
++    kcfg_speech_system_python->setEnabled(!local);
++    if (local) {
++        const bool follow = savedEngine == QLatin1String("system-default");
++        (follow ? engineSystem : engineVibe)->setChecked(true);
++        speech_stack->setCurrentIndex(follow ? 2 : 3);
++    } else if (savedEngine == QLatin1String("whisper")) {
+         engine_whisper->setChecked(true);
+         speech_stack->setCurrentIndex(1);
+     } else {
+@@ -917,6 +943,9 @@
+ 
+ void PluginsSettings::checkSpeechDependencies()
+ {
++    if (speech_stack->currentIndex() >= 2) {
++        return;
++    }
+     m_sttWhisper->checkDependenciesConcurrently();
+     m_sttVosk->checkDependenciesConcurrently();
+ }
+@@ -928,20 +957,12 @@
+ 
+ void PluginsSettings::applySettings()
+ {
+-    // Speech
+-    switch (speech_stack->currentIndex()) {
+-    case 1:
+-        if (KdenliveSettings::speechEngine() != QLatin1String("whisper")) {
+-            KdenliveSettings::setSpeechEngine(QStringLiteral("whisper"));
+-            Q_EMIT pCore->speechEngineChanged();
+-        }
+-        break;
+-    default:
+-        if (!KdenliveSettings::speechEngine().isEmpty()) {
+-            KdenliveSettings::setSpeechEngine(QString());
+-            Q_EMIT pCore->speechEngineChanged();
+-        }
+-        break;
++    // Keep the empty value used by older versions to save VOSK.
++    const QStringList engines{QString(), QStringLiteral("whisper"), QStringLiteral("system-default"), QStringLiteral("vibe")};
++    const QString selectedEngine = engines.at(speech_stack->currentIndex());
++    if (KdenliveSettings::speechEngine() != selectedEngine) {
++        KdenliveSettings::setSpeechEngine(selectedEngine);
++        Q_EMIT pCore->speechEngineChanged();
+     }
+     if (speech_system_python_path->text() != KdenliveSettings::speech_system_python_path()) {
+         KdenliveSettings::setSpeech_system_python_path(speech_system_python_path->text());
+--- a/src/dialogs/speechdialog.cpp
++++ b/src/dialogs/speechdialog.cpp
+@@ -5,6 +5,7 @@
+ */
+ 
+ #include "speechdialog.h"
++#include "speech/vibespeechjob.h"
+ 
+ #include "bin/model/subtitlemodel.hpp"
+ #include "core.h"
+@@ -31,6 +32,7 @@
+ 
+ SpeechDialog::SpeechDialog(std::shared_ptr<TimelineItemModel> timeline, QPoint zone, int tid, bool, bool, QWidget *parent)
+     : QDialog(parent)
++    , m_engine(KdenliveSettings::speechEngine())
+     , m_timeline(timeline)
+     , m_zone(zone)
+     , m_tid(-1)
+@@ -53,7 +55,27 @@
+     maxChars->setValue(KdenliveSettings::whisperMaxChars());
+     check_maxchars->setChecked(KdenliveSettings::cutWhisperMaxChars());
+ 
+-    if (KdenliveSettings::speechEngine() == QLatin1String("whisper")) {
++    if (VibeSpeechJob::isVibeEngine(m_engine)) {
++        whisper_settings->hide();
++        speech_model->hide();
++        label->hide();
++        m_vibeJob = std::make_unique<VibeSpeechJob>(this);
++        connect(m_vibeJob.get(), &VibeSpeechJob::phaseChanged, speech_info, &KMessageWidget::setText);
++        connect(m_vibeJob.get(), &VibeSpeechJob::finished, this, [this](const QString &error) {
++            for (auto *button : m_buttonGroup->buttons()) {
++                button->setEnabled(true);
++            }
++            buttonBox->button(QDialogButtonBox::Apply)->setEnabled(true);
++            frame_progress->hide();
++            if (error.isEmpty()) {
++                importSpeechSubtitles();
++            } else {
++                speech_info->setMessageType(KMessageWidget::Warning);
++                speech_info->setText(error);
++                speech_info->animatedShow();
++            }
++        });
++    } else if (m_engine == QLatin1String("whisper")) {
+         // Whisper model
+         m_stt = new SpeechToTextWhisper(this);
+     } else {
+@@ -61,9 +83,11 @@
+         whisper_settings->setVisible(false);
+         m_stt = new SpeechToTextVosk(this);
+     }
+-    const QStringList speechModels = m_stt->getInstalledModels();
+-    buildSpeechModelsList(m_stt->engineType(), speechModels);
+-    connect(pCore.get(), &Core::speechModelUpdate, this, &SpeechDialog::buildSpeechModelsList);
++    if (m_stt) {
++        const QStringList speechModels = m_stt->getInstalledModels();
++        buildSpeechModelsList(m_stt->engineType(), speechModels);
++        connect(pCore.get(), &Core::speechModelUpdate, this, &SpeechDialog::buildSpeechModelsList);
++    }
+     buttonBox->button(QDialogButtonBox::Apply)->setText(i18n("Process"));
+     adjustSize();
+ 
+@@ -78,7 +102,7 @@
+                     speech_info->animatedHide();
+                 }
+                 KdenliveSettings::setSubtitleMode(m_buttonGroup->checkedId());
+-                if (speech_model->count() > 0) {
++                if (m_vibeJob || speech_model->count() > 0) {
+                     buttonBox->button(QDialogButtonBox::Apply)->setEnabled(true);
+                 }
+                 if (button == timeline_full) {
+@@ -158,11 +182,13 @@
+     connect(buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, [this]() { slotProcessSpeech(); });
+     frame_progress->setVisible(false);
+     connect(button_abort, &QToolButton::clicked, this, [this]() {
+-        if (m_speechJob && m_speechJob->state() == QProcess::Running) {
++        if (m_vibeJob) {
++            m_vibeJob->cancel();
++        } else if (m_speechJob && m_speechJob->state() == QProcess::Running) {
+             m_speechJob->kill();
+         }
+     });
+-    if (!KdenliveSettings::speech_system_python()) {
++    if (m_stt && !KdenliveSettings::speech_system_python()) {
+         buttonBox->button(QDialogButtonBox::Apply)->setEnabled(false);
+         connect(m_stt, &SpeechToText::installStatusChanged, this, &SpeechDialog::checkDeps);
+         qDebug() << "SAM INTERFASCE STATUS: " << m_stt->status();
+@@ -276,11 +302,11 @@
+ 
+ void SpeechDialog::slotProcessSpeech()
+ {
+-    if (translate_seamless->isChecked()) {
++    if (!m_vibeJob && translate_seamless->isChecked()) {
+         KdenliveSettings::setSrtSeamlessTranslate(true);
+         KdenliveSettings::setSeamless_input(seamless_in->currentData().toString());
+         KdenliveSettings::setSeamless_output(seamless_out->currentData().toString());
+-    } else {
++    } else if (!m_vibeJob) {
+         KdenliveSettings::setSrtSeamlessTranslate(false);
+     }
+     buttonBox->button(QDialogButtonBox::Apply)->setEnabled(false);
+@@ -366,6 +392,10 @@
+     qApp->processEvents();
+     xmlConsumer.set("terminate_on_pause", 1);
+     xmlConsumer.set("properties", "WAV");
++    if (m_vibeJob) {
++        xmlConsumer.set("ar", 16000);
++        xmlConsumer.set("ac", 1);
++    }
+     producer.set_in_and_out(m_zone.x(), m_zone.y());
+     xmlConsumer.connect(producer);
+ 
+@@ -378,6 +408,14 @@
+     speech_info->setMessageType(KMessageWidget::Information);
+     speech_info->setText(i18n("Starting speech recognition"));
+     qApp->processEvents();
++    if (m_vibeJob) {
++        for (auto *button : m_buttonGroup->buttons()) {
++            button->setEnabled(false);
++        }
++        speech_progress->setRange(0, 0);
++        m_vibeJob->start(audio, m_tmpSrtPath, m_engine == QLatin1String("system-default"));
++        return;
++    }
+     QString modelDirectory = m_stt->modelFolder();
+     m_speechJob = std::make_unique<QProcess>(this);
+     connect(m_speechJob.get(), static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished), this, &SpeechDialog::slotProcessSpeechStatus);
+@@ -451,6 +489,11 @@
+         return;
+     }
+ 
++    importSpeechSubtitles();
++}
++
++void SpeechDialog::importSpeechSubtitles()
++{
+     m_timeline->getSubtitleModel()->importSubtitle(m_tmpSrtPath, m_zone.x(), true);
+     speech_info->setMessageType(KMessageWidget::Positive);
+     speech_info->setText(i18n("Subtitles imported"));
+--- a/src/dialogs/speechdialog.h
++++ b/src/dialogs/speechdialog.h
+@@ -17,6 +17,7 @@
+ 
+ class QAction;
+ class QButtonGroup;
++class VibeSpeechJob;
+ 
+ /**
+  * @class SpeechDialog
+@@ -34,6 +35,8 @@
+ 
+ private:
+     std::unique_ptr<QProcess> m_speechJob;
++    std::unique_ptr<VibeSpeechJob> m_vibeJob;
++    const QString m_engine;
+     const std::shared_ptr<TimelineItemModel> m_timeline;
+     QButtonGroup *m_buttonGroup;
+     QPoint m_zone;
+@@ -44,7 +47,8 @@
+     QAction *m_speechConfig;
+     QAction *m_logAction;
+     QString m_errorLog;
+-    SpeechToText *m_stt;
++    SpeechToText *m_stt{nullptr};
++    void importSpeechSubtitles();
+     void fillSeamlessLanguages();
+ 
+ private Q_SLOTS:
+--- a/src/dialogs/textbasededit.cpp
++++ b/src/dialogs/textbasededit.cpp
+@@ -4,6 +4,7 @@
+ */
+ 
+ #include "textbasededit.h"
++#include "speech/vibespeechjob.h"
+ #include "bin/bin.h"
+ #include "bin/projectclip.h"
+ #include "bin/projectitemmodel.h"
+@@ -935,6 +936,14 @@
+ void TextBasedEdit::updateEngine()
+ {
+     delete m_stt;
++    m_stt = nullptr;
++    if (VibeSpeechJob::isVibeEngine(KdenliveSettings::speechEngine())) {
++        m_modelsMenu->clear();
++        language_box->hide();
++        button_start->setEnabled(false);
++        showMessage(i18n("Vibe is available in Automatic Subtitling. Choose VOSK or Whisper to use the Speech Editor."), KMessageWidget::Information, m_speechConfig);
++        return;
++    }
+     if (KdenliveSettings::speechEngine() == QLatin1String("whisper")) {
+         m_stt = new SpeechToTextWhisper(this);
+         m_modelsMenu->clear();
+@@ -1060,6 +1069,10 @@
+ 
+ void TextBasedEdit::startRecognition()
+ {
++    if (!m_stt) {
++        showMessage(i18n("Vibe is available in Automatic Subtitling. Choose VOSK or Whisper to use the Speech Editor."), KMessageWidget::Information, m_speechConfig);
++        return;
++    }
+     if (m_speechJob && m_speechJob->state() != QProcess::NotRunning) {
+         if (KMessageBox::questionTwoActions(
+                 this, i18n("Another recognition job is already running. It will be aborted in favor of the new job. Do you want to proceed?"), {},
+@@ -1792,5 +1805,5 @@
+     button_delete->setEnabled(enable);
+     button_remove_silence->setEnabled(enable);
+     button_search->setEnabled(enable);
+-    button_start->setEnabled(enableStart);
+-}
++    button_start->setEnabled(enableStart && m_stt);
++}
+--- a/src/kdenlivesettings.kcfg
++++ b/src/kdenlivesettings.kcfg
+@@ -1676,8 +1676,8 @@
+            <default></default>
+        </entry>
+        <entry name="speechEngine" type="String">
+-           <label>Selected model for speech recognition (whisper or vosk)</label>
+-           <default>whisper</default>
++           <label>Selected engine for speech recognition</label>
++           <default>system-default</default>
+        </entry>
+    </group>
+     <group name="Media Browser">
+--- /dev/null
++++ b/src/speech/vibespeechjob.cpp
+@@ -0,0 +1,278 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++
++#include "vibespeechjob.h"
++
++#include <KLocalizedString>
++#include <QFile>
++#include <QFileInfo>
++#include <QHttpMultiPart>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QLocale>
++#include <QNetworkProxy>
++#include <QNetworkReply>
++#include <QRegularExpression>
++#include <QSaveFile>
++#include <QStandardPaths>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++bool readableModel(const QString &path)
++{
++    const QFileInfo info(path);
++    return info.isAbsolute() && info.isFile() && info.isReadable();
++}
++
++QJsonObject vibeStore()
++{
++    const QString data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
++    QFile file(data + u"/github.com.thewh1teagle.vibe/app_config.json"_s);
++    return file.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(file.readAll()).object() : QJsonObject{};
++}
++
++QHttpPart field(const QByteArray &name, const QByteArray &value)
++{
++    QHttpPart part;
++    part.setRawHeader("Content-Disposition", "form-data; name=\"" + name + "\"");
++    part.setBody(value);
++    return part;
++}
++}
++
++VibeSpeechJob::VibeSpeechJob(QObject *parent)
++    : QObject(parent)
++{
++    m_network.setProxy(QNetworkProxy::NoProxy);
++    m_timer.setSingleShot(true);
++    connect(&m_timer, &QTimer::timeout, this, [this]() {
++        complete(m_resolving ? i18n("System Settings, Partners did not answer.") : i18n("Vibe's speech server did not become ready."));
++    });
++    connect(&m_resolver, &QProcess::finished, this, &VibeSpeechJob::resolved);
++    connect(&m_resolver, &QProcess::errorOccurred, this, [this]() { complete(i18n("Could not read the speech settings from System Settings, Partners.")); });
++    connect(&m_server, &QProcess::readyReadStandardOutput, this, &VibeSpeechJob::readServerOutput);
++    connect(&m_server, &QProcess::errorOccurred, this, [this]() { complete(i18n("Could not start Vibe's speech server: %1", m_server.errorString())); });
++    connect(&m_server, &QProcess::finished, this, [this]() {
++        static const QRegularExpression terminalFormatting(u"\\x{1b}\\[[0-?]*[ -/]*[@-~]"_s);
++        const QString detail = QString::fromUtf8(m_server.readAllStandardError().right(4096)).remove(terminalFormatting).trimmed().section(u'\n', -1);
++        complete(detail.isEmpty() ? i18n("Vibe's speech server stopped.") : i18n("Vibe's speech server stopped: %1", detail));
++    });
++}
++
++VibeSpeechJob::~VibeSpeechJob()
++{
++    stop();
++}
++
++bool VibeSpeechJob::isVibeEngine(const QString &engine)
++{
++    return engine == "vibe"_L1 || engine == "system-default"_L1;
++}
++
++bool VibeSpeechJob::isRunning() const
++{
++    return m_running;
++}
++
++void VibeSpeechJob::start(const QString &audioPath, const QString &subtitlePath, bool systemDefault)
++{
++    if (m_running) {
++        return;
++    }
++    m_running = true;
++    m_audioPath = audioPath;
++    m_subtitlePath = subtitlePath;
++    m_serverProgram = QStandardPaths::findExecutable(u"vibe-server"_s);
++    if (m_serverProgram.isEmpty()) {
++        complete(i18n("Vibe is missing. Install Vibe from Stereo APTus."));
++        return;
++    }
++
++    if (systemDefault) {
++        const QString partners = QStandardPaths::findExecutable(u"sparky-stereo-partners"_s);
++        if (partners.isEmpty()) {
++            complete(i18n("System Settings, Partners is missing. Install it to use the system default."));
++            return;
++        }
++        m_resolving = true;
++        Q_EMIT phaseChanged(i18n("Reading the speech settings from Partners"));
++        m_timer.start(12000);
++        m_resolver.start(partners, {u"resolve"_s, u"--kind"_s, u"speech"_s, u"--program"_s, u"org.kde.kdenlive"_s});
++    } else {
++        startServer({}, QProcessEnvironment::systemEnvironment());
++    }
++}
++
++void VibeSpeechJob::resolved(int exitCode, QProcess::ExitStatus status)
++{
++    if (!m_running) {
++        return;
++    }
++    m_timer.stop();
++    m_resolving = false;
++    QString engine;
++    QString model;
++    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
++    static const QRegularExpression environmentName(u"^[A-Z_][A-Z0-9_]*$"_s);
++    const auto lines = QString::fromUtf8(m_resolver.readAllStandardOutput()).split(u'\n');
++    for (const QString &line : lines) {
++        const qsizetype separator = line.indexOf(u'=');
++        if (separator <= 0) {
++            continue;
++        }
++        const QString key = line.left(separator);
++        const QString value = line.mid(separator + 1);
++        if (key == "PARTNER_INTERFACE"_L1) {
++            engine = value;
++        } else if (key == "PARTNER_MODEL"_L1) {
++            model = value;
++        } else if (!key.startsWith("PARTNER_"_L1) && environmentName.match(key).hasMatch()) {
++            environment.insert(key, value);
++        }
++    }
++    if (status != QProcess::NormalExit || (exitCode != 0 && (exitCode != 1 || !model.isEmpty()))) {
++        complete(i18n("Could not use the speech settings from Partners: %1", QString::fromUtf8(m_resolver.readAllStandardError()).trimmed()));
++        return;
++    }
++    if (engine != "vibe-local"_L1) {
++        complete(i18n("Select Vibe for speech in System Settings, Partners."));
++        return;
++    }
++    if (!model.isEmpty() && !readableModel(model)) {
++        complete(i18n("Kdenlive cannot read the speech model selected in Partners: %1", model));
++        return;
++    }
++    startServer(model, environment);
++}
++
++void VibeSpeechJob::startServer(const QString &model, const QProcessEnvironment &environment)
++{
++    const QJsonObject settings = vibeStore();
++    const QString selectedModel = model.isEmpty() ? settings.value("model.path"_L1).toString() : model;
++    if (!readableModel(selectedModel)) {
++        complete(i18n("Select an installed model in Vibe. Its large-v3-turbo model is %1. Vibe shows download sizes before you choose.",
++                      QLocale().formattedDataSize(1624555275)));
++        return;
++    }
++    m_language = settings.value("transcription.modelOptions"_L1).toObject().value("lang"_L1).toString().trimmed();
++    if (m_language.compare("auto"_L1, Qt::CaseInsensitive) == 0) {
++        m_language.clear();
++    }
++    m_serverOutput.clear();
++    m_server.setProcessEnvironment(environment);
++    Q_EMIT phaseChanged(i18n("Starting Vibe's speech server"));
++    m_timer.start(180000);
++    m_server.start(m_serverProgram, {u"serve"_s, selectedModel, u"--host"_s, u"127.0.0.1"_s, u"--port"_s, u"0"_s});
++}
++
++void VibeSpeechJob::readServerOutput()
++{
++    const QByteArray output = m_server.readAllStandardOutput();
++    if (!m_running || m_reply) {
++        return;
++    }
++    m_serverOutput.append(output);
++    for (qsizetype end = m_serverOutput.indexOf('\n'); end >= 0; end = m_serverOutput.indexOf('\n')) {
++        const QJsonObject ready = QJsonDocument::fromJson(m_serverOutput.left(end)).object();
++        m_serverOutput.remove(0, end + 1);
++        const int port = ready.value("port"_L1).toInt();
++        if (ready.value("status"_L1).toString() == "ready"_L1 && port > 0 && port <= 65535) {
++            m_timer.stop();
++            postAudio(port);
++            return;
++        }
++    }
++    if (m_serverOutput.size() > 65536) {
++        complete(i18n("Vibe's speech server did not report a valid address."));
++    }
++}
++
++void VibeSpeechJob::postAudio(int port)
++{
++    auto *multipart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
++    auto *file = new QFile(m_audioPath, multipart);
++    if (!file->open(QIODevice::ReadOnly)) {
++        delete multipart;
++        complete(i18n("Audio export failed"));
++        return;
++    }
++    QHttpPart audio;
++    audio.setRawHeader("Content-Disposition", "form-data; name=\"file\"; filename=\"speech.wav\"");
++    audio.setRawHeader("Content-Type", "audio/wav");
++    audio.setBodyDevice(file);
++    multipart->append(audio);
++    multipart->append(field("response_format", "srt"));
++    // In Vibe 3.3.5 detect_language requests detection without transcription.
++    if (!m_language.isEmpty()) {
++        multipart->append(field("language", m_language.toUtf8()));
++    }
++
++    QNetworkRequest request(QUrl(u"http://127.0.0.1:%1/v1/audio/transcriptions"_s.arg(port)));
++    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
++    m_reply = m_network.post(request, multipart);
++    multipart->setParent(m_reply);
++    Q_EMIT phaseChanged(i18n("Recognizing speech with Vibe"));
++    connect(m_reply.data(), &QNetworkReply::finished, this, &VibeSpeechJob::replyFinished);
++}
++
++void VibeSpeechJob::replyFinished()
++{
++    const QByteArray result = m_reply->readAll();
++    const int status = m_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
++    if (m_reply->error() != QNetworkReply::NoError || status != 200) {
++        const QJsonObject error = QJsonDocument::fromJson(result).object().value("error"_L1).toObject();
++        const QString message = error.value("message"_L1).toString();
++        complete(i18n("Vibe could not recognize the speech: %1", message.isEmpty() ? m_reply->errorString() : message));
++        return;
++    }
++    if (!result.contains(" --> ")) {
++        complete(i18n("Vibe returned no timed subtitles."));
++        return;
++    }
++    QSaveFile subtitles(m_subtitlePath);
++    if (!subtitles.open(QIODevice::WriteOnly) || subtitles.write(result) != result.size() || !subtitles.commit()) {
++        complete(i18n("Could not save Vibe's subtitles: %1", subtitles.errorString()));
++        return;
++    }
++    complete({});
++}
++
++void VibeSpeechJob::cancel()
++{
++    if (m_running) {
++        complete(i18n("Speech recognition aborted."));
++    }
++}
++
++void VibeSpeechJob::complete(const QString &error)
++{
++    if (!m_running) {
++        return;
++    }
++    stop();
++    Q_EMIT finished(error);
++}
++
++void VibeSpeechJob::stop()
++{
++    m_running = false;
++    m_resolving = false;
++    m_timer.stop();
++    if (m_reply) {
++        m_reply->disconnect(this);
++        m_reply->abort();
++        m_reply->deleteLater();
++        m_reply.clear();
++    }
++    for (auto *process : {&m_resolver, &m_server}) {
++        if (process->state() != QProcess::NotRunning) {
++            process->terminate();
++            if (!process->waitForFinished(500)) {
++                process->kill();
++                process->waitForFinished(500);
++            }
++        }
++    }
++}
+--- /dev/null
++++ b/src/speech/vibespeechjob.h
+@@ -0,0 +1,51 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++
++#pragma once
++
++#include <QNetworkAccessManager>
++#include <QPointer>
++#include <QProcess>
++#include <QTimer>
++
++class QNetworkReply;
++
++class VibeSpeechJob : public QObject
++{
++    Q_OBJECT
++
++public:
++    explicit VibeSpeechJob(QObject *parent = nullptr);
++    ~VibeSpeechJob() override;
++    void start(const QString &audioPath, const QString &subtitlePath, bool systemDefault);
++    void cancel();
++    bool isRunning() const;
++
++    static bool isVibeEngine(const QString &engine);
++
++Q_SIGNALS:
++    void phaseChanged(const QString &text);
++    void finished(const QString &error);
++
++private:
++    void resolved(int exitCode, QProcess::ExitStatus status);
++    void startServer(const QString &model, const QProcessEnvironment &environment);
++    void readServerOutput();
++    void postAudio(int port);
++    void replyFinished();
++    void complete(const QString &error);
++    void stop();
++
++    QProcess m_resolver;
++    QProcess m_server;
++    QTimer m_timer;
++    QNetworkAccessManager m_network;
++    QPointer<QNetworkReply> m_reply;
++    QByteArray m_serverOutput;
++    QString m_serverProgram;
++    QString m_audioPath;
++    QString m_subtitlePath;
++    QString m_language;
++    bool m_running{false};
++    bool m_resolving{false};
++};
