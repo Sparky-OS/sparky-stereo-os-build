@@ -18,7 +18,9 @@ rate, among the formats a known machine's caveat names (sparky-stereo-hardware's
 controls, a governing control before the one it governs); a saved setting that is inactive is left for when it is active; \fBwatch\fR does so whenever a camera appears, and is what the user service sparky-stereo-camera.service runs.
 \fBpacking\fR keeps how a two-lens camera packs its two pictures, by the stereo layer's input list (\fBpacking NAME list\fR prints it).
 .PP
-Output is JSON. Exit status 0 is success, 1 a failure the command says, 2 a wrong command line, 3 no default camera.
+A NAME that PipeWire does not list is asked for again for 3 seconds before the command says it is not present.
+.PP
+Output is JSON. Exit status 0 is success, 1 a failure the command says (a camera not present or not answering among them), 2 a wrong command line, 3 no default camera.
 .SH ENVIRONMENT
 .TP
 SPARKY_STEREO_CAMERA_SYSFS

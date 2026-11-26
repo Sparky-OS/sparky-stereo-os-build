@@ -6,6 +6,9 @@ sparky-stereo-camera 0.1.3 (2026-11-26)
   * A control's default outside its own range (the A10's sharpness, 120 for 0 to 100) is taken as the driver holds it, so a reset no longer saves it.
   * The page says why a control is not kept (moves the camera, changes by itself, no range, held by another program), follows a governing control at once, and keeps a refused mode or reset on screen; five packing names missing since 0.1.2 now come translated from the stereo layer's catalogues.
   * The user service knows a camera plugged in again by PipeWire's object.serial, which is never given twice: a camera unplugged and plugged in again within one pass got its old node id back and was not applied.
+  * An entry of 0.1.0 to 0.1.2 keeps the values of controls that are inactive now (review of 2026-11-26, from the A10: the person's manual temperature 3000 was removed as "saved while inactive", which nobody measured): an old store cannot tell the person's value from a moving reading, so it stays and waits. A waiting value is set when its control is active again, at plug-in and when the person switches the governing control on the page or with the command. The journal says only what is known.
+  * A camera asked for by name that PipeWire does not list is asked for again for 3 seconds, then said with exit status 1 ("No camera called NAME is present."); a listed camera whose device opens and does not answer is said by every verb, never answered with an empty list or an empty mode; the user service tries such a camera again at its next pass.
+  * The page's sentence about other programs is true again: programs built on Qt Multimedia and programs that ask PipeWire for a camera follow the default camera and choose their own picture size and frame rate (ten languages).
 
 sparky-stereo-camera 0.1.1 (2026-11-20)
   * Translate the System Settings search keywords (ORDER 46).

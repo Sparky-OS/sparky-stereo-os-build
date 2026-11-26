@@ -164,6 +164,10 @@ void CameraKcm::readDetails()
                 m_formats.append(QVariantMap{{QStringLiteral("fourcc"), f.fourcc}, {QStringLiteral("description"), formatLabel(f.fourcc, f.description)}, {QStringLiteral("compressed"), f.compressed}, {QStringLiteral("sizes"), sizes}});
             }
             const Mode mode = dev.currentMode();
+            if (dev.lastError()) {
+                // listed by PipeWire, its device opened and does not answer: going away or still starting, said on the page
+                m_modeError = V4l2Camera::explain({false, dev.lastError(), QStringLiteral("VIDIOC_G_FMT")}, info.node.description);
+            }
             m_mode = {{QStringLiteral("fourcc"), mode.fourcc}, {QStringLiteral("width"), mode.size.width}, {QStringLiteral("height"), mode.size.height}, {QStringLiteral("fps"), mode.fps}};
             m_controlFlags.clear();
             for (const Control &c : dev.controls()) {
@@ -262,6 +266,16 @@ QString CameraKcm::setControl(int controlId, double value)
     }
     m_touched.insert(m_current);
     setNeedsSave(true);
+    // a saved value that waited for this change (the temperature once automatic white balance is off) is set on the camera now
+    QSet<quint32> wasInactive;
+    for (auto it = m_controlFlags.cbegin(); it != m_controlFlags.cend(); ++it) {
+        if (it.value() & V4L2_CTRL_FLAG_INACTIVE) {
+            wasInactive.insert(it.key());
+        }
+    }
+    for (const QString &line : applyWaiting(dev, loadChoice(info.key), wasInactive)) {
+        qInfo().noquote() << line;
+    }
     // A governing control changes whether others are in use (automatic white balance and its temperature; the driver may say
     // so with V4L2_CTRL_FLAG_UPDATE, uvcvideo only through the others' INACTIVE flag): the page follows when another control's
     // flags changed. A value that only moved (a slider being dragged) does not rebuild the list under the pointer.

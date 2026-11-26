@@ -243,12 +243,17 @@ quint32 V4l2Camera::fourccCode(const QString &text)
 QList<Format> V4l2Camera::formats()
 {
     QList<Format> result;
+    m_error = 0;
     for (quint32 i = 0;; ++i) {
         v4l2_fmtdesc d;
         std::memset(&d, 0, sizeof d);
         d.index = i;
         d.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (xioctl(m_fd, VIDIOC_ENUM_FMT, &d) < 0) {
+            // EINVAL past the last format is the end of the list (VIDIOC_ENUM_FMT); anything else is the device not answering
+            if (errno != EINVAL) {
+                m_error = errno;
+            }
             break;
         }
         Format f;
@@ -324,12 +329,15 @@ QList<ModeCandidate> V4l2Camera::modeCandidates()
 Mode V4l2Camera::currentMode()
 {
     Mode mode;
+    m_error = 0;
     v4l2_format f;
     std::memset(&f, 0, sizeof f);
     f.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (xioctl(m_fd, VIDIOC_G_FMT, &f) == 0) {
         mode.fourcc = fourccText(f.fmt.pix.pixelformat);
         mode.size = {int(f.fmt.pix.width), int(f.fmt.pix.height)};
+    } else {
+        m_error = errno;
     }
     v4l2_streamparm p;
     std::memset(&p, 0, sizeof p);
@@ -431,7 +439,15 @@ QList<Control> V4l2Camera::controls()
     v4l2_query_ext_ctrl q;
     std::memset(&q, 0, sizeof q);
     q.id = V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
-    while (xioctl(m_fd, VIDIOC_QUERY_EXT_CTRL, &q) == 0) {
+    m_error = 0;
+    while (true) {
+        if (xioctl(m_fd, VIDIOC_QUERY_EXT_CTRL, &q) < 0) {
+            // EINVAL after the last control is the end of the list (VIDIOC_QUERYCTRL); anything else is the device not answering
+            if (errno != EINVAL) {
+                m_error = errno;
+            }
+            break;
+        }
         const quint32 nextId = q.id | V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
         // DISABLED: "permanently disabled and should be ignored by the application"
         if (q.type != V4L2_CTRL_TYPE_CTRL_CLASS && !(q.flags & V4L2_CTRL_FLAG_DISABLED)) {

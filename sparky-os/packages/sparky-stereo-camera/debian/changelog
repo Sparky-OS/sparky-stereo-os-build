@@ -14,6 +14,15 @@ sparky-stereo-camera (0.1.3) unstable; urgency=medium
     packing names from the stereo layer's catalogues.
   * Know a camera plugged in again by PipeWire's object.serial: a node id
     is given again, so a quick replug was not applied.
+  * An old store keeps the values of controls that are inactive now: they
+    may be the person's own; they wait and are set when the control is
+    active again, also when the person switches its governing control.
+    Journal lines say only what is known.
+  * A camera not found is said (exit 1) after asking PipeWire again for 3 s;
+    a listed camera whose device does not answer is said, never answered
+    with an empty list; the user service tries it again at its next pass.
+  * The page says that Qt Multimedia and PipeWire programs follow the
+    default camera and choose their own size and frame rate.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 26 Nov 2026 08:59:00 +0000
 

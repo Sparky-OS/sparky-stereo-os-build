@@ -130,6 +130,10 @@ public:
     QString driver() const { return m_driver; }
     QString busInfo() const { return m_bus; }
     bool canCapture() const { return m_capture; }
+    // The errno that ended the last enumeration (formats, controls) or reading of the mode early, 0 when it ended as the API ends
+    // a list (EINVAL past the last entry). A device that is going away or still starting answers ENODEV or EIO: an empty list
+    // from it is not "this camera has nothing" and is said, never printed as an empty answer.
+    int lastError() const { return m_error; }
 
     QList<Format> formats();
     // The frame rates for one size, as numbers of frames a second; a stepwise range is listed by its limits
@@ -178,6 +182,7 @@ private:
 
     int m_fd = -1;
     int m_openError = 0;
+    int m_error = 0;
     QString m_path;
     QString m_card;
     QString m_driver;

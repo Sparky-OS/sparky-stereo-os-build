@@ -6,12 +6,14 @@
 #include <KLocalizedString>
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
 #include <QSet>
+#include <QThread>
 
 #include <cmath>
 #include <linux/videodev2.h>
@@ -44,15 +46,24 @@ QList<CameraInfo> Sparky::Camera::listCameras(QString *error)
     return result;
 }
 
-CameraInfo Sparky::Camera::findCamera(const QString &nodeName, QString *error)
+CameraInfo Sparky::Camera::findCamera(const QString &nodeName, QString *error, int waitMs)
 {
-    for (const CameraInfo &c : listCameras(error)) {
-        if (c.node.name == nodeName) {
-            return c;
+    QElapsedTimer waited;
+    waited.start();
+    while (true) {
+        error->clear();
+        for (const CameraInfo &c : listCameras(error)) {
+            if (c.node.name == nodeName) {
+                return c;
+            }
         }
+        if (waited.elapsed() >= waitMs) {
+            break;
+        }
+        QThread::msleep(250);
     }
     if (error->isEmpty()) {
-        *error = i18n("No camera is called %1.", nodeName);
+        *error = i18n("No camera called %1 is present.", nodeName);
     }
     return {};
 }
@@ -88,6 +99,34 @@ QString modeText(const Mode &m)
     return QStringLiteral("%1 %2x%3 %4 fps").arg(m.fourcc).arg(m.size.width).arg(m.size.height).arg(m.fps);
 }
 
+// What the journal says about a control that is not a setting: only the rule's answer, in words (keepRule)
+QString keepWords(Keep keep)
+{
+    switch (keep) {
+    case Keep::Motion:
+        return QStringLiteral("a motion control (relative or speed)");
+    case Keep::WriteOnly:
+        return QStringLiteral("write-only");
+    case Keep::ReadOnly:
+        return QStringLiteral("read-only");
+    case Keep::Volatile:
+        return QStringLiteral("it changes by itself (volatile)");
+    case Keep::Action:
+        return QStringLiteral("an action (execute on write)");
+    case Keep::NoRange:
+        return QStringLiteral("it has no range");
+    case Keep::Payload:
+        return QStringLiteral("an array or compound value");
+    case Keep::NotEditable:
+        return QStringLiteral("a kind this page cannot change");
+    case Keep::Button:
+        return QStringLiteral("a button");
+    case Keep::Setting:
+        break;
+    }
+    return QStringLiteral("a setting");
+}
+
 bool sameMode(const Mode &a, const Mode &b)
 {
     return a.fourcc == b.fourcc && a.size == b.size && (a.fps <= 0 || b.fps <= 0 || std::abs(a.fps - b.fps) < 0.01);
@@ -107,6 +146,14 @@ ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
         report.messages << V4l2Camera::explain({false, device.openError(), QStringLiteral("open")}, camera.node.description);
         return report;
     }
+    // A camera PipeWire still lists can be going away or still starting: its device opens and does not answer (ENODEV, EIO).
+    // Nothing is set and nothing is cleaned then; the unit tries again at its next pass (reached stays false).
+    device.currentMode();
+    if (device.lastError()) {
+        report.messages << V4l2Camera::explain({false, device.lastError(), QStringLiteral("VIDIOC_G_FMT")}, camera.node.description);
+        return report;
+    }
+    report.reached = true;
     const QString name = camera.node.description;
     const bool oldEntry = choice.exists && choice.version < StoreVersion;
     bool refused = false;
@@ -152,11 +199,13 @@ ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
             case V4l2Camera::SetOutcome::NotSetting:
                 // the camera says this control is not a setting (a movement, an action, read-only, without a range...): never kept
                 clearProblem(key);
+                report.log << QStringLiteral("camera %1: removed the saved value %2 of %3: not a setting: %4")
+                                  .arg(camera.node.name)
+                                  .arg(choice.controls.value(o.id))
+                                  .arg(controlName, keepWords(keepRule(*o.control)));
                 choice.controls.remove(o.id);
                 choice.controlNames.remove(o.id);
                 cleaned = true;
-                report.log << QStringLiteral("camera %1: removed the saved value of %2 (%3): not a setting")
-                                  .arg(camera.node.name, controlName, keepName(keepRule(*o.control)));
                 break;
             case V4l2Camera::SetOutcome::Inactive:
                 // waiting for its governing control: not a failure (an earlier version may have kept a problem for it)
@@ -199,18 +248,13 @@ ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
         if (refused) {
             report.log << QStringLiteral("camera %1: the entry written by an earlier version is cleaned at the next apply without a refusal").arg(camera.node.name);
         } else {
-            // 0.1.0 to 0.1.2 saved every control whose reading differed from its default. A value of a control that is still inactive
-            // once every saved governing control has its value was read while that control was not in use: never the person's setting.
-            for (quint32 id : std::as_const(stillInactive)) {
-                report.log << QStringLiteral("camera %1: removed the saved value %2 of %3: it was saved while the control was inactive")
-                                  .arg(camera.node.name)
-                                  .arg(choice.controls.value(id))
-                                  .arg(choice.controlNames.value(id, QString::number(id)));
-                choice.controls.remove(id);
-                choice.controlNames.remove(id);
-            }
+            // 0.1.0 to 0.1.2 saved every control whose reading differed from its default. An old value of a control that is inactive
+            // now cannot be told apart: the person's own manual value (set while it was active: the A10's white balance temperature
+            // 3000) or a reading the automatic mode moved (the iMac's 5537). It may be the person's choice, so it stays and waits, as
+            // 0.1.3 keeps a value saved while the control was active (review of 2026-11-26). A value equal to what the camera holds
+            // as its default is removed: 0.1.3 never saves one, and the camera holds it anyway.
             for (quint32 id : std::as_const(atDefault)) {
-                report.log << QStringLiteral("camera %1: removed the saved value %2 of %3: it is what the camera holds as its default")
+                report.log << QStringLiteral("camera %1: removed the saved value %2 of %3: equal to the camera's default")
                                   .arg(camera.node.name)
                                   .arg(choice.controls.value(id))
                                   .arg(choice.controlNames.value(id, QString::number(id)));
@@ -220,15 +264,40 @@ ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
             choice.version = StoreVersion;
             cleaned = true;
         }
-    } else {
-        for (quint32 id : std::as_const(stillInactive)) {
-            report.log << QStringLiteral("camera %1: %2 is inactive now; its saved value waits for it").arg(camera.node.name, choice.controlNames.value(id, QString::number(id)));
-        }
+    }
+    for (quint32 id : std::as_const(stillInactive)) {
+        report.log << QStringLiteral("camera %1: %2 is inactive now; its saved value %3 waits for it")
+                          .arg(camera.node.name, choice.controlNames.value(id, QString::number(id)))
+                          .arg(choice.controls.value(id));
     }
     if (cleaned && choice.exists) {
         saveChoice(camera.key, choice);
     }
     return report;
+}
+
+QStringList Sparky::Camera::applyWaiting(V4l2Camera &device, const CameraChoice &stored, const QSet<quint32> &wasInactive)
+{
+    QStringList log;
+    QList<QPair<quint32, qint64>> values;
+    for (auto it = stored.controls.cbegin(); it != stored.controls.cend(); ++it) {
+        if (!wasInactive.contains(it.key())) {
+            continue;
+        }
+        const std::optional<Control> c = device.control(it.key());
+        if (c && isSetting(*c) && !c->inactive && (!c->valueKnown || c->value != it.value())) {
+            values.append({it.key(), it.value()});
+        }
+    }
+    for (const V4l2Camera::SetOutcome &o : device.setControls(values)) {
+        const QString name = o.control ? o.control->name : stored.controlNames.value(o.id, QString::number(o.id));
+        if (o.state == V4l2Camera::SetOutcome::Applied) {
+            log << QStringLiteral("%1 is active again: its saved value %2 is set").arg(name).arg(stored.controls.value(o.id));
+        } else if (o.state == V4l2Camera::SetOutcome::Refused) {
+            log << QStringLiteral("%1 is active again: its saved value %2 was refused: %3").arg(name).arg(stored.controls.value(o.id)).arg(o.result.error);
+        }
+    }
+    return log;
 }
 
 CameraChoice Sparky::Camera::choiceFromDevice(V4l2Camera &device, const CameraChoice &stored, bool withMode)

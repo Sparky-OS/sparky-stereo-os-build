@@ -20,10 +20,6 @@ T = {
  "%1 ist keine V4L2-Kamera, daher sind ihre Regler hier nicht verfügbar.", "%1 no es una cámara V4L2, así que sus controles no están disponibles aquí.", "%1 n’est pas une caméra V4L2 : ses réglages ne sont pas disponibles ici.",
  "%1 は V4L2 カメラではないため、ここでは調整項目を使えません。", "%1은(는) V4L2 카메라가 아니므로 여기서 조절 항목을 쓸 수 없습니다.", "%1 nie jest kamerą V4L2, więc jej regulacje nie są tu dostępne.",
  "%1 não é uma câmera V4L2, então seus controles não estão disponíveis aqui.", "%1 不是 V4L2 摄像头，因此这里无法使用它的调节项。", "%1 不是 V4L2 相機，因此這裡無法使用它的調整項目。"),
-"No camera is called %1.": (
- "Es gibt keine Kamera namens %1.", "No hay ninguna cámara llamada %1.", "Aucune caméra ne s’appelle %1.",
- "%1 という名前のカメラはありません。", "%1(이)라는 카메라가 없습니다.", "Nie ma kamery o nazwie %1.",
- "Nenhuma câmera se chama %1.", "没有名为 %1 的摄像头。", "沒有名為 %1 的相機。"),
 "%1: the saved size and format were not applied. ": (
  "%1: Die gespeicherte Größe und das Format wurden nicht angewendet. ", "%1: no se aplicaron el tamaño y el formato guardados. ", "%1 : la taille et le format enregistrés n’ont pas été appliqués. ",
  "%1: 保存したサイズと形式は適用されませんでした。", "%1: 저장된 크기와 형식을 적용하지 못했습니다. ", "%1: zapisany rozmiar i format nie zostały zastosowane. ",
@@ -125,16 +121,6 @@ T = {
  "Programme, die eine Kamera anfordern, ohne eine zu wählen, bekommen diese Kamera.", "Los programas que piden una cámara sin elegir ninguna reciben esta cámara.", "Les programmes qui demandent une caméra sans en choisir une reçoivent celle-ci.",
  "カメラを指定せずに要求したプログラムには、このカメラが使われます。", "카메라를 고르지 않고 요청하는 프로그램은 이 카메라를 받습니다.", "Programy, które proszą o kamerę bez wybierania jej, dostają tę kamerę.",
  "Os programas que pedem uma câmera sem escolher uma recebem esta câmera.", "未指定摄像头就请求摄像头的程序会使用这个摄像头。", "未指定相機就請求相機的程式會使用這個相機。"),
-"A program in which you chose a camera keeps your choice. Programs that open the camera themselves, such as those built on Qt Multimedia, do not follow this default yet.": (
- "Ein Programm, in dem Sie eine Kamera gewählt haben, behält Ihre Wahl. Programme, die die Kamera selbst öffnen, etwa mit Qt Multimedia, folgen dieser Standardkamera noch nicht.",
- "Un programa en el que eligió una cámara conserva su elección. Los programas que abren la cámara por sí mismos, como los basados en Qt Multimedia, todavía no siguen esta cámara predeterminada.",
- "Un programme dans lequel vous avez choisi une caméra garde votre choix. Les programmes qui ouvrent eux-mêmes la caméra, comme ceux construits sur Qt Multimedia, ne suivent pas encore cette caméra par défaut.",
- "プログラム内でカメラを選んだ場合は、その選択が保たれます。Qt Multimedia を使うプログラムなど、カメラを自分で開くプログラムは、まだこの既定のカメラに従いません。",
- "프로그램에서 직접 카메라를 고른 경우 그 선택이 유지됩니다. Qt Multimedia를 쓰는 프로그램처럼 카메라를 직접 여는 프로그램은 아직 이 기본 카메라를 따르지 않습니다.",
- "Program, w którym wybrano kamerę, zachowuje ten wybór. Programy otwierające kamerę samodzielnie, na przykład oparte na Qt Multimedia, jeszcze nie stosują tej kamery domyślnej.",
- "Um programa em que você escolheu uma câmera mantém a sua escolha. Programas que abrem a câmera por conta própria, como os baseados no Qt Multimedia, ainda não seguem esta câmera padrão.",
- "在某个程序中选择过摄像头时，该程序保留您的选择。自行打开摄像头的程序（例如基于 Qt Multimedia 的程序）暂时不会遵循此默认摄像头。",
- "在某個程式中選擇過相機時，該程式會保留您的選擇。自行開啟相機的程式（例如以 Qt Multimedia 為基礎的程式）目前尚不會遵循此預設相機。"),
 "Settings for:": ("Einstellungen für:", "Ajustes de:", "Réglages de :", "設定の対象:", "설정 대상:", "Ustawienia dla:", "Configurações de:", "设置对象：", "設定對象："),
 "This preview cannot show that packing. Other programs can.": (
  "Diese Vorschau kann diese Anordnung nicht zeigen. Andere Programme können es.", "Esta vista previa no puede mostrar esa disposición. Otros programas sí.", "Cet aperçu ne peut pas montrer cet agencement. D’autres programmes le peuvent.",
@@ -203,4 +189,27 @@ T = {
  "Kamera, której nie ustawiono, zaczyna od największego obrazu i przy tym rozmiarze od największej liczby klatek na sekundę.",
  "Uma câmera que você não configurou começa com a sua maior imagem e, nesse tamanho, com o maior número de quadros por segundo.",
  "未设置过的摄像头以最大的画面启动，并在该尺寸下使用最高的每秒帧数。", "未設定過的相機以最大的畫面啟動，並在該尺寸下使用最高的每秒幀數。"),
+"No camera called %1 is present.": (
+ "Es ist keine Kamera namens %1 vorhanden.", "No está presente ninguna cámara llamada %1.", "Aucune caméra nommée %1 n’est présente.",
+ "%1 という名前のカメラは接続されていません。", "%1(이)라는 카메라가 연결되어 있지 않습니다.", "Nie ma podłączonej kamery o nazwie %1.",
+ "Nenhuma câmera chamada %1 está presente.", "当前没有名为 %1 的摄像头。", "目前沒有名為 %1 的相機。"),
+"%1 lists no picture format. It may be starting up or going away: try again, or plug it in again.": (
+ "%1 nennt kein Bildformat. Die Kamera startet vielleicht gerade oder wird getrennt: Versuchen Sie es erneut oder schließen Sie sie erneut an.",
+ "%1 no indica ningún formato de imagen. Puede que se esté iniciando o desconectando: inténtelo de nuevo o vuelva a conectarla.",
+ "%1 n’indique aucun format d’image. Elle démarre peut-être ou est en train de se déconnecter : réessayez, ou rebranchez-la.",
+ "%1 は画像形式を示していません。起動中か取り外し中の可能性があります。もう一度試すか、接続し直してください。",
+ "%1이(가) 영상 형식을 알려 주지 않습니다. 시작 중이거나 연결이 끊기는 중일 수 있습니다. 다시 시도하거나 다시 연결하세요.",
+ "%1 nie podaje żadnego formatu obrazu. Może się właśnie uruchamiać lub odłączać: spróbuj ponownie albo podłącz ją ponownie.",
+ "%1 não informa nenhum formato de imagem. Ela pode estar iniciando ou sendo desconectada: tente de novo ou conecte-a outra vez.",
+ "%1 没有提供任何画面格式。它可能正在启动或正在断开：请重试，或重新插入。", "%1 沒有提供任何畫面格式。它可能正在啟動或正在中斷連線：請重試，或重新插入。"),
+"Programs built on Qt Multimedia, and programs that ask PipeWire for a camera, follow this default camera; they choose their own picture size and frame rate. A program in which you chose a camera keeps your choice.": (
+ "Programme mit Qt Multimedia und Programme, die PipeWire nach einer Kamera fragen, folgen dieser Standardkamera; Bildgröße und Bilder pro Sekunde wählen sie selbst. Ein Programm, in dem Sie eine Kamera gewählt haben, behält Ihre Wahl.",
+ "Los programas basados en Qt Multimedia y los que piden una cámara a PipeWire siguen esta cámara predeterminada; eligen ellos mismos el tamaño de imagen y los fotogramas por segundo. Un programa en el que eligió una cámara conserva su elección.",
+ "Les programmes construits sur Qt Multimedia et ceux qui demandent une caméra à PipeWire suivent cette caméra par défaut ; ils choisissent eux-mêmes la taille de l’image et le nombre d’images par seconde. Un programme dans lequel vous avez choisi une caméra garde votre choix.",
+ "Qt Multimedia を使うプログラムと、PipeWire にカメラを求めるプログラムは、この既定のカメラに従います。画像のサイズと毎秒フレーム数はプログラムが自分で選びます。プログラム内でカメラを選んだ場合は、その選択が保たれます。",
+ "Qt Multimedia를 쓰는 프로그램과 PipeWire에 카메라를 요청하는 프로그램은 이 기본 카메라를 따릅니다. 화면 크기와 초당 프레임 수는 프로그램이 직접 고릅니다. 프로그램에서 직접 카메라를 고른 경우 그 선택이 유지됩니다.",
+ "Programy oparte na Qt Multimedia oraz programy, które proszą PipeWire o kamerę, stosują tę kamerę domyślną; rozmiar obrazu i liczbę klatek na sekundę wybierają same. Program, w którym wybrano kamerę, zachowuje ten wybór.",
+ "Programas baseados no Qt Multimedia e programas que pedem uma câmera ao PipeWire seguem esta câmera padrão; eles escolhem o próprio tamanho de imagem e os quadros por segundo. Um programa em que você escolheu uma câmera mantém a sua escolha.",
+ "基于 Qt Multimedia 的程序以及向 PipeWire 请求摄像头的程序会遵循此默认摄像头；画面尺寸和每秒帧数由程序自行选择。在某个程序中选择过摄像头时，该程序保留您的选择。",
+ "以 Qt Multimedia 為基礎的程式，以及向 PipeWire 要求相機的程式，會遵循此預設相機；畫面尺寸與每秒幀數由程式自行選擇。在某個程式中選擇過相機時，該程式會保留您的選擇。"),
 }
