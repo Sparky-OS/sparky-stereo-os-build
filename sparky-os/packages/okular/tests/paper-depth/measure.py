@@ -3,8 +3,8 @@
 # Copyright 2026 Daniel Campos Ramos
 """measure.py CASE_DIR KIND -- the paper depth proof's measurements of one case, as one JSON object on stdout.
 
-KIND is okular (a magenta desk, 255,0,255, Okular's custom background) or preview (Qt's print preview, a Qt::gray desk,
-160,160,164). The capture (shot.png) holds both eyes side by side, left first, each 1920 wide; a 2D capture is one picture.
+KIND is okular (Okular's page view, its desk set to a custom background) or preview (Qt's print preview). The desk's
+colour is the most common colour inside the program's window that is not white. The capture (shot.png) holds both eyes side by side, left first, each 1920 wide; a 2D capture is one picture.
 
 - pages: the white pages inside the program's window (KWin's frame from windows.json), found in the left eye.
 - disparity of a region: the horizontal shift s that best maps the left eye's region onto the right eye's along the same
@@ -22,7 +22,6 @@ import numpy as np
 from PIL import Image
 
 case_dir, kind = sys.argv[1], sys.argv[2]
-desk_colour = np.array((255, 0, 255) if kind == "okular" else (160, 160, 164))
 shot = np.asarray(Image.open(f"{case_dir}/shot.png").convert("RGB")).astype(np.int16)
 height, width, _ = shot.shape
 stereo = width >= 2 * 1920
@@ -48,7 +47,12 @@ x0, y0, fw, fh = (int(round(v)) for v in frame)
 x1, y1 = min(x0 + fw, left.shape[1]), min(y0 + fh, left.shape[0])
 x0, y0 = max(x0, 0), max(y0, 0)
 
-# the desk inside the window: where the view is
+# the desk inside the window: its most common colour that is not white, and where it is
+inside = left[y0:y1, x0:x1].reshape(-1, 3)
+inside = inside[(inside < 245).any(axis=1)]
+colours, counts = np.unique(inside, axis=0, return_counts=True)
+desk_colour = colours[counts.argmax()]
+result["desk_colour"] = [int(v) for v in desk_colour]
 desk = (np.abs(left - desk_colour).max(axis=2) <= 3)
 desk[:y0] = False
 desk[y1:] = False
@@ -58,11 +62,13 @@ ys, xs = np.nonzero(desk)
 view = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())] if len(xs) else None
 result["desk_box"] = view
 
-# the pages: runs of white rows inside the view, then runs of white columns in each band
+# the pages: runs of paper rows inside the view, then runs of paper columns in each band; paper is what is neither the
+# desk nor dark (an outline, a shadow): white and the marks on it
 pages = []
 if view:
     vx0, vy0, vx1, vy1 = view
-    white = (left[vy0:vy1 + 1, vx0:vx1 + 1] >= 245).all(axis=2)
+    area = left[vy0:vy1 + 1, vx0:vx1 + 1]
+    white = (np.abs(area - desk_colour).max(axis=2) > 30) & (area.max(axis=2) > 100)
     rows = white.sum(axis=1) > 40
     y = 0
     while y < len(rows):

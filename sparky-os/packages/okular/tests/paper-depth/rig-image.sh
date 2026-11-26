@@ -3,7 +3,7 @@
 # Copyright 2026 Daniel Campos Ramos
 # rig-image.sh BASE NAME REPO_DIR [DEB_DIR...] -- the paper depth proof's image: Debian testing (BASE, pulled by digest) with
 # the edition's published tree (REPO_DIR, a local copy, as a file: source pinned at 1001), Stereo KWin, kscreen-doctor,
-# Okular, Qt's development files, g++ and the rig's Python; then, from each DEB_DIR, the .deb files of the packages under
+# Okular, Qt's development files, g++, the rig's Python and KWin's Breeze decoration (windows framed by KWin, as in a session); then, from each DEB_DIR, the .deb files of the packages under
 # test installed by apt over it: the newer build of every package the image already has, and okular.
 # The edition's local names map to 127.0.0.1, so no packet reaches the local network; sparky-stereo.sources, which
 # sparky-stereo-apt adds, is removed after any install. NAME is committed from the container; PREFIX names the container.
@@ -32,7 +32,8 @@ printf "deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf "Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n" > /etc/apt/preferences.d/edition
 apt-get -qq update
 apt-get -y -qq --no-install-recommends install kwin-wayland libkscreen-bin okular qt6-base-dev g++ pkg-config python3-gi \
-	gir1.2-glib-2.0 python3-numpy python3-pil dbus libgl1-mesa-dri libegl-mesa0 fonts-dejavu-core procps > /tmp/install.log 2>&1 \
+	gir1.2-glib-2.0 python3-numpy python3-pil dbus libgl1-mesa-dri libegl-mesa0 fonts-dejavu-core procps \
+	kwin-style-breeze breeze-cursor-theme > /tmp/install.log 2>&1 \
 	|| { tail -30 /tmp/install.log; exit 1; }
 rm -f /etc/apt/sources.list.d/sparky-stereo.sources
 if compgen -G "/debs/*/*.deb" > /dev/null; then

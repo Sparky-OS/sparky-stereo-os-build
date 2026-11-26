@@ -22,7 +22,7 @@ printf '[Daemon]\nAutolock=false\nLockOnResume=false\nTimeout=0\n' > "$XDG_CONFI
 # Okular: a desk of one colour key (magenta), no messages over the view, the sidebar closed; 100 % for the two pages in
 # view, fit width for the page run under the toolbar
 zoom=0; [ "$CASE" = okular-scrolled ] && zoom=1
-printf '[General]\nUseCustomBackgroundColor=true\nBackgroundColor=255,0,255\nShowOSD=false\nShowSidebar=false\n[Zoom]\nZoomMode=%s\n[Core General]\nContinueFromLastViewedPage=true\n' \
+printf '[General]\nShowOSD=false\n[PageView]\nUseCustomBackgroundColor=true\nBackgroundColor=255,0,255\n[Zoom]\nZoomMode=%s\n[Core General]\nContinueFromLastViewedPage=true\n' \
     "$zoom" > "$XDG_CONFIG_HOME/okularpartrc"
 printf '[General]\nShowSidebar=false\nShowBottomBar=false\n' > "$XDG_CONFIG_HOME/okularrc"
 pdf=/tmp/two-pages.pdf
