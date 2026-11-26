@@ -22,11 +22,12 @@ cat > "$T/bin/dpkg-query" <<FAKE
 #!/bin/bash
 fmt=; names=()
 while ((\$#)); do case \$1 in -W) ;; -f) shift; fmt=\$1 ;; *) names+=("\$1") ;; esac; shift; done
+((\${#names[@]})) || names=('*')
 for n in "\${names[@]}"; do
 	while IFS=\$'\t' read -r pkg version; do
 		base=\${pkg%%:*}
 		arch=amd64; [[ \$pkg == *:i386 ]] && arch=i386
-		[[ \$base == "\${n%%:*}" ]] || continue
+		[[ \$n == '*' || \$base == "\${n%%:*}" ]] || continue
 		[[ \$n != *:* || \${n#*:} == "\$arch" ]] || continue
 		case \$fmt in
 		*binary:Package*) printf '%s\tii \n' "\$pkg" ;;
@@ -41,20 +42,19 @@ cat > "$T/bin/apt-get" <<FAKE
 echo "apt-get \$*" >> $T/apt.calls
 case " \$* " in
 *" check "*) exit 0 ;;
-*" autoremove "*) sed 's/^/Remv /; s/\$/ [1]/' $T/unneeded; exit 0 ;;
 esac
 pk=(); sim=0; seen=0
 for a in "\$@"; do case \$a in -s|--simulate) sim=1 ;; purge) seen=1 ;; -*) ;; *) ((seen)) && pk+=("\$a") ;; esac; done
 if ((sim)); then
-	for p in "\${pk[@]}" \$(cat $T/also 2>/dev/null); do echo "Purg \$p [1]"; done
+	# the plan: the packages named, what depends on each of them (needs: PACKAGE DEPENDENT), and "also"
+	for p in "\${pk[@]}" \$(cat $T/also 2>/dev/null); do echo "Purg \$p [1]"; awk -v p="\$p" '\$1 == p {print "Purg " \$2 " [1]"}' $T/needs 2>/dev/null; done
 	exit 0
 fi
 [ -e $T/purge.fail ] && { echo "E: dpkg was interrupted"; exit 100; }
 for p in "\${pk[@]}"; do grep -v -P "^\Q\$p\E\t" $T/installed > $T/installed.new; mv $T/installed.new $T/installed; done
-[ -e $T/unneeded-after ] && mv $T/unneeded-after $T/unneeded
 exit 0
 FAKE
-printf '#!/bin/sh\ncat %s\n' "$T/closure" > "$T/bin/apt-cache"
+printf '#!/bin/sh\ncat %s\n' "$T/auto" > "$T/bin/apt-mark"
 printf '#!/bin/sh\n[ "$1" = --print-foreign-architectures ] && cat %s 2>/dev/null\nexit 0\n' "$T/foreign" > "$T/bin/dpkg"
 printf '#!/bin/sh\ncat %s 2>/dev/null || exit 1\n' "$T/metered" > "$T/bin/busctl"
 printf '#!/bin/sh\nexit 0\n' > "$T/bin/logger"
@@ -79,8 +79,11 @@ image() { # the image's NVIDIA packages, with some that are not NVIDIA's driver
 	printf '%s\t615.71.09-2\n' nvidia-driver nvidia-driver-libs nvidia-kernel-support libnvcuvid1 nvidia-vaapi-driver libnvidia-glcore libcuda1 firmware-nvidia-gsp firmware-nvidia-graphics nvidia-detect > "$T/installed"
 	printf '%s\t615.71.09-2+stereo3d9+lc1\n' nvidia-kernel-open-dkms-stereo3d sparky-stereo-nvidia-driver-lock >> "$T/installed"
 	printf '%s\t1\n' sparky-stereo-cuda-repo g++ sparky-stereo-desktop >> "$T/installed"
-	printf '%s\n' firmware-nvidia-gsp g++ libc6 libnvidia-glcore nvidia-driver sparky-stereo-nvidia-driver-lock | sort > "$T/closure"
-	: > "$T/unneeded"; printf '%s\n' firmware-nvidia-gsp g++ libnvidia-glcore | sort > "$T/unneeded-after"
+	# installed automatically: the driver's libraries and firmware, the compiler it brought, NVIDIA's nvidia-detect
+	printf '%s\n' firmware-nvidia-gsp g++ libnvidia-glcore nvidia-detect nvidia-kernel-support > "$T/auto"
+	# the image's metapackage still depends on nvidia-detect, and the person installed a CUDA toolkit by name
+	printf 'nvidia-detect sparky-stereo-desktop\n' > "$T/needs"
+	printf 'nvidia-cuda-toolkit\t13\n' >> "$T/installed"
 	rm -f "$T/also" "$T/purge.fail" "$T/setup.fail" "$T/metered" "$T/foreign"; : > "$T/apt.calls"; : > "$T/setup.calls"
 	rm -rf "${T:?}/root"; mkdir -p "$T/root"
 }
@@ -99,9 +102,9 @@ card unreadable; run present >/dev/null 2>&1; check "present: a PCI bus that can
 image; card intel
 run auto >/dev/null 2>&1; rc=$?
 check "first start, no card: exit status" "$rc" 0
-check "first start, no card: NVIDIA's driver is gone, its leftovers too; nouveau's firmware, nvidia-detect and g++ stay" "$(have)" "firmware-nvidia-graphics g++ nvidia-detect sparky-stereo-desktop "
-check "first start, no card: apt's plan is read before each removal" "$(grep -c -- '-s -q -o Debug::NoLocking=true purge' "$T/apt.calls")" 2
-check "first start, no card: never an autoremove that removes" "$(grep ' autoremove' "$T/apt.calls" | grep -v -c -- '--simulate')" 0
+check "first start, no card: the driver and what is left of it are gone; nouveau's firmware, the compiler, a toolkit the person installed and nvidia-detect (the metapackage needs it) stay" "$(have)" "firmware-nvidia-graphics g++ nvidia-cuda-toolkit nvidia-detect sparky-stereo-desktop "
+check "first start, no card: two removals, each after apt's plan was read" "$(grep -c -- '^apt-get -y -q purge' "$T/apt.calls")" 2
+check "first start, no card: never an autoremove" "$(grep -c ' autoremove' "$T/apt.calls")" 0
 check "first start, no card: the session is told, with the count" "$(told)" "LOCAL120 ['11']"
 check "first start, no card: settled, no card recorded" "$([ -e "$S/nvidia-card-settled" ] && echo settled):$(cat "$S/nvidia-cards-seen")" "settled:"
 : > "$T/apt.calls"; run auto >/dev/null 2>&1
@@ -109,11 +112,11 @@ check "a second start: nothing is asked of apt" "$(grep -c purge "$T/apt.calls")
 
 image; card intel; echo sparky-stereo-desktop > "$T/also"
 run auto >/dev/null 2>&1; rc=$?
-check "the removal would take a package that is not NVIDIA's: nothing removed, exit status 1" "$rc:$(have | wc -w)" "1:15"
+check "the removal would take a package that is not NVIDIA's: nothing removed, exit status 1" "$rc:$(have | wc -w)" "1:16"
 check "kept by the engine, naming the package" "$(kept)" "LOCAL121 ['sparky-stereo-desktop']"
 check "not settled, so the next start looks again" "$([ -e "$S/nvidia-card-settled" ] && echo settled || echo open)" open
 rm -f "$T/also"; run auto >/dev/null 2>&1
-check "the cause gone: removed, and the kept problem is cleared" "$(have | wc -w):$(kept)" "4:none"
+check "the cause gone: removed, and the kept problem is cleared" "$(have | wc -w):$(kept)" "5:none"
 
 image; card intel; touch "$T/purge.fail"
 run auto >/dev/null 2>&1; rc=$?
@@ -121,14 +124,14 @@ check "apt fails: exit status 1, kept with the removal as its repair" "$rc:$(kep
 
 image; card nvidia 2504
 run auto >/dev/null 2>&1
-check "first start with a card: nothing is removed" "$(have | wc -w):$(grep -c purge "$T/apt.calls")" "15:0"
+check "first start with a card: nothing is removed" "$(have | wc -w):$(grep -c purge "$T/apt.calls")" "16:0"
 check "first start with a card: settled, the card recorded" "$(cat "$S/nvidia-cards-seen")" "10de:2504"
 card intel; run auto >/dev/null 2>&1
-check "the card leaves later: nothing is removed" "$(have | wc -w):$(grep -c purge "$T/apt.calls")" "15:0"
+check "the card leaves later: nothing is removed" "$(have | wc -w):$(grep -c purge "$T/apt.calls")" "16:0"
 
 image; card unreadable
 run auto >/dev/null 2>&1; rc=$?
-check "a PCI bus that cannot be read: nothing decided, not settled" "$rc:$(have | wc -w):$([ -e "$S/nvidia-card-settled" ] && echo settled || echo open)" "0:15:open"
+check "a PCI bus that cannot be read: nothing decided, not settled" "$rc:$(have | wc -w):$([ -e "$S/nvidia-card-settled" ] && echo settled || echo open)" "0:16:open"
 
 # a card that appears after the machine was settled without one
 appear() { image; card intel; run auto >/dev/null 2>&1; : > "$T/setup.calls"; card nvidia 2504; }
