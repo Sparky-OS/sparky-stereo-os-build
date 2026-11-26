@@ -1,6 +1,9 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/26. Copyright 2026 under the GNU GPL3 License.
 # Usage: build-25.sh WORK SOURCE_DIR PREVIOUS_DIR REPO_DIR ARCHIVE_DIR EXTRA_DIR PREVIOUS_SIBLINGS_FILE
+#   PREVIOUS_DIR: the +24 binaries (row 863's stage); PREVIOUS_SIBLINGS_FILE: only edition packages the build needs that are not
+#   published yet, an empty file for +25 (the published ones reach the gate through ARCHIVE_DIR; a list holding the published
+#   qt6-base binaries stops the gate: "conflicting supplied package: libqt6core6t64").
 # Run with the lane's DOCKER_HOST, SPARKY_BUILD_IMAGE, BUILD_NAME_PREFIX and recipe SOURCE_DATE_EPOCH.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
