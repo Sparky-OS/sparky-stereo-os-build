@@ -11,8 +11,11 @@ gimp (3.2.8-1+stereo3d1) unstable; urgency=medium
     side by side, left first, declared once, and the compositor does the
     one resize. Guides, the selection, paths and the tools' outlines stay
     over the picture at the screen, the same in both eyes. Where the canvas
-    cannot be shown per eye the left eye is shown and the status bar says
-    why. View > Display Settings opens the display settings, where each
+    cannot be shown per eye (a window drawn by the processor on Wayland, an
+    X11 window on Mesa's zink, where GTK 3 draws a window holding an OpenGL
+    area black) the canvas draws the left eye with its guides and outlines
+    and the status bar says why; Enable 3D off and on tries again.
+    View > Display Settings opens the display settings, where each
     screen's 3D mode is chosen. A 2D image is drawn as before.
   * The strings in nine languages besides English
     (stereo3d-canvas-per-eye-po).

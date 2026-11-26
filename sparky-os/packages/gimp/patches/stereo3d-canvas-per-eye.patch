@@ -17,8 +17,12 @@ Description: the canvas of a stereo image per eye, through a stereo GtkGLArea
  between the backdrop and the items), so guides, the selection, paths and the
  tools' outlines stay over the picture at the screen, the same in both eyes.
  Each eye's picture carries what lies under the canvas in 2D (the backgrounds
- of the widgets around it).  When the area cannot show the canvas per eye it
- shows the left eye, and the person is told why in the status bar.  View >
+ of the widgets around it).  When the area cannot show the canvas per eye,
+ the canvas draws the left eye itself, with its items over it, and the person
+ is told why in the status bar (the reason in English on stderr); turning
+ Enable 3D off and on tries again.  On X11 the renderer is first read on a
+ window of its own: with Mesa's zink GTK 3 draws an X11 window that holds an
+ OpenGL area black, so there the image window gets no area.  View >
  Display Settings... opens the display settings (kcmshell6 kcm_kscreen),
  where each screen's 3D mode is chosen.  On X11 the image window gets an
  alpha channel when the screen is composited, so that the stereo child window
@@ -1077,10 +1081,10 @@ index 0c340d7..ca9bed7 100644
    /* re-enable the active tool */
 diff --git a/app/display/gimpdisplayshell-stereo.c b/app/display/gimpdisplayshell-stereo.c
 new file mode 100644
-index 0000000..79ad64d
+index 0000000..e756fa0
 --- /dev/null
 +++ b/app/display/gimpdisplayshell-stereo.c
-@@ -0,0 +1,1106 @@
+@@ -0,0 +1,1223 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -1122,8 +1126,12 @@ index 0000000..79ad64d
 + *  in the left half and in the right half), so the canvas keeps the
 + *  image's size and coordinates and every tool works where it is used.
 + *
-+ *  When the area cannot show the canvas per eye it shows the left eye,
-+ *  and the person is told why.
++ *  When the canvas cannot be shown per eye, the canvas draws the left
++ *  eye itself, with the guides and outlines over it, and the person is
++ *  told why; "Enable 3D" turned off and on again tries once more.  On
++ *  X11 the renderer is read first, on a window of its own: with Mesa's
++ *  zink, GTK 3 draws an X11 window that holds an OpenGL area black, so
++ *  the canvas's window is never given one there.
 + */
 +
 +#include "config.h"
@@ -1135,6 +1143,10 @@ index 0000000..79ad64d
 +
 +#ifdef HAVE_GTK_GL_AREA_STEREO
 +#include <epoxy/gl.h>
++#endif
++
++#ifdef GDK_WINDOWING_X11
++#include <gdk/gdkx.h>
 +#endif
 +
 +#include "libgimpbase/gimpbase.h"
@@ -1205,6 +1217,12 @@ index 0000000..79ad64d
 +  gboolean          renderer_known;
 +  gboolean          on_processor;
 +
++  /*  the area said it cannot show the pair: the canvas draws the left eye  */
++  gboolean          failed;
++  /*  why the canvas's window is not given an area at all (X11 and zink)  */
++  gboolean          probed;
++  gchar            *refused;
++
 +  guint             apply_idle_id;
 +  guint             tell_idle_id;
 +  gchar            *told;
@@ -1231,6 +1249,7 @@ index 0000000..79ad64d
 +                                                      GParamSpec             *pspec,
 +                                                      GimpDisplayShellStereo *stereo);
 +static gboolean gimp_display_shell_stereo_tell       (gpointer                data);
++static gchar  * gimp_display_shell_stereo_probe      (GtkWidget              *widget);
 +#endif
 +
 +
@@ -1277,6 +1296,7 @@ index 0000000..79ad64d
 +    }
 +
 +  g_free (stereo->told);
++  g_free (stereo->refused);
 +  g_free (stereo);
 +}
 +
@@ -1337,9 +1357,19 @@ index 0000000..79ad64d
 +      return FALSE;
 +    }
 +
-+  if (stereo->model.kind == STEREO_NONE ||
-+      ! stereo->area                     ||
-+      ! gtk_widget_get_visible (stereo->area))
++  if (stereo->model.kind == STEREO_NONE)
++    return FALSE;
++
++  /*  the canvas cannot be shown per eye: the left eye, drawn by the canvas
++   *  itself so that the guides and outlines lie over it
++   */
++  if (stereo->refused || stereo->failed)
++    {
++      gimp_display_shell_draw_picture (shell, cr, GIMP_DISPLAY_SHELL_EYE_LEFT);
++      return TRUE;
++    }
++
++  if (! stereo->area || ! gtk_widget_get_visible (stereo->area))
 +    return FALSE;
 +
 +#ifdef HAVE_GTK_GL_AREA_STEREO
@@ -1796,7 +1826,22 @@ index 0000000..79ad64d
 +    }
 +
 +#ifdef HAVE_GTK_GL_AREA_STEREO
-+  if (wanted.kind != STEREO_NONE)
++  /*  a new image kind, or "Enable 3D" turned on again, tries again  */
++  stereo->failed = FALSE;
++
++  if (wanted.kind != STEREO_NONE && ! stereo->probed)
++    {
++      stereo->probed  = TRUE;
++      stereo->refused = gimp_display_shell_stereo_probe (GTK_WIDGET (shell));
++    }
++
++  if (wanted.kind != STEREO_NONE && stereo->refused)
++    {
++      if (! stereo->tell_idle_id)
++        stereo->tell_idle_id = g_idle_add (gimp_display_shell_stereo_tell,
++                                           stereo);
++    }
++  else if (wanted.kind != STEREO_NONE)
 +    {
 +      if (! stereo->area)
 +        gimp_display_shell_stereo_make_area (stereo);
@@ -2136,26 +2181,46 @@ index 0000000..79ad64d
 +gimp_display_shell_stereo_tell (gpointer data)
 +{
 +  GimpDisplayShellStereo *stereo = data;
-+  GtkGLArea              *area   = GTK_GL_AREA (stereo->area);
-+  const GError           *error;
++  GtkGLArea              *area   = NULL;
++  const gchar            *reason;
 +
 +  stereo->tell_idle_id = 0;
 +
-+  error = gtk_gl_area_get_stereo_error (area);
-+
-+  if (! error)
++  if (stereo->refused)
 +    {
-+      g_clear_pointer (&stereo->told, g_free);
-+      return G_SOURCE_REMOVE;
++      reason = stereo->refused;
++    }
++  else
++    {
++      const GError *error;
++
++      area  = GTK_GL_AREA (stereo->area);
++      error = gtk_gl_area_get_stereo_error (area);
++
++      if (! error)
++        {
++          g_clear_pointer (&stereo->told, g_free);
++          return G_SOURCE_REMOVE;
++        }
++
++      reason = error->message;
++
++      /*  GTK draws the area's left view with OpenGL, and GTK 3 then keeps
++       *  that rectangle free of what the canvas draws after it: the canvas
++       *  draws the left eye itself instead, with its guides and outlines
++       */
++      stereo->failed = TRUE;
++      gtk_widget_hide (stereo->area);
++      gtk_widget_queue_draw (stereo->shell->canvas);
 +    }
 +
-+  if (! g_strcmp0 (stereo->told, error->message))
++  if (! g_strcmp0 (stereo->told, reason))
 +    return G_SOURCE_REMOVE;
 +
 +  g_free (stereo->told);
-+  stereo->told = g_strdup (error->message);
++  stereo->told = g_strdup (reason);
 +
-+  if (! stereo->renderer_known && gtk_widget_get_realized (stereo->area))
++  if (area && ! stereo->renderer_known && gtk_widget_get_realized (stereo->area))
 +    {
 +      const gchar *renderer;
 +
@@ -2168,8 +2233,8 @@ index 0000000..79ad64d
 +      stereo->renderer_known = TRUE;
 +    }
 +
-+  /*  GTK's own reason, in English, is in the log  */
-+  g_printerr ("GIMP: the canvas is not shown per eye: %s\n", error->message);
++  /*  the reason, in English, is in the log  */
++  g_printerr ("GIMP: the canvas is not shown per eye: %s\n", reason);
 +
 +  if (stereo->on_processor)
 +    gimp_message_literal (stereo->shell->display->gimp,
@@ -2184,6 +2249,62 @@ index 0000000..79ad64d
 +                            "left eye is shown; the reason is in the log."));
 +
 +  return G_SOURCE_REMOVE;
++}
++
++/*  On X11, the renderer as a window of its own reads it: in GTK 3 a window
++ *  that is given an OpenGL context is drawn with OpenGL from then on, and
++ *  with Mesa's zink under Xwayland such a window shows nothing but black
++ *  (Debian's GTK 3 too).  Returns why the canvas's window must not be given
++ *  an area, or NULL.
++ */
++static gchar *
++gimp_display_shell_stereo_probe (GtkWidget *widget)
++{
++  gchar *refused = NULL;
++
++#ifdef GDK_WINDOWING_X11
++  GdkDisplay    *display = gtk_widget_get_display (widget);
++  GdkWindowAttr  attributes = { 0, };
++  GdkWindow     *window;
++  GdkGLContext  *context;
++  GError        *error = NULL;
++
++  if (! GDK_IS_X11_DISPLAY (display))
++    return NULL;
++
++  attributes.window_type       = GDK_WINDOW_TOPLEVEL;
++  attributes.wclass            = GDK_INPUT_OUTPUT;
++  attributes.width             = 1;
++  attributes.height            = 1;
++  attributes.override_redirect = TRUE;
++
++  window = gdk_window_new (gdk_screen_get_root_window (gtk_widget_get_screen (widget)),
++                           &attributes, GDK_WA_NOREDIR);
++
++  context = gdk_window_create_gl_context (window, &error);
++
++  if (context && gdk_gl_context_realize (context, &error))
++    {
++      const gchar *renderer;
++
++      gdk_gl_context_make_current (context);
++
++      renderer = (const gchar *) glGetString (GL_RENDERER);
++
++      if (renderer && strstr (renderer, "zink"))
++        refused = g_strdup_printf ("GTK 3 draws an X11 window that holds an "
++                                   "OpenGL area black with Mesa's zink (%s)",
++                                   renderer);
++
++      gdk_gl_context_clear_current ();
++    }
++
++  g_clear_error (&error);
++  g_clear_object (&context);
++  gdk_window_destroy (window);
++#endif
++
++  return refused;
 +}
 +
 +#endif /* HAVE_GTK_GL_AREA_STEREO */
