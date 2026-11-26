@@ -53,7 +53,8 @@ if [ "$M2" = 1 ]; then
         xml=/usr/share/plasma-wayland-protocols/fake-input.xml
         wayland-scanner client-header "$xml" "$tmp/fake-input-client.h"
         wayland-scanner private-code "$xml" "$tmp/fake-input.c"
-        cc -O2 -I"$tmp" /tests/input.c "$tmp/fake-input.c" -lwayland-client -lm -o /out/bin/input'
+        cc -O2 -I"$tmp" /tests/input.c "$tmp/fake-input.c" -lwayland-client -lm -o /out/bin/input
+        dpkg-query -W plasma-wayland-protocols calligrawords >> /out/bin/versions.txt'
     test -x "$RESULTS/bin/input"
     run build-words-style -- bash -ec '
         tmp=$(mktemp -d)
@@ -76,6 +77,11 @@ for case in $CASES; do
     esac > "/out/$1/measure.json" 2> "/out/$1/measure.err"
     if [ "${1##*-}" != 2d ]; then
         python3 -I /tests/mark_pns.py "/out/$1/shot.png" "/out/$1/shot.pns" > "/out/$1/pns.txt"
+        if [ "$1" = okular-kcm ]; then
+            for picture in kcm kcm-edited; do
+                python3 -I /tests/mark_pns.py "/out/$1/$picture.png" "/out/$1/$picture.pns" >> "/out/$1/pns.txt"
+            done
+        fi
     fi' -- "$case"
 	if [ -n "${BASELINE:-}" ] && [ "${case##*-}" = 2d ]; then
 		# a 2D screen: the same pixels as the baseline's run of the same case
