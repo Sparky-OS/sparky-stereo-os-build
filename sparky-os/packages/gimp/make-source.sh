@@ -45,9 +45,9 @@ def sub(old, new):
     s = s.replace(old, new)
 # the stereo GtkGLArea of the edition'"'"'s GTK 3 (the canvas per eye) and OpenGL through epoxy
 sub("               libgtk-3-dev,\n", "               libgtk-3-dev (>= 3.24.52-3+stereo3d1~),\n               libepoxy-dev,\n")
-# View > Display Settings runs kcmshell6 (kde-cli-tools) with the display page (kscreen): a dependency a designed
+# View > Display Settings runs kcmshell6 (libkf6kcmutils-bin) with the display page (kscreen): a dependency a designed
 # feature needs is a Depends
-sub("         xdg-utils,\nRecommends: ghostscript,", "         xdg-utils,\n         kde-cli-tools,\n         kscreen,\nRecommends: ghostscript,")
+sub("         xdg-utils,\nRecommends: ghostscript,", "         xdg-utils,\n         libkf6kcmutils-bin,\n         kscreen,\nRecommends: ghostscript,")
 p.write_text(s)
 CONTROL
 	python3 - tree/debian/copyright <<"COPYRIGHT"
