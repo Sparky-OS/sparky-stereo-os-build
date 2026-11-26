@@ -88,7 +88,7 @@ def button(name):
             line = "#969696" if dead else hexa(OUTLINE)
             body = (f'<rect x="{slot + .5}" y=".5" width="15" height="15" rx="1.5" fill="{face}" stroke="{line}"/>'
                     f'<path d="M{slot + 2} 13.5V2h11.5" stroke="{tl}" fill="none"/>'
-                    f'<path d="M{slot + 2.5} 14H14V2.5" stroke="{br}" fill="none"/>')
+                    f'<path d="M{slot + 2.5} 14H{slot + 14}V2.5" stroke="{br}" fill="none"/>')
             ink = "#9a9a9a" if dead else "#1e1e1e"
             body += glyph(name, slot, ink, face, toggled)
             chunks.append(f'<g id="{"on-" if toggled else ""}{state}-center">{body}</g>')
