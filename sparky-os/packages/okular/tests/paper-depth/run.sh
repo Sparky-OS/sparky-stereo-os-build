@@ -53,7 +53,7 @@ if [ "$M2" = 1 ]; then
         xml=/usr/share/plasma-wayland-protocols/fake-input.xml
         wayland-scanner client-header "$xml" "$tmp/fake-input-client.h"
         wayland-scanner private-code "$xml" "$tmp/fake-input.c"
-        cc -O2 -I"$tmp" /tests/input.c "$tmp/fake-input.c" -lwayland-client -o /out/bin/input'
+        cc -O2 -I"$tmp" /tests/input.c "$tmp/fake-input.c" -lwayland-client -lm -o /out/bin/input'
     test -x "$RESULTS/bin/input"
 fi
 grep -q 'build rc=0' "$RESULTS/bin/build.log" || { cat "$RESULTS/bin/build.log"; exit 1; }
