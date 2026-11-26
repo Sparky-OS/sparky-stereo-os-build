@@ -43,6 +43,23 @@ static QByteArray languages()
     return KLocalizedString::languages().join(u':').toUtf8();
 }
 
+static QString repairMessage(const QJsonObject &feedback, int status)
+{
+    const QByteArray package = feedback[u"package"_s].toString().toUtf8();
+    const QByteArray key = feedback[u"messages"_s].toObject()[QString::number(status)].toString().toUtf8();
+    if (package.isEmpty() || key.isEmpty()) {
+        return {};
+    }
+    const QByteArray lang = languages();
+    char *json = ssp_render(package.constData(), key.constData(), nullptr, 0, lang.constData());
+    if (!json) {
+        return {};
+    }
+    const QString text = QJsonDocument::fromJson(QByteArray(json)).object()[u"text"_s].toString();
+    ssp_free(json);
+    return text == QString::fromUtf8(key) ? QString() : text;
+}
+
 static QString whenText(const QString &iso)
 {
     const QDateTime t = QDateTime::fromString(iso, Qt::ISODate);
@@ -130,6 +147,7 @@ void ProblemsKcm::refresh()
         e[u"since"_s] = i18nc("@info %1 a date and time", "Since %1", whenText(p[u"first"_s].toString()));
         e[u"canDismiss"_s] = true;
         e[u"canRepair"_s] = !p[u"repair"_s].toArray().isEmpty() && !p[u"over"_s].toBool();
+        e[u"repairFeedback"_s] = p[u"data"_s].toObject()[u"repair_feedback"_s].toObject();
         QStringList labels;
         for (const QJsonValue &l : p[u"labels"_s].toArray()) {
             labels << l.toString();
@@ -226,6 +244,7 @@ void ProblemsKcm::repair(const QString &handle)
     auto *process = new QProcess(this);
     process->setProcessChannelMode(QProcess::MergedChannels);
     const QString title = e[u"title"_s].toString();
+    const auto feedback = e[u"repairFeedback"_s].toJsonObject();
     connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {
             setMessages(i18nc("@info", "%1 could not be started: %2", process->program(), process->errorString()), QString());
@@ -234,18 +253,19 @@ void ProblemsKcm::repair(const QString &handle)
             process->deleteLater();
         }
     });
-    connect(process, &QProcess::finished, this, [this, process, title, program](int code, QProcess::ExitStatus status) {
+    connect(process, &QProcess::finished, this, [this, process, title, program, feedback](int code, QProcess::ExitStatus status) {
         const QString output = QString::fromUtf8(process->readAll()).trimmed();
         process->deleteLater();
         m_busy = false;
         Q_EMIT busyChanged();
+        const QString message = status == QProcess::NormalExit ? repairMessage(feedback, code) : QString();
         if (status == QProcess::NormalExit && code == 0) {
-            setMessages(QString(), i18nc("@info %1 a problem's title", "It works again: %1", title));
+            setMessages(QString(), message.isEmpty() ? i18nc("@info %1 a problem's title", "It works again: %1", title) : message);
         } else if (program == u"pkexec"_s && (code == 126 || code == 127)) {
             setMessages(i18nc("@info", "The administrator's permission was not given (pkexec exit status %1).", code), QString());
         } else {
-            // a repair that failed is kept by the engine as a new generation: the problem is listed again with it
-            setMessages(i18nc("@info %1 the engine's words", "The repair did not work: %1", output), QString());
+            // A failed repair is kept by the engine as a new generation.
+            setMessages(message.isEmpty() ? i18nc("@info %1 the engine's words", "The repair did not work: %1", output) : message, QString());
         }
         refresh();
     });

@@ -28,7 +28,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: power-profiles-daemon (>= 0.30), powerdevil (>= 6.7), sparky-stereo-powerdevil-policy (>= 1), sparky-stereo-cushion-swap (>= 0.3.6+lc1), sparky-stereo-problems (>= 0.1.1), python3, systemd, init-system-helpers (>= 1.54~), libkf6config-bin
+Depends: power-profiles-daemon (>= 0.30), powerdevil (>= 6.7), sparky-stereo-powerdevil-policy (>= 1), sparky-stereo-cushion-swap (>= 0.3.7+lc1), sparky-stereo-problems (>= 0.1.1), python3, systemd, init-system-helpers (>= 1.54~), libkf6config-bin
 Breaks: sparky-stereo-problems-plasma (<< 0.2.3)
 Section: System
 Priority: optional

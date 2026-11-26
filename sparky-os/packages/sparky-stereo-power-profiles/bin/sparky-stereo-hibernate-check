@@ -10,6 +10,7 @@ PACKAGE = 'sparky-stereo-power-profiles'
 SELF = '/usr/libexec/sparky-stereo/hibernate-check'
 ENGINE = 'sparky-stereo-problems'
 REPAIR = '/usr/libexec/cushion-swap/repair-swap'
+FEEDBACK = Path('/usr/share/sparky/sparky-stereo-cushion-swap/repair-feedback.json')
 LOGIN = ['busctl', '--system', 'call', 'org.freedesktop.login1',
          '/org/freedesktop/login1', 'org.freedesktop.login1.Manager', 'CanHibernate']
 
@@ -46,9 +47,12 @@ def boot_check():
     suspend_states = Path('/sys/power/state')
     can_prepare_disk = (result.returncode == 0 and result.stdout.strip() == 's "na"' and
                         suspend_states.is_file() and 'disk' in suspend_states.read_text().split())
+    data = {'notify': False}
+    if can_prepare_disk:
+        data['repair_feedback'] = json.loads(FEEDBACK.read_text())
     command = [ENGINE, 'keep', '--machine', '--quiet', '--severity', 'notice',
                '--command', json.dumps(LOGIN), '--status', str(result.returncode or 1),
-               '--output', result.stdout + result.stderr, '--details', '{"data":{"notify":false}}']
+               '--output', result.stdout + result.stderr, '--details', json.dumps({'data': data})]
     if can_prepare_disk:
         command += ['--repair', json.dumps([REPAIR, 'hibernate'])]
     subprocess.run(command + [PACKAGE, 'hibernate-capability', 'LOCAL7' if can_prepare_disk else 'LOCAL8'], check=True)
