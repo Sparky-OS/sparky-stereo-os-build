@@ -38,8 +38,8 @@ apt-get -y -qq --no-install-recommends install kwin-wayland libkscreen-bin okula
 	|| { tail -30 /tmp/install.log; exit 1; }
 rm -f /etc/apt/sources.list.d/sparky-stereo.sources
 if [ "$WITH_WORDS" = 1 ]; then
-    apt-cache policy calligrawords kde-cli-tools libwayland-dev plasma-wayland-protocols
-    apt-get -y --no-install-recommends install calligrawords=1:26.08.0+dfsg-1+b1 kde-cli-tools libwayland-dev \
+    apt-cache policy calligrawords libkf6kcmutils-bin libwayland-dev plasma-wayland-protocols
+    apt-get -y --no-install-recommends install calligrawords=1:26.08.0+dfsg-1+b1 libkf6kcmutils-bin libwayland-dev \
         plasma-wayland-protocols qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-org-kde-kirigami \
         qml6-module-org-kde-kcmutils >> /tmp/install.log 2>&1 || { tail -35 /tmp/install.log; exit 1; }
 fi
