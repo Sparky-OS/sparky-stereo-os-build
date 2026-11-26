@@ -52,7 +52,7 @@ firmware() { # bios | unsupported | off | on | unreadable | odd
 	esac
 }
 run() { SPARKY_DKMS_EFI=$T/efi SPARKY_DKMS_SIG_ENFORCE=$T/sig_enforce LC_ALL=C.UTF-8 /usr/lib/dkms/dkms-sign-unsigned "$@"; }
-kept() { ls /var/lib/sparky-stereo-problems 2>/dev/null | grep -c '^dkms_'; }
+kept() { find /var/lib/sparky-stereo-problems -name 'dkms_*' 2>/dev/null | wc -l; }
 builds() { grep -c '^build ' "$T/dkms.calls"; }
 STAMP=/var/lib/dkms/dkms-sign-unsigned.first-boot
 echo N > "$T/sig_enforce"

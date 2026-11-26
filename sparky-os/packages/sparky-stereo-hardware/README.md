@@ -312,7 +312,7 @@ A correction is one of two reviewed kinds (since 0.1.43), each of a fixed shape;
   (`kernel/firmware/acpi`), where the kernel adds them before it reads the firmware's own tables
   (Documentation/admin-guide/acpi/initrd_table_override.rst), and records per kernel what it put in.
 - `kernel-option`: one option `name=value`, added to the kernel line of every Linux entry by the package's own boot
-  option file, `/etc/default/grub.d/40-sparky-stereo-known-machines.cfg`.
+  option file, `/etc/default/grub.d/zz-sparky-stereo-known-machines.cfg`.
 `--apply` writes the boot images (`update-initramfs -u -k all`) or the menu (`update-grub`) only when they do not
 hold what is on now, through the engine (a failure is kept with `--apply` as its repair), and tells the session that
 the correction takes effect at the next restart. Nothing is written on a computer that is not in the table.

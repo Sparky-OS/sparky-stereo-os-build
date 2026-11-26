@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.43+lc1
+VERSION=0.1.44+lc1
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
@@ -43,7 +43,7 @@ EOF
 printf '%s\n' /etc/apt/preferences.d/sparky-stereo-gpu-nvidia /etc/apt/preferences.d/sparky-stereo-gpu-amd \
 	/etc/xdg/autostart/sparky-stereo-live-gpu.desktop /etc/xdg/autostart/sparky-stereo-openrgb.desktop /etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh \
 	/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh /etc/xdg/plasma-workspace/env/sparky-stereo-tablet-mode.sh\
-	/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware /etc/default/grub.d/40-sparky-stereo-known-machines.cfg >"$D/DEBIAN/conffiles"
+	/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware /etc/default/grub.d/zz-sparky-stereo-known-machines.cfg >"$D/DEBIAN/conffiles"
 # the OpenGL stereo default: written at install, at boot (the service) and by udev on GPU changes
 install -m755 "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/DEBIAN/"
 # the initramfs carries the live session's NVIDIA choice

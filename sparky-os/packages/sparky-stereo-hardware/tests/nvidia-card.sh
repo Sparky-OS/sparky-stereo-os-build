@@ -150,7 +150,7 @@ appear; touch "$T/setup.fail"; run auto >/dev/null 2>&1; rc=$?
 check "the installation fails: exit status 1, kept with its repair" "$rc:$(kept | cut -d' ' -f1):$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repair"])' "$T/root/var/lib/sparky-stereo-problems/sparky-stereo-hardware_nvidia-card.json")" "1:LOCAL123:[['sparky-stereo-hardware', '--nvidia-card']]"
 
 # nvidia-i386 asks for a card first
-i386kept() { ls "$T/root/var/lib/sparky-stereo-problems" 2>/dev/null | grep -c nvidia-i386; }
+i386kept() { find "$T/root/var/lib/sparky-stereo-problems" -name '*nvidia-i386*' 2>/dev/null | wc -l; }
 i386() { PATH=$T/bin:$PATH SPARKY_STEREO_SYSFS=$T/sys /usr/lib/sparky-stereo-hardware/nvidia-i386 "$@"; }
 image; echo i386 > "$T/foreign"; card intel
 i386 check >/dev/null 2>&1

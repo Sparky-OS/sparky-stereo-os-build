@@ -278,7 +278,7 @@ if ! $auto; then
 	load_strings
 	# A known machine's corrections, in the person's language, each with what it does and its switch (ORDER 665, 669).
 	# The first one gets the window's button; every one has the command (sparky-stereo-known-machines --off ID, --on ID).
-	km_button= km_switch= km_switch_id=
+	km_button='' km_switch='' km_switch_id=''
 	while IFS=$'\t' read -r km_id km_message km_state km_kind km_value; do
 		km_what=$(render_message "$km_message")
 		if [[ $km_state == on ]]; then

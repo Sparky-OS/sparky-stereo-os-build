@@ -105,7 +105,7 @@ for asl in "$HERE"/share/acpi-tables/*.asl; do
 	chmod 644 "$D/usr/share/sparky/sparky-stereo-hardware/acpi-tables/$name.aml"
 done
 install -Dm755 "$HERE/share/initramfs/hooks/sparky-stereo-acpi-tables" "$D/usr/share/initramfs-tools/hooks/sparky-stereo-acpi-tables"
-install -Dm644 "$HERE/share/grub/40-sparky-stereo-known-machines.cfg" "$D/etc/default/grub.d/40-sparky-stereo-known-machines.cfg"
+install -Dm644 "$HERE/share/grub/zz-sparky-stereo-known-machines.cfg" "$D/etc/default/grub.d/zz-sparky-stereo-known-machines.cfg"
 # a card Broadcom's wl can drive keeps its Wi-Fi connected, whichever driver has it: power saving off and its own address,
 # in NetworkManager's per-boot folder, matched on the card's permanent addresses; written before NetworkManager starts and
 # when such a card's interface appears (row 728b; 0.1.39's file matched on the driver wl only is gone)
