@@ -64,7 +64,8 @@ License: GPL-3+
 Path(sys.argv[2]).write_text(s.replace(anchor, stanza + anchor))
 COPYRIGHT
 	grep -q "^License: GPL-3+$" overlay/debian/copyright
-	PYTHONPATH=/toolkit python3 /toolkit/repo/lc-successor.py --in-place --overlay overlay --reapply-patches --next 3.2.8-1+stereo3d2 \
+	mkdir -p "$W/successor"
+	PYTHONPATH=/toolkit python3 /toolkit/repo/lc-successor.py --work "$W/successor" --in-place --overlay overlay --reapply-patches --next 3.2.8-1+stereo3d2 \
 		--item "Sparky Stereo OS: depth layers (queue row 148, the stereo GIMP'"'"'s milestone 2; stereo3d-depth-layers). A depth layer is a layer group that holds its layers at one depth the artist sets, in pixels of separation with three decimals, positive behind the screen, never clamped; each eye sees it moved by half the depth (a copy for a whole move, the stereo policy library'"'"'s resampling for a fractional one) and the stereo canvas shows each eye'"'"'s picture. Layers in no depth layer are at the screen and a 2D image is drawn as before; depth layers inside each other are each at their own value. Layer > New Depth Layer; the Depth row of the Layers dock; the keys 8 (pop) and 7 (sink) held over the canvas while the pointer moves, rebindable; the PDB procedures gimp-depth-layer-new, -get-depth, -set-depth and -new-from-eye. An XCF keeps the depth as the group'"'"'s parasite gimp-depth-layer, so another GIMP opens a plain layer group." \
 		--item "The strings in nine languages besides English (stereo3d-depth-layers-po)." \
 		--item "debian/control: Build-Depends libstereo-policy-dev (>= 1.24.0); gimp Recommends gimp-stereo-pictures." \
