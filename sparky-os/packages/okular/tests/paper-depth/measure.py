@@ -42,7 +42,8 @@ try:
                 windows = json.loads(line).get("windows") or []
 except (OSError, ValueError):
     pass
-names = ("okular",) if kind == "okular" else ("paper-depth-preview",)
+names = {"okular": ("okular",), "preview": ("paper-depth-preview",),
+         "words": ("calligrawords", "calligra words")}[kind]
 program = [w for w in windows if any(n in (w.get("caption", "") + " " + w.get("cls", "")).lower() for n in names)
            and w.get("normal") and not w.get("deleted")]
 frame = program[0]["fg"] if program else [0, 0, 1920, 1080]
@@ -61,6 +62,8 @@ def is_desk(pixels):
 
 def is_paper(pixels):
     white = (pixels >= 250).all(axis=-1)
+    if kind == "words":
+        return white
     pure = (pixels.max(axis=-1) >= 200) & (pixels.min(axis=-1) <= 60) & ~is_desk(pixels)
     return white | pure
 
@@ -148,6 +151,21 @@ def shadow_rows(px0, px1, py1):
     return found
 
 
+def words_desk(px0, px1, py0, py1):
+    # Words paints the whole comment strip cyan. Use its outside edge as a desk mark.
+    a, b = max(y0, py0 + 8), min(y1, py1 - 8)
+    x = min(px1 + 1, x1)
+    if b <= a or x >= x1:
+        return None
+    strip = left[a:b, x:x1]
+    cyan = (strip[:, :, 0] < 20) & (strip[:, :, 1:] >= 235).all(axis=2)
+    columns = np.flatnonzero(cyan.sum(axis=0) > (b - a) // 4)
+    if not len(columns):
+        return None
+    edge = x + int(columns[-1])
+    return disparity([edge - 8, a, edge + 8, b - 1])
+
+
 def cut_at_top(px0, px1, py0):
     """Whether the page's top is cut by something above it that is neither its outline (near black), its desk nor paper."""
     xm = (px0 + px1) // 2
@@ -159,7 +177,9 @@ measures = []
 for i, (px0, py0, px1, py1) in enumerate(pages):
     entry = {"page": i, "box": [px0, py0, px1, py1]}
     entry["paper"] = disparity([px0 + 8, py0 + 8, px1 - 8, py1 - 8])
-    rows_below = shadow_rows(px0, px1, py1)
+    rows_below = [] if kind == "words" else shadow_rows(px0, px1, py1)
+    if kind == "words":
+        entry["desk"] = words_desk(px0, px1, py0, py1)
     if rows_below:
         entry["shadow_rows"] = [rows_below[0], rows_below[-1]]
         entry["desk"] = disparity([px0 - 40, rows_below[0], px0 + 60, rows_below[-1]])

@@ -19,6 +19,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 IMAGE=$1 RESULTS=$(mkdir -p "$2" && cd "$2" && pwd -P) ROLE=${3:-staged}
 [ -z "$(ls -A "$RESULTS")" ] || { echo "$RESULTS is not empty" >&2; exit 2; }
 PREFIX=${PREFIX:-paper-depth}
+M2=${M2:-0}
 CASES=${CASES:-okular-3d okular-scale12 okular-limit0 okular-scrolled okular-presentation okular-background okular-2d
 	preview-3d preview-scale12 preview-limit0 preview-scrolled preview-background preview-2d}
 echo "load at start $(date -u +%FT%TZ): $(cut -d' ' -f1-3 /proc/loadavg)" | tee "$RESULTS/load.txt"
@@ -41,12 +42,29 @@ run() { # NAME [ENV...] -- COMMAND...
 run build -- bash -c 'mkdir -p /out/bin && g++ -O1 -fPIC -std=c++17 -o /out/bin/preview /tests/preview.cpp \
 	$(pkg-config --cflags --libs Qt6Widgets Qt6PrintSupport) > /out/bin/build.log 2>&1; echo "build rc=$?" >> /out/bin/build.log;
 	dpkg-query -W kwin-wayland okular libqt6widgets6 libqt6printsupport6 libqt6waylandclient6 > /out/bin/versions.txt'
+if [ "$M2" = 1 ]; then
+    run build-input -- bash -ec '
+        tmp=$(mktemp -d)
+        trap "rm -rf \"$tmp\"" EXIT
+        xml=/usr/share/plasma-wayland-protocols/fake-input.xml
+        wayland-scanner client-header "$xml" "$tmp/fake-input-client.h"
+        wayland-scanner private-code "$xml" "$tmp/fake-input.c"
+        cc -O2 -I"$tmp" /tests/input.c "$tmp/fake-input.c" -lwayland-client -o /out/bin/input'
+    test -x "$RESULTS/bin/input"
+fi
 grep -q 'build rc=0' "$RESULTS/bin/build.log" || { cat "$RESULTS/bin/build.log"; exit 1; }
 for case in $CASES; do
 	element=1
-	case $case in *-scale12) element=12 ;; *-limit0) element=0 ;; esac
-	run "$case" "ELEMENT=$element" -- timeout 180 bash /tests/case.sh "$case"
-	run "measure-$case" -- bash -c "python3 -I /tests/measure.py /out/$case ${case%%-*} > /out/$case/measure.json 2> /out/$case/measure.err"
+	case $case in *-scale12) element=12 ;; *-limit0) element=0 ;; *-display|words-*) element=6 ;; probe-override) element=3 ;; esac
+	run "$case" "ELEMENT=$element" "M2=$M2" "KCM_FIELD_XY=${KCM_FIELD_XY:-650 417}" "KCM_APPLY_XY=${KCM_APPLY_XY:-1045 920}" -- timeout 180 bash /tests/case.sh "$case"
+	test -s "$RESULTS/$case/shot.png"
+	run "measure-$case" -- bash -c 'case "$1" in
+        probe-*) python3 -I /tests/measure-probe.py "/out/$1/shot.png" ;;
+        *) python3 -I /tests/measure.py "/out/$1" "${1%%-*}" ;;
+    esac > "/out/$1/measure.json" 2> "/out/$1/measure.err"
+    if [ "${1##*-}" != 2d ]; then
+        python3 -I /tests/mark_pns.py "/out/$1/shot.png" "/out/$1/shot.pns" > "/out/$1/pns.txt"
+    fi' -- "$case"
 	if [ -n "${BASELINE:-}" ] && [ "${case##*-}" = 2d ]; then
 		# a 2D screen: the same pixels as the baseline's run of the same case
 		base=$(cd "$BASELINE" && pwd -P)
@@ -57,4 +75,6 @@ for case in $CASES; do
 	fi
 done
 echo "load at end $(date -u +%FT%TZ): $(cut -d' ' -f1-3 /proc/loadavg)" | tee -a "$RESULTS/load.txt"
-python3 -I "$HERE/verdicts.py" "$RESULTS" "$ROLE" ${BASELINE:+--baseline "$BASELINE"} | tee "$RESULTS/verdicts.txt"
+if [ "$ROLE" != capture ]; then
+    python3 -I "$HERE/verdicts.py" "$RESULTS" "$ROLE" ${BASELINE:+--baseline "$BASELINE"} | tee "$RESULTS/verdicts.txt"
+fi

@@ -17,12 +17,46 @@
 #include <QToolBar>
 #include <cstdio>
 
+class ElementProbe : public QWidget
+{
+public:
+    using QWidget::QWidget;
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        setProperty("_q_stereo_depth_rects", QVariantList{
+            QVariantMap{{QStringLiteral("rect"), rect()}, {QStringLiteral("depth"), -1.0}},
+            QVariantMap{{QStringLiteral("rect"), QRect(200, 70, 320, 220)}, {QStringLiteral("depth"), 1.0}},
+        });
+    }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.fillRect(rect(), Qt::gray);
+        painter.fillRect(QRect(80, 70, 6, 220), Qt::red);
+        painter.fillRect(QRect(200, 70, 320, 220), Qt::white);
+        painter.fillRect(QRect(332, 92, 6, 176), Qt::green);
+    }
+};
+
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     const QString mode = argc > 1 ? QString::fromLatin1(argv[1]) : QStringLiteral("all");
     const double zoom = argc > 2 ? QString::fromLatin1(argv[2]).toDouble() : 2.0;
     const double scroll = argc > 3 ? QString::fromLatin1(argv[3]).toDouble() : 0.3;
+
+    if (mode == QLatin1String("probe")) {
+        QMainWindow window;
+        window.setWindowTitle(QStringLiteral("paper-depth-element-probe"));
+        window.setCentralWidget(new ElementProbe(&window));
+        window.resize(900, 520);
+        window.show();
+        return app.exec();
+    }
 
     QPrinter printer(QPrinter::ScreenResolution);
     printer.setOutputFormat(QPrinter::PdfFormat);
