@@ -15,8 +15,14 @@ apt-get -y --no-install-recommends install quilt bubblewrap
 # 1. the source (as the builder: the source's files are its own)
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 if [[ "${RESUME_927:-0}" == 1 ]]; then
-    test -x /work/lc/source/obj-x86_64-linux-gnu/bin/krdp-panel-discovery
-    test "$(dpkg-parsechangelog -l /work/lc/source/debian/changelog -S Version)" = 6.7.4-1+stereo3d12
+    case "$SOURCE" in
+        krdp) binary=krdp-panel-discovery; version=6.7.4-1+stereo3d12 ;;
+        krdc) binary=krdc-catch; version=4:26.04.0-1+stereo3d4+lc1 ;;
+        *) exit 2 ;;
+    esac
+    test -x "/work/lc/source/obj-x86_64-linux-gnu/bin/$binary"
+    test "$(dpkg-parsechangelog -l /work/lc/source/debian/changelog -S Version)" = "$version"
+    test "$(dpkg-parsechangelog -l /work/lc/source/debian/changelog -S Timestamp)" = "$SOURCE_DATE_EPOCH"
     options=(-nc)
 else
     options=()
