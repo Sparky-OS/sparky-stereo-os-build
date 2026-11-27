@@ -156,6 +156,24 @@ ENTRIES = [
                  "a pilha gráfica não oferece aqui uma superfície mais profunda para a tela de pintura.",
         "zh_CN": "画布以每通道 %1 位到达屏幕，少于此文档的 %2 位：此处的图形栈不提供更深的画布表面。",
         "zh_TW": "畫布以每個色版 %1 位元抵達螢幕，少於此文件的 %2 位元：此處的圖形堆疊不提供更深的畫布表面。"}),
+    (None, "The canvas reaches the screen with %1 bits per channel, fewer than this document's %2: "
+           "the canvas surface bit depth is set to %1 bits in Settings > Configure Krita > Color Management.", {
+        "de": "Die Leinwand erreicht den Bildschirm mit %1 Bit pro Kanal, weniger als die %2 dieses Dokuments: "
+              "Die Bittiefe der Leinwandoberfläche ist unter Einstellungen > Krita einrichten > Farbverwaltung auf %1 Bit gesetzt.",
+        "es": "El lienzo llega a la pantalla con %1 bits por canal, menos que los %2 de este documento: "
+              "la profundidad de bits de la superficie del lienzo está fijada en %1 bits en Preferencias > Configurar Krita > Gestión de color.",
+        "fr": "Le canevas atteint l’écran avec %1 bits par canal, moins que les %2 de ce document : "
+              "la profondeur en bits de la surface du canevas est réglée sur %1 bits dans Paramètres > Configuration de Krita > Gestion des couleurs.",
+        "ja": "キャンバスはチャンネルあたり %1 ビットで画面に届き、このドキュメントの %2 ビットより少なくなります: "
+              "設定 > Krita の設定を変更 > カラーマネジメント でキャンバスサーフェスのビット深度が %1 ビットに設定されています。",
+        "ko": "캔버스가 채널당 %1비트로 화면에 전달되며, 이 문서의 %2비트보다 적습니다. "
+              "설정 > Krita 설정 > 색 관리에서 캔버스 표면 비트 깊이가 %1비트로 설정되어 있습니다.",
+        "pl": "Płótno trafia na ekran z %1 bitami na kanał, mniej niż %2 tego dokumentu: "
+              "głębia bitowa powierzchni płótna jest ustawiona na %1 bitów w Ustawienia > Ustawienia Krity > Zarządzanie barwami.",
+        "pt_BR": "A tela de pintura chega ao monitor com %1 bits por canal, menos que os %2 deste documento: "
+                 "a profundidade de bits da superfície da tela está definida como %1 bits em Configurações > Configurar o Krita > Gerenciamento de cor.",
+        "zh_CN": "画布以每通道 %1 位到达屏幕，少于此文档的 %2 位：设置 > 配置 Krita > 色彩管理 中的画布表面位深度设为 %1 位。",
+        "zh_TW": "畫布以每個色版 %1 位元抵達螢幕，少於此文件的 %2 位元：設定 > 設定 Krita > 色彩管理 中的畫布表面位元深度設為 %1 位元。"}),
     (None, "The canvas reaches the screen in half float, about 11 bits per channel, fewer than this document's 16: "
            "the graphics stack offers no 16-bit integer canvas surface here.", {
         "de": "Die Leinwand erreicht den Bildschirm in halber Gleitkommagenauigkeit, etwa 11 Bit pro Kanal, weniger als "
