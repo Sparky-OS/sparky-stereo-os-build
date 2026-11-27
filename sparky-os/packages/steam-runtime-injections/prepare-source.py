@@ -48,6 +48,13 @@ def main():
         run('dpkg-source', '--before-build', str(tree))
     else:
         run('patch', '--batch', '--fuzz=0', '-p1', '-i', str(patch.resolve()), cwd=tree)
+    if args.name == 'dxvk':
+        # The published source has separate orig components and no vendor.xz.
+        # Remove the inherited dpkg-source entry for that absent file.
+        listing = tree / 'debian/source/include-binaries'
+        if listing.read_text().strip() != 'debian/vendor.xz' or (tree / 'debian/vendor.xz').exists():
+            raise ValueError('Review the changed DXVK vendor input before preparing the source')
+        listing.unlink()
 
     changelog = tree / 'debian/changelog'
     timestamp = format_datetime(datetime.datetime.fromtimestamp(args.epoch, datetime.timezone.utc))
