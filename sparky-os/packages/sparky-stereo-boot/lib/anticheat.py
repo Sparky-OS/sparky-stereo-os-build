@@ -627,6 +627,38 @@ def _refused_names():
     return sorted(set(re.findall(r"insert (?:module )?'([\w-]+)'", done.stdout)))
 
 
+def _lockdown_refusals():
+    try:
+        done = _run([_tool('journalctl'), '-b', '-k', '-o', 'cat', '--no-pager', '-g', 'unsigned module loading is restricted'],
+                    timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    return len(done.stdout.splitlines())
+
+
+def _unverifiable_not_loaded():
+    """Modules of this kernel's updates folder, not loaded, signed by this computer's DKMS key or not at all."""
+    serial = _dkms_serial()
+    base = os.path.join(ROOT + '/lib/modules', os.environ.get('SPARKY_STEREO_RELEASE', os.uname().release), 'updates')
+    loaded = set(os.listdir(SYSFS + '/module')) if os.path.isdir(SYSFS + '/module') else set()
+    found = []
+    for folder, _dirs, files in os.walk(base):
+        for name in sorted(files):
+            if not re.search(r'\.ko(\.(xz|zst|gz))?$', name):
+                continue
+            module = re.sub(r'\.ko(\.(xz|zst|gz))?$', '', name)
+            if module.replace('-', '_') in loaded:
+                continue
+            try:
+                done = _run([_tool('modinfo'), '-F', 'sig_key', os.path.join(folder, name)], timeout=30)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            key = done.stdout.strip().replace(':', '').upper().lstrip('0')
+            if done.returncode == 0 and (not key or (serial and key == serial)):
+                found.append(module)
+    return sorted(set(found))
+
+
 def _unverified_loaded():
     """Loaded modules whose signature the kernel could not verify (taint E): lockdown refuses them."""
     found = []
@@ -771,6 +803,10 @@ def check(as_root=None):
     # is below LOCKDOWN_INTEGRITY_MAX, include/linux/security.h), so in the anti-cheat start they do not load
     if anticheat:
         blocked = sorted(set(_refused_names() + _unsigned_installed()))
+        if not blocked and _lockdown_refusals():
+            # the kernel logs the refusal without the module's name ("Lockdown: modprobe: unsigned module loading is
+            # restricted", security/lockdown/lockdown.c): name this kernel's modules it cannot verify that did not load
+            blocked = _unverifiable_not_loaded()
     else:
         blocked = sorted(set(_unverified_loaded() + _unsigned_installed()))
     if blocked:
