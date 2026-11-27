@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Created by Daniel Ramos (Capitain Jack) 2026/11/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/14 (ORDER 558: a tear-down is told from a set-up by what the unit and its script do)
+# Last update 2026/11/27 (row 933: a package's Lean Code record is not read; ORDER 558: a tear-down is told from a set-up by what the unit and its script do)
 """Refuse zram and zswap in what the edition ships or turns on, and anything of ours that keeps the person from it.
 
 zram and zswap: never ours, never on by default; the person may opt in (HOUSE-RULES; Daniel, 2026-11-02: "do not
@@ -61,9 +61,12 @@ PULLING = ('Pre-Depends', 'Depends', 'Recommends', 'Provides')
 CAPPING = ('Conflicts', 'Breaks')
 
 # Never executed and never read as configuration: documentation, manual pages, translations, shell completions,
-# and dpkg-stereo's compressed authored copies (the package they belong to is checked itself).
+# dpkg-stereo's compressed authored copies (the package they belong to is checked itself) and its Lean Code
+# records (one line listing the package's own paths, each of which is checked at its own place: round r1127a's
+# record read as "modprobe ... zram" once the package shipped a file under /etc/modprobe.d).
 SKIP_PREFIXES = ('usr/share/doc/', 'usr/share/man/', 'usr/share/info/', 'usr/share/locale/', 'usr/share/help/',
-                 'usr/share/bash-completion/', 'usr/share/zsh/', 'usr/share/fish/', 'usr/share/dpkg-stereo/hr/')
+                 'usr/share/bash-completion/', 'usr/share/zsh/', 'usr/share/fish/', 'usr/share/dpkg-stereo/hr/',
+                 'usr/share/dpkg-stereo/lc/')
 DOCUMENT_FOLDERS = {'doc', 'docs', 'documentation', 'skills', 'agent-skills'}
 CONFIG_FOLDERS = {'systemd', 'udev', 'modprobe.d', 'sysctl.d', 'tmpfiles.d', 'modules-load.d',
                   'system-generators', 'user-generators', 'initramfs-tools'}
