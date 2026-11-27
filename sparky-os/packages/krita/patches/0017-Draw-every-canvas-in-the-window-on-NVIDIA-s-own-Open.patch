@@ -1,0 +1,149 @@
+From fa095ea6f1efb489cc8846c19d989c8b8f7a7226 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 14:30:35 -0300
+Subject: [PATCH 17/17] Draw every canvas in the window on NVIDIA's own OpenGL
+Forwarded: no, Krita's README sets a moratorium on AI-assisted contributions; carried in the edition's fork,
+ https://invent.kde.org/danielcamposramos/krita
+
+On NVIDIA's own OpenGL (its EGL) the layer below the window is never
+shown: the compositor shows black in its place, and the layer's buffer
+holds only the canvas's background colour, while Mesa's zink on the same
+card shows it. The published build's own layer, with its Stereo 3D setting
+on, is black there too. Since every canvas of a session on the layer goes
+through it, a 2D document was black on that stack.
+
+Krita knows its OpenGL's vendor from the probe it makes at start-up,
+before any window exists. Where that is NVIDIA's own, no session on the
+layer is started: the main window is made as without the layer (no alpha
+channel), and every canvas is drawn in it, as the published build draws
+it. A stereo document there shows its left eye and says why: "The
+graphics stack does not show the surface the 3D canvas is drawn on",
+with the renderer's name.
+
+Assisted-by: Claude Opus 5.5
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libs/ui/opengl/KisStereoCanvasLayer.cpp | 16 +++++++++++++++-
+ libs/ui/opengl/KisStereoCanvasLayer.h   | 11 ++++++++++-
+ libs/ui/opengl/kis_opengl.cpp           |  9 +++++++++
+ libs/ui/opengl/kis_opengl.h             |  2 ++
+ libs/ui/opengl/kis_opengl_canvas2.cpp   | 10 ++++++++--
+ 5 files changed, 44 insertions(+), 4 deletions(-)
+
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.cpp b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+index 743a9a38..dcb3bdff 100644
+--- a/libs/ui/opengl/KisStereoCanvasLayer.cpp
++++ b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+@@ -15,6 +15,8 @@
+ 
+ #include <kis_debug.h>
+ 
++#include "kis_opengl.h"
++
+ #ifdef KRITA_HAS_STEREO_CANVAS_LAYER
+ #include <QtGui/qpa/qplatformwindow_p.h>
+ #include <wayland-client.h>
+@@ -46,12 +48,24 @@ struct KisStereoCanvasLayer::Private
+ bool KisStereoCanvasLayer::isSupported()
+ {
+ #ifdef KRITA_HAS_STEREO_CANVAS_LAYER
+-    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
++    return QGuiApplication::platformName().startsWith(QLatin1String("wayland")) && stackShowsLayer();
+ #else
+     return false;
+ #endif
+ }
+ 
++bool KisStereoCanvasLayer::stackShowsLayer()
++{
++#ifdef KRITA_HAS_STEREO_CANVAS_LAYER
++    // the OpenGL Krita found at start-up, before any window is made: NVIDIA's own reports
++    // "NVIDIA Corporation", Mesa's zink over an NVIDIA card "Mesa"
++    static const bool shows = !KisOpenGL::currentVendor().startsWith(QLatin1String("NVIDIA"));
++    return shows;
++#else
++    return true;
++#endif
++}
++
+ bool KisStereoCanvasLayer::stereoCanvasAvailable()
+ {
+     return g_layerStarted;
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.h b/libs/ui/opengl/KisStereoCanvasLayer.h
+index f82efaed..3881f3dc 100644
+--- a/libs/ui/opengl/KisStereoCanvasLayer.h
++++ b/libs/ui/opengl/KisStereoCanvasLayer.h
+@@ -50,9 +50,18 @@ public:
+     KisStereoCanvasLayer(QWidget *area, QOpenGLContext *shareContext, bool stereo = true);
+     ~KisStereoCanvasLayer() override;
+ 
+-    /// Qt's Wayland platform, and a build that can place a subsurface below its window
++    /// Qt's Wayland platform, a build that can place a subsurface below its window, and a
++    /// graphics stack that shows it (stackShowsLayer())
+     static bool isSupported();
+ 
++    /**
++     * False where the graphics stack is known not to show the layer: NVIDIA's own OpenGL (its
++     * EGL), where the compositor shows black in the layer's place and the layer's buffer never
++     * holds the canvas's picture, while Mesa's zink on the same card shows it. A session there
++     * draws every canvas in the window, as Krita does without the layer.
++     */
++    static bool stackShowsLayer();
++
+     /// True when the main window was made translucent for a layer (layerStarted())
+     static bool stereoCanvasAvailable();
+     static void setLayerStarted(bool started);
+diff --git a/libs/ui/opengl/kis_opengl.cpp b/libs/ui/opengl/kis_opengl.cpp
+index c039d6a7..31cbc450 100644
+--- a/libs/ui/opengl/kis_opengl.cpp
++++ b/libs/ui/opengl/kis_opengl.cpp
+@@ -355,6 +355,15 @@ QString KisOpenGL::currentDriver()
+     return QString();
+ }
+ 
++QString KisOpenGL::currentVendor()
++{
++    initialize();
++    if (openGLCheckResult) {
++        return openGLCheckResult->vendorString();
++    }
++    return QString();
++}
++
+ // Check whether we can allow LoD on OpenGL3 without triggering
+ // all of the other 3.2 functionality.
+ bool KisOpenGL::supportsLoD()
+diff --git a/libs/ui/opengl/kis_opengl.h b/libs/ui/opengl/kis_opengl.h
+index 5f8e2991..801b2ad8 100644
+--- a/libs/ui/opengl/kis_opengl.h
++++ b/libs/ui/opengl/kis_opengl.h
+@@ -95,6 +95,8 @@ public:
+     static QStringList getOpenGLWarnings();
+ 
+     static QString currentDriver();
++    /// the vendor string (GL_VENDOR) of the OpenGL found at start-up
++    static QString currentVendor();
+     static bool supportsLoD();
+     static bool hasOpenGL3();
+     static bool hasOpenGLES();
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index 7c834725..05b56012 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -302,8 +302,14 @@ void KisOpenGLCanvas2::paintGL()
+     const int flatEye = pairWanted && !d->renderer->wrapAroundViewingMode() ? 0 : -1;
+ 
+     QString flatReason;
+-    if (pairWanted && !layerSession) {
+-        flatReason = KisStereoCanvasLayer::isSupported() || QGuiApplication::platformName().startsWith(QLatin1String("wayland"))
++    const bool wayland = QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
++    if (pairWanted && !layerSession && wayland && !KisStereoCanvasLayer::stackShowsLayer()) {
++        // the session draws every canvas in the window (KisStereoCanvasLayer::stackShowsLayer())
++        const GLubyte *renderer = context()->functions()->glGetString(GL_RENDERER);
++        flatReason = i18n("The graphics stack does not show the surface the 3D canvas is drawn on (%1).",
++                          renderer ? QString::fromLatin1(reinterpret_cast<const char *>(renderer)) : QStringLiteral("?"));
++    } else if (pairWanted && !layerSession) {
++        flatReason = KisStereoCanvasLayer::isSupported() || wayland
+             ? i18n("This Krita was built without the surface the 3D canvas is shown on.")
+             : i18n("Krita runs on X11 here, and its 3D canvas is shown on Wayland: start Krita without QT_QPA_PLATFORM=xcb.");
+     } else if (pairWanted && d->renderer->wrapAroundViewingMode()) {

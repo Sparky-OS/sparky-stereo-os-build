@@ -1,0 +1,84 @@
+From 4bf33bc155c74adca4f9f5cf11e05689b893bd9e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 10 Oct 2026 20:02:39 -0300
+Subject: [PATCH 10/17] Keep the caller's transaction open when updating
+ resource metadata
+Forwarded: no, Krita's README sets a moratorium on AI-assisted contributions; carried in the edition's fork,
+ https://invent.kde.org/danielcamposramos/krita
+
+KisResourceCacheDb::updateMetaDataForId() started and committed a
+transaction of its own. Called from addResources(), which adds the
+resources of a storage inside one transaction, its BEGIN failed and its
+COMMIT ended the caller's transaction, so every statement after the
+first resource was committed on its own, each with a disk sync. A first
+start with an empty resource cache made 6908 fdatasync calls; on a
+hard disk Krita showed only its splash for minutes.
+
+Commit or roll back only a transaction started there, and let
+addMetaDataForId() leave the rollback to its caller.
+
+Assisted-by: Claude Opus via Claude Code
+---
+ libs/resources/KisResourceCacheDb.cpp | 21 +++++++++++++++------
+ 1 file changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/libs/resources/KisResourceCacheDb.cpp b/libs/resources/KisResourceCacheDb.cpp
+index e901450f..9cdea0af 100644
+--- a/libs/resources/KisResourceCacheDb.cpp
++++ b/libs/resources/KisResourceCacheDb.cpp
+@@ -2454,14 +2454,20 @@ QMap<QString, QVariant> KisResourceCacheDb::metaDataForId(int id, const QString
+ 
+ bool KisResourceCacheDb::updateMetaDataForId(const QMap<QString, QVariant> map, int id, const QString &tableName)
+ {
+-    QSqlDatabase::database().transaction();
++    /// When the caller already has a transaction open, as addResources() has, starting
++    /// one fails and a commit here would end the caller's transaction: every statement
++    /// after it would then be committed on its own, one disk sync each. Only commit or
++    /// roll back the transaction started here.
++    const bool ownTransaction = QSqlDatabase::database().transaction();
+ 
+     {
+         QSqlQuery q;
+         if (!q.prepare("DELETE FROM metadata\n"
+                        "WHERE  foreign_id = :id\n"
+                        "AND    table_name = :table\n")) {
+-            QSqlDatabase::database().rollback();
++            if (ownTransaction) {
++                QSqlDatabase::database().rollback();
++            }
+             qWarning() << "Could not prepare delete metadata query" << q.lastError();
+             return false;
+         }
+@@ -2470,7 +2476,9 @@ bool KisResourceCacheDb::updateMetaDataForId(const QMap<QString, QVariant> map,
+         q.bindValue(":table", tableName);
+ 
+         if (!q.exec()) {
+-            QSqlDatabase::database().rollback();
++            if (ownTransaction) {
++                QSqlDatabase::database().rollback();
++            }
+             qWarning() << "Could not execute delete metadata query" << q.lastError();
+             return false;
+ 
+@@ -2478,9 +2486,11 @@ bool KisResourceCacheDb::updateMetaDataForId(const QMap<QString, QVariant> map,
+     }
+ 
+     if (addMetaDataForId(map, id, tableName)) {
+-        QSqlDatabase::database().commit();
++        if (ownTransaction) {
++            QSqlDatabase::database().commit();
++        }
+     }
+-    else {
++    else if (ownTransaction) {
+         QSqlDatabase::database().rollback();
+     }
+     return true;
+@@ -2494,7 +2504,6 @@ bool KisResourceCacheDb::addMetaDataForId(const QMap<QString, QVariant> map, int
+                    "(foreign_id, table_name, key, value)\n"
+                    "VALUES\n"
+                    "(:id, :table, :key, :value)")) {
+-        QSqlDatabase::database().rollback();
+         qWarning() << "Could not create insert metadata query" << q.lastError();
+         return false;
+     }

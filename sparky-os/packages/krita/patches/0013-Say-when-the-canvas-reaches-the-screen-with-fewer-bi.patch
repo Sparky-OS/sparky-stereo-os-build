@@ -1,0 +1,350 @@
+From 9d66e093d8207ec0331e26d8c6168631a09db369 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 21:20:01 -0300
+Subject: [PATCH 13/17] Say when the canvas reaches the screen with fewer bits
+ per channel than the document
+Forwarded: no, Krita's README sets a moratorium on AI-assisted contributions; carried in the edition's fork,
+ https://invent.kde.org/danielcamposramos/krita
+
+A 16-bit or float document can reach the compositor at 10 bits per
+channel, or in half float, when the graphics stack offers no deeper
+canvas surface: the picture is quantized there with nothing said.
+
+When the surface that reaches the compositor (the canvas layer, or the
+window where there is none) is first shown, and whenever the image's
+colour space changes, its depth is compared with the document's, up to
+16 bits per channel (what a display link carries at most): fewer bits,
+or half float (about 11 significant bits) for a 16-bit integer document,
+is said on the canvas and in the log. The component type of the layer's
+EGL configuration tells half float from 16-bit integer
+(EGL_EXT_pixel_format_float).
+
+Where the person chose a shallower canvas surface in Settings > Configure
+Krita > Color Management, the note says that setting is the cause rather
+than the graphics stack: KisOpenGL keeps the depth the setting asked for
+at this start (it applies from the next start). A 32-bit float document
+is called 32 bits in the note.
+
+Assisted-by: Claude Opus 5.5
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libs/ui/KisViewManager.cpp              | 12 ++++
+ libs/ui/KisViewManager.h                |  1 +
+ libs/ui/canvas/kis_canvas2.cpp          | 14 +++++
+ libs/ui/canvas/kis_canvas2.h            |  4 ++
+ libs/ui/opengl/KisStereoCanvasLayer.cpp |  5 ++
+ libs/ui/opengl/KisStereoCanvasLayer.h   |  3 +
+ libs/ui/opengl/kis_opengl.cpp           | 13 +++++
+ libs/ui/opengl/kis_opengl.h             |  3 +
+ libs/ui/opengl/kis_opengl_canvas2.cpp   | 76 +++++++++++++++++++++++++
+ libs/ui/opengl/kis_opengl_canvas2.h     |  2 +
+ 10 files changed, 133 insertions(+)
+
+diff --git a/libs/ui/KisViewManager.cpp b/libs/ui/KisViewManager.cpp
+index ae6b6f36..daeac86c 100644
+--- a/libs/ui/KisViewManager.cpp
++++ b/libs/ui/KisViewManager.cpp
+@@ -519,8 +519,12 @@ void KisViewManager::setCurrentView(KisView *view)
+             kisCanvas->setStereoEnabled(d->stereoEnable3DAction->isChecked());
+             d->stereoFlatReasonShown.clear();
+             d->viewConnections.addConnection(kisCanvas, &KisCanvas2::sigStereoChanged, this, &KisViewManager::slotUpdateStereoActions, Qt::QueuedConnection);
++            d->viewConnections.addConnection(kisCanvas, &KisCanvas2::sigCanvasDepthNoteChanged, this, &KisViewManager::slotCanvasDepthNote, Qt::QueuedConnection);
+             d->viewConnections.addConnection(doc, &KisDocument::sigPathChanged, this, &KisViewManager::slotUpdateStereoActions);
+             slotUpdateStereoActions();
++            if (!kisCanvas->canvasDepthNote().isEmpty()) {
++                slotCanvasDepthNote(kisCanvas->canvasDepthNote());
++            }
+         }
+ 
+         d->viewConnections.addUniqueConnection(d->levelOfDetailAction, SIGNAL(toggled(bool)), canvasController, SLOT(slotToggleLevelOfDetailMode(bool)));
+@@ -1876,6 +1880,14 @@ void KisViewManager::slotStereoDisplaySettings()
+     }
+ }
+ 
++void KisViewManager::slotCanvasDepthNote(const QString &note)
++{
++    if (note.isEmpty()) return;
++
++    qWarning() << "canvas depth:" << note;
++    showFloatingMessage(note, QIcon(), 10000);
++}
++
+ void KisViewManager::slotResetRotation()
+ {
+     KisCanvasController *canvasController = d->currentImageView->canvasController();
+diff --git a/libs/ui/KisViewManager.h b/libs/ui/KisViewManager.h
+index 03b47049..96bb8b8e 100644
+--- a/libs/ui/KisViewManager.h
++++ b/libs/ui/KisViewManager.h
+@@ -261,6 +261,7 @@ private Q_SLOTS:
+     void slotUpdateStereoActions();
+     void slotStereoInputChanged(const QStringList &paths);
+     void slotStereoDisplaySettings();
++    void slotCanvasDepthNote(const QString &note);
+     void slotResetDisplay();
+     void slotCreateOpacityResource(bool isOpacityPresetMode, KoToolBase *tool);
+ private:
+diff --git a/libs/ui/canvas/kis_canvas2.cpp b/libs/ui/canvas/kis_canvas2.cpp
+index 7a1296dc..20ce6532 100644
+--- a/libs/ui/canvas/kis_canvas2.cpp
++++ b/libs/ui/canvas/kis_canvas2.cpp
+@@ -269,6 +269,7 @@ public:
+     bool stereoEnabled {true};
+     KisNodeWSP stereoEyeLayers[2];
+     QString stereoFlatReason;
++    QString canvasDepthNote;
+     // a document's layers change in bursts: the stereo document is looked at once they settle
+     KisSignalCompressor stereoSourceCompressor {200, KisSignalCompressor::POSTPONE};
+     int isBatchUpdateActive = 0;
+@@ -1539,6 +1540,19 @@ void KisCanvas2::setStereoFlatReason(const QString &reason)
+     Q_EMIT sigStereoChanged();
+ }
+ 
++QString KisCanvas2::canvasDepthNote() const
++{
++    return m_d->canvasDepthNote;
++}
++
++void KisCanvas2::setCanvasDepthNote(const QString &note)
++{
++    if (note == m_d->canvasDepthNote) return;
++
++    m_d->canvasDepthNote = note;
++    Q_EMIT sigCanvasDepthNoteChanged(note);
++}
++
+ KisPopupPalette *KisCanvas2::popupPalette()
+ {
+     return m_d->popupPalette;
+diff --git a/libs/ui/canvas/kis_canvas2.h b/libs/ui/canvas/kis_canvas2.h
+index b7d640b3..33fe1d5b 100644
+--- a/libs/ui/canvas/kis_canvas2.h
++++ b/libs/ui/canvas/kis_canvas2.h
+@@ -249,6 +249,9 @@ public: // KisCanvas2 methods
+     /// Why the pair of a stereo document is shown flat, as its left eye (empty while it is a pair)
+     QString stereoFlatReason() const;
+     void setStereoFlatReason(const QString &reason);
++    /// Why the canvas reaches the screen with fewer bits per channel than the document has (empty when it does not)
++    QString canvasDepthNote() const;
++    void setCanvasDepthNote(const QString &note);
+ 
+     KisPopupPalette* popupPalette();
+ 
+@@ -279,6 +282,7 @@ Q_SIGNALS:
+ 
+     /// The stereo document, Enable 3D or the pair's flat reason changed
+     void sigStereoChanged();
++    void sigCanvasDepthNoteChanged(const QString &note);
+ 
+ public Q_SLOTS:
+ 
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.cpp b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+index aee7f2bc..4502d818 100644
+--- a/libs/ui/opengl/KisStereoCanvasLayer.cpp
++++ b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+@@ -166,6 +166,11 @@ QWindow *KisStereoCanvasLayer::window() const
+     return d->window.data();
+ }
+ 
++QOpenGLContext *KisStereoCanvasLayer::context() const
++{
++    return d->window && !d->failed ? d->context : nullptr;
++}
++
+ KisStereoCanvasLayer::Failure KisStereoCanvasLayer::failure() const
+ {
+     return d->failure;
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.h b/libs/ui/opengl/KisStereoCanvasLayer.h
+index 607e51b4..f82efaed 100644
+--- a/libs/ui/opengl/KisStereoCanvasLayer.h
++++ b/libs/ui/opengl/KisStereoCanvasLayer.h
+@@ -69,6 +69,9 @@ public:
+     enum class Failure { None, NoWindow, OpenGLES, Context, OneView };
+     Failure failure() const;
+ 
++    /// the layer's own context, once it is ready
++    QOpenGLContext *context() const;
++
+     /**
+      * Copies the two eyes' textures (of the area's context, @p size pixels each) into the
+      * layer's buffers and swaps them. Returns false while the layer cannot show them yet.
+diff --git a/libs/ui/opengl/kis_opengl.cpp b/libs/ui/opengl/kis_opengl.cpp
+index b7575b92..c039d6a7 100644
+--- a/libs/ui/opengl/kis_opengl.cpp
++++ b/libs/ui/opengl/kis_opengl.cpp
+@@ -91,6 +91,10 @@ namespace
+     KisOpenGL::OpenGLRenderer g_rendererPreferredByQt;
+ 
+     bool g_useBufferInvalidation = false;
++
++    // the canvas surface depth the person chose in Krita's settings, as read at this start (8, 10, or 16 for
++    // "16-bit" and "Auto")
++    int g_userPreferredCanvasSurfaceBitDepth = 16;
+     PFNGLINVALIDATEBUFFERDATAPROC g_glInvalidateBufferData = nullptr;
+ 
+     bool g_forceDisableTextureBuffers = false;
+@@ -923,6 +927,10 @@ KisOpenGL::RendererConfig KisOpenGL::selectSurfaceConfig(KisOpenGL::OpenGLRender
+ {
+     QVector<KLocalizedString> warningMessages;
+ 
++    g_userPreferredCanvasSurfaceBitDepth =
++        preferredCanvasSurfaceBitMode == KisConfig::CanvasSurfaceBitDepthMode::Depth8Bit ? 8 :
++        preferredCanvasSurfaceBitMode == KisConfig::CanvasSurfaceBitDepthMode::Depth10Bit ? 10 : 16;
++
+     using Info = boost::optional<KisOpenGLModeProber::Result>;
+ 
+     QHash<OpenGLRenderer, Info> renderersToTest;
+@@ -1200,6 +1208,11 @@ KisOpenGL::RendererConfig KisOpenGL::selectSurfaceConfig(KisOpenGL::OpenGLRender
+     return resultConfig;
+ }
+ 
++int KisOpenGL::userPreferredCanvasSurfaceBitDepth()
++{
++    return g_userPreferredCanvasSurfaceBitDepth;
++}
++
+ void KisOpenGL::setDefaultSurfaceConfig(const KisOpenGL::RendererConfig &config)
+ {
+     KIS_SAFE_ASSERT_RECOVER_NOOP(!g_sanityDefaultFormatIsSet);
+diff --git a/libs/ui/opengl/kis_opengl.h b/libs/ui/opengl/kis_opengl.h
+index e0616db7..5f8e2991 100644
+--- a/libs/ui/opengl/kis_opengl.h
++++ b/libs/ui/opengl/kis_opengl.h
+@@ -73,6 +73,9 @@ public:
+ 
+     static void setDefaultSurfaceConfig(const RendererConfig &config);
+ 
++    /// the canvas surface depth (8, 10 or 16 bits per channel) the person's setting asked for at this start
++    static int userPreferredCanvasSurfaceBitDepth();
++
+     static OpenGLRenderer getCurrentOpenGLRenderer();
+     static OpenGLRenderer getQtPreferredOpenGLRenderer();
+     static OpenGLRenderers getSupportedOpenGLRenderers();
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index 6f871c1f..b206867a 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -12,6 +12,9 @@
+ #include <QTimer>
+ #include <QGuiApplication>
+ #include <QOpenGLContext>
++#include <QPointer>
++#include <KoColorModelStandardIds.h>
++#include <KoColorSpace.h>
+ #include <klocalizedstring.h>
+ #include "kis_image.h"
+ 
+@@ -89,6 +92,9 @@ public:
+     bool stereoLayerTimerConnected = false;
+     QTimer stereoLayerTimer;
+     bool stereoLayerShown = false;
++    // the surface whose depth was last compared with the document's
++    QPointer<QWindow> depthCheckedSurface;
++    const KoColorSpace *depthCheckedColorSpace = nullptr;
+     QScopedPointer<KisOpenGLSync> glSyncObject;
+     KisRepaintDebugger repaintDbg;
+ };
+@@ -389,6 +395,10 @@ void KisOpenGLCanvas2::paintGL()
+         f->glClearColor(0, 0, 0, 0);
+         f->glClear(GL_COLOR_BUFFER_BIT);
+     } else {
++        // the window's own surface: as deep as the window is
++        if (!layer && window()->windowHandle()) {
++            checkCanvasDepth(window()->windowHandle(), nullptr);
++        }
+         d->renderer->setStereoEye(flatEye);
+         d->renderer->paintCanvasOnly(canvasImageDirtyRect, updateRect);
+         d->renderer->setStereoEye(-1);
+@@ -441,6 +451,9 @@ bool KisOpenGLCanvas2::paintStereoLayer(KisStereoCanvasLayer *layer, bool stereo
+     if (shown && !d->stereoLayerTimer.isActive()) {
+         d->stereoLayerTimer.start();
+     }
++    if (shown) {
++        checkCanvasDepth(layer->window(), layer->context());
++    }
+     return shown;
+ }
+ 
+@@ -464,6 +477,69 @@ QString KisOpenGLCanvas2::stereoLayerFailureText(KisStereoCanvasLayer *layer)
+     return QString();
+ }
+ 
++namespace {
++// EGL_EXT_pixel_format_float: whether the surface's colour is half float (about 11 significant bits)
++bool surfaceIsHalfFloat(QOpenGLContext *surfaceContext)
++{
++#if QT_CONFIG(egl)
++    auto *egl = surfaceContext ? surfaceContext->nativeInterface<QNativeInterface::QEGLContext>() : nullptr;
++    if (!egl) {
++        return false;
++    }
++    using GetConfigAttrib = unsigned int (*)(void *, void *, int, int *);
++    auto getConfigAttrib = reinterpret_cast<GetConfigAttrib>(surfaceContext->getProcAddress("eglGetConfigAttrib"));
++    int type = 0;
++    const int colorComponentType = 0x3339; // EGL_COLOR_COMPONENT_TYPE_EXT
++    const int colorComponentTypeFloat = 0x333B; // EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT
++    return getConfigAttrib && getConfigAttrib(egl->display(), egl->config(), colorComponentType, &type) &&
++        type == colorComponentTypeFloat;
++#else
++    Q_UNUSED(surfaceContext);
++    return false;
++#endif
++}
++}
++
++void KisOpenGLCanvas2::checkCanvasDepth(QWindow *surface, QOpenGLContext *surfaceContext)
++{
++    const KoColorSpace *cs = canvas()->image() ? canvas()->image()->colorSpace() : nullptr;
++    if (!surface || !cs || (surface == d->depthCheckedSurface && cs == d->depthCheckedColorSpace)) {
++        return;
++    }
++    d->depthCheckedSurface = surface;
++    d->depthCheckedColorSpace = cs;
++
++    // the document's depth; a display can be given up to 16 bits per channel (deep colour stops there), so a
++    // document is shown at its depth when the surface has its bits or 16
++    const KoID depth = cs->colorDepthId();
++    const bool documentFloat = depth == Float16BitsColorDepthID || depth == Float32BitsColorDepthID;
++    const int documentBits = depth == Integer8BitsColorDepthID ? 8 : depth == Float32BitsColorDepthID ? 32 : 16;
++    const int shownBits = qMin(documentBits, 16);
++
++    const QSurfaceFormat format = surface->format();
++    const int surfaceBits = qMin(format.redBufferSize(), qMin(format.greenBufferSize(), format.blueBufferSize()));
++    const bool halfFloat = surfaceBits == 16 && surfaceIsHalfFloat(surfaceContext);
++    // a shallower surface the person chose in the settings is theirs, and said as theirs
++    const bool chosen = KisOpenGL::userPreferredCanvasSurfaceBitDepth() <= surfaceBits;
++
++    QString note;
++    if (surfaceBits > 0 && surfaceBits < shownBits && chosen) {
++        note = i18n("The canvas reaches the screen with %1 bits per channel, fewer than this document's %2: "
++                    "the canvas surface bit depth is set to %1 bits in Settings > Configure Krita > Color Management.",
++                    surfaceBits, documentBits);
++    } else if (surfaceBits > 0 && surfaceBits < shownBits) {
++        note = i18n("The canvas reaches the screen with %1 bits per channel, fewer than this document's %2: "
++                    "the graphics stack offers no deeper canvas surface here.", surfaceBits, documentBits);
++    } else if (halfFloat && !documentFloat && documentBits == 16) {
++        note = i18n("The canvas reaches the screen in half float, about 11 bits per channel, fewer than this "
++                    "document's 16: the graphics stack offers no 16-bit integer canvas surface here.");
++    }
++
++    infoOpenGL << "canvas surface:" << surfaceBits << "bits per channel" << (halfFloat ? "half float" : "")
++               << "for a document of" << documentBits << "bits" << (documentFloat ? "float" : "");
++    canvas()->setCanvasDepthNote(note);
++}
++
+ void KisOpenGLCanvas2::paintEvent(QPaintEvent *e)
+ {
+     KIS_SAFE_ASSERT_RECOVER_RETURN(!d->updateRect);
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.h b/libs/ui/opengl/kis_opengl_canvas2.h
+index 0aa4a30f..98e272b2 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.h
++++ b/libs/ui/opengl/kis_opengl_canvas2.h
+@@ -116,6 +116,8 @@ private:
+     bool paintStereoLayer(KisStereoCanvasLayer *layer, bool stereo, int flatEye);
+     /// Why the layer of a stereo pair cannot be had, in the person's words (empty when it can)
+     QString stereoLayerFailureText(KisStereoCanvasLayer *layer);
++    /// Compares the depth of the surface that reaches the compositor with the document's and says when it is less
++    void checkCanvasDepth(QWindow *surface, QOpenGLContext *surfaceContext);
+ 
+ private:
+     struct Private;

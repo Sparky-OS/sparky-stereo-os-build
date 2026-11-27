@@ -1,0 +1,95 @@
+From 30e47c83904ba2949259dcdfd6f279f6f635be7f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 26 Nov 2026 21:39:13 -0300
+Subject: [PATCH 14/17] Show a stereo document as it is in wrap-around mode and
+ on the QPainter canvas
+Forwarded: no, Krita's README sets a moratorium on AI-assisted contributions; carried in the edition's fork,
+ https://invent.kde.org/danielcamposramos/krita
+
+Wrap-around mode shows copies of the image around it, which one eye's
+picture, drawn half by half in its place, would cut away; Krita's
+QPainter canvas has no picture per eye. In both the canvas now draws the
+picture as it is, and the sentence says which: "shown flat, as its left
+eye" where the left eye is drawn, "shown flat, as it is" here, each with
+its reason. The canvas composes the whole sentence, which is what the
+floating message, the log and Enable 3D's tooltip show.
+
+Assisted-by: Claude Opus 5.5
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libs/ui/KisViewManager.cpp            | 4 ++--
+ libs/ui/canvas/kis_canvas2.cpp        | 4 +++-
+ libs/ui/canvas/kis_canvas2.h          | 2 +-
+ libs/ui/opengl/kis_opengl_canvas2.cpp | 9 ++++++---
+ 4 files changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/libs/ui/KisViewManager.cpp b/libs/ui/KisViewManager.cpp
+index daeac86c..f3159581 100644
+--- a/libs/ui/KisViewManager.cpp
++++ b/libs/ui/KisViewManager.cpp
+@@ -1851,8 +1851,8 @@ void KisViewManager::slotUpdateStereoActions()
+     const QString reason = kisCanvas->stereoFlatReason();
+     d->stereoEnable3DAction->setToolTip(reason.isEmpty() ? d->stereoEnable3DToolTip : reason);
+     if (!reason.isEmpty() && reason != d->stereoFlatReasonShown) {
+-        qWarning() << "Krita shows a stereo document flat, as its left eye:" << reason;
+-        showFloatingMessage(i18n("This picture is shown flat, as its left eye. %1", reason), QIcon(), 10000);
++        qWarning() << "Krita shows a stereo document flat:" << reason;
++        showFloatingMessage(reason, QIcon(), 10000);
+     }
+     d->stereoFlatReasonShown = reason;
+ }
+diff --git a/libs/ui/canvas/kis_canvas2.cpp b/libs/ui/canvas/kis_canvas2.cpp
+index 20ce6532..cdde70c5 100644
+--- a/libs/ui/canvas/kis_canvas2.cpp
++++ b/libs/ui/canvas/kis_canvas2.cpp
+@@ -1527,7 +1527,9 @@ KisNodeSP KisCanvas2::stereoEyeLayer(int eye) const
+ QString KisCanvas2::stereoFlatReason() const
+ {
+     if (m_d->stereoEnabled && m_d->stereoSource != StereoSource::None && !m_d->currentCanvasIsOpenGL) {
+-        return i18n("The 3D canvas needs Krita's OpenGL canvas (Settings > Configure Krita > Display).");
++        // the QPainter canvas draws the picture as it is
++        return i18n("This picture is shown flat, as it is. %1",
++                    i18n("The 3D canvas needs Krita's OpenGL canvas (Settings > Configure Krita > Display)."));
+     }
+     return m_d->stereoEnabled && m_d->stereoSource != StereoSource::None ? m_d->stereoFlatReason : QString();
+ }
+diff --git a/libs/ui/canvas/kis_canvas2.h b/libs/ui/canvas/kis_canvas2.h
+index 33fe1d5b..4fca3d09 100644
+--- a/libs/ui/canvas/kis_canvas2.h
++++ b/libs/ui/canvas/kis_canvas2.h
+@@ -246,7 +246,7 @@ public: // KisCanvas2 methods
+     KisNodeSP stereoEyeLayer(int eye) const;
+     /// Looks at the document again: its file's choice, its layers or its size changed
+     void updateStereoSource();
+-    /// Why the pair of a stereo document is shown flat, as its left eye (empty while it is a pair)
++    /// Why the pair of a stereo document is shown flat, and how (empty while it is a pair)
+     QString stereoFlatReason() const;
+     void setStereoFlatReason(const QString &reason);
+     /// Why the canvas reaches the screen with fewer bits per channel than the document has (empty when it does not)
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index b206867a..529c2e0a 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -294,8 +294,9 @@ void KisOpenGLCanvas2::paintGL()
+      */
+     const bool pairWanted = canvas()->stereoPairWanted();
+     const bool layerSession = KisStereoCanvasLayer::isSupported() && KisStereoCanvasLayer::layerStarted();
+-    // the eye a stereo document shows when its pair is not shown: the left one
+-    const int flatEye = pairWanted ? 0 : -1;
++    // the eye a stereo document shows when its pair is not shown: the left one, except in wrap-around
++    // mode, which shows the image's copies around it as they are
++    const int flatEye = pairWanted && !d->renderer->wrapAroundViewingMode() ? 0 : -1;
+ 
+     QString flatReason;
+     if (pairWanted && !layerSession) {
+@@ -374,7 +375,9 @@ void KisOpenGLCanvas2::paintGL()
+         d->updateRect = boost::none;
+         d->canvasImageDirtyRect = QRect();
+     }
+-    canvas()->setStereoFlatReason(flatReason);
++    canvas()->setStereoFlatReason(flatReason.isEmpty() ? QString()
++                                  : flatEye >= 0 ? i18n("This picture is shown flat, as its left eye. %1", flatReason)
++                                                 : i18n("This picture is shown flat, as it is. %1", flatReason));
+ 
+     // one eye of a stereo document shows a view in both halves: an edit in one half shows in the
+     // other too, so its picture is painted whole

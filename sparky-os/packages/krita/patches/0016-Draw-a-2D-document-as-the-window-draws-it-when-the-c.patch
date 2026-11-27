@@ -1,0 +1,225 @@
+From 23f57c278e6365d9c013f0975c559014f411c7a7 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 11:23:31 -0300
+Subject: [PATCH 16/17] Draw a 2D document as the window draws it when the
+ canvas is on a layer
+Forwarded: no, Krita's README sets a moratorium on AI-assisted contributions; carried in the edition's fork,
+ https://invent.kde.org/danielcamposramos/krita
+
+A window whose canvas can be shown on the layer below it has an alpha
+channel, and every canvas in it is shown through a layer: a stereo
+document through the layer of its two eyes, any other through a layer with
+one buffer. Two things a 2D document showed differently from a window
+without the layer are fixed:
+
+- The brush outline was painted on the transparent widget over the layer,
+  and its subtracting blend inverted nothing there, so it was drawn in its
+  own colour instead of the inverse of the picture under it. The
+  decorations and the outline of a layer with one buffer are now painted on
+  that layer's picture, with QPainter's same paint engine, so the outline
+  inverts the picture as on the window. The eye framebuffer gets a stencil
+  buffer for the paint engine's path fills and clips. A stereo pair keeps
+  its decorations on the widget, on the screen plane.
+
+- The separators of the dock areas were painted in the window's colour:
+  QMainWindow::event() paints them before paintEvent(), and the window's
+  own background, painted in paintEvent() with the Source mode, covered
+  them. The background is now painted in event(), before the separators,
+  as Qt paints an opaque window's background before them.
+
+Assisted-by: Claude Opus 5.5
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libs/ui/KisMainWindow.cpp                  | 38 ++++++++++++----------
+ libs/ui/KisMainWindow.h                    |  2 +-
+ libs/ui/opengl/KisOpenGLCanvasRenderer.cpp | 12 ++++++-
+ libs/ui/opengl/KisOpenGLCanvasRenderer.h   |  6 ++--
+ libs/ui/opengl/kis_opengl_canvas2.cpp      | 27 +++++++++++++--
+ 5 files changed, 60 insertions(+), 25 deletions(-)
+
+diff --git a/libs/ui/KisMainWindow.cpp b/libs/ui/KisMainWindow.cpp
+index cf2ee610..5afb7b95 100644
+--- a/libs/ui/KisMainWindow.cpp
++++ b/libs/ui/KisMainWindow.cpp
+@@ -1571,27 +1571,29 @@ void KisMainWindow::redo()
+     }
+ }
+ 
+-void KisMainWindow::paintEvent(QPaintEvent *e)
++bool KisMainWindow::event(QEvent *e)
+ {
+-    if (!testAttribute(Qt::WA_TranslucentBackground)) {
+-        KXmlGuiWindow::paintEvent(e);
+-        return;
+-    }
+-
+-    // A window with an alpha buffer paints its own background, except where a stereo canvas
+-    // shows the layer below the window through it
+-    QRegion background(rect());
+-    const QList<KisOpenGLCanvas2 *> canvases = findChildren<KisOpenGLCanvas2 *>();
+-    for (KisOpenGLCanvas2 *canvas : canvases) {
+-        if (canvas->showsStereoLayer() && canvas->isVisible()) {
+-            background -= QRect(canvas->mapTo(this, QPoint(0, 0)), canvas->size());
++    if (e->type() == QEvent::Paint && testAttribute(Qt::WA_TranslucentBackground)) {
++        /**
++         * A window with an alpha buffer paints its own background, except where a stereo canvas
++         * shows the layer below the window through it. It is painted before QMainWindow::event()
++         * paints the separators of the dock areas on it, as Qt paints an opaque window's
++         * background before them: a background painted in paintEvent() would cover them.
++         */
++        QRegion background(rect());
++        const QList<KisOpenGLCanvas2 *> canvases = findChildren<KisOpenGLCanvas2 *>();
++        for (KisOpenGLCanvas2 *canvas : canvases) {
++            if (canvas->showsStereoLayer() && canvas->isVisible()) {
++                background -= QRect(canvas->mapTo(this, QPoint(0, 0)), canvas->size());
++            }
++        }
++        QPainter painter(this);
++        painter.setCompositionMode(QPainter::CompositionMode_Source);
++        for (const QRect &r : background) {
++            painter.fillRect(r, palette().window());
+         }
+     }
+-    QPainter painter(this);
+-    painter.setCompositionMode(QPainter::CompositionMode_Source);
+-    for (const QRect &r : background) {
+-        painter.fillRect(r, palette().window());
+-    }
++    return KXmlGuiWindow::event(e);
+ }
+ 
+ void KisMainWindow::closeEvent(QCloseEvent *e)
+diff --git a/libs/ui/KisMainWindow.h b/libs/ui/KisMainWindow.h
+index 3539cbb9..df5ad322 100644
+--- a/libs/ui/KisMainWindow.h
++++ b/libs/ui/KisMainWindow.h
+@@ -427,8 +427,8 @@ private Q_SLOTS:
+ 
+ protected:
+ 
++    bool event(QEvent *e) override;
+     void closeEvent(QCloseEvent * e) override;
+-    void paintEvent(QPaintEvent *e) override;
+     void resizeEvent(QResizeEvent * e) override;
+     void showEvent(QShowEvent *event) override;
+ 
+diff --git a/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp b/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
+index 10da4388..1f0a4485 100644
+--- a/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
++++ b/libs/ui/opengl/KisOpenGLCanvasRenderer.cpp
+@@ -415,13 +415,16 @@ void KisOpenGLCanvasRenderer::paintCanvasOnly(const QRect &canvasImageDirtyRect,
+     }
+ }
+ 
+-GLuint KisOpenGLCanvasRenderer::paintCanvasToEyeTexture(int eye)
++GLuint KisOpenGLCanvasRenderer::paintCanvasToEyeTexture(int eye, const std::function<void()> &paintOver)
+ {
+     // eye -1 (the image as it is, for a layer with one buffer) uses the left eye's picture
+     QScopedPointer<QOpenGLFramebufferObject> &fbo = d->eyeFBO[eye == 1 ? 1 : 0];
+     if (!fbo || fbo->size() != d->viewportDevicePixelSize) {
+         QOpenGLFramebufferObjectFormat format;
+         format.setInternalTextureFormat(d->canvasBridge->internalTextureFormat());
++        // what is painted over the picture is painted by QPainter, whose paint engine fills paths
++        // and clips through the stencil buffer, as on the widget's framebuffer
++        format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+         fbo.reset(new QOpenGLFramebufferObject(d->viewportDevicePixelSize, format));
+     }
+ 
+@@ -429,6 +432,13 @@ GLuint KisOpenGLCanvasRenderer::paintCanvasToEyeTexture(int eye)
+     d->stereoEye = eye;
+     fbo->bind();
+     renderCanvasGL(QRect());
++    if (paintOver) {
++        glDisable(GL_SCISSOR_TEST);
++        glClearStencil(0);
++        glClear(GL_STENCIL_BUFFER_BIT);
++        paintOver();
++        fbo->bind();
++    }
+     fbo->release();
+     d->stereoEye = previousEye;
+     QOpenGLFramebufferObject::bindDefault();
+diff --git a/libs/ui/opengl/KisOpenGLCanvasRenderer.h b/libs/ui/opengl/KisOpenGLCanvasRenderer.h
+index 0c40bd77..3d50f4ac 100644
+--- a/libs/ui/opengl/KisOpenGLCanvasRenderer.h
++++ b/libs/ui/opengl/KisOpenGLCanvasRenderer.h
+@@ -9,6 +9,7 @@
+ #define KIS_OPENGL_CANVAS_RENDERER_H
+ 
+ #include <QtGlobal>
++#include <functional>
+ 
+ #ifndef Q_OS_MACOS
+ #include <QOpenGLFunctions>
+@@ -67,9 +68,10 @@ public:
+     /**
+      * Paint the canvas background and image tiles into a texture of its own, for one eye of a
+      * stereo canvas layer, and return the texture. The texture is the renderer's: it stays valid
+-     * until the next call for the same eye or the next resize.
++     * until the next call for the same eye or the next resize. paintOver, when given, paints on
++     * the picture while its framebuffer is still bound (the decorations of a layer with one buffer).
+      */
+-    GLuint paintCanvasToEyeTexture(int eye);
++    GLuint paintCanvasToEyeTexture(int eye, const std::function<void()> &paintOver = {});
+ 
+     /**
+      * The eye whose picture paintCanvasOnly() paints (0 left, 1 right), or -1 for the image as it
+diff --git a/libs/ui/opengl/kis_opengl_canvas2.cpp b/libs/ui/opengl/kis_opengl_canvas2.cpp
+index 529c2e0a..7c834725 100644
+--- a/libs/ui/opengl/kis_opengl_canvas2.cpp
++++ b/libs/ui/opengl/kis_opengl_canvas2.cpp
+@@ -13,6 +13,8 @@
+ #include <QGuiApplication>
+ #include <QOpenGLContext>
+ #include <QPointer>
++#include <QPainter>
++#include <QOpenGLPaintDevice>
+ #include <KoColorModelStandardIds.h>
+ #include <KoColorSpace.h>
+ #include <klocalizedstring.h>
+@@ -290,7 +292,8 @@ void KisOpenGLCanvas2::paintGL()
+      * left eye and says why.
+      *
+      * The window of a session on the layer has an alpha channel: every other canvas is shown
+-     * through a layer too, with one buffer, so that it keeps the depth of the canvas surface.
++     * through a layer too, with one buffer, so that it keeps the depth of the canvas surface. That
++     * layer's picture carries the decorations and the brush outline, as the window's would.
+      */
+     const bool pairWanted = canvas()->stereoPairWanted();
+     const bool layerSession = KisStereoCanvasLayer::isSupported() && KisStereoCanvasLayer::layerStarted();
+@@ -406,7 +409,9 @@ void KisOpenGLCanvas2::paintGL()
+         d->renderer->paintCanvasOnly(canvasImageDirtyRect, updateRect);
+         d->renderer->setStereoEye(-1);
+     }
+-    {
++    // a layer with one buffer has the decorations on its picture (paintStereoLayer()); a stereo pair has them
++    // here, on the screen plane
++    if (!stereoLayerShown || stereo) {
+         QPainter gc(this);
+         if (!updateRect.isEmpty()) {
+             gc.setClipRect(updateRect);
+@@ -445,7 +450,23 @@ bool KisOpenGLCanvas2::paintStereoLayer(KisStereoCanvasLayer *layer, bool stereo
+         textures[0] = d->renderer->paintCanvasToEyeTexture(0);
+         textures[1] = d->renderer->paintCanvasToEyeTexture(1);
+     } else {
+-        textures[0] = textures[1] = d->renderer->paintCanvasToEyeTexture(flatEye);
++        /**
++         * A layer with one buffer (a 2D document, or a stereo one shown flat) shows the canvas as
++         * the window shows it: the decorations and the brush outline are painted on its picture,
++         * with the same paint engine, so the outline is the inverse of the picture under it. The
++         * whole picture is painted for every frame, and so is the outline, with no clip of its own.
++         */
++        textures[0] = textures[1] = d->renderer->paintCanvasToEyeTexture(flatEye, [this] {
++            const boost::optional<QRect> updateRect = d->updateRect;
++            d->updateRect = boost::none;
++            QOpenGLPaintDevice device(coordinatesConverter()->viewportDevicePixelSize());
++            device.setDevicePixelRatio(devicePixelRatioF());
++            {
++                QPainter gc(&device);
++                drawDecorations(gc, coordinatesConverter()->imageRectInWidgetPixels().toAlignedRect());
++            }
++            d->updateRect = updateRect;
++        });
+     }
+ 
+     // the layer works in a context of its own, and the textures are still being drawn
