@@ -1,0 +1,15 @@
+#!/bin/sh
+# initramfs-tools' update-initramfs.conf moves aside for the edition's (update_initramfs=all)
+set -e
+if [ "$1" = install ] || [ "$1" = upgrade ]; then
+	f=/etc/initramfs-tools/update-initramfs.conf
+	before=$(dpkg-divert --listpackage "$f")
+	dpkg-divert --package sparky-stereo-boot --add --rename --divert "$f.debian" "$f" >/dev/null
+	# initramfs-tools unpacked earlier in this dpkg run keeps its conffile as $f.dpkg-new until it is configured; our
+	# link at $f is unpacked through that same name and would replace it, so initramfs-tools' conffile would never be
+	# installed (rows 629/802: dpkg recorded it "newconffile"). It goes where dpkg now installs initramfs-tools' copy.
+	if [ -z "$before" ] && [ -e "$f.dpkg-new" ] && [ ! -e "$f.debian.dpkg-new" ]; then
+		mv "$f.dpkg-new" "$f.debian.dpkg-new"
+	fi
+fi
+exit 0

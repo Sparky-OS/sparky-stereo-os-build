@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 
-from . import VERSION, archive, buildrecord, identities, linkcheck, package, parallel, project
+from . import VERSION, archive, buildrecord, diversioncheck, identities, linkcheck, package, parallel, project
 
 
 def projection_hash(path):
@@ -391,6 +391,8 @@ def main():
                        help='only check; the default also writes the build record beside the .deb files (lean/buildrecord.py)')
     ident = commands.add_parser('check-identity', help='staged lc1 archives: renderer label and digest match the version table')
     ident.add_argument('debs', nargs='+')
+    diversions = commands.add_parser('check-diversions', help='report unmodelled diversion scripts before the link gate')
+    diversions.add_argument('pool')
     link = commands.add_parser('check-link')
     link.add_argument('debs', nargs='+')
     link.add_argument('--previous-dir', help='directory holding the pre-lc1 builds to compare with')
@@ -437,6 +439,8 @@ def main():
                 buildrecord.record(args.debs)
         elif args.command == 'check-identity':
             check_identity(args.debs)
+        elif args.command == 'check-diversions':
+            diversioncheck.check(args.pool)
         elif args.command == 'check-link':
             check_link(args.debs, args.previous_dir, args.smoke, args.archive_config, args.scratch,
                        Path(args.siblings_file).read_text().splitlines() if args.siblings_file else (),
