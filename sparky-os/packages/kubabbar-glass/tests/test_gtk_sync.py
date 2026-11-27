@@ -220,6 +220,10 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
         print(json.dumps(result))
 
     # Kubabbar Glass 9's bars always show: overlay scrolling off for its themes only, a person's own value kept (row 147)
+    def text(path):
+        """A file's text, or None when it is missing (the red run: a script that never wrote it)."""
+        return path.read_text() if path.exists() else None
+
     def ini(config, version):
         p = config / ('gtk-' + version) / 'settings.ini'
         lines = p.read_text().splitlines() if p.exists() else []
@@ -262,6 +266,9 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
                               'dconf-fail' if name == 'overlay-dconf-fail' else 'works')
         log = first.stdout + first.stderr
         if name == 'overlay-record-unreadable':
+            if not record.exists():  # a script that never records (the red run): the case still needs a record
+                record.parent.mkdir(parents=True, exist_ok=True)
+                record.write_text('gtk-3.0 false\n')
             record.chmod(0)
             first, records = sync(work, config, 'kubabbar-glass-9')
             log = first.stdout + first.stderr
@@ -276,25 +283,25 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
                           theme_still_applied='gtk-theme-name=Kubabbar-Glass-9-Ivy\n' in (config/'gtk-4.0/settings.ini').read_text())
             retry, after = sync(work, config, 'kubabbar-glass-9-ivy')
             checks.update(retry_clears=retry.returncode == 0 and not after,
-                          retry_writes=ini(config, '3.0') == 'false' and dconf_value.read_text() == 'false')
+                          retry_writes=ini(config, '3.0') == 'false' and text(dconf_value) == 'false')
         else:
             checks.update(exit_zero=first.returncode == 0, no_problem=not records)
             if name == 'overlay-9-fresh':
                 checks.update(ini_3=ini(config, '3.0') == 'false', ini_4=ini(config, '4.0') == 'false',
-                              gsettings=dconf_value.read_text() == 'false',
-                              recorded=record.read_text() == 'gtk-3.0 false\ngtk-4.0 false\ngsettings false\n')
+                              gsettings=text(dconf_value) == 'false',
+                              recorded=text(record) == 'gtk-3.0 false\ngtk-4.0 false\ngsettings false\n')
             elif name == 'overlay-9-own-ini':
                 checks.update(own_kept=ini(config, '4.0') == 'true', ini_3=ini(config, '3.0') == 'false',
-                              gsettings=dconf_value.read_text() == 'false',
-                              recorded=record.read_text() == 'gtk-3.0 false\ngsettings false\n')
+                              gsettings=text(dconf_value) == 'false',
+                              recorded=text(record) == 'gtk-3.0 false\ngsettings false\n')
             elif name == 'overlay-9-own-dconf':
-                checks.update(own_kept=dconf_value.read_text() == 'true', ini_3=ini(config, '3.0') == 'false',
-                              recorded=record.read_text() == 'gtk-3.0 false\ngtk-4.0 false\n')
+                checks.update(own_kept=text(dconf_value) == 'true', ini_3=ini(config, '3.0') == 'false',
+                              recorded=text(record) == 'gtk-3.0 false\ngtk-4.0 false\n')
             elif name == 'overlay-9-twice':
                 second, again = sync(work, config, 'kubabbar-glass-9')
                 checks.update(second_exit_zero=second.returncode == 0 and not again, ini_3=ini(config, '3.0') == 'false',
-                              ini_4=ini(config, '4.0') == 'false', gsettings=dconf_value.read_text() == 'false',
-                              recorded=record.read_text() == 'gtk-3.0 false\ngtk-4.0 false\ngsettings false\n')
+                              ini_4=ini(config, '4.0') == 'false', gsettings=text(dconf_value) == 'false',
+                              recorded=text(record) == 'gtk-3.0 false\ngtk-4.0 false\ngsettings false\n')
             elif name == 'overlay-leave':
                 second, again = sync(work, config, 'OxygenDark')
                 checks.update(second_exit_zero=second.returncode == 0 and not again, ini_3_removed=ini(config, '3.0') is None,
@@ -307,10 +314,10 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
                 dconf_value.write_text('true')
                 second, again = sync(work, config, 'OxygenDark')
                 checks.update(second_exit_zero=second.returncode == 0 and not again, own_ini_kept=ini(config, '3.0') == 'true',
-                              own_dconf_kept=dconf_value.read_text() == 'true', ours_removed=ini(config, '4.0') is None,
+                              own_dconf_kept=text(dconf_value) == 'true', ours_removed=ini(config, '4.0') is None,
                               record_removed=not record.exists())
             elif name == 'overlay-other-look':
-                checks.update(own_ini_kept=ini(config, '3.0') == 'true', own_dconf_kept=dconf_value.read_text() == 'true',
+                checks.update(own_ini_kept=ini(config, '3.0') == 'true', own_dconf_kept=text(dconf_value) == 'true',
                               nothing_written=ini(config, '4.0') is None and not record.exists())
         (args.output / (name + '.log')).write_text(log)
         result = dict(case=name, exit=first.returncode, checks=checks, passed=all(checks.values()))

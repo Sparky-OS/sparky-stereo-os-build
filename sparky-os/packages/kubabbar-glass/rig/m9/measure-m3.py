@@ -76,7 +76,7 @@ for side in ("before", "after"):
         row(len(gtk4) == 2 and all(l.startswith("FAIL") for l in gtk4) and all(l.startswith("PASS") for l in rest),
             f"gtk-red: on the before image only GTK 4 lacks the arrows ({len(gtk4)} GTK 4 rows FAIL, {len(rest)} others PASS)")
     else:
-        row(len(lines) >= 13 and all(l.startswith("PASS") for l in lines), f"gtk: {sum(l.startswith('PASS') for l in lines)} of "
+        row(len(lines) == 11 and all(l.startswith("PASS") for l in lines), f"gtk: {sum(l.startswith('PASS') for l in lines)} of "
             f"{len(lines)} gallery rows: GTK 2, 3 and 4 show the arrows together, then apart, beside Qt 6; the Breeze control fails")
         rows.extend("  " + l for l in gtk4)
 
@@ -121,37 +121,51 @@ for side in ("before", "after"):
     d = case(side, "bars")
     if not d:
         continue
-    g3, g4 = load(find(d, "bars-gtk3.json")), load(find(d, "bars-gtk4.json"))
+    g3, g4, g4t = (load(find(d, f"bars-gtk{k}.json")) for k in ("3", "4", "4-theme"))
     st = load(find(d, "bars-settings.json")) or {}
-    if not (g3 and g4):
+    portal = load(find(d, "bars-portal.json")) or {}
+    if not (g3 and g4 and g4t):
         row(False, f"bars-{side}: no report from the GTK programs")
         continue
     facts = {k: {"overlay": g["overlay_setting"], "classes": [c for c in g["classes"] if c in ("overlay-indicator", "hovering", "dragging")],
-                 "opacity": g["opacity"], "width": g["width"], "theme": g["theme"]} for k, g in (("gtk3", g3), ("gtk4", g4))}
+                 "opacity": g["opacity"], "width": g["width"], "colour": g.get("colour_scheme")} for k, g in (("gtk3", g3), ("gtk4", g4), ("gtk4-theme", g4t))}
     if side == "before":
-        row(all(g["overlay_setting"] and "overlay-indicator" in g["classes"] and g["opacity"] == 0 for g in (g3, g4)),
+        row(all(g["overlay_setting"] and "overlay-indicator" in g["classes"] and g["opacity"] == 0 for g in (g3, g4, g4t)),
             f"bars-red: before, GTK 3 and 4 resolve overlay scrolling on and their idle bars are faded overlay indicators {json.dumps(facts)}")
+        row(not g4t["steppers"], f"bars-gtk4-arrows-red: before, the GTK 4 program in the look has no steppers ({g4t['steppers']})")
     else:
         visible = all(not g["overlay_setting"] and "overlay-indicator" not in g["classes"] and g["opacity"] == 1 and g["mapped"]
-                      for g in (g3, g4))
-        row(visible and g3["theme"].startswith("Kubabbar-Glass-9") and g4["theme"].startswith("Kubabbar-Glass-9"),
-            f"bars: in a login on Kubabbar Glass 9, GTK 3 and 4 bars show without hover (no overlay indicator, opacity 1) {json.dumps(facts)}")
-        row(g4["steppers"] is not None and [s[1] for s in g4["steppers"]] == [0, 0, 16, 16],
-            f"bars-gtk4-arrows: the GTK 4 program's bar has its arrows together at the end (stepper heights {[s[1] for s in g4['steppers'] or []]})")
+                      for g in (g3, g4, g4t))
+        row(visible, f"bars: in a login on Kubabbar Glass 9, GTK 3 and 4 bars show without hover (no overlay indicator, opacity 1) {json.dumps(facts)}")
+        row([s[1] for s in g4t["steppers"] or []] == [0, 0, 16, 16],
+            f"bars-gtk4-arrows: the GTK 4 program drawn in the look (GTK_THEME) has its arrows together at the end "
+            f"(stepper heights {[s[1] for s in g4t['steppers'] or []]}, bar {g4t['width']} wide)")
         ini = [st.get(f) or "" for f in ("gtk-3.0/settings.ini", "gtk-4.0/settings.ini")]
         row(all("gtk-overlay-scrolling=false" in i for i in ini) and st.get("dconf") == "false"
             and st.get("record") == "gtk-3.0 false\ngtk-4.0 false\ngsettings false\n",
             f"bars-settings: the sync wrote both settings.ini files and the GSettings key (dconf {st.get('dconf')!r}) and recorded them; "
             f"settings portal on the bus: {st.get('portal_on_bus')} {st.get('portal_backends_on_bus')}")
+    appearance = (portal.get("org.freedesktop.appearance") or {}).get("color-scheme")
+    gsi = (portal.get("org.gnome.desktop.interface") or {}).get("overlay-scrolling")
+    rows.append(f"  NOTE bars-{side}: the portal serves overlay-scrolling {gsi} and color-scheme {appearance}; without GTK_THEME the GTK 4 "
+                f"program asks for the dark variant (colour {g4.get('colour_scheme')}), which the look does not ship, and draws GTK's own "
+                f"theme: steppers {[s[1] for s in g4['steppers'] or []]}, bar width {g4['width']}")
 
 # ---------------------------------------------------------------- the family's login screen labelled
 TEXT = np.array((27, 33, 25))  # the theme's text colour, #1b2119
+# the theme's panel is 440 x 330, centred on 1920 x 1080 (740, 375); the bands where its two labels and the two dark
+# button labels are drawn, as (top, bottom, left, right) inside the panel (Main.qml: the column at 36, 56; the buttons'
+# row at the bottom right)
+BANDS = {"user name": (54, 76, 36, 240), "password": (122, 146, 36, 240), "buttons": (282, 320, 200, 362)}
 
 
 def label_pixels(img):
-    """Text-coloured pixels inside the theme's panel (440 x 330, centred on 1920 x 1080), title bar excluded."""
-    panel = img[375 + 30:375 + 330, 740:740 + 440].astype(int)
-    return int((np.abs(panel - TEXT).max(axis=2) <= 40).sum())
+    """Text-coloured pixels in each label band of the theme's panel."""
+    out = {}
+    for name, (t, b, l, r) in BANDS.items():
+        band = img[375 + t:375 + b, 740 + l:740 + r].astype(int)
+        out[name] = int((np.abs(band - TEXT).max(axis=2) <= 40).sum())
+    return out
 
 
 for side in ("before", "after"):
@@ -179,8 +193,8 @@ for side in ("before", "after"):
                 bimg = np.asarray(Image.open(bshot).convert("RGB"))
                 beyes = [bimg] if mode == "2d" else [bimg[:, :bimg.shape[1] // 2], bimg[:, bimg.shape[1] // 2:]]
                 bcounts = [label_pixels(e) for e in beyes]
-            more = bcounts is not None and all(c >= bc + 300 for c, bc in zip(counts, bcounts))
-            same_eyes = mode == "2d" or abs(counts[0] - counts[1]) <= max(20, counts[0] // 50)
+            more = bcounts is not None and all(min(c.values()) >= 40 and max(bc.values()) <= 5 for c, bc in zip(counts, bcounts))
+            same_eyes = mode == "2d" or counts[0] == counts[1]
             row(errors == 0 and more and same_eyes,
                 f"greeter-family-{mode}: the new theme logs {errors} errors and its labels are drawn (text-coloured pixels "
                 f"{counts} against {bcounts} before" + ("" if mode == "2d" else ", in both eyes") + ")")

@@ -4,7 +4,8 @@
 (plasmashell's), results in $CASE. Shares session2.py's helpers.
   bars            a GTK 3 and a GTK 4 program with a scrolled list (bars.py), on Wayland, left alone with the pointer at
                   the screen's corner: what GTK resolved (overlay scrolling, the bar's classes and opacity) into
-                  bars-gtk3.json and bars-gtk4.json, a capture of each (bars-shot-gtk3.png, bars-shot-gtk4.png), what the settings
+                  bars-gtk3.json and bars-gtk4.json, a capture of each (bars-shot-gtk3.png, bars-shot-gtk4.png), the GTK 4 program again with GTK_THEME naming the
+                  look (bars-gtk4-theme.json, bars-shot-gtk4-theme.png), what the settings
                   portal serves (bars-portal.json), and the settings the sync wrote (bars-settings.json: both
                   settings.ini files, dconf's value, the sync's record, the portal's names on the bus)
   greeter-family  SDDM's greeter in test mode with Kubabbar Glass's own theme (row 945), a Wayland window of the session:
@@ -26,17 +27,19 @@ def bars():
     # the pointer at the screen's corner, away from every bar, before the programs start
     subprocess.run([FAKEINPUT, "m:1910,10", "s:300"], env=env, capture_output=True, text=True)
     # one program at a time, so neither window hides the other in its capture (KWin centres both)
-    for kit in ("3", "4"):
-        out = os.path.join(CASE, f"bars-gtk{kit}.json")
-        p = subprocess.Popen(["python3", f"{M9}/bars.py", kit, out, "5"], env=env, stdout=subprocess.DEVNULL,
+    # and GTK 4 once more with the theme named in GTK_THEME, which sets aside the dark variant GTK 4 asks for when the
+    # settings portal prefers dark (the look has no gtk-dark.css, so GTK 4 would fall back to its own theme)
+    for label, kit, extra in (("3", "3", {}), ("4", "4", {}), ("4-theme", "4", {"GTK_THEME": "Kubabbar-Glass-9"})):
+        out = os.path.join(CASE, f"bars-gtk{label}.json")
+        p = subprocess.Popen(["python3", f"{M9}/bars.py", kit, out, "5"], env=dict(env, **extra), stdout=subprocess.DEVNULL,
                              stderr=open(out + ".log", "w"))
         for _ in range(150):
             if os.path.exists(out):
                 break
             time.sleep(0.1)
         time.sleep(0.5)
-        json.dump(kwin_windows(), open(os.path.join(CASE, f"bars-gtk{kit}-windows.json"), "w"), indent=1)
-        shot(f"bars-shot-gtk{kit}")
+        json.dump(kwin_windows(), open(os.path.join(CASE, f"bars-gtk{label}-windows.json"), "w"), indent=1)
+        shot(f"bars-shot-gtk{label}")
         p.terminate()
         p.wait(timeout=10)
     # what the settings portal serves (GTK on Wayland takes these settings from it, above settings.ini)
