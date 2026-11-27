@@ -471,7 +471,8 @@ class Pins:
 
     def __init__(self, prefs, native):
         self.native = native
-        self.records = []
+        self.specific = []
+        self.general = []
         for fname in sorted(prefs):
             for fields, _ in stanzas(prefs[fname][0]):
                 if 'Package' not in fields or 'Pin' not in fields:
@@ -480,7 +481,18 @@ class Pins:
                     prio = int(fields.get('Pin-Priority', '0'))
                 except ValueError:
                     continue
-                self.records.append((fields['Package'].split(), fields['Pin'].strip(), prio))
+                names = fields['Package'].split()
+                pin = fields['Pin'].strip()
+                if names == ['*']:
+                    self.general.append((pin, prio))
+                    continue
+                literal, patterns = set(), []
+                for name in names:
+                    if re.fullmatch(r'(?:src:)?[a-zA-Z0-9.+-]+(?::[a-zA-Z0-9-]+)?', name):
+                        literal.add((name.startswith('src:'), name.removeprefix('src:')))
+                    else:
+                        patterns.append(name)
+                self.specific.append((literal, patterns, pin, prio))
 
     @staticmethod
     def _name(patterns, entry, native):
@@ -533,12 +545,24 @@ class Pins:
         return False
 
     def blocked(self, entry):
-        specific = [r for r in self.records if r[0] != ['*']]
-        general = [r for r in self.records if r[0] == ['*']]
-        for names, pin, prio in specific:
-            if self._name(names, entry, self.native) and self._pin(pin, entry):
+        name = entry['Package']
+        source = entry.get('Source', name).split()[0]
+        arch = entry.get('Architecture', self.native)
+        if arch == 'all':
+            arch = self.native
+        selectors = [(False, f'{name}:{arch}'), (True, f'{source}:{arch}'),
+                     (False, f'{name}:any'), (True, f'{source}:any')]
+        if arch == self.native:
+            selectors.extend(((False, name), (True, source),
+                              (False, f'{name}:native'), (True, f'{source}:native')))
+        # The generated edition pin contains thousands of literal package selectors.
+        # Keep record order and check only wildcard and regex selectors one at a time.
+        for literal, patterns, pin, prio in self.specific:
+            if self._pin(pin, entry) and (
+                not literal.isdisjoint(selectors) or self._name(patterns, entry, self.native)
+            ):
                 return prio < 0
-        for names, pin, prio in general:
+        for pin, prio in self.general:
             if self._pin(pin, entry):
                 return prio < 0
         return False
