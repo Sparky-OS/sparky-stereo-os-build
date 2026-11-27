@@ -73,20 +73,23 @@ match_all("Element limit page moved the desk", marks(read(green, "okular-kcm"), 
 for label, directory, expected in (("Debian Words", red, 0), ("Stereo Words", green, -6)):
     data = read(directory, "words-3d")
     check(f"{label} two visible pages", len(data["pages"]), 2)
-    match_all(f"{label} paper", marks(data, "paper"), 0)
+    check(f"{label} both papers at the window plane", marks(data, "paper"), [0, 0])
     match_all(f"{label} desk", marks(data, "desk"), expected)
 
-data = read(green, "words-scrolled")
-cut = [page for page in data["measures"] if page.get("paper_at_cut")]
-check("Words page under the toolbar", bool(cut), True)
-match_all("Words page under the toolbar depth", [page["paper_at_cut"]["shift"] for page in cut], 0)
-check("Words page edge under the toolbar is the same in both eyes",
-      bool(cut) and all(None not in page["right_edge_at_cut"] and len(set(page["right_edge_at_cut"])) == 1 for page in cut), True)
-background = read(green, "words-background")
-background_shift = (background.get("title_bar") or {}).get("shift")
-check("Words background title-bar disparity measured", background_shift is not None, True)
-match_all("Words background paper follows the window", marks(background, "paper"), background_shift)
-match_all("Words background desk follows the window", marks(background, "desk"), background_shift)
+for label, directory in (("Debian Words", red), ("Stereo Words", green)):
+    data = read(directory, "words-scrolled")
+    cut = [page for page in data["measures"] if page.get("paper_at_cut")]
+    check(f"{label} page under the toolbar", bool(cut), True)
+    match_all(f"{label} page under the toolbar depth", [page["paper_at_cut"]["shift"] for page in cut], 0)
+    check(f"{label} page edge under the toolbar is the same in both eyes",
+          bool(cut) and all(None not in page["right_edge_at_cut"] and len(set(page["right_edge_at_cut"])) == 1
+                            for page in cut), True)
+    background = read(directory, "words-background")
+    background_shift = (background.get("title_bar") or {}).get("shift")
+    check(f"{label} background title-bar disparity measured", background_shift is not None, True)
+    check(f"{label} both background papers follow the window", marks(background, "paper"),
+          [background_shift, background_shift])
+    match_all(f"{label} background desk follows the window", marks(background, "desk"), background_shift)
 check("Words 2D output matches Debian pixel for pixel", read(green, "words-2d", "baseline.json")["differing"], 0)
 
 sys.exit(1 if failures else 0)
