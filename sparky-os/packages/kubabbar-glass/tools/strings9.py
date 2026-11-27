@@ -85,8 +85,8 @@ SDDM_DESCRIPTION = {
     "fr": "Écran de connexion du thème Kubabbar Glass 9 : une fenêtre classique affiche la liste des utilisateurs de l’ordinateur sur le motif du thème",
     "ja": "Kubabbar Glass 9 のログイン画面：外観の模様の上に、このコンピューターを使う人の一覧を表示するクラシックなウィンドウ",
     "ko": "Kubabbar Glass 9 로그인 화면: 테마 무늬 위에 이 컴퓨터의 사용자 목록을 보여 주는 클래식 창",
-    "pl": "Ekran logowania wyglądu Kubabbar Glass 9: klasyczne okno z listą osób korzystających z tego komputera, na wzorze stylu",
-    "pt_BR": "Tela de login do tema Kubabbar Glass 9: uma janela clássica com a lista das pessoas deste computador sobre o padrão do visual",
+    "pl": "Ekran logowania wyglądu Kubabbar Glass 9: klasyczne okno z listą osób korzystających z tego komputera, na tle wzoru tego wyglądu",
+    "pt_BR": "Tela de login do tema Kubabbar Glass 9: uma janela clássica com a lista das pessoas deste computador sobre o padrão do tema",
     "zh_CN": "Kubabbar Glass 9 主题的登录屏幕：以主题图案为背景，在经典窗口中列出本机用户",
     "zh_TW": "Kubabbar Glass 9 主題的登入畫面：以主題圖案為背景，在經典視窗中列出本機使用者",
 }
