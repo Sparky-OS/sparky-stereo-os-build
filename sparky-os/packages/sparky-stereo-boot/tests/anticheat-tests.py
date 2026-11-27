@@ -249,6 +249,9 @@ sm3_event = struct.pack('<III', 8, 0xd, 2) + struct.pack('<H', 0x000b) + b'\x22'
 check('event log: an SM3_256 bank beside SHA-256 is read too', anticheat.event_log(sm3_header + sm3_event) == (2, True),
       str(anticheat.event_log(sm3_header + sm3_event)))
 check('event log: too short', anticheat.event_log(b'abc') == (0, False))
+real = open(os.path.join(FIX, 'ovmf-swtpm-eventlog.bin'), 'rb').read()
+check('event log: a real one (OVMF, swtpm, shim, GRUB 2.14): 137 entries as tpm2_eventlog counts, GRUB measured',
+      anticheat.event_log(real) == (137, True), str(anticheat.event_log(real)))
 test_der = open(keys + '/test.der', 'rb').read()
 check('MOK list: X.509 entries read', anticheat.esl_certificates(esl(test_der, test_der)) == [test_der, test_der])
 
