@@ -23,9 +23,13 @@
     Measured boot needs the boot manager's own measurements (PCRs 8, 9, 11, 12), and the kernel's unsigned-module taint
     counts a module loaded and gone; a Valve device is told not to turn Secure Boot on, and a handheld needs no IOMMU
     (Epic's FAQ). These rules follow Bazzite's check-anticheat (Universal Blue; Ted O'Hayer and stellaberrant).
-  * The check also names the modules of this kernel's updates folder (DKMS, prebuilt) that carry no signature: lockdown
-    refuses them, so in the anti-cheat start they do not load (LOCAL175, LOCAL176). Found on the test laptop, whose
-    DKMS modules (evdi, vhba, spl, zfs) are loaded without a signature.
+  * The check also names the modules lockdown refuses, so in the anti-cheat start they do not load (LOCAL175,
+    LOCAL176): in the usual start, the modules of this kernel's updates folder (DKMS, prebuilt) without a signature
+    and the loaded ones whose signature the kernel could not verify (taint E: signed with this computer's DKMS key,
+    which it does not trust); in the anti-cheat start, the names in this start's journal, and, when the kernel logged a
+    refusal without a name, this kernel's unverifiable modules that did not load. Measured on the test laptop (evdi,
+    vhba, spl, zfs, signed with an untrusted DKMS key; lockdown refused 7 loads). A person who cannot read the kernel's
+    log is told that only an administrator can see the refusals (LOCAL185) instead of getting no row.
   * The anti-cheat start never runs over a hibernated system: under lockdown the kernel does not read the image
     (resume_store, kernel/power/hibernate.c), so an initramfs-tools script after resume finds an image (a swap
     partition of type suspend, or a swap file's header at resume_offset ending in S1SUSPEND), says so in the system's

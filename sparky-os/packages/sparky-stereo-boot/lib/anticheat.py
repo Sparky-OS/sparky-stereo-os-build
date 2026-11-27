@@ -627,6 +627,16 @@ def _refused_names():
     return sorted(set(re.findall(r"insert (?:module )?'([\w-]+)'", done.stdout)))
 
 
+def _kernel_log_readable():
+    """True when this start's kernel messages can be read here, False when journalctl ran and showed none (a person
+    outside the adm and systemd-journal groups sees only their own journal), None when there is no journalctl."""
+    try:
+        done = _run([_tool('journalctl'), '-b', '-k', '-n', '1', '-o', 'cat', '--no-pager', '-q'], timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return bool(done.stdout.strip())
+
+
 def _lockdown_refusals():
     try:
         done = _run([_tool('journalctl'), '-b', '-k', '-o', 'cat', '--no-pager', '-g', 'unsigned module loading is restricted'],
@@ -811,6 +821,8 @@ def check(as_root=None):
         blocked = sorted(set(_unverified_loaded() + _unsigned_installed()))
     if blocked:
         rows.append(('modules-refused', 'not-met', text(s, 'LOCAL176' if anticheat else 'LOCAL175', ', '.join(blocked))))
+    elif anticheat and _kernel_log_readable() is False:
+        rows.append(('modules-refused', 'unknown', text(s, 'LOCAL185')))
 
     # 2. TPM 2.0
     major = (_read(SYSFS + '/class/tpm/tpm0/tpm_version_major') or '').strip()

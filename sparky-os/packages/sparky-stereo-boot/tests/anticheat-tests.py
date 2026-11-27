@@ -339,6 +339,23 @@ check('check: no hibernation row when hibernation is available', 'hibernation' n
 code, got, _ = rows(check_root(modules=[('dkmsmod', 'OE')], cmdline='root=UUID=1 ro quiet'), keys + '/signed.efi')
 check('check: a module loaded with a signature the kernel could not verify is named for the anti-cheat start',
       got.get('modules-refused', ('',))[0] == 'not-met' and 'dkmsmod' in got['modules-refused'][1], str(got.get('modules-refused')))
+def rows_with_journal(root, body):
+    folder = tempfile.mkdtemp(prefix='ac190-bin-')
+    fake(os.path.join(folder, 'journalctl'), body)
+    done = run(root, 'check', '--json', SPARKY_STEREO_KERNEL_IMAGE=keys + '/signed.efi',
+               SPARKY_STEREO_EDITION_CERT=keys + '/test.der', PATH=folder + ':' + os.environ.get('PATH', ''))
+    return {r['id']: (r['state'], r['text']) for r in json.loads(done.stdout)['rows']}
+
+
+got = rows_with_journal(check_root(), 'exit 0')
+check('check: in the anti-cheat start, a kernel log this person cannot read is said, not skipped',
+      got.get('modules-refused', ('',))[0] == 'unknown' and 'only an administrator' in got['modules-refused'][1],
+      str(got.get('modules-refused')))
+got = rows_with_journal(check_root(), 'case "$*" in *-n\ 1*) echo "Linux version 7.3.4";; esac; exit 0')
+check('check: a readable kernel log with no refusal gives no refused-modules row', 'modules-refused' not in got,
+      str(got.get('modules-refused')))
+got = rows_with_journal(check_root(cmdline='root=UUID=1 ro quiet'), 'exit 0')
+check('check: the usual start needs no kernel log for its row', 'modules-refused' not in got, str(got.get('modules-refused')))
 code, got, _ = rows(check_root(tainted=str(8192 | 4096)), keys + '/signed.efi')
 check('check: an unsigned module loaded earlier in this start, the taint bit', got.get('modules-loaded', ('',))[0] == 'not-met',
       str(got.get('modules-loaded')))
