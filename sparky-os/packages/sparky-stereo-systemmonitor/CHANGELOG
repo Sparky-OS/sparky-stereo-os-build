@@ -1,0 +1,23 @@
+-------------------------------------------------------------------------------
+  Version 0.1.0 (2026-11-27)
+-------------------------------------------------------------------------------
+  * System Monitor's Overview fits the computer it runs on (queue row 182; Daniel, 2026-10-17: "system monitor
+    overview presets for different configs like multiple GPUs and CPUs"; "auto apply by hardware probe"). At a
+    person's login the graphics cards are read in ksystemstats 6.7.4's order (PCI classes 0x030000, 0x030200 and
+    0x038000 of AMD, NVIDIA and Intel), with what each card's driver reports of usage, video memory, temperature and
+    power (AMD: gpu_busy_percent, mem_info_vram_*, the amdgpu hwmon's temp1 and power1; NVIDIA: nvidia-smi dmon, a
+    column printed as - is not reported; Intel: usage only, through i915's PMU and ksystemstats_intel_helper's
+    CAP_PERFMON or perf_event_paranoid 0), and the processor threads from /proc/cpuinfo.
+  * Four presets are written to the person's System Monitor folder: one GPU (the one that draws the desktop) or every
+    GPU, few (up to 8) or many processor threads. Every GPU has its usage chart, its name, video memory, temperature
+    and power where reported; a sensor its driver does not report is named on the page ("Not reported to System
+    Monitor: ...") and never shown, so no zero stands for it. Many threads are a grid of one chart per thread.
+  * The first time, the preset of the computer's class is the start page (Ctrl+Alt+Del opens it), KDE's Overview and
+    the other presets are listed in Edit Pages, hidden. A person or an administrator who had chosen already, or a
+    person who edited KDE's Overview, keeps their arrangement; the other presets are only added hidden. The choice is
+    written once: the person's later choice is never written again.
+  * When the cards or threads change, the presets the person did not edit or remove are written again for the
+    computer; the person's choice stays.
+  * A probe that cannot read the computer writes nothing, so KDE's Overview stays, and the person is told why through
+    sparky-stereo-problems (LOCAL2, Repair runs the probe again); a later probe that works clears it.
+  * The pages' words and the problem in the ten languages (en pl pt_BR fr de es ja ko zh_CN zh_TW).
