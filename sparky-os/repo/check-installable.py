@@ -50,7 +50,10 @@ and in the nvidia profile those of sparky-stereo-cuda-repo.
 Profiles: base (every install without NVIDIA's repository), nvidia (base plus sparky-stereo-cuda-repo: every
 installed image, and what the hardware setup adds on a machine with an NVIDIA card), arm64 (the arm64 packages,
 in an arm64 universe).
-A package fails a profile when the apt engine says it cannot be installed there.
+A package fails a profile when the apt engine says it cannot be installed there. The report retains the
+solver's failure even where it measures a designed profile limit: the GLib i386 tests' native Python stack,
+the unsupported dual-architecture Mesa OpenCL ICD pair, and a 580 request proven with the legacy lock and
+CUDA repository that the hardware setup installs first.
 
 Output (--report DIR): installable.tsv (one row per package and profile that fails), summary.txt,
 apt/ (the solver's words for each failure), dose-PROFILE.yaml, collateral.tsv (the Debian and deb-multimedia
@@ -58,7 +61,7 @@ packages above that cannot be installed, one row per profile), twins.tsv (the Mu
 of ours whose architectures cannot be installed together, one row per profile), metadata.json (sources,
 signed index hashes, policy files and their hashes, versions of apt and dose).
 Exit status: 0 in --mode report (the publication's report); in --mode refuse, 1 when a failing
-package, ours or one of those Debian and deb-multimedia packages, or a twin pair is not listed in --known
+package, ours or one of those Debian and deb-multimedia packages, or a twin pair is neither designed nor listed in --known
 (package<TAB>version or *<TAB>reason; a pair by the version that is behind), so a known, explained
 failure does not stop every publication while it waits for its rebuild.
 
@@ -90,6 +93,7 @@ SPARKY_OS = HERE.parent
 POLICY_PACKAGES = ('sparky-stereo-apt', 'sparky-stereo-hardware', 'sparky-stereo-nvidia-driver-lock')
 # NVIDIA's CUDA repository, its key and its pins (the nvidia profile)
 CUDA_PACKAGE = 'sparky-stereo-cuda-repo'
+LEGACY_LOCK = 'sparky-stereo-nvidia-legacy-580xx-driver-lock'
 COMPANIONS = ('-dbgsym', '-lc-hr')
 ORIGIN = 'Sparky Stereo OS'
 # The archives whose builds of our packages the policy blocks (sparky-stereo-only-ours)
@@ -443,9 +447,61 @@ class Universe:
         spec = '%s=%s' % (name, version) if arch == 'all' else '%s:%s=%s' % (name, arch, version)
         return self.simulate_specs([spec])
 
-    def simulate_specs(self, specs):
-        p = self.apt(['apt-get', '--simulate', '-q', '--no-install-recommends', 'install'] + list(specs), check=False, timeout=300)
+    def simulate_specs(self, specs, options=()):
+        p = self.apt(['apt-get', '--simulate', '-q', '--no-install-recommends',
+                      *options, 'install', *specs], check=False, timeout=300)
         return p.returncode == 0, (p.stdout + p.stderr)
+
+
+def legacy_580_entry(entry):
+    source = entry.get('Source', entry['Package']).split()[0]
+    version = entry['Version'].split(':')[-1]
+    return version.startswith('580.') and source in ('nvidia-graphics-drivers', 'nvidia-kmod-legacy-580xx')
+
+
+def measure_legacy_580(universe, tree, entries, targets, report, jobs):
+    """Repeat rejected 580 requests with the shipped legacy lock loaded alongside the open lock."""
+    if not targets or not any(e['Package'] == LEGACY_LOCK for e in entries):
+        return set()
+    deb, version = tree_deb(tree, entries, LEGACY_LOCK)
+    prefs = universe.base / 'etc/preferences.d'
+    legacy = universe.base / 'legacy-prefs'
+    shutil.copytree(prefs, legacy, dirs_exist_ok=True)
+    for name, (text, _) in preferences_from_deb(deb, LEGACY_LOCK).items():
+        if (legacy / name).exists():
+            raise Stop(f'{LEGACY_LOCK} and the NVIDIA profile both ship /etc/apt/preferences.d/{name}')
+        (legacy / name).write_text(text)
+    options = ('-o', f'Dir::Etc::preferencesparts={legacy}')
+
+    def solve(key):
+        name, arch, requested = key
+        spec = f'{name}={requested}' if arch == 'all' else f'{name}:{arch}={requested}'
+        ok, text = universe.simulate_specs((spec,), options)
+        (report / 'apt' / f'legacy-580_{name}_{arch}.log').write_text(text)
+        if name == 'nvidia-legacy-580xx-kernel-dkms':
+            branch = version.split(':')[-1].split('-', 1)[0]
+            ok = ok and any(line.startswith(f'Inst nvidia-kernel-support ({branch}-')
+                            and ORIGIN in line for line in text.splitlines())
+        return key, ok
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as workers:
+        return {key for key, ok in workers.map(solve, sorted(targets)) if ok}
+
+
+def glib_native_test_reason(source, package, architecture, solver_log):
+    if (source == 'glib2.0' and architecture == 'i386'
+            and package in ('libglib2.0-tests', 'libglib2.0-tests-dbgsym')
+            and 'python3-dbus:amd64 Conflicts python3-dbus:i386' in solver_log):
+        return 'GLib installed tests use the native Python D-Bus stack. The amd64 gaming routes use the i386 libraries.'
+    return ''
+
+
+def mesa_opencl_pair_reason(source, package, versions, solver_log):
+    if (source == 'mesa' and package in ('mesa-opencl-icd', 'mesa-opencl-icd-dbgsym')
+            and set(versions) == {'amd64', 'i386'} and len(set(versions.values())) == 1
+            and 'libclang-cpp21:amd64 Conflicts libclang-cpp21:i386' in solver_log):
+        return 'Both OpenCL ICDs install separately. The gaming routes do not require both LLVM OpenCL stacks together.'
+    return ''
 
 
 DOSE_FIELDS = ('Package', 'Version', 'Architecture', 'Multi-Arch', 'Essential', 'Source',
@@ -471,7 +527,8 @@ class Pins:
 
     def __init__(self, prefs, native):
         self.native = native
-        self.records = []
+        self.specific = []
+        self.general = []
         for fname in sorted(prefs):
             for fields, _ in stanzas(prefs[fname][0]):
                 if 'Package' not in fields or 'Pin' not in fields:
@@ -480,7 +537,18 @@ class Pins:
                     prio = int(fields.get('Pin-Priority', '0'))
                 except ValueError:
                     continue
-                self.records.append((fields['Package'].split(), fields['Pin'].strip(), prio))
+                names = fields['Package'].split()
+                pin = fields['Pin'].strip()
+                if names == ['*']:
+                    self.general.append((pin, prio))
+                    continue
+                literal, patterns = set(), []
+                for name in names:
+                    if re.fullmatch(r'(?:src:)?[a-zA-Z0-9.+-]+(?::[a-zA-Z0-9-]+)?', name):
+                        literal.add((name.startswith('src:'), name.removeprefix('src:')))
+                    else:
+                        patterns.append(name)
+                self.specific.append((literal, patterns, pin, prio))
 
     @staticmethod
     def _name(patterns, entry, native):
@@ -533,12 +601,24 @@ class Pins:
         return False
 
     def blocked(self, entry):
-        specific = [r for r in self.records if r[0] != ['*']]
-        general = [r for r in self.records if r[0] == ['*']]
-        for names, pin, prio in specific:
-            if self._name(names, entry, self.native) and self._pin(pin, entry):
+        name = entry['Package']
+        source = entry.get('Source', name).split()[0]
+        arch = entry.get('Architecture', self.native)
+        if arch == 'all':
+            arch = self.native
+        selectors = [(False, f'{name}:{arch}'), (True, f'{source}:{arch}'),
+                     (False, f'{name}:any'), (True, f'{source}:any')]
+        if arch == self.native:
+            selectors.extend(((False, name), (True, source),
+                              (False, f'{name}:native'), (True, f'{source}:native')))
+        # The generated edition pin contains thousands of literal package selectors.
+        # Keep record order and check only wildcard and regex selectors one at a time.
+        for literal, patterns, pin, prio in self.specific:
+            if self._pin(pin, entry) and (
+                not literal.isdisjoint(selectors) or self._name(patterns, entry, self.native)
+            ):
                 return prio < 0
-        for names, pin, prio in general:
+        for pin, prio in self.general:
             if self._pin(pin, entry):
                 return prio < 0
         return False
@@ -834,12 +914,13 @@ def main():
     rows, failures, checked, failed_in, not_candidate = [], {}, {}, {}, []
     collateral, collateral_checked = [], {}
     twins, twins_checked = [], {}
+    legacy_verified = set()
     sparky_apt = None
     for profile in profiles:
         arches = ['arm64'] if profile == 'arm64' else [x for x in ('amd64', 'i386') if x in tree_arches or x == 'amd64']
         base = scratch / ('state-' + profile)
         if base.exists():
-            for sub in ('etc', 'keys', 'edition', 'policy', 'cache'):
+            for sub in ('etc', 'keys', 'edition', 'policy', 'cache', 'legacy-prefs'):
                 shutil.rmtree(base / sub, ignore_errors=True)
         base.mkdir(parents=True, exist_ok=True)
         cuda_key = None
@@ -1016,13 +1097,16 @@ def main():
                 causes = ['the versions match (%s); apt cannot install them together: %s' % (newest, ' / '.join(
                     [ln.strip() for ln in text.splitlines() if ' : ' in ln or ln.startswith(('E:', 'Error:', '   1.', '   2.'))][:8]))]
             first = next(iter(by_arch.values()))
-            twins.append({'profile': profile, 'package': name, 'source': first.get('Source', name).split()[0],
+            source = first.get('Source', name).split()[0]
+            twins.append({'profile': profile, 'package': name, 'source': source,
                           'companion': name.endswith(COMPANIONS), 'versions': versions, 'behind': behind,
                           'apt': {True: 'ok', False: 'FAIL', None: '-'}[ok],
-                          'static': {True: 'ok', False: 'FAIL', None: '-'}[static_ok], 'causes': causes})
+                          'static': {True: 'ok', False: 'FAIL', None: '-'}[static_ok], 'causes': causes,
+                          'designed': mesa_opencl_pair_reason(source, name, versions, text)})
         print('[%s] %d Multi-Arch: same packages of the tree built for %s, asked of apt beside their other architectures; '
-              '%d cannot be installed together' % (profile, len(pairs), '+'.join(arches),
-                                                   len([t for t in twins if t['profile'] == profile])), flush=True)
+              '%d cannot be installed together outside the designed limits' % (
+                  profile, len(pairs), '+'.join(arches),
+                  sum(t['profile'] == profile and not t['designed'] for t in twins)), flush=True)
         # Debian's and deb-multimedia's packages the policy can leave uninstallable with no package of ours depending on
         # them: an exact dependency on an Architecture: all name whose candidate the policy decides (ORDER 321).
         coll, ours_all = collateral_candidates(index, arches, only)
@@ -1094,28 +1178,48 @@ def main():
             if not failed and dose_ok is not False and static_ok is not False:
                 continue
             causes = []
+            source = e.get('Source', e['Package']).split()[0]
+            designed = ''
+            text = ''
+            if apt_ok is False:
+                parent, parent_arch = derived[key][:2] if key in derived else key[:2]
+                text = (report / 'apt' / f'{profile}_{parent}_{parent_arch}.log').read_text()
+                designed = glib_native_test_reason(source, e['Package'], e['Architecture'], text)
             for path, field, rel, alts in missing:
                 cls, detail = classify(index, alts)
                 causes.append('%s: %s %s [%s: %s]' % (' > '.join(path), field, rel, cls, detail))
             if not causes and apt_ok is False and key in derived:
                 causes.append('apt: installs only with %s %s %s, which fails' % derived[key])
             elif not causes and apt_ok is False:
-                text = (report / 'apt' / ('%s_%s_%s.log' % (profile, e['Package'], e['Architecture']))).read_text()
                 lines = [ln.strip() for ln in text.splitlines()
                          if ' : ' in ln or ln.startswith(('E:', 'Error:')) or 'conflict' in ln.lower()]
                 causes.append('apt: ' + ' / '.join(lines[:6]))
             companion = e['Package'].endswith(COMPANIONS)
             rows.append({'profile': profile, 'package': e['Package'], 'version': e['Version'],
-                         'architecture': e['Architecture'], 'source': e.get('Source', e['Package']).split()[0],
+                         'architecture': e['Architecture'], 'source': source,
                          'companion': companion,
                          'apt': {True: 'ok', False: 'FAIL', None: '-'}[apt_ok] + (' (as %s)' % derived[key][0] if key in derived and apt_ok is not None else ''),
                          'static': {True: 'ok', False: 'FAIL', None: '-'}[static_ok],
                          'dose': {True: 'ok', False: 'FAIL', None: '-'}[dose_ok],
                          'dose_reasons': dose.get(dose_key, [])[:8] if dose_key else [],
-                         'causes': causes})
-            if failed:
-                failures.setdefault((e['Package'], e['Version']), []).append(profile)
-                failed_in.setdefault((e['Package'], e['Version'], e['Architecture']), set()).add(profile)
+                         'causes': causes, 'failed': failed, 'designed': designed})
+        if profile == 'nvidia' and 'apt' in engines:
+            failed_requests = {(r['package'], r['architecture'], r['version']) for r in rows if r['apt'].startswith('FAIL')}
+            targets = {(e['Package'], e['Architecture'], e['Version']) for e in want if legacy_580_entry(e)}
+            legacy_verified = measure_legacy_580(u, tree, tree_entries, targets & failed_requests, report, a.jobs)
+            if legacy_verified:
+                print('[nvidia] %d requests pass with the legacy 580 lock active' % len(legacy_verified), flush=True)
+
+    for r in rows:
+        name, arch, version, profile = r['package'], r['architecture'], r['version'], r['profile']
+        if not r['failed']:
+            continue
+        if (name, arch, version) in legacy_verified and profile in ('base', 'nvidia'):
+            r['designed'] = 'The 580 hardware route loads the legacy lock and CUDA source first. The exact request passes with both shipped lock files active.'
+        if not r['designed']:
+            failures.setdefault((name, version), []).append(profile)
+            failed_in.setdefault((name, version, arch), set()).add(profile)
+    failed_twins = [t for t in twins if not t['designed']]
 
     known = {}
     if a.known:
@@ -1127,18 +1231,18 @@ def main():
     unexplained += sorted({(r['package'], r['version']) for r in collateral if r['policy']
                            and (r['package'], r['version']) not in known and (r['package'], '*') not in known})
     # A pair at different versions is known by the version that is behind (the build waiting for its rebuild).
-    for t in twins:
+    for t in failed_twins:
         keys = list(dict.fromkeys([(t['package'], v) for v in t['behind'].values()]
                                   or [(t['package'], v) for v in t['versions'].values()]))
         if (t['package'], '*') not in known and not all(k in known for k in keys):
             unexplained += [k for k in keys if k not in known and k not in unexplained]
 
     with open(report / 'installable.tsv', 'w') as out:
-        out.write('profile\tpackage\tversion\tarchitecture\tsource\tcompanion\tapt\tstatic\tdose\tcauses\tdose_reasons\n')
+        out.write('profile\tpackage\tversion\tarchitecture\tsource\tcompanion\tapt\tstatic\tdose\tcauses\tdose_reasons\tdesigned\n')
         for r in rows:
             out.write('\t'.join([r['profile'], r['package'], r['version'], r['architecture'], r['source'],
                                  'yes' if r['companion'] else 'no', r['apt'], r['static'], r['dose'],
-                                 ' || '.join(r['causes']), ' | '.join(r['dose_reasons'])]) + '\n')
+                                 ' || '.join(r['causes']), ' | '.join(r['dose_reasons']), r['designed']]) + '\n')
     disagree = [r for r in rows if len({r['apt'].split()[0], r['static'], r['dose']} - {'-'}) > 1]
     lines = ['Installability of %s (%s), %s' % (tree, tree_fields.get('Date', 'unsigned'), meta['started']),
              'engines: %s; profiles: %s' % (','.join(engines), ','.join(profiles)),
@@ -1152,7 +1256,7 @@ def main():
                                                                     for r in collateral if not r['policy']})
                  if any(not r['policy'] for r in collateral) else ''),
              'Multi-Arch: same packages of ours that cannot be installed beside their other architectures: %d of %s asked' % (
-                 len({t['package'] for t in twins}), '+'.join('%d (%s)' % (n, p) for p, n in twins_checked.items()) or '0'), '']
+                 len({t['package'] for t in failed_twins}), '+'.join('%d (%s)' % (n, p) for p, n in twins_checked.items()) or '0'), '']
     def category(key):
         bad, all_ = failed_in.get(key, set()), checked.get(key, set())
         if bad == all_:
@@ -1168,7 +1272,7 @@ def main():
     lines[3:3] = ['  %d: %s' % (n, c) for c, n in sorted(counts.items())]
     by_source = {}
     for r in rows:
-        if (r['package'], r['version']) in failures:
+        if r['failed'] and not r['designed']:
             by_source.setdefault(r['source'], {}).setdefault((r['package'], r['version'], r['architecture']), []).append(r)
     for src in sorted(by_source):
         lines.append('source %s' % src)
@@ -1206,11 +1310,11 @@ def main():
                 lines.append('  %s %s %s [%s]: needs %s%s' % (r['package'], r['version'], r['architecture'], r['profile'],
                                                              r['relations'], ' (%s)' % r['policy'] if r['policy'] else ''))
                 lines += ['    ' + c for c in r['causes'][:2]]
-    if twins:
+    if failed_twins:
         lines += ['', 'Multi-Arch: same packages of ours that cannot be installed beside their other architectures (each installs '
                   'alone; Debian Policy 5.6.34.3 lets only the exact same version of every architecture install together):']
         by_source = {}
-        for t in twins:
+        for t in failed_twins:
             by_source.setdefault(t['source'], {}).setdefault(t['package'], []).append(t)
         for src in sorted(by_source):
             lines.append('source %s' % src)
@@ -1220,13 +1324,20 @@ def main():
                                                  ' (companion)' if ts[0]['companion'] else ''))
                 if not ts[0]['companion']:
                     lines += ['    ' + c for c in ts[0]['causes'][:2]]
+    designed = [r for r in rows + twins if r['designed']]
+    if designed:
+        lines += ['', 'Designed profile limits (%d APT rows, raw solver failures retained):' % len(designed)]
+        for row in designed:
+            identity = row.get('version') or ' '.join('%s=%s' % pair for pair in sorted(row['versions'].items()))
+            lines.append('  %s %s %s [%s]: %s' % (row['package'], identity, row.get('architecture', ''),
+                                                row['profile'], row['designed']))
     with open(report / 'twins.tsv', 'w') as out:
-        out.write('profile\tpackage\tsource\tcompanion\tversions\tbehind\tapt\tstatic\tcauses\n')
+        out.write('profile\tpackage\tsource\tcompanion\tversions\tbehind\tapt\tstatic\tcauses\tdesigned\n')
         for t in twins:
             out.write('\t'.join([t['profile'], t['package'], t['source'], 'yes' if t['companion'] else 'no',
                                  ' '.join('%s=%s' % x for x in sorted(t['versions'].items())),
                                  ' '.join('%s=%s' % x for x in sorted(t['behind'].items())),
-                                 t['apt'], t['static'], ' || '.join(t['causes'])]) + '\n')
+                                 t['apt'], t['static'], ' || '.join(t['causes']), t['designed']]) + '\n')
     with open(report / 'collateral.tsv', 'w') as out:
         out.write('profile\tpackage\tversion\tarchitecture\torigin\tsource\trelations\tapt\tstatic\tdecided by the policy\tcauses\n')
         for r in collateral:
@@ -1240,7 +1351,9 @@ def main():
     meta['failures'] = len(failures)
     meta['collateral'] = {'asked': collateral_checked, 'uninstallable': len([r for r in collateral if r['policy']]),
                           'another archive': len([r for r in collateral if not r['policy']])}
-    meta['twins'] = {'asked': twins_checked, 'cannot be installed together': len({t['package'] for t in twins})}
+    meta['twins'] = {'asked': twins_checked, 'cannot be installed together': len({t['package'] for t in failed_twins})}
+    meta['designed'] = {'installable rows': sum(bool(r['designed']) for r in rows),
+                        'twin rows': sum(bool(t['designed']) for t in twins)}
     (report / 'metadata.json').write_text(json.dumps(meta, indent=2, default=str) + '\n')
     print('\n'.join(lines))
     print('report: ' + str(report))

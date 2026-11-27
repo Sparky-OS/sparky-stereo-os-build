@@ -1,0 +1,14 @@
+Description: Link the TBB calls in the Import workbench
+ Open CASCADE's Debian build enables HAVE_TBB. ImportOCAF.cpp then
+ calls TBB directly, so Import must declare that link dependency.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Bug: https://github.com/FreeCAD/FreeCAD/issues/33573
+Forwarded: no
+Last-Update: 2026-11-27
+
+--- a/src/Mod/Import/App/CMakeLists.txt
++++ b/src/Mod/Import/App/CMakeLists.txt
+@@ -91 +91,2 @@
+-target_link_libraries(Import ${Import_LIBS})
++find_package(TBB CONFIG REQUIRED COMPONENTS tbb)
++target_link_libraries(Import ${Import_LIBS} TBB::tbb)
