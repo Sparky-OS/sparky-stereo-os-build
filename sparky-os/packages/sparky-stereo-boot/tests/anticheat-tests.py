@@ -343,6 +343,27 @@ pt = run(check_root(), 'check', SPARKY_STEREO_KERNEL_IMAGE=keys + '/signed.efi',
          LANG='pt_BR.UTF-8')
 check('check: Brazilian Portuguese', 'O Secure Boot está ligado.' in pt.stdout and '[atendido]' in pt.stdout, pt.stdout)
 
+module = os.environ.get('SPARKY_STEREO_TEST_MODULE')
+if module:
+    # a real module of the edition's kernel, signed at its build, and the same module with the signature taken off
+    # (module_signature: twelve bytes and the signature before the magic, include/linux/module_signature.h)
+    import lzma
+    data = lzma.decompress(open(module, 'rb').read()) if module.endswith('.xz') else open(module, 'rb').read()
+    magic = b'~Module signature appended~\n'
+    sig_len = struct.unpack('>I', data[-len(magic) - 4:-len(magic)])[0]
+    stripped = data[:-(len(magic) + 12 + sig_len)]
+    root = check_root(cmdline='root=UUID=1 ro quiet')
+    updates = os.path.join(root, 'lib/modules/7.3.4-stereo3d18/updates/dkms')
+    os.makedirs(updates)
+    open(os.path.join(updates, 'signedmod.ko'), 'wb').write(data)
+    open(os.path.join(updates, 'bare.ko'), 'wb').write(stripped)
+    done = run(root, 'check', '--json', SPARKY_STEREO_KERNEL_IMAGE=keys + '/signed.efi', SPARKY_STEREO_EDITION_CERT=keys + '/test.der',
+               SPARKY_STEREO_RELEASE='7.3.4-stereo3d18')
+    got = {r['id']: (r['state'], r['text']) for r in json.loads(done.stdout)['rows']}
+    check('check: a module without a signature is named for the anti-cheat start, the signed one is not',
+          got.get('modules-refused', ('', ''))[0] == 'not-met' and 'bare' in got['modules-refused'][1]
+          and 'signedmod' not in got['modules-refused'][1] and 'would not load' in got['modules-refused'][1], str(got.get('modules-refused')))
+
 kernel = os.environ.get('SPARKY_STEREO_TEST_KERNEL')
 if kernel:
     code, got, _ = rows(check_root(), kernel, cert=TREE_CERT)
@@ -354,7 +375,7 @@ langs = {}
 for code in ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW'):
     langs[code] = {k: v for k, v in (line.split('=', 1) for line in open(os.path.join(PKG, 'lang', code), encoding='utf-8')
                                      if line.startswith('LOCAL'))}
-wanted = ['LOCAL%d' % k for k in list(range(105, 111)) + list(range(120, 175))]
+wanted = ['LOCAL%d' % k for k in list(range(105, 111)) + list(range(120, 177))]
 for code, values in langs.items():
     missing = [k for k in wanted if k not in values]
     wrong = [k for k in wanted if k in values and values[k].count('%s') != langs['en'][k].count('%s')]

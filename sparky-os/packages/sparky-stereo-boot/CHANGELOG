@@ -20,6 +20,9 @@
     boot manager measurement read as an administrator), the IOMMU and passthrough, lockdown, kexec, the BPF LSM: each
     met, not met or unknown, with why, in ten languages. The edition's own key and this computer's DKMS key are named
     as not on Epic's list; any other signer is unknown, because the list is Epic's to say.
+  * The check also names the modules of this kernel's updates folder (DKMS, prebuilt) that carry no signature: lockdown
+    refuses them, so in the anti-cheat start they do not load (LOCAL175, LOCAL176). Found on the test laptop, whose
+    DKMS modules (evdi, vhba, spl, zfs) are loaded without a signature.
   * The anti-cheat start never runs over a hibernated system: under lockdown the kernel does not read the image
     (resume_store, kernel/power/hibernate.c), so an initramfs-tools script after resume finds an image (a swap
     partition of type suspend, or a swap file's header at resume_offset ending in S1SUSPEND), says so in the system's

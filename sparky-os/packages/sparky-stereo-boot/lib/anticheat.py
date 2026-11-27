@@ -589,6 +589,24 @@ def _module_signers():
     return found
 
 
+def _unsigned_installed():
+    """Modules of the running kernel's updates folder (DKMS, the edition's prebuilt ones) that carry no signature."""
+    base = os.path.join(ROOT + '/lib/modules', os.uname().release if not ROOT else os.environ.get('SPARKY_STEREO_RELEASE',
+                                                                                                  os.uname().release), 'updates')
+    found = []
+    for folder, _dirs, files in os.walk(base):
+        for name in sorted(files):
+            if not re.search(r'\.ko(\.(xz|zst|gz))?$', name):
+                continue
+            try:
+                done = _run(['modinfo', '-F', 'sig_id', os.path.join(folder, name)], timeout=30)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if done.returncode == 0 and not done.stdout.strip():
+                found.append(re.sub(r'\.ko(\.(xz|zst|gz))?$', '', name))
+    return sorted(set(found))
+
+
 def _dkms_serial():
     data = _read(DKMS_CERT, 'rb')
     if not data:
@@ -679,6 +697,12 @@ def check(as_root=None):
             rows.append(('modules', 'not-met', text(s, 'LOCAL147', ', '.join(here))))
         if other:
             rows.append(('modules', 'unknown', text(s, 'LOCAL148', ', '.join('%s (%s)' % pair for pair in other))))
+
+    # modules installed for this kernel outside its tree with no signature: lockdown refuses them (LOCKDOWN_MODULE_SIGNATURE
+    # is below LOCKDOWN_INTEGRITY_MAX, include/linux/security.h), so in the anti-cheat start they do not load
+    blocked = _unsigned_installed()
+    if blocked:
+        rows.append(('modules-refused', 'not-met', text(s, 'LOCAL176' if anticheat else 'LOCAL175', ', '.join(blocked))))
 
     # 2. TPM 2.0
     major = (_read(SYSFS + '/class/tpm/tpm0/tpm_version_major') or '').strip()
