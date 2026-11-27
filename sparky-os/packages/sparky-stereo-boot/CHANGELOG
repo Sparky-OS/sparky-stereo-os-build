@@ -29,7 +29,12 @@
   * The anti-cheat start never runs over a hibernated system: under lockdown the kernel does not read the image
     (resume_store, kernel/power/hibernate.c), so an initramfs-tools script after resume finds an image (a swap
     partition of type suspend, or a swap file's header at resume_offset ending in S1SUSPEND), says so in the system's
-    language (LOCAL174) and restarts into the usual start, which resumes it.
+    language (LOCAL174) and switches the computer off; turned on again, the usual start resumes it. Off and not a
+    restart: measured under OVMF, the usual start after a restart refused the image ("Hibernate inconsistent memory map
+    detected"), after a power-off it resumed.
+  * After a resume, GRUB's environment blocks are read from the disk again (sparky-stereo-boot-anticheat-resume.service,
+    before grub2-common.service): measured, grub2-common.service rewrote /boot/grub/grubenv from the copy held before
+    hibernation and brought back the one-time request GRUB had already taken.
   * At the anti-cheat start the session is told that it has no hibernation until the next restart, as a notice of this
     boot in the problems engine (sparky-stereo-boot-anticheat.service, LOCAL173).
   * Depends: pkexec, openssl, kmod. Tests: tests/anticheat-tests.py.

@@ -7,8 +7,10 @@
 # start changes the file systems, and the next usual start would restore memory that no longer matches its disks.
 # When this start finds a hibernation image where initramfs-tools' own resume script looks (local-premount/resume:
 # get_fstype says "suspend" for a swap partition; for a swap file the header at resume_offset, in PAGE_SIZE units,
-# ends with HIBERNATE_SIG "S1SUSPEND", struct swsusp_header in kernel/power/swap.c), it says so and restarts: GRUB has
-# already taken the one-time request, so the next start is the usual one, which resumes the system.
+# ends with HIBERNATE_SIG "S1SUSPEND", struct swsusp_header in kernel/power/swap.c), it says so and switches the
+# computer off: GRUB has already taken the one-time request, so the next start is the usual one, which resumes the
+# system. Off, not a restart: measured under OVMF, the usual start after this start's reset refused the image
+# ("Hibernate inconsistent memory map detected", arch/x86/power/hibernate.c), and after a power-off it resumed.
 PREREQ="resume"
 prereqs()
 {
@@ -48,5 +50,5 @@ while IFS= read -r line; do
 		plymouth display-message --text="$line"
 	fi
 done < /etc/sparky-stereo-boot/anticheat-hibernated
-sleep 15
-echo b > /proc/sysrq-trigger
+sleep 20
+echo o > /proc/sysrq-trigger

@@ -24,7 +24,8 @@ chmod 755 "$D"
 install -D -m 755 "$HERE/bin/sparky-stereo-boot" "$D/usr/bin/sparky-stereo-boot"
 for u in sparky-stereo-boot.socket sparky-stereo-boot@.service sparky-stereo-boot-handover.service sparky-stereo-boot-check.service \
 	sparky-stereo-boot-login.service sparky-stereo-boot-finished.service \
-	sparky-stereo-boot-secureboot.service sparky-stereo-boot-dkms-key.path sparky-stereo-boot-anticheat.service; do
+	sparky-stereo-boot-secureboot.service sparky-stereo-boot-dkms-key.path sparky-stereo-boot-anticheat.service \
+	sparky-stereo-boot-anticheat-resume.service; do
 	install -D -m 644 "$HERE/systemd/system/$u" "$D/usr/lib/systemd/system/$u"
 done
 install -D -m 644 "$HERE/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf" "$D/usr/lib/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf"
@@ -57,6 +58,9 @@ ln -s ../sparky-stereo-boot-secureboot.service "$D/usr/lib/systemd/system/multi-
 # polkit, what Easy Anti-Cheat would see, the guard that never lets it run over a hibernated system, and the notice at
 # login that it has no hibernation (the unit runs only with sparky_stereo.anticheat=1 on the kernel line)
 ln -s ../sparky-stereo-boot-anticheat.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-boot-anticheat.service"
+for t in hibernate hybrid-sleep suspend-then-hibernate; do
+	ln -s ../sparky-stereo-boot-anticheat-resume.service "$D/usr/lib/systemd/system/$t.target.wants/sparky-stereo-boot-anticheat-resume.service"
+done
 install -D -m 644 "$HERE/lib/anticheat.py" "$D/usr/lib/sparky-stereo-boot/anticheat.py"
 install -D -m 755 "$HERE/lib/anticheat-restart" "$D/usr/lib/sparky-stereo-boot/anticheat-restart"
 install -D -m 755 "$HERE/grub/89_sparky_stereo_anticheat" "$D/etc/grub.d/89_sparky_stereo_anticheat"

@@ -867,6 +867,24 @@ def anticheat_start():
     return 0
 
 
+def resumed():
+    """After a resume (sparky-stereo-boot-anticheat-resume.service, before grub2-common.service): GRUB may have written
+    its environment block while this system was hibernated (the anti-cheat start took the one-time request, then its
+    guard switched the computer off), and this system still holds the block as it was before. grub2-common.service
+    rewrites the whole block from that copy (grub-editenv unset recordfail), which brought the one-time request back
+    (measured in the virtual machine). The cached pages are clean, so dropping them makes the next read the disk's."""
+    for path in (GRUBENV, ESP + ESP_BLOCK):
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+        finally:
+            os.close(fd)
+    return 0
+
+
 def main(argv):
     command = argv[0] if argv else ''
     if command == 'grub':
@@ -877,6 +895,8 @@ def main(argv):
         return report('--json' in argv[1:])
     if command == 'start':
         return anticheat_start()
+    if command == 'resumed':
+        return resumed()
     print(__doc__, file=sys.stderr)
     return 2
 
