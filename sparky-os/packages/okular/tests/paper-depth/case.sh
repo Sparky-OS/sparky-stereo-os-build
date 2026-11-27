@@ -29,7 +29,7 @@ printf '[General]\nShowSidebar=false\nShowBottomBar=false\n[Notification Message
 printf '[Wallet]\nEnabled=false\n' > "$XDG_CONFIG_HOME/kwalletrc"
 if [ "${M2:-0}" = 1 ]; then
     python3 -I /tests/make-m2-fixture.py /tmp/display.edid /tmp/two-pages.odt
-    # The 2D screenshot should not depend on the Words text tool's own caret timer.
+    # Open the 2D comparison document in the same read-only viewing state.
     if [ "$CASE" = words-2d ]; then chmod a-w /tmp/two-pages.odt || exit 1; fi
     case "$CASE" in *-display|probe-override) export KWIN_VIRTUAL_OUTPUT_EDIDS=/tmp/display.edid ;; esac
     printf '[Interface]\nZoom=100\nZoomMode=0\n' > "$XDG_CONFIG_HOME/calligrawordsrc"
@@ -97,6 +97,10 @@ words-*)
         input drag 708 175 708 224 || exit 1
     else
         place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 960};'
+    fi
+    if [ "$CASE" = words-2d ]; then
+        # Focus the zoom slider at its current 100% handle so the canvas caret stops blinking.
+        input click 706 964 || exit 1
     fi
     sleep 2 ;;
 okular-presentation)
