@@ -316,14 +316,8 @@ class UnmodeledDiversion(package.Invalid):
     """A preinst outside the bounded grammar cannot authorize a redirect."""
 
 
-def static_diversions(deb, obj):
-    """Read a bounded, complete preinst grammar, never execute shell code.
-
-    Debian Policy's package diversion exempts the declaring package. Only an
-    unconditional install/upgrade loop or direct commands with literal paths
-    are understood here;
-    arbitrary maintainer-script effects remain outside this data-only root.
-    """
+def preinst_script(deb):
+    """Read the canonical executable preinst from a Debian control archive."""
     proc = subprocess.Popen(['dpkg-deb', '--ctrl-tarfile', str(deb)], stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     script = None
@@ -346,6 +340,17 @@ def static_diversions(deb, obj):
         if proc.poll() is None:
             proc.kill()
         proc.communicate()
+    return script
+
+
+def static_diversions(deb, obj, *, script=None):
+    """Read a bounded, complete preinst grammar, never execute shell code.
+
+    Only literal install/upgrade diversions are understood. Debian Policy's
+    package diversion exempts the declaring package.
+    """
+    if script is None:
+        script = preinst_script(deb)
     if script is None:
         return []
     # Only LF delimits shell lines. Full-line comments may contain UTF-8, but
@@ -391,6 +396,16 @@ def static_diversions(deb, obj):
         r'set -e\nif \[ "\$1" = (?:install|"install") \] \|\| '
         r'\[ "\$1" = (?:upgrade|"upgrade") \]; then\n'
         r'(?P<commands>(?:(?:dpkg-divert [^\n]+|mkdir -p ' + literal + r')\n)+)fi\nexit 0', text)
+    pending = re.fullmatch(
+        r'set -e\nif \[ "\$1" = install \] \|\| \[ "\$1" = upgrade \]; then\n'
+        r'(?P<var>(?!before=)[a-z][a-z0-9_]*)=(?P<path>' + literal + r')\n'
+        r'before=\$\(dpkg-divert --listpackage "\$(?P=var)"\)\n'
+        r'dpkg-divert --package (?P<owner>[a-z0-9][a-z0-9+.-]*) --add --rename '
+        r'--divert "\$(?P=var)(?P<suffix>\.[A-Za-z0-9_.+-]+)" "\$(?P=var)" >/dev/null\n'
+        r'if \[ -z "\$before" \] && \[ -e "\$(?P=var)\.dpkg-new" \] && '
+        r'\[ ! -e "\$(?P=var)(?P=suffix)\.dpkg-new" \]; then\n'
+        r'mv "\$(?P=var)\.dpkg-new" "\$(?P=var)(?P=suffix)\.dpkg-new"\n'
+        r'fi\nfi\nexit 0', text)
     declarations = []
     if loop:
         declarations = [(loop['owner'], source, source + loop['suffix'])
@@ -415,6 +430,11 @@ def static_diversions(deb, obj):
             used_parents.add(str(PurePosixPath(match['target']).parent))
         if directories - used_parents:
             raise UnmodeledDiversion(f'{deb}: directory is not a literal diversion destination parent')
+    elif pending:
+        # The guarded move changes nothing in a data-only root, which has
+        # no pending .dpkg-new files.
+        source = pending['path']
+        declarations = [(pending['owner'], source, source + pending['suffix'])]
     if not declarations or not script.startswith('#!/bin/sh\n'):
         raise UnmodeledDiversion(f'{deb}: unsupported dynamic or unrecognized diversion preinst')
     result = []

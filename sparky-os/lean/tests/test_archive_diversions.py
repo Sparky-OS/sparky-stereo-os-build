@@ -1,10 +1,12 @@
 """Static package diversions, with dpkg-divert as the independent oracle."""
 
+import hashlib
 import json
 import io
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 
 import pytest
@@ -325,3 +327,67 @@ def test_double_slash_archive_symlink_target_rejected(tmp_path):
     with pytest.raises(package.Invalid, match='double-slash archive anchor'):
         archive.unpack(candidate, root)
     assert not (root / 'usr/share/link').exists()
+
+
+BOOT_PREINST = Path(__file__).with_name('fixtures').joinpath('boot-0.1.16.preinst').read_bytes()
+BOOT_PATH = 'etc/initramfs-tools/update-initramfs.conf'
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_boot_pending_conffile_diversion_matches_dpkg_oracle(tmp_path, reverse):
+    old = deb(tmp_path, 'initramfs-tools', version='0.151', files={BOOT_PATH: b'Debian\n'})
+    new = deb(tmp_path, 'sparky-stereo-boot', version='0.1.16+lc1', files={
+        'DEBIAN/preinst': BOOT_PREINST, BOOT_PATH: ('update-initramfs.conf.sparky-stereo',),
+        BOOT_PATH + '.sparky-stereo': b'Sparky\n'})
+    oracle = tmp_path / 'dpkg-root'
+    (oracle / 'var/lib/dpkg').mkdir(parents=True)
+    archive.unpack(old, oracle)
+    subprocess.run(['dpkg-divert', '--root', str(oracle), '--package', 'sparky-stereo-boot',
+                    '--add', '--rename', '--divert', '/' + BOOT_PATH + '.debian', '/' + BOOT_PATH],
+                   env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}, check=True, capture_output=True)
+    archive.unpack(new, oracle)
+    root = tmp_path / 'root'
+    rows = extract([new, old] if reverse else [old, new], root)
+    assert next(iter(rows.values()))['preinst_sha256'] == hashlib.sha256(BOOT_PREINST).hexdigest()
+    assert os.readlink(root / BOOT_PATH) == os.readlink(oracle / BOOT_PATH)
+    assert (root / BOOT_PATH).read_bytes() == (oracle / BOOT_PATH).read_bytes() == b'Sparky\n'
+    diverted = BOOT_PATH + '.debian'
+    assert (root / diverted).read_bytes() == (oracle / diverted).read_bytes() == b'Debian\n'
+
+
+@pytest.mark.parametrize(('old', 'new'), [
+    pytest.param(b'mv "$f.dpkg-new"', b'mv "$g.dpkg-new"', id='different-variable'),
+    pytest.param(b'mv "$f.dpkg-new"', b'mv "/etc/another.dpkg-new"', id='different-path'),
+    pytest.param(b'>/dev/null\n', b'>/dev/null\n\ttrue\n', id='second-command'),
+    pytest.param(b'mv "$f.dpkg-new" "$f.debian.dpkg-new"', b'mv "$f.dpkg-new" "$f.other.dpkg-new"',
+                 id='different-suffix'),
+    pytest.param(b'--package sparky-stereo-boot', b'--package someone-else', id='different-owner'),
+    pytest.param(b'f=/etc/', b'before=/etc/', id='assignment-alias'),
+])
+def test_boot_pending_conffile_near_miss_is_refused(tmp_path, old, new):
+    script = BOOT_PREINST.replace(old, new)
+    if old == b'f=/etc/':
+        script = script.replace(b'$f', b'$before')
+    path = deb(tmp_path, 'sparky-stereo-boot', files={'DEBIAN/preinst': script})
+    with pytest.raises(package.Invalid, match='diversion'):
+        archive.static_diversions(path, archive.control(path))
+
+
+@pytest.mark.parametrize(('source', 'ships', 'status', 'report'), [
+    pytest.param('/usr/share/fixture/banner', True, 1, '/usr/share/fixture/banner', id='overlap'),
+    pytest.param('/usr/share/fixture/banner', False, 0, 'no', id='disjoint'),
+    pytest.param('"$unknown"', False, 1, 'unknown', id='unresolved-source'),
+])
+def test_diversion_precheck_reports_unmodelled_additions(tmp_path, source, ships, status, report):
+    script = ('#!/bin/sh\nset -e\n'
+              f'dpkg-divert --add --rename --package wrapper {source}\n'
+              'exit 0\n').encode()
+    files = {'DEBIAN/preinst': script}
+    if ships:
+        files['usr/share/fixture/banner'] = ('banner.wrapper',)
+    deb(tmp_path, 'wrapper', files=files)
+    result = subprocess.run([sys.executable, '-m', 'lean.release', 'check-diversions', str(tmp_path)],
+                            env={**os.environ, 'PYTHONPATH': str(Path(archive.__file__).parents[1])},
+                            capture_output=True, text=True)
+    assert result.returncode == status, result.stderr
+    assert f'\tunmodelled\tships diverted path: {report}' in result.stdout
