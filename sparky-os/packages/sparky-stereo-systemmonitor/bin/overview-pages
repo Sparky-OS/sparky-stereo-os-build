@@ -1,0 +1,704 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""System Monitor's Overview fitted to the computer it runs on (queue row 182).
+
+Daniel, 2026-10-17: "system monitor overview presets for different configs like multiple GPUs and CPUs - current
+default is too narrow for both test targets (this and a10)"; "auto apply by hardware probe".
+
+At a person's login (the autostart entry) this reads what ksystemstats 6.7.4 reads of the computer: its graphics cards
+in ksystemstats' order, which of usage, video memory, temperature and power each card's driver reports, and the number
+of processor threads. It composes the Overview presets (one GPU or, with two display devices or more, every GPU; all
+threads in one chart or a chart per thread, each thread labelled "Thread N" by its processor number) for this computer
+into the person's System Monitor folder, titled by what they show so the title fits the sidebar at its default width.
+The first time, it makes the preset of the computer's class the person's start page, with KDE's Overview and the
+other presets listed in Edit Pages, hidden; the person's own
+choice afterwards is theirs and is never written again. A sensor a driver does not report is left out of the page and
+named on it as not reported, never shown as a zero. When the cards or threads change, the presets the person did not
+edit or remove are composed again. A probe that cannot read the computer writes nothing, so KDE's Overview stays, and
+tells the person why through the edition's problems engine.
+
+  overview-pages --login     what the autostart entry runs
+  overview-pages --explain   the facts and the preset this computer gets, nothing written
+"""
+import argparse
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+PACKAGE = "sparky-stereo-systemmonitor"
+PROBLEM = "overview-probe"
+LANGS = ["en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW"]
+# ksystemstats 6.7.4, plugins/gpu/LinuxBackend.cpp: the PCI classes it enumerates and the vendors it measures
+GPU_CLASSES = {"0x030000", "0x030200", "0x038000"}
+VENDORS = {"0x1002": "amd", "0x10de": "nvidia", "0x8086": "intel"}
+FEW_THREADS = 8
+GPUS_PER_ROW = 4
+STATE_VERSION = 1
+SENSORS = ["usage", "memory", "temperature", "power"]
+PRESETS = [("one", "few"), ("one", "many"), ("every", "few"), ("every", "many")]
+STOCK_PAGES = ["overview.page", "applications.page", "history.page", "processes.page"]
+ABSENT = "\x01absent"
+
+
+def preset_file(gpus, threads):
+    return f"sparky-overview-{gpus}-gpu-{threads}-threads.page"
+
+
+def read(path):
+    try:
+        return path.read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def number(text):
+    return text is not None and re.fullmatch(r"-?[0-9]+", text) is not None
+
+
+class ProbeFailed(Exception):
+    pass
+
+
+class Gpu:
+    def __init__(self, index, address, vendor, device, driver, desktop):
+        self.index = index
+        self.address = address
+        self.vendor = vendor
+        self.device = device
+        self.driver = driver
+        self.desktop = desktop
+        self.ids = {}
+        self.why = {}
+
+    def missing(self):
+        return [s for s in SENSORS if s not in self.ids]
+
+
+def pci_address(text):
+    domain, bus, devfn = text.lower().split(":")
+    return "%04x:%s:%s" % (int(domain, 16), bus, devfn)
+
+
+def hwmon(dev, name):
+    for chip in sorted((dev / "hwmon").glob("hwmon*")):
+        if read(chip / "name") == name:
+            return chip
+    return None
+
+
+def amd(gpu, dev):
+    # LinuxAmdGpu.cpp: usage and used memory from sysfs, temperature and power from the lm-sensors chip "amdgpu-*"
+    # of this card (temp1 becomes "temperature", other features keep their names: power1)
+    if number(read(dev / "gpu_busy_percent")):
+        gpu.ids["usage"] = ["usage"]
+    else:
+        gpu.why["usage"] = "no gpu_busy_percent"
+    used, total = read(dev / "mem_info_vram_used"), read(dev / "mem_info_vram_total")
+    if number(used) and number(total) and int(total) > 0:
+        gpu.ids["memory"] = ["usedVram", "totalVram"]
+    else:
+        gpu.why["memory"] = "no mem_info_vram_used or total"
+    chip = hwmon(dev, "amdgpu")
+    if chip is not None and (chip / "temp1_input").exists():
+        gpu.ids["temperature"] = ["temperature"]
+    else:
+        gpu.why["temperature"] = "no amdgpu temp1_input"
+    if chip is not None and ((chip / "power1_input").exists() or (chip / "power1_average").exists()):
+        gpu.ids["power"] = ["power1"]
+    else:
+        gpu.why["power"] = "no amdgpu power1_input or power1_average"
+
+
+def nvidia_smi_facts(smi):
+    # NvidiaSmiProcess.cpp: "nvidia-smi --query" for the card list, "nvidia-smi dmon -s pucm" for the values;
+    # a column printed as "-" is read as 0 there, so it is a sensor this card does not report
+    def run(args):
+        result = subprocess.run([smi, *args], capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise ProbeFailed("%s %s: status %d: %s" % (smi, args[0], result.returncode, result.stderr.strip()[-200:]))
+        return result.stdout
+    cards = {}
+    for line in run(["--query-gpu=index,pci.bus_id,memory.total", "--format=csv,noheader,nounits"]).splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) == 3 and parts[0].isdigit():
+            cards[pci_address(parts[1])] = {"index": parts[0], "total": parts[2]}
+    columns, values = None, {}
+    for line in run(["dmon", "-c", "1", "-s", "pucm"]).splitlines():
+        if line.startswith("#"):
+            if columns is None:
+                columns = line.lstrip("#").split()
+            continue
+        parts = line.split()
+        if columns and len(parts) == len(columns):
+            values[parts[0]] = dict(zip(columns, parts))
+    if columns is None:
+        raise ProbeFailed("%s dmon printed no header" % smi)
+    return cards, values
+
+
+def nvidia(gpu, smi_facts):
+    if gpu.driver != "nvidia":
+        for s in SENSORS:
+            gpu.why[s] = "driver %s: ksystemstats reads NVIDIA cards only through nvidia-smi" % (gpu.driver or "none")
+        return
+    if isinstance(smi_facts, str):
+        for s in SENSORS:
+            gpu.why[s] = smi_facts
+        return
+    cards, values = smi_facts
+    card = cards.get(gpu.address)
+    row = values.get(card["index"]) if card else None
+    if row is None:
+        for s in SENSORS:
+            gpu.why[s] = "nvidia-smi does not list %s" % gpu.address
+        return
+
+    def given(column):
+        return row.get(column, "-") not in ("-", "")
+    if given("sm"):
+        gpu.ids["usage"] = ["usage"]
+    else:
+        gpu.why["usage"] = "nvidia-smi dmon: sm is -"
+    if given("fb") and number(card["total"]) and int(card["total"]) > 0:
+        gpu.ids["memory"] = ["usedVram", "totalVram"]
+    else:
+        gpu.why["memory"] = "nvidia-smi dmon: fb is -"
+    if given("gtemp"):
+        gpu.ids["temperature"] = ["temperature"]
+    else:
+        gpu.why["temperature"] = "nvidia-smi dmon: gtemp is -"
+    if given("pwr"):
+        gpu.ids["power"] = ["power"]
+    else:
+        gpu.why["power"] = "nvidia-smi dmon: pwr is -"
+
+
+def intel_helper():
+    explicit = os.environ.get("SPARKY_STEREO_INTEL_HELPER")
+    if explicit:
+        return Path(explicit)
+    for candidate in sorted(Path("/usr/lib").glob("*/libexec/ksystemstats_intel_helper")) + [
+            Path("/usr/libexec/ksystemstats_intel_helper")]:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def intel(gpu, sysfs, procfs):
+    # LinuxIntelGpu.cpp: usage only, from ksystemstats_intel_helper, which opens the i915 PMU system-wide; that needs
+    # its CAP_PERFMON or perf_event_paranoid at 0 or below (perf_event_open(2)). Memory, temperature and power: none.
+    for s in ("memory", "temperature", "power"):
+        gpu.why[s] = "ksystemstats 6.7.4 reads only usage of Intel cards"
+    if gpu.driver != "i915":
+        gpu.why["usage"] = "driver %s: ksystemstats 6.7.4 reads only i915's PMU" % (gpu.driver or "none")
+        return
+    # IntelHelper.cpp deviceDirectory(): "i915" for 0000:00:02.0, else "i915" followed by the address with _ for :
+    pmu = "i915" if gpu.address == "0000:00:02.0" else "i915" + gpu.address.replace(":", "_")
+    if not (sysfs / "bus/event_source/devices" / pmu).is_dir():
+        gpu.why["usage"] = "no PMU %s" % pmu
+        return
+    helper = intel_helper()
+    paranoid = read(procfs / "sys/kernel/perf_event_paranoid")
+    capable = False
+    if helper is not None:
+        try:
+            capable = "security.capability" in os.listxattr(helper)
+        except OSError:
+            capable = False
+    if capable or (number(paranoid) and int(paranoid) <= 0):
+        gpu.ids["usage"] = ["usage"]
+    else:
+        gpu.why["usage"] = "ksystemstats_intel_helper has no CAP_PERFMON and perf_event_paranoid is %s" % paranoid
+
+
+def probe(sysfs, procfs, smi_command, details=True):
+    """The computer's cards and threads; with details, which sensors each card's driver reports (nvidia-smi runs only
+    then, so an unchanged computer costs one directory read at login)."""
+    devices = sysfs / "bus/pci/devices"
+    try:
+        # udev's enumeration order, which numbers ksystemstats' cards: device paths compared component by component
+        # (systemd's device_compare(), path_compare())
+        entries = sorted(devices.iterdir(), key=lambda d: os.path.realpath(d).split("/"))
+    except OSError as error:
+        raise ProbeFailed("%s: %s" % (devices, error.strerror)) from error
+    gpus, others = [], []
+    for dev in entries:
+        cls = read(dev / "class")
+        if cls is None or not cls.startswith("0x03"):
+            continue
+        vendor = read(dev / "vendor")
+        kind = VENDORS.get(vendor)
+        if cls not in GPU_CLASSES or kind is None:
+            others.append({"address": dev.name, "id": "%s:%s" % ((vendor or "?")[2:], (read(dev / "device") or "?")[2:])})
+            continue
+        driver = dev / "driver"
+        gpus.append(Gpu(len(gpus), dev.name, kind, (read(dev / "device") or "?")[2:],
+                        os.path.basename(os.readlink(driver)) if driver.is_symlink() else None,
+                        read(dev / "boot_vga") == "1"))
+    cpuinfo = read(procfs / "cpuinfo")
+    if cpuinfo is None:
+        raise ProbeFailed("%s: unreadable" % (procfs / "cpuinfo"))
+    # ksystemstats makes one object per processor entry, cpu/cpuN with N its processor number (linuxcpuplugin.cpp)
+    processors = [int(n) for n in re.findall(r"^processor\s*:\s*([0-9]+)", cpuinfo, re.M)]
+    threads = len(processors)
+    if threads == 0:
+        raise ProbeFailed("%s lists no processor" % (procfs / "cpuinfo"))
+    if not details:
+        return {"gpus": gpus, "others": others, "threads": threads, "processors": processors}
+    smi_facts = None
+    if any(g.vendor == "nvidia" and g.driver == "nvidia" for g in gpus):
+        smi = smi_command or shutil.which("nvidia-smi")
+        if smi is None:
+            smi_facts = "no nvidia-smi on this computer"
+        else:
+            try:
+                smi_facts = nvidia_smi_facts(smi)
+            except (OSError, subprocess.TimeoutExpired, ProbeFailed) as error:
+                smi_facts = "nvidia-smi: %s" % error
+    for gpu in gpus:
+        dev = devices / gpu.address
+        if gpu.vendor == "amd":
+            amd(gpu, dev)
+        elif gpu.vendor == "nvidia":
+            nvidia(gpu, smi_facts)
+        else:
+            intel(gpu, sysfs, procfs)
+    return {"gpus": gpus, "others": others, "threads": threads, "processors": processors}
+
+
+def fingerprint(facts):
+    return json.dumps({"gpus": [[g.address, g.vendor, g.device, g.driver] for g in facts["gpus"]],
+                       "others": [o["address"] for o in facts["others"]], "processors": facts["processors"]}, sort_keys=True)
+
+
+def chosen_class(facts):
+    return ("every" if len(facts["gpus"]) > 1 else "one", "many" if facts["threads"] > FEW_THREADS else "few")
+
+
+def presets_for(facts):
+    """The presets this computer gets: the one-GPU pair always, the every-GPU pair with two display devices or more,
+    measured or not (with one they would show the same and carry the same title)."""
+    return [c for c in PRESETS if c[0] == "one" or len(facts["gpus"]) + len(facts["others"]) > 1]
+
+
+def load_strings(folder):
+    strings = {}
+    for lang in LANGS:
+        table = {}
+        for line in (folder / lang).read_text(encoding="utf-8").splitlines():
+            m = re.fullmatch(r'(LOCAL[0-9]+)="([^"]*)"', line)
+            if m:
+                table[m.group(1)] = m.group(2)
+        strings[lang] = table
+    return strings
+
+
+def esc(value):
+    value = str(value).replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t")
+    if value.startswith(" "):
+        value = "\\s" + value[1:]
+    if value.endswith(" "):
+        value = value[:-1] + "\\s"
+    return value
+
+
+class Page:
+    def __init__(self, strings):
+        self.s = strings
+        self.faces = []
+        self.rows = []
+
+    def text(self, key, *args):
+        return {lang: self.s[lang][key] % tuple(a[lang] if isinstance(a, dict) else a for a in args) for lang in LANGS}
+
+    def listing(self, keys):
+        return {lang: self.s[lang]["LOCAL13"].join(self.s[lang][k] for k in keys) for lang in LANGS}
+
+    def face(self, chart, title, high=(), total=(), general=None, show_title=True, labels=None):
+        fid = "Face-182%04d" % (len(self.faces) + 1)
+        self.faces.append((fid, chart, title, show_title, list(high), list(total), general or {}, labels or {}))
+        return fid
+
+    def row(self, columns, height="balanced", title=None):
+        self.rows.append((columns, height, title))
+
+    def render(self, title, icon):
+        out = ["# Written by %s for this computer (System Monitor's Overview presets, queue row 182)." % PACKAGE,
+               "# Edited in System Monitor it is yours: it is not composed again.", ""]
+
+        def localized(key, texts):
+            out.append("%s=%s" % (key, esc(texts["en"])))
+            for lang in LANGS[1:]:
+                out.append("%s[%s]=%s" % (key, lang, esc(texts[lang])))
+        for fid, chart, ftitle, show_title, high, total, general, labels in self.faces:
+            out.append("[%s][Appearance]" % fid)
+            out.append("chartFace=%s" % chart)
+            if ftitle is not None:
+                localized("Title", ftitle)
+            out.append("showTitle=%s" % ("true" if show_title else "false"))
+            out.append("")
+            if high or total:
+                out.append("[%s][Sensors]" % fid)
+                out.append("highPrioritySensorIds=%s" % esc(json.dumps(high)))
+                if total:
+                    out.append("totalSensors=%s" % esc(json.dumps(total)))
+                out.append("")
+            if labels:
+                # the face's own label for each sensor (SensorFaceController's SensorLabels, read with readEntry, so
+                # KConfig gives the person's language)
+                out.append("[%s][SensorLabels]" % fid)
+                for sensor, texts in labels.items():
+                    localized(sensor, texts)
+                out.append("")
+            if general:
+                out.append("[%s][%s][General]" % (fid, chart))
+                for key, value in general.items():
+                    out.append("%s=%s" % (key, value))
+                out.append("")
+        out.append("[page]")
+        out.append("actionsFace=")
+        out.append("icon=%s" % icon)
+        out.append("loadType=")
+        out.append("margin=2")
+        out.append("version=1")
+        localized("Title", title)
+        out.append("")
+        for r, (columns, height, rtitle) in enumerate(self.rows):
+            out.append("[page][row-%d]" % r)
+            if rtitle is None:
+                out.append("Title=")
+            else:
+                localized("Title", rtitle)
+            out.append("heightMode=%s" % height)
+            out.append("isTitle=%s" % ("true" if not columns else "false"))
+            out.append("name=row-%d" % r)
+            out.append("")
+            for c, sections in enumerate(columns):
+                out.append("[page][row-%d][column-%d]" % (r, c))
+                out.append("name=column-%d" % c)
+                out.append("noMargins=%s" % ("true" if sections == ["applications"] else ""))
+                out.append("showBackground=true")
+                out.append("")
+                for n, section in enumerate(sections):
+                    if section == "applications":
+                        section = self.applications
+                    out.append("[page][row-%d][column-%d][section-%d]" % (r, c, n))
+                    out.append("face=%s" % ("" if section is None else section))
+                    out.append("isSeparator=%s" % ("true" if section is None else "false"))
+                    out.append("name=section-%d" % n)
+                    out.append("")
+        return "\n".join(out)
+
+
+def range100():
+    return {"rangeAutoY": "false", "rangeFromY": "0", "rangeToY": "100"}
+
+
+def cpu_total(p):
+    return p.face("org.kde.ksysguard.linechart", p.text("LOCAL5"), ["cpu/all/usage"],
+                  general={"showLegend": "false", **range100()})
+
+
+def thread_label(p, n):
+    return {"cpu/cpu%d/usage" % n: p.text("LOCAL23", str(n + 1))}
+
+
+def threads_chart(p, processors):
+    """Few threads: one chart, a line for each logical processor, each labelled "Thread N" (N its processor number
+    plus one), so no two lines share a name whatever names ksystemstats gives them."""
+    labels = {}
+    for n in processors:
+        labels.update(thread_label(p, n))
+    return p.face("org.kde.ksysguard.linechart", p.text("LOCAL6"), list(labels), labels=labels,
+                  general={"showLegend": "true", **range100()})
+
+
+def threads_grid(p, processors):
+    """Many threads: one chart face for each logical processor, laid out as page rows of sections. Not KDE's facegrid:
+    its cells share one configuration group (FaceGrid.qml gives each cell the group name "FaceGrid", FaceLoader.cpp
+    builds every cell's controller on parentController->configGroup().group(groupName)), and on the station two
+    threads showed under one name."""
+    n = len(processors)
+    per_row = n if n <= 4 else min(8, max(4, math.ceil(n / 2))) if n <= 16 else 8
+    faces = [p.face("org.kde.ksysguard.linechart", p.text("LOCAL23", str(c + 1)), ["cpu/cpu%d/usage" % c],
+                    labels=thread_label(p, c), general={"showLegend": "true", **range100()}, show_title=False)
+             for c in processors]
+    return [faces[i:i + per_row] for i in range(0, n, per_row)]
+
+
+def gpu_card(p, gpu):
+    """A card's two sections, side by side in its column: the usage chart titled "GPU n" and the text face (name,
+    video memory, temperature, power) titled with the note of what is not reported; without usage, the text face
+    titled "GPU n" and the note on its own. Two sections keep the note's whole sentence readable."""
+    name = p.text("LOCAL7", str(gpu.index + 1))
+    base = "gpu/gpu%d/" % gpu.index
+    shown = [base + "name"] + [base + i for s in ("memory", "temperature", "power") for i in gpu.ids.get(s, [])]
+    missing = gpu.missing()
+    note = p.text("LOCAL8", p.listing(["LOCAL%d" % (9 + SENSORS.index(s)) for s in missing])) if missing else None
+    if "usage" in gpu.ids:
+        return [p.face("org.kde.ksysguard.linechart", name, [base + "usage"],
+                       general={"showLegend": "false", **range100()}),
+                p.face("org.kde.ksysguard.textonly", note or name, shown, show_title=note is not None)]
+    sections = [p.face("org.kde.ksysguard.textonly", name, shown)]
+    if note:
+        sections.append(p.face("org.kde.ksysguard.textonly", note))
+    return sections
+
+
+def stock(p):
+    memory = p.face("org.kde.ksysguard.piechart", p.text("LOCAL16"), ["memory/physical/used"],
+                    ["memory/physical/used", "memory/physical/total"], {"showLegend": "false"})
+    swap = p.face("org.kde.ksysguard.piechart", p.text("LOCAL17"), ["memory/swap/used"],
+                  ["memory/swap/used", "memory/swap/total"], {"showLegend": "false"})
+    disks = p.face("org.kde.ksysguard.horizontalbars", p.text("LOCAL18"), ["disk/(?!all).*/used"])
+    networks = p.face("org.kde.ksysguard.textonly", p.text("LOCAL19"),
+                      ["network/(?!all).*/download", "network/(?!all).*/upload", "network/(?!all).*/ipv4address",
+                       "network/(?!all).*/ipv6address"], ["network/(?!all).*/network"], {"groupByTotal": "true"})
+    p.applications = p.face("org.kde.ksysguard.applicationstable", p.text("LOCAL20"),
+                            general={"showToolBar": "true"})
+    return [memory, None, swap], [disks], [networks]
+
+
+def title(p, facts, gpus_kind, threads_kind):
+    """GPU part and thread part, short enough for System Monitor's sidebar at its default width (10 grid units: about
+    131 pixels of text at Noto Sans 10 pt) in the ten languages, with up to nine cards."""
+    devices = len(facts["gpus"]) + len(facts["others"])
+    count = devices if gpus_kind == "every" else min(1, devices)
+    part = p.text("LOCAL1") if count == 1 else p.text("LOCAL2", str(count))
+    return p.text("LOCAL3" if threads_kind == "few" else "LOCAL4", part)
+
+
+def compose(facts, strings, gpus_kind, threads_kind):
+    p = Page(strings)
+    many = threads_kind == "many"
+    total = cpu_total(p)
+    if many:
+        grid = threads_grid(p, facts["processors"])
+    else:
+        threads = threads_chart(p, facts["processors"])
+    memory_swap, disks, networks = stock(p)
+    shown = facts["gpus"]
+    if gpus_kind == "one" and shown:
+        shown = [next((g for g in shown if g.desktop), shown[0])]
+    cards = [gpu_card(p, g) for g in shown]
+    others = [p.face("org.kde.ksysguard.textonly", p.text("LOCAL15", "%s (%s)" % (o["address"], o["id"])))
+              for o in facts["others"]]
+    if not cards:
+        # no card System Monitor measures: the note, and the devices it does not measure beside it
+        cards = [[p.face("org.kde.ksysguard.textonly", p.text("LOCAL14"))] + (others if gpus_kind == "one" else [])]
+    if gpus_kind == "every":
+        cards += [[face] for face in others]
+    def thread_rows():
+        p.row([], "minimum", p.text("LOCAL6"))
+        for faces in grid:
+            p.row([faces])
+    if gpus_kind == "one":
+        if many:
+            p.row([[total], cards[0]])
+            thread_rows()
+        else:
+            p.row([[total], [threads], cards[0]])
+        p.row([memory_swap, disks, networks])
+    else:
+        if many:
+            p.row([[total], memory_swap])
+            thread_rows()
+        else:
+            p.row([[total], [threads], memory_swap])
+        p.row([], "minimum", p.text("LOCAL21"))
+        for start in range(0, len(cards), GPUS_PER_ROW):
+            p.row(cards[start:start + GPUS_PER_ROW])
+        p.row([disks, networks])
+    p.row([["applications"]], "half")
+    return p.render(title(p, facts, gpus_kind, threads_kind), "speedometer")
+
+
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def write_atomic(path, data, mode):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".%s." % path.name, dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fchmod(stream.fileno(), mode)
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def kread(key):
+    result = subprocess.run(["kreadconfig6", "--file", "systemmonitorrc", "--group", "General", "--key", key,
+                             "--default", ABSENT], capture_output=True, text=True, check=True)
+    value = result.stdout.rstrip("\n")
+    return None if value == ABSENT else value
+
+
+def kwrite(key, value):
+    subprocess.run(["kwriteconfig6", "--file", "systemmonitorrc", "--group", "General", "--key", key, value],
+                   check=True)
+
+
+def split_list(value):
+    return [v for v in (value or "").split(",") if v]
+
+
+def set_choice(chosen, ours, pages_folder):
+    """Once, at the first run: the person's start page, order and hidden pages, unless they or the administrator
+    chose already (any of the three keys set) or the person edited KDE's Overview; then only the presets other than
+    the computer's own are added to the hidden pages, so the person's arrangement stays as it was."""
+    others = [f for f in ours if f != chosen]
+    chose = any(kread(k) is not None for k in ("pageOrder", "hiddenPages", "startPage"))
+    if chose or (pages_folder / "overview.page").exists():
+        hidden = split_list(kread("hiddenPages"))
+        kwrite("hiddenPages", ",".join(hidden + [f for f in others if f not in hidden]))
+        return "kept the person's arrangement; added %s to the hidden pages" % ",".join(others)
+    kwrite("pageOrder", ",".join([chosen] + STOCK_PAGES + others))
+    kwrite("hiddenPages", ",".join(["overview.page"] + others))
+    kwrite("startPage", chosen)
+    return "start page %s; KDE's Overview and %s hidden" % (chosen, ",".join(others))
+
+
+def keep_problem(reason):
+    subprocess.run(["sparky-stereo-problems", "keep", "--repair",
+                    json.dumps([str(Path(sys.argv[0]).resolve()), "--login"]), PACKAGE, PROBLEM, "LOCAL2", reason],
+                   check=False)
+
+
+def clear_problem():
+    subprocess.run(["sparky-stereo-problems", "clear", PACKAGE, PROBLEM], check=False, capture_output=True)
+
+
+def home(variable, default):
+    value = os.environ.get(variable)
+    return Path(value) if value else Path.home() / default
+
+
+def login(args, sysfs, procfs, strings):
+    pages = home("XDG_DATA_HOME", ".local/share") / "plasma-systemmonitor"
+    state_dir = home("XDG_STATE_HOME", ".local/state") / PACKAGE
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / "state.json"
+    with (state_dir / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            state = json.loads(state_file.read_text())
+            if state.get("version") != STATE_VERSION:
+                state = None
+        except (OSError, ValueError):
+            state = None
+        smi = os.environ.get("SPARKY_STEREO_NVIDIA_SMI")
+        try:
+            current = fingerprint(probe(sysfs, procfs, smi, details=False))
+            if state is not None and state.get("fingerprint") == current:
+                clear_problem()
+                return 0
+            facts = probe(sysfs, procfs, smi)
+        except ProbeFailed as error:
+            print("%s: KDE's Overview kept: %s" % (PACKAGE, error), file=sys.stderr)
+            keep_problem(str(error))
+            return 1
+        print_lines = []
+        recorded = state.get("pages", {}) if state else {}
+        written = {}
+        composed = presets_for(facts)
+        for name in sorted(set(recorded) - {preset_file(*c) for c in composed}):
+            print_lines.append("left %s as it was: this computer has fewer than two display devices now" % name)
+            if (pages / name).exists() and recorded[name] == sha((pages / name).read_bytes()):
+                written[name] = recorded[name]
+        for gpus_kind, threads_kind in composed:
+            name = preset_file(gpus_kind, threads_kind)
+            path = pages / name
+            data = compose(facts, strings, gpus_kind, threads_kind).encode()
+            if path.exists():
+                if recorded.get(name) == sha(path.read_bytes()):
+                    write_atomic(path, data, 0o600)
+                    written[name] = sha(data)
+                    print_lines.append("composed again %s" % name)
+                else:
+                    print_lines.append("kept %s: the person's" % name)
+            elif state is None:
+                write_atomic(path, data, 0o600)
+                written[name] = sha(data)
+                print_lines.append("composed %s" % name)
+            else:
+                print_lines.append("left out %s: the person removed it" % name)
+        chosen = preset_file(*chosen_class(facts))
+        if state is None:
+            print_lines.append(set_choice(chosen, [preset_file(*c) for c in composed], pages))
+        new_state = {"version": STATE_VERSION, "fingerprint": current, "chosen": state["chosen"] if state else chosen,
+                     "pages": written}
+        write_atomic(state_file, (json.dumps(new_state, indent=1) + "\n").encode(), 0o600)
+        clear_problem()
+        for line in print_lines:
+            print("%s: %s" % (PACKAGE, line))
+        return 0
+
+
+def explain(sysfs, procfs):
+    try:
+        facts = probe(sysfs, procfs, os.environ.get("SPARKY_STEREO_NVIDIA_SMI"))
+    except ProbeFailed as error:
+        print("probe failed: %s (KDE's Overview would stay)" % error)
+        return 1
+    for g in facts["gpus"]:
+        print("gpu%d %s %s:%s driver=%s desktop=%s" % (g.index, g.address, g.vendor, g.device, g.driver,
+                                                     "yes" if g.desktop else "no"))
+        for s in SENSORS:
+            if s in g.ids:
+                print("  %-11s reported: %s" % (s, ", ".join("gpu/gpu%d/%s" % (g.index, i) for i in g.ids[s])))
+            else:
+                print("  %-11s not reported: %s" % (s, g.why.get(s, "")))
+    for o in facts["others"]:
+        print("not measured by ksystemstats: %s %s" % (o["address"], o["id"]))
+    print("threads %d (processors %s)" % (facts["threads"], ",".join(str(n) for n in facts["processors"])))
+    strings = load_strings(Path(os.environ.get("SPARKY_STEREO_SYSTEMMONITOR_DATA", "/usr/share/%s" % PACKAGE)) / "lang")
+    p = Page(strings)
+    for c in presets_for(facts):
+        print("composed %s: %s" % (preset_file(*c), title(p, facts, *c)["en"]))
+    print("preset %s" % preset_file(*chosen_class(facts)))
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--login", action="store_true", help="compose the presets and set the first choice once")
+    mode.add_argument("--explain", action="store_true", help="print the facts and the preset, write nothing")
+    mode.add_argument("--compose", nargs=3, metavar=("GPUS", "THREADS", "FILE"),
+                      help="write one preset (one|every, few|many) for this computer to FILE")
+    args = parser.parse_args()
+    sysfs = Path(os.environ.get("SPARKY_STEREO_SYSFS", "/sys"))
+    procfs = Path(os.environ.get("SPARKY_STEREO_PROCFS", "/proc"))
+    data = Path(os.environ.get("SPARKY_STEREO_SYSTEMMONITOR_DATA", "/usr/share/%s" % PACKAGE))
+    if args.explain:
+        return explain(sysfs, procfs)
+    strings = load_strings(data / "lang")
+    if args.compose:
+        gpus_kind, threads_kind, target = args.compose
+        if (gpus_kind, threads_kind) not in PRESETS:
+            parser.error("GPUS is one or every, THREADS few or many")
+        facts = probe(sysfs, procfs, os.environ.get("SPARKY_STEREO_NVIDIA_SMI"))
+        if (gpus_kind, threads_kind) not in presets_for(facts):
+            parser.error("this computer has fewer than two display devices: it gets no every-GPU preset")
+        Path(target).write_text(compose(facts, strings, gpus_kind, threads_kind))
+        return 0
+    return login(args, sysfs, procfs, strings)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
