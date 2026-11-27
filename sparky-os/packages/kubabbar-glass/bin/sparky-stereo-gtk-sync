@@ -96,4 +96,64 @@ if [ -f "$config/xsettingsd/xsettingsd.conf" ]; then
 else
 	sparky-stereo-problems say "$package" LOCAL6
 fi
+# Kubabbar Glass 9 is a classic look whose scroll bars always show (its Kvantum themes: transient_scrollbar=false), so its
+# GTK bars always show too: overlay scrolling off for its themes only. GTK reads it from settings.ini, and on Wayland from
+# the settings portal, which serves the GSettings key above settings.ini. A person's own value is kept: the script
+# records what it wrote, changes nothing it did not write, and when another look is applied removes only what it wrote
+# and what still holds that value.
+state=${XDG_STATE_HOME:-$HOME/.local/state}/sparky-stereo-gtk
+record=$state/overlay-scrolling.written
+if [ -e "$record" ] && [ ! -r "$record" ]; then
+	sparky-stereo-problems keep --person --repair "$repair" "$package" overlay-scrolling LOCAL3 "$record"
+	exit 1
+fi
+sparky-stereo-problems clear --person "$package" overlay-scrolling
+run overlay-scrolling-state mkdir -p "$state"
+newrecord=$(mktemp "$state/.overlay-scrolling.XXXXXX")
+trap 'rm -f "$newrecord"' EXIT
+dconf_key=/org/gnome/desktop/interface/overlay-scrolling
+for target in gtk-3.0 gtk-4.0 gsettings; do
+	if [ "$target" = gsettings ]; then
+		# dconf, unlike gsettings, prints nothing for a key nobody has set
+		current=$(dconf read "$dconf_key") || { run overlay-scrolling-read dconf read "$dconf_key"; exit 1; }
+		sparky-stereo-problems clear --person "$package" overlay-scrolling-read
+	else
+		ini=$config/$target/settings.ini
+		current=
+		if [ -f "$ini" ]; then
+			current=$(sed -n 's/^gtk-overlay-scrolling *= *//p' "$ini" | tail -n 1)
+		fi
+	fi
+	wrote=
+	if [ -f "$record" ]; then
+		wrote=$(sed -n "s/^$target //p" "$record")
+	fi
+	case "$theme" in
+		Kubabbar-Glass-9*)
+			if [ -z "$current" ] || { [ -n "$wrote" ] && [ "$current" = "$wrote" ]; }; then
+				if [ "$target" = gsettings ]; then
+					run overlay-scrolling-gsettings gsettings set org.gnome.desktop.interface overlay-scrolling false
+					run overlay-scrolling-gsettings-verify sh -c '[ "$(dconf read "$1")" = false ]' sh "$dconf_key"
+				else
+					run "$target-overlay-scrolling" kwriteconfig6 --file "$ini" --group Settings --key gtk-overlay-scrolling false
+				fi
+				printf '%s false\n' "$target" >> "$newrecord"
+			fi
+			;;
+		*)
+			if [ -n "$wrote" ] && [ "$current" = "$wrote" ]; then
+				if [ "$target" = gsettings ]; then
+					run overlay-scrolling-gsettings gsettings reset org.gnome.desktop.interface overlay-scrolling
+				else
+					run "$target-overlay-scrolling" kwriteconfig6 --file "$ini" --group Settings --key gtk-overlay-scrolling --delete
+				fi
+			fi
+			;;
+	esac
+done
+if [ -s "$newrecord" ]; then
+	run overlay-scrolling-record mv "$newrecord" "$record"
+else
+	run overlay-scrolling-record rm -f "$newrecord" "$record"
+fi
 sparky-stereo-problems say "$package" LOCAL7 "$scheme" "$theme" "$dark"
