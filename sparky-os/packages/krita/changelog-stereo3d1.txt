@@ -24,6 +24,11 @@ krita (1:6.0.4.1+dfsg-1+stereo3d1) unstable; urgency=medium
     View > Display Settings opens the display settings. This replaces the
     "Stereo 3D" setting of +stereo3d2 to +stereo3d7 (off by default, read at
     start-up, one half shown, "Paint on the Right View").
+  * A 2D document is drawn as on a window without the layer: its canvas goes
+    through a layer with one buffer, which keeps the depth of the canvas
+    surface, with the decorations and the brush outline painted on that
+    picture, so the outline is the inverse of the picture under it; the
+    window paints its background before the separators of its docks.
   * The deep canvas: the canvas says when it reaches the screen with fewer
     bits per channel than the document has (10-bit surface, or half float for
     a 16-bit document), at every depth the standard defines.
