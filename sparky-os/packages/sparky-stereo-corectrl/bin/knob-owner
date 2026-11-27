@@ -157,9 +157,16 @@ def amd_cards():
 
 
 def processor_packages():
-    """The machine's physical processor ids, one CPU component each in CoreCtrl."""
-    base = SYS + "/sys/devices/system/cpu"
+    """The machine's physical processor ids, one CPU component each in CoreCtrl: the "physical id" lines of /proc/cpuinfo, as
+    CoreCtrl reads them (sysmodelfactory.cpp createCPUInfo), else the processors' physical_package_id in sysfs."""
     ids = set()
+    for line in read(ROOT + "/proc/cpuinfo").splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key.strip() == "physical id" and value.strip().isdigit():
+            ids.add(value.strip())
+    if ids:
+        return sorted(ids)
+    base = SYS + "/sys/devices/system/cpu"
     try:
         names = os.listdir(base)
     except OSError:

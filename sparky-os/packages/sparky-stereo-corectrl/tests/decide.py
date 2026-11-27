@@ -26,7 +26,7 @@ def write(root, path, text):
         f.write(text)
 
 
-def profile(exe="_global_", name=None, active=True, cpu=True, cpu_mode="CPU_CPUFREQ", cpu_node="mode", gpus=None):
+def profile(exe="_global_", name=None, active=True, cpu=True, cpu_mode="CPU_CPUFREQ", cpu_node="mode", gpus=None, physical=0):
     """CoreCtrl's profile.xml. cpu: the CPU component on or off; cpu_mode: CPU_CPUFREQ or NOOP ("Do not control");
     cpu_node: "mode" (1.5.2), "legacy" (an older profile: the control right under CPU, socketId), None (no CPU element).
     gpus: [(active, index, deviceid, revision, uniqueid, control, mode)]."""
@@ -35,7 +35,7 @@ def profile(exe="_global_", name=None, active=True, cpu=True, cpu_mode="CPU_CPUF
     b = lambda v: "true" if v else "false"
     out = ['<?xml version="1.0"?>', '<PROFILE active="%s" name="%s" exe="%s">' % (b(active), name or exe, exe)]
     if cpu_node == "mode":
-        out += ['\t<CPU active="%s" physicalId="0">' % b(cpu),
+        out += ['\t<CPU active="%s" physicalId="%d">' % (b(cpu), physical),
                 '\t\t<CPU_CPUFREQ_MODE active="true" mode="%s">' % cpu_mode,
                 '\t\t\t<CPU_CPUFREQ active="%s" scalingGovernor="performance" eppHint="balance_performance" />' % b(cpu_mode == "CPU_CPUFREQ"),
                 '\t\t\t<NOOP active="%s" />' % b(cpu_mode == "NOOP"), '\t\t</CPU_CPUFREQ_MODE>', '\t</CPU>']
@@ -50,13 +50,15 @@ def profile(exe="_global_", name=None, active=True, cpu=True, cpu_mode="CPU_CPUF
 
 
 def machine(cpu="acpi-cpufreq", cards=None, corectrl="no", profiles=None, apps=(), lactd="inactive", lact=None, ppd="inactive",
-            dpm=None, live=None, tuned="inactive", record=None, person=None):
+            dpm=None, live=None, tuned="inactive", record=None, person=None, physical=None):
     """cards: [(card, slot, driver, vendor, render index, PCI_ID, revision, unique_id or None)]; profiles: {file name: text}
     (None: CoreCtrl's folder is not known); live: the running daemon's amdgpu_dpm, "on" or "off"."""
     if cards is None:
         cards = [("card0", SLOT, "amdgpu", "0x1002", 0, "1002:6660", "0x83", None)]
     root = tempfile.mkdtemp(prefix="knob-owner-")
     write(root, "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor", "schedutil\n")
+    if physical is not None:   # /proc/cpuinfo, where CoreCtrl reads the processor's id (sysmodelfactory.cpp)
+        write(root, "/proc/cpuinfo", "processor\t: 0\nvendor_id\t: AuthenticAMD\nphysical id\t: %d\ncore id\t\t: 0\n\n" % physical)
     if cpu in ("amd_pstate", "intel_pstate"):
         write(root, "/sys/devices/system/cpu/%s/status" % cpu, "active\n")
         write(root, "/sys/devices/system/cpu/cpufreq/policy0/energy_performance_preference", "balance_performance\n")
@@ -158,6 +160,10 @@ CASES = [
      dict(ppd_args=BLOCK)),
     ("a profile without a CPU element: CoreCtrl's default, on", machine(cpu="amd_pstate", corectrl="started", profiles={G: profile(cpu_node=None)}, ppd="active"),
      dict(ppd_args=BLOCK)),
+    ("the processor's id from /proc/cpuinfo (1 on the A10): its element is found, Do not control",
+     machine(cpu="amd_pstate", physical=1, corectrl="started", profiles={G: profile(cpu_mode="NOOP", physical=1)}, ppd="active"), dict(ppd_args=[])),
+    ("an element for another processor id: CoreCtrl's defaults for this one (on)",
+     machine(cpu="amd_pstate", physical=1, corectrl="started", profiles={G: profile(cpu_mode="NOOP", physical=0)}, ppd="active"), dict(ppd_args=BLOCK)),
     # programs with a profile (the helper's appExec / appExit)
     ("a program's profile with the processor on, the program running", machine(
         cpu="amd_pstate", corectrl="started", profiles={G: profile(cpu_mode="NOOP"), "game.ccpro": profile(exe="game")}, apps=["game"], ppd="active"),
