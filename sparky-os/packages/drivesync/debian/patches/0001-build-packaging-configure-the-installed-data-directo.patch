@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 13:27:18 -0300
+Subject: [PATCH] build(packaging): configure the installed data directory at
+ build time
+
+Motivation: the bundled OAuth client metadata and the translation catalogues
+were read from /app/share, which exists only inside the Flatpak. A
+distribution package installs them under /usr/share, so the program found
+neither: sign-in reported that it was not configured and every string stayed
+English.
+
+Changes: DATADIR comes from DRIVESYNC_DATADIR at build time and keeps
+/app/share when it is unset, so both Flatpak manifests build as before. The
+OAuth file and the locale directory are read below it.
+
+Validation: cargo fmt --check, cargo clippy --workspace --all-targets
+-D warnings; a Debian package built with DRIVESYNC_DATADIR=/usr/share loads
+/usr/share/locale/pt_BR/LC_MESSAGES/drivesync.mo in a pt_BR session.
+
+Limitations: run with Debian's Rust 1.98.1 in a container, not in the
+GNOME 50 Flatpak SDK.
+
+Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
+Origin: vendor, Sparky Stereo OS (branch order299 of the edition's DriveSync fork)
+Forwarded: no
+Last-Update: 2026-11-27
+---
+ src/application/lifecycle.rs | 2 +-
+ src/core/build_info.rs       | 7 +++++++
+ src/core/i18n.rs             | 7 +++++--
+ 3 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/src/application/lifecycle.rs b/src/application/lifecycle.rs
+index 63801a5..1dd44e9 100644
+--- a/src/application/lifecycle.rs
++++ b/src/application/lifecycle.rs
+@@ -10,7 +10,7 @@ pub(crate) const APP_ID: &str = match option_env!("DRIVESYNC_APP_ID") {
+     None => "com.rtosta.DriveSync.Devel",
+ };
+ fn config() -> EngineConfig {
+-    let bundled = PathBuf::from("/app/share/drivesync/oauth.json");
++    let bundled = PathBuf::from(crate::core::build_info::DATADIR).join("drivesync/oauth.json");
+     let development = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/oauth/development.json");
+     let google_oauth_file = std::env::var_os("DRIVESYNC_GOOGLE_OAUTH_FILE")
+         .map(PathBuf::from)
+diff --git a/src/core/build_info.rs b/src/core/build_info.rs
+index b27b244..5aca7c1 100644
+--- a/src/core/build_info.rs
++++ b/src/core/build_info.rs
+@@ -5,3 +5,10 @@ pub(crate) const VERSION: &str = env!("DRIVESYNC_VERSION");
+ 
+ /// Full source revision for support, including tracked local changes when present.
+ pub(crate) const REVISION: &str = env!("DRIVESYNC_SOURCE_REVISION");
++
++/// Installed architecture-independent data directory. Flatpak builds keep `/app/share`;
++/// distribution packages set `DRIVESYNC_DATADIR` (for example `/usr/share`) when building.
++pub(crate) const DATADIR: &str = match option_env!("DRIVESYNC_DATADIR") {
++    Some(path) => path,
++    None => "/app/share",
++};
+diff --git a/src/core/i18n.rs b/src/core/i18n.rs
+index 17bc3f3..e27f3ea 100644
+--- a/src/core/i18n.rs
++++ b/src/core/i18n.rs
+@@ -8,8 +8,11 @@ pub(crate) fn init() {
+     if unsafe { setlocale(LocaleCategory::LcAll, "") }.is_none() {
+         eprintln!("Could not activate the locale requested by the environment");
+     }
+-    bindtextdomain("drivesync", "/app/share/locale")
+-        .expect("Could not bind the DriveSync translation catalog");
++    bindtextdomain(
++        "drivesync",
++        format!("{}/locale", super::build_info::DATADIR),
++    )
++    .expect("Could not bind the DriveSync translation catalog");
+     bind_textdomain_codeset("drivesync", "UTF-8")
+         .expect("Could not set the translation catalog encoding");
+     textdomain("drivesync").expect("Could not select the DriveSync translation domain");

@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 13:27:18 -0300
+Subject: [PATCH] fix(metainfo): declare GPL-3.0-only and describe
+ synchronization
+
+Motivation: the AppStream files still carried the placeholder licence
+LicenseRef-proprietary and the sentence "It does not synchronize, transfer
+or delete files", from before synchronization existed. Software centres
+built from distribution metadata (Discover, GNOME Software) show both.
+
+Changes: project_license GPL-3.0-only, as README.md, LICENSE and Cargo.toml
+state; the old sentence replaced by "It synchronizes the folders you choose
+with Google Drive. It never deletes files permanently.", in English and nine
+translations, for the normal and development profiles.
+
+Validation: appstreamcli validate --no-net on both files.
+
+Limitations: none known.
+
+Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
+Origin: vendor, Sparky Stereo OS (branch order299 of the edition's DriveSync fork)
+Forwarded: no
+Last-Update: 2026-11-27
+---
+ data/com.rtosta.DriveSync.Devel.metainfo.xml | 14 +++++++++++---
+ data/com.rtosta.DriveSync.metainfo.xml       | 14 +++++++++++---
+ 2 files changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/data/com.rtosta.DriveSync.Devel.metainfo.xml b/data/com.rtosta.DriveSync.Devel.metainfo.xml
+index 6c5cc97..d26a273 100644
+--- a/data/com.rtosta.DriveSync.Devel.metainfo.xml
++++ b/data/com.rtosta.DriveSync.Devel.metainfo.xml
+@@ -5,12 +5,20 @@
+   <summary>Google account management for Linux</summary>
+   <summary xml:lang="pt_BR">Gerenciamento de contas do Google para Linux</summary>
+   <metadata_license>CC0-1.0</metadata_license>
+-  <project_license>LicenseRef-proprietary</project_license>
++  <project_license>GPL-3.0-only</project_license>
+   <description>
+     <p>DriveSync is an experimental desktop application for connecting Google accounts and editing their local names.</p>
+     <p xml:lang="pt_BR">O DriveSync é um aplicativo experimental para conectar contas do Google e editar seus nomes locais.</p>
+-    <p>It does not synchronize, transfer or delete files.</p>
+-    <p xml:lang="pt_BR">Ele não sincroniza, transfere ou exclui arquivos.</p>
++    <p>It synchronizes the folders you choose with Google Drive. It never deletes files permanently.</p>
++    <p xml:lang="pt_BR">Ele sincroniza com o Google Drive as pastas que você escolher. Ele nunca exclui arquivos permanentemente.</p>
++    <p xml:lang="pl">Synchronizuje wybrane foldery z Dyskiem Google. Nigdy nie usuwa plików trwale.</p>
++    <p xml:lang="fr">Il synchronise avec Google Drive les dossiers que vous choisissez. Il ne supprime jamais de fichiers définitivement.</p>
++    <p xml:lang="de">Es synchronisiert die von Ihnen gewählten Ordner mit Google Drive. Es löscht niemals Dateien endgültig.</p>
++    <p xml:lang="es">Sincroniza con Google Drive las carpetas que elijas. Nunca elimina archivos de forma permanente.</p>
++    <p xml:lang="ja">選んだフォルダーを Google ドライブと同期します。ファイルを完全に削除することはありません。</p>
++    <p xml:lang="ko">선택한 폴더를 Google 드라이브와 동기화합니다. 파일을 영구적으로 삭제하지 않습니다.</p>
++    <p xml:lang="zh_CN">它会将你选择的文件夹与 Google 云端硬盘同步。它从不永久删除文件。</p>
++    <p xml:lang="zh_TW">它會將您選擇的資料夾與 Google 雲端硬碟同步。它從不永久刪除檔案。</p>
+   </description>
+   <launchable type="desktop-id">com.rtosta.DriveSync.Devel.desktop</launchable>
+   <url type="homepage">https://github.com/rafatosta/drivesync</url>
+diff --git a/data/com.rtosta.DriveSync.metainfo.xml b/data/com.rtosta.DriveSync.metainfo.xml
+index 413c6cc..8a33ef6 100644
+--- a/data/com.rtosta.DriveSync.metainfo.xml
++++ b/data/com.rtosta.DriveSync.metainfo.xml
+@@ -5,12 +5,20 @@
+   <summary>Google account management for Linux</summary>
+   <summary xml:lang="pt_BR">Gerenciamento de contas do Google para Linux</summary>
+   <metadata_license>CC0-1.0</metadata_license>
+-  <project_license>LicenseRef-proprietary</project_license>
++  <project_license>GPL-3.0-only</project_license>
+   <description>
+     <p>DriveSync is an experimental desktop application for connecting Google accounts and editing their local names.</p>
+     <p xml:lang="pt_BR">O DriveSync é um aplicativo experimental para conectar contas do Google e editar seus nomes locais.</p>
+-    <p>It does not synchronize, transfer or delete files.</p>
+-    <p xml:lang="pt_BR">Ele não sincroniza, transfere ou exclui arquivos.</p>
++    <p>It synchronizes the folders you choose with Google Drive. It never deletes files permanently.</p>
++    <p xml:lang="pt_BR">Ele sincroniza com o Google Drive as pastas que você escolher. Ele nunca exclui arquivos permanentemente.</p>
++    <p xml:lang="pl">Synchronizuje wybrane foldery z Dyskiem Google. Nigdy nie usuwa plików trwale.</p>
++    <p xml:lang="fr">Il synchronise avec Google Drive les dossiers que vous choisissez. Il ne supprime jamais de fichiers définitivement.</p>
++    <p xml:lang="de">Es synchronisiert die von Ihnen gewählten Ordner mit Google Drive. Es löscht niemals Dateien endgültig.</p>
++    <p xml:lang="es">Sincroniza con Google Drive las carpetas que elijas. Nunca elimina archivos de forma permanente.</p>
++    <p xml:lang="ja">選んだフォルダーを Google ドライブと同期します。ファイルを完全に削除することはありません。</p>
++    <p xml:lang="ko">선택한 폴더를 Google 드라이브와 동기화합니다. 파일을 영구적으로 삭제하지 않습니다.</p>
++    <p xml:lang="zh_CN">它会将你选择的文件夹与 Google 云端硬盘同步。它从不永久删除文件。</p>
++    <p xml:lang="zh_TW">它會將您選擇的資料夾與 Google 雲端硬碟同步。它從不永久刪除檔案。</p>
+   </description>
+   <launchable type="desktop-id">com.rtosta.DriveSync.desktop</launchable>
+   <url type="homepage">https://github.com/rafatosta/drivesync</url>

@@ -1,0 +1,897 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 13:27:18 -0300
+Subject: [PATCH] feat(desktop): show synchronization in the system tray
+
+Motivation: on KDE Plasma and other desktops with a StatusNotifierItem host
+there is no way back to a hidden window and no sign that DriveSync keeps
+running; the Background portal does not provide either for a program
+installed from a distribution package.
+
+Changes: a StatusNotifierItem (org.kde.StatusNotifierItem with a
+com.canonical.dbusmenu menu: Open DriveSync, Quit) is exported on the
+session bus with GIO and registered with org.kde.StatusNotifierWatcher when
+one is present. Its icon, overlay, status and tooltip follow each account's
+public synchronization status (idle, working, conflict, needs a decision,
+failed), read through monitor_synchronization; retryable waits stay
+"working". While a tray host shows the item, closing the window hides it
+there and posts the existing "continues running" notice; without a host the
+Background portal path is unchanged. No new dependency.
+
+Validation: cargo fmt --check, cargo clippy --workspace --all-targets
+-D warnings, unit tests for the status classification; in a Plasma 6.7
+session the item is listed by the watcher, shown in the system tray, its
+menu opens and quits the program, and a closed window comes back from it.
+
+Limitations: no real Google account was used; the tray was checked on
+Plasma only.
+
+Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
+Origin: vendor, Sparky Stereo OS (branch order299 of the edition's DriveSync fork)
+Forwarded: no
+Last-Update: 2026-11-27
+---
+ src/application.rs                |   1 +
+ src/application/background/mod.rs |  30 +-
+ src/application/desktop/mod.rs    | 165 +++++++++++
+ src/application/desktop/status.rs | 151 ++++++++++
+ src/application/desktop/tray.rs   | 440 ++++++++++++++++++++++++++++++
+ src/application/lifecycle.rs      |   1 +
+ 6 files changed, 780 insertions(+), 8 deletions(-)
+ create mode 100644 src/application/desktop/mod.rs
+ create mode 100644 src/application/desktop/status.rs
+ create mode 100644 src/application/desktop/tray.rs
+
+diff --git a/src/application.rs b/src/application.rs
+index b6849c3..e1139fa 100644
+--- a/src/application.rs
++++ b/src/application.rs
+@@ -2,6 +2,7 @@
+ mod acceptance;
+ pub(crate) mod accounts;
+ mod background;
++mod desktop;
+ mod lifecycle;
+ use crate::ui::components::main_menu;
+ pub(crate) mod navigation;
+diff --git a/src/application/background/mod.rs b/src/application/background/mod.rs
+index f0ee1cf..9466c63 100644
+--- a/src/application/background/mod.rs
++++ b/src/application/background/mod.rs
+@@ -49,6 +49,15 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
+             }
+             return glib::Propagation::Proceed;
+         }
++        // A tray entry shows that DriveSync keeps running and offers Open and Quit, so
++        // the window can be hidden there without the Background portal.
++        if super::desktop::tray_hosted() {
++            if let Some(app) = window.application() {
++                notify_running(&app);
++            }
++            window.set_visible(false);
++            return glib::Propagation::Stop;
++        }
+         if pending.replace(true) {
+             return glib::Propagation::Stop;
+         }
+@@ -63,14 +72,7 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
+             let Some(window) = weak_window.upgrade() else { return; };
+             if allowed {
+                 let Some(app) = window.application() else { return; };
+-                if crate::services::preferences::Preferences::load().notify_on_close {
+-                    let notice = gio::Notification::new("DriveSync continues running");
+-                    notice.set_body(Some("DriveSync is running in the background."));
+-                    notice.set_default_action("app.show");
+-                    notice.add_button("Open DriveSync", "app.show");
+-                    notice.add_button("Quit", "app.quit");
+-                    app.send_notification(Some(NOTICE), &notice);
+-                }
++                notify_running(&app);
+                 window.set_visible(false);
+                 publish_status();
+             } else {
+@@ -92,6 +94,18 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
+     });
+ }
+ 
++/// Says that closing the window left DriveSync running, when the person wants that notice.
++fn notify_running(app: &impl IsA<gio::Application>) {
++    if crate::services::preferences::Preferences::load().notify_on_close {
++        let notice = gio::Notification::new("DriveSync continues running");
++        notice.set_body(Some("DriveSync is running in the background."));
++        notice.set_default_action("app.show");
++        notice.add_button("Open DriveSync", "app.show");
++        notice.add_button("Quit", "app.quit");
++        app.send_notification(Some(NOTICE), &notice);
++    }
++}
++
+ fn publish_status() {
+     glib::spawn_future_local(async move {
+         let Ok(bus) = gio::bus_get_future(gio::BusType::Session).await else {
+diff --git a/src/application/desktop/mod.rs b/src/application/desktop/mod.rs
+new file mode 100644
+index 0000000..45195f7
+--- /dev/null
++++ b/src/application/desktop/mod.rs
+@@ -0,0 +1,165 @@
++//! Desktop integration outside the window: a status notifier item in the system tray.
++//!
++//! It observes the public Engine API only; it owns no credentials and decides nothing
++//! about synchronization.
++mod status;
++mod tray;
++
++use super::Context;
++use adw::gtk::glib;
++use drivesync_engine::{Account, Engine, ListAccountsRequest};
++use gettextrs::gettext;
++use status::{classify, Phase};
++use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
++use tray::Tray;
++
++const ACCOUNTS_REFRESH: Duration = Duration::from_secs(20);
++
++thread_local! { static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) }; }
++
++/// True while a tray host shows DriveSync, so a closed window can live in the tray.
++pub(crate) fn tray_hosted() -> bool {
++    TRAY.with(|tray| tray.borrow().as_ref().is_some_and(Tray::is_hosted))
++}
++
++struct Watched {
++    name: String,
++    phase: Phase,
++    task: glib::JoinHandle<()>,
++}
++
++struct Shared {
++    tray: Tray,
++    accounts: RefCell<HashMap<String, Watched>>,
++}
++
++impl Shared {
++    fn refresh(&self) {
++        let accounts = self.accounts.borrow();
++        let phase = Phase::most_urgent(accounts.values().map(|watched| watched.phase));
++        let mut lines: Vec<String> = accounts
++            .values()
++            .map(|watched| format!("{}: {}", watched.name, describe(watched.phase)))
++            .collect();
++        lines.sort();
++        self.tray.set_status(phase, false, lines.join("\n"));
++    }
++}
++
++fn describe(phase: Phase) -> String {
++    match phase {
++        Phase::Stopped => gettext("Synchronization is not running"),
++        Phase::Idle => gettext("Google Drive is up to date"),
++        Phase::Working => gettext("Synchronizing with Google Drive…"),
++        Phase::Conflict => gettext("A file changed on both sides"),
++        Phase::Attention => gettext("DriveSync needs your decision"),
++        Phase::Failed => gettext("Synchronization failed"),
++    }
++}
++
++fn account_name(account: &Account) -> String {
++    account
++        .display_name
++        .clone()
++        .or_else(|| account.email.clone())
++        .unwrap_or_else(|| gettext("Google Drive"))
++}
++
++/// Starts the tray item at once and the status observers when the Engine becomes available.
++pub(crate) fn install(app: &adw::Application, context: &Context) {
++    let tray = Tray::new(app);
++    TRAY.with(|slot| *slot.borrow_mut() = Some(tray.clone()));
++    let shared = Rc::new(Shared {
++        tray,
++        accounts: RefCell::default(),
++    });
++    let context = context.clone();
++    glib::spawn_future_local(async move {
++        let engine = loop {
++            if let Some(engine) = context.engine.borrow().clone() {
++                break engine;
++            }
++            glib::timeout_future(Duration::from_millis(250)).await;
++        };
++        start(shared, engine);
++    });
++}
++
++fn start(shared: Rc<Shared>, engine: Engine) {
++    shared.refresh();
++    glib::spawn_future_local(async move {
++        loop {
++            follow_accounts(&shared, &engine).await;
++            glib::timeout_future(ACCOUNTS_REFRESH).await;
++        }
++    });
++}
++
++/// Starts a watcher for each new account and drops the ones that were removed.
++async fn follow_accounts(shared: &Rc<Shared>, engine: &Engine) {
++    let Ok(result) = engine
++        .list_accounts(ListAccountsRequest { provider: None })
++        .await
++    else {
++        return;
++    };
++    let current: HashMap<String, Account> = result
++        .accounts
++        .into_iter()
++        .map(|account| (account.id.0.clone(), account))
++        .collect();
++    {
++        let mut watched = shared.accounts.borrow_mut();
++        watched.retain(|id, entry| {
++            let keep = current.contains_key(id);
++            if !keep {
++                entry.task.abort();
++            }
++            keep
++        });
++        for (id, account) in &current {
++            if let Some(entry) = watched.get_mut(id) {
++                entry.name = account_name(account);
++                continue;
++            }
++            let task = glib::spawn_future_local(watch(
++                Rc::downgrade(shared),
++                engine.clone(),
++                account.clone(),
++            ));
++            watched.insert(
++                id.clone(),
++                Watched {
++                    name: account_name(account),
++                    phase: Phase::Stopped,
++                    task,
++                },
++            );
++        }
++    }
++    shared.refresh();
++}
++
++/// Follows one account's worker for the tray.
++async fn watch(shared: std::rc::Weak<Shared>, engine: Engine, account: Account) {
++    let mut monitor = engine.monitor_synchronization(account.id.clone());
++    loop {
++        let phase = match monitor.current().await {
++            Ok(status) => classify(&status),
++            Err(_) => Phase::Failed,
++        };
++        let Some(shared) = shared.upgrade() else {
++            return;
++        };
++        {
++            let mut accounts = shared.accounts.borrow_mut();
++            let Some(entry) = accounts.get_mut(&account.id.0) else {
++                return;
++            };
++            entry.phase = phase;
++        }
++        shared.refresh();
++        drop(shared);
++        monitor.changed().await;
++    }
++}
+diff --git a/src/application/desktop/status.rs b/src/application/desktop/status.rs
+new file mode 100644
+index 0000000..188d7b5
+--- /dev/null
++++ b/src/application/desktop/status.rs
+@@ -0,0 +1,151 @@
++//! Account-level summary of synchronization status for desktop surfaces.
++//!
++//! The summary is derived only from the public status; it never decides or retries
++//! synchronization.
++use drivesync_engine::{
++    SynchronizationIssueKind as Kind, SynchronizationState as State, SynchronizationStatus,
++};
++
++/// What a desktop surface shows for one account.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub(crate) enum Phase {
++    /// No worker is running for the account.
++    #[default]
++    Stopped,
++    /// The worker is idle and reports no blocker.
++    Idle,
++    /// Observing, analyzing or applying changes.
++    Working,
++    /// A file changed on both sides and needs a decision.
++    Conflict,
++    /// The account needs the person's decision before synchronization continues.
++    Attention,
++    /// An operation or the worker failed and will not be retried on its own.
++    Failed,
++}
++
++/// Classifies one status. Retryable waits stay `Working`; only blockers that need the
++/// person, or failures that are not retried, leave it.
++pub(crate) fn classify(status: &SynchronizationStatus) -> Phase {
++    let issues = status
++        .issue
++        .iter()
++        .chain(status.pending.as_ref().map(|pending| &pending.issue));
++    let mut phase = None;
++    for issue in issues {
++        let found = match issue.kind {
++            Kind::Conflict => Phase::Conflict,
++            Kind::AdoptionRequired => Phase::Attention,
++            Kind::OperationFailed
++            | Kind::WorkerFailed
++            | Kind::RecoveryRequired
++            | Kind::TrashRefused
++            | Kind::TrashRecoveryRequired
++                if !issue.retryable =>
++            {
++                Phase::Failed
++            }
++            _ => continue,
++        };
++        phase = Some(phase.map_or(found, |current: Phase| current.max(found)));
++    }
++    if let Some(phase) = phase {
++        return phase;
++    }
++    match status.state {
++        State::Failed => Phase::Failed,
++        State::Stopped => Phase::Stopped,
++        State::Running | State::Waiting => Phase::Working,
++        State::Idle => Phase::Idle,
++    }
++}
++
++impl Phase {
++    fn rank(self) -> u8 {
++        match self {
++            Phase::Stopped => 0,
++            Phase::Idle => 1,
++            Phase::Working => 2,
++            Phase::Attention => 3,
++            Phase::Conflict => 4,
++            Phase::Failed => 5,
++        }
++    }
++    fn max(self, other: Phase) -> Phase {
++        if other.rank() > self.rank() {
++            other
++        } else {
++            self
++        }
++    }
++    /// The most urgent phase among several accounts.
++    pub(crate) fn most_urgent(phases: impl IntoIterator<Item = Phase>) -> Phase {
++        phases.into_iter().fold(Phase::Stopped, Phase::max)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use drivesync_engine::{
++        AccountId, SynchronizationActivity, SynchronizationIssue, SynchronizationOperation,
++        SynchronizationWork,
++    };
++
++    fn status(state: State, issue: Option<(Kind, bool)>, operation: bool) -> SynchronizationStatus {
++        SynchronizationStatus {
++            account_id: AccountId("a".into()),
++            work: SynchronizationWork::default(),
++            pending: None,
++            state,
++            activity: SynchronizationActivity::None,
++            current_item: None,
++            current_operation: operation.then(|| SynchronizationOperation {
++                id: "op".into(),
++                item_id: drivesync_engine::models::ItemId("i".into()),
++                display_name: None,
++                newly_observed_remote: false,
++                newly_observed_local: true,
++                updates_local_content: false,
++                updates_remote_content: false,
++                rename: None,
++                movement: None,
++                workspace_shortcut: None,
++                directory_creation: None,
++                trash: None,
++            }),
++            progress: None,
++            verification: None,
++            issue: issue.map(|(kind, retryable)| SynchronizationIssue { kind, retryable }),
++            updated_at: drivesync_engine::models::Timestamp { unix_millis: 0 },
++        }
++    }
++
++    #[test]
++    fn retryable_waits_are_work_not_failures() {
++        assert_eq!(
++            classify(&status(
++                State::Waiting,
++                Some((Kind::OperationFailed, true)),
++                false
++            )),
++            Phase::Working
++        );
++        assert_eq!(
++            classify(&status(
++                State::Waiting,
++                Some((Kind::OperationFailed, false)),
++                false
++            )),
++            Phase::Failed
++        );
++        assert_eq!(
++            classify(&status(
++                State::Running,
++                Some((Kind::Conflict, false)),
++                false
++            )),
++            Phase::Conflict
++        );
++    }
++}
+diff --git a/src/application/desktop/tray.rs b/src/application/desktop/tray.rs
+new file mode 100644
+index 0000000..33b1987
+--- /dev/null
++++ b/src/application/desktop/tray.rs
+@@ -0,0 +1,440 @@
++//! System tray entry through the StatusNotifierItem D-Bus interface (KDE Plasma and other
++//! hosts of `org.kde.StatusNotifierWatcher`), with its menu exported as `com.canonical.dbusmenu`.
++//!
++//! The item exists only while a watcher with a registered host is present; without one the
++//! application keeps its portal-based background behaviour. All D-Bus traffic runs on the
++//! GTK main context.
++use super::status::Phase;
++use adw::{
++    gtk::{gio, glib},
++    prelude::*,
++};
++use gettextrs::gettext;
++use std::{cell::RefCell, collections::HashMap, rc::Rc};
++
++const WATCHER: &str = "org.kde.StatusNotifierWatcher";
++const WATCHER_PATH: &str = "/StatusNotifierWatcher";
++const ITEM_PATH: &str = "/StatusNotifierItem";
++const MENU_PATH: &str = "/MenuBar";
++const ITEM_INTERFACE: &str = "org.kde.StatusNotifierItem";
++const MENU_INTERFACE: &str = "com.canonical.dbusmenu";
++
++const XML: &str = r#"<node>
++  <interface name="org.kde.StatusNotifierItem">
++    <property name="Category" type="s" access="read"/>
++    <property name="Id" type="s" access="read"/>
++    <property name="Title" type="s" access="read"/>
++    <property name="Status" type="s" access="read"/>
++    <property name="WindowId" type="i" access="read"/>
++    <property name="IconName" type="s" access="read"/>
++    <property name="IconPixmap" type="a(iiay)" access="read"/>
++    <property name="OverlayIconName" type="s" access="read"/>
++    <property name="OverlayIconPixmap" type="a(iiay)" access="read"/>
++    <property name="AttentionIconName" type="s" access="read"/>
++    <property name="AttentionIconPixmap" type="a(iiay)" access="read"/>
++    <property name="AttentionMovieName" type="s" access="read"/>
++    <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
++    <property name="ItemIsMenu" type="b" access="read"/>
++    <property name="Menu" type="o" access="read"/>
++    <property name="IconThemePath" type="s" access="read"/>
++    <method name="ContextMenu"><arg name="x" type="i" direction="in"/><arg name="y" type="i" direction="in"/></method>
++    <method name="Activate"><arg name="x" type="i" direction="in"/><arg name="y" type="i" direction="in"/></method>
++    <method name="SecondaryActivate"><arg name="x" type="i" direction="in"/><arg name="y" type="i" direction="in"/></method>
++    <method name="Scroll"><arg name="delta" type="i" direction="in"/><arg name="orientation" type="s" direction="in"/></method>
++    <signal name="NewTitle"/>
++    <signal name="NewIcon"/>
++    <signal name="NewAttentionIcon"/>
++    <signal name="NewOverlayIcon"/>
++    <signal name="NewToolTip"/>
++    <signal name="NewStatus"><arg name="status" type="s"/></signal>
++  </interface>
++  <interface name="com.canonical.dbusmenu">
++    <property name="Version" type="u" access="read"/>
++    <property name="TextDirection" type="s" access="read"/>
++    <property name="Status" type="s" access="read"/>
++    <property name="IconThemePath" type="as" access="read"/>
++    <method name="GetLayout">
++      <arg name="parentId" type="i" direction="in"/>
++      <arg name="recursionDepth" type="i" direction="in"/>
++      <arg name="propertyNames" type="as" direction="in"/>
++      <arg name="revision" type="u" direction="out"/>
++      <arg name="layout" type="(ia{sv}av)" direction="out"/>
++    </method>
++    <method name="GetGroupProperties">
++      <arg name="ids" type="ai" direction="in"/>
++      <arg name="propertyNames" type="as" direction="in"/>
++      <arg name="properties" type="a(ia{sv})" direction="out"/>
++    </method>
++    <method name="GetProperty">
++      <arg name="id" type="i" direction="in"/>
++      <arg name="name" type="s" direction="in"/>
++      <arg name="value" type="v" direction="out"/>
++    </method>
++    <method name="Event">
++      <arg name="id" type="i" direction="in"/>
++      <arg name="eventId" type="s" direction="in"/>
++      <arg name="data" type="v" direction="in"/>
++      <arg name="timestamp" type="u" direction="in"/>
++    </method>
++    <method name="EventGroup">
++      <arg name="events" type="a(isvu)" direction="in"/>
++      <arg name="idErrors" type="ai" direction="out"/>
++    </method>
++    <method name="AboutToShow">
++      <arg name="id" type="i" direction="in"/>
++      <arg name="needUpdate" type="b" direction="out"/>
++    </method>
++    <method name="AboutToShowGroup">
++      <arg name="ids" type="ai" direction="in"/>
++      <arg name="updatesNeeded" type="ai" direction="out"/>
++      <arg name="idErrors" type="ai" direction="out"/>
++    </method>
++    <signal name="ItemsPropertiesUpdated">
++      <arg name="updatedProps" type="a(ia{sv})"/>
++      <arg name="removedProps" type="a(ias)"/>
++    </signal>
++    <signal name="LayoutUpdated"><arg name="revision" type="u"/><arg name="parent" type="i"/></signal>
++    <signal name="ItemActivationRequested"><arg name="id" type="i"/><arg name="timestamp" type="u"/></signal>
++  </interface>
++</node>"#;
++
++/// Menu entries: identifier, label and the application action it activates.
++const OPEN: i32 = 1;
++const SEPARATOR: i32 = 2;
++const QUIT: i32 = 3;
++
++#[derive(Default)]
++struct State {
++    phase: Phase,
++    held: bool,
++    detail: String,
++    connection: Option<gio::DBusConnection>,
++    hosted: bool,
++}
++
++/// One status notifier item for the application instance.
++#[derive(Clone)]
++pub(crate) struct Tray {
++    app: glib::WeakRef<adw::Application>,
++    state: Rc<RefCell<State>>,
++    name: Rc<String>,
++}
++
++impl Tray {
++    pub(crate) fn new(app: &adw::Application) -> Self {
++        let tray = Self {
++            app: app.downgrade(),
++            state: Rc::default(),
++            name: Rc::new(format!(
++                "org.kde.StatusNotifierItem-{}-1",
++                std::process::id()
++            )),
++        };
++        tray.start();
++        tray
++    }
++
++    /// True while a tray host shows this item, so closing the window can hide it there.
++    pub(crate) fn is_hosted(&self) -> bool {
++        self.state.borrow().hosted
++    }
++
++    /// Updates the icon state and tooltip; emits the item's change signals.
++    pub(crate) fn set_status(&self, phase: Phase, held: bool, detail: String) {
++        {
++            let mut state = self.state.borrow_mut();
++            if state.phase == phase && state.held == held && state.detail == detail {
++                return;
++            }
++            state.phase = phase;
++            state.held = held;
++            state.detail = detail;
++        }
++        let connection = self.state.borrow().connection.clone();
++        if let Some(connection) = connection {
++            for signal in ["NewIcon", "NewOverlayIcon", "NewToolTip"] {
++                let _ = connection.emit_signal(None, ITEM_PATH, ITEM_INTERFACE, signal, None);
++            }
++            let status = self.status_name();
++            let _ = connection.emit_signal(
++                None,
++                ITEM_PATH,
++                ITEM_INTERFACE,
++                "NewStatus",
++                Some(&(status,).to_variant()),
++            );
++        }
++    }
++
++    fn status_name(&self) -> &'static str {
++        let state = self.state.borrow();
++        match state.phase {
++            Phase::Failed | Phase::Conflict | Phase::Attention => "NeedsAttention",
++            _ => "Active",
++        }
++    }
++
++    fn overlay(&self) -> &'static str {
++        let state = self.state.borrow();
++        if state.held {
++            return "media-playback-pause";
++        }
++        match state.phase {
++            Phase::Failed => "emblem-error",
++            Phase::Conflict | Phase::Attention => "emblem-warning",
++            Phase::Working => "emblem-synchronizing",
++            Phase::Idle | Phase::Stopped => "",
++        }
++    }
++
++    fn summary(&self) -> String {
++        let state = self.state.borrow();
++        if state.held {
++            return gettext("Synchronization waits: the connection is metered");
++        }
++        match state.phase {
++            Phase::Stopped => gettext("Synchronization is not running"),
++            Phase::Idle => gettext("Google Drive is up to date"),
++            Phase::Working => gettext("Synchronizing with Google Drive…"),
++            Phase::Conflict => gettext("A file changed on both sides"),
++            Phase::Attention => gettext("DriveSync needs your decision"),
++            Phase::Failed => gettext("Synchronization failed"),
++        }
++    }
++
++    fn start(&self) {
++        let tray = self.clone();
++        let tray_lost = self.clone();
++        // The watch lives as long as the application; plasmashell restarting re-registers.
++        let _ = gio::bus_watch_name(
++            gio::BusType::Session,
++            WATCHER,
++            gio::BusNameWatcherFlags::NONE,
++            move |connection, _, _| tray.register(connection),
++            move |_, _| tray_lost.state.borrow_mut().hosted = false,
++        );
++    }
++
++    /// Exports the item once per connection and registers it with the watcher.
++    fn register(&self, connection: gio::DBusConnection) {
++        if self.state.borrow().connection.is_none() {
++            if let Err(error) = self.export(&connection) {
++                glib::g_warning!("drivesync", "Status notifier item unavailable: {error}");
++                return;
++            }
++            let _ = gio::bus_own_name_on_connection(
++                &connection,
++                &self.name,
++                gio::BusNameOwnerFlags::NONE,
++                |_, _| {},
++                |_, _| {},
++            );
++            self.state.borrow_mut().connection = Some(connection.clone());
++        }
++        let tray = self.clone();
++        let name = self.name.to_string();
++        glib::spawn_future_local(async move {
++            let registered = connection
++                .call_future(
++                    Some(WATCHER),
++                    WATCHER_PATH,
++                    WATCHER,
++                    "RegisterStatusNotifierItem",
++                    Some(&(name,).to_variant()),
++                    None,
++                    gio::DBusCallFlags::NONE,
++                    5_000,
++                )
++                .await
++                .is_ok();
++            let host = connection
++                .call_future(
++                    Some(WATCHER),
++                    WATCHER_PATH,
++                    "org.freedesktop.DBus.Properties",
++                    "Get",
++                    Some(&(WATCHER, "IsStatusNotifierHostRegistered").to_variant()),
++                    None,
++                    gio::DBusCallFlags::NONE,
++                    5_000,
++                )
++                .await
++                .ok()
++                .and_then(|reply| reply.child_value(0).as_variant())
++                .and_then(|value| value.get::<bool>())
++                .unwrap_or(false);
++            tray.state.borrow_mut().hosted = registered && host;
++        });
++    }
++
++    fn export(&self, connection: &gio::DBusConnection) -> Result<(), glib::Error> {
++        let node = gio::DBusNodeInfo::for_xml(XML)?;
++        let item = node
++            .lookup_interface(ITEM_INTERFACE)
++            .expect("item interface is declared");
++        let menu = node
++            .lookup_interface(MENU_INTERFACE)
++            .expect("menu interface is declared");
++        let tray = self.clone();
++        let tray_properties = self.clone();
++        connection
++            .register_object(ITEM_PATH, &item)
++            .method_call(move |_, _, _, _, method, _, invocation| {
++                match method {
++                    "Activate" | "SecondaryActivate" => tray.activate("show"),
++                    _ => {}
++                }
++                invocation.return_value(None);
++            })
++            .property(move |_, _, _, _, property| tray_properties.item_property(property))
++            .build()?;
++        let tray = self.clone();
++        connection
++            .register_object(MENU_PATH, &menu)
++            .method_call(move |_, _, _, _, method, parameters, invocation| {
++                tray.menu_call(method, &parameters, invocation)
++            })
++            .property(|_, _, _, _, property| match property {
++                "Version" => 3u32.to_variant(),
++                "TextDirection" => "ltr".to_variant(),
++                "Status" => "normal".to_variant(),
++                _ => Vec::<String>::new().to_variant(),
++            })
++            .build()?;
++        Ok(())
++    }
++
++    fn item_property(&self, property: &str) -> glib::Variant {
++        let none: Vec<(i32, i32, Vec<u8>)> = Vec::new();
++        match property {
++            "Category" => "ApplicationStatus".to_variant(),
++            "Id" => crate::application::APP_ID.to_variant(),
++            "Title" => "DriveSync".to_variant(),
++            "Status" => self.status_name().to_variant(),
++            "WindowId" => 0i32.to_variant(),
++            "IconName" => crate::application::APP_ID.to_variant(),
++            "OverlayIconName" => self.overlay().to_variant(),
++            "AttentionIconName" => crate::application::APP_ID.to_variant(),
++            "AttentionMovieName" | "IconThemePath" => "".to_variant(),
++            "ToolTip" => {
++                let detail = self.state.borrow().detail.clone();
++                (crate::application::APP_ID, none, self.summary(), detail).to_variant()
++            }
++            "ItemIsMenu" => false.to_variant(),
++            "Menu" => glib::variant::ObjectPath::try_from(MENU_PATH)
++                .expect("constant object path is valid")
++                .to_variant(),
++            _ => none.to_variant(),
++        }
++    }
++
++    fn entry(id: i32) -> glib::Variant {
++        let mut properties: HashMap<String, glib::Variant> = HashMap::new();
++        match id {
++            OPEN => {
++                properties.insert("label".into(), gettext("Open DriveSync").to_variant());
++            }
++            SEPARATOR => {
++                properties.insert("type".into(), "separator".to_variant());
++            }
++            QUIT => {
++                properties.insert("label".into(), gettext("Quit").to_variant());
++                properties.insert("icon-name".into(), "application-exit".to_variant());
++            }
++            _ => {
++                properties.insert("children-display".into(), "submenu".to_variant());
++            }
++        }
++        let children: Vec<glib::Variant> = if id == 0 {
++            [OPEN, SEPARATOR, QUIT]
++                .into_iter()
++                .map(|child| Self::entry(child).to_variant())
++                .collect()
++        } else {
++            Vec::new()
++        };
++        (id, properties, children).to_variant()
++    }
++
++    fn menu_call(
++        &self,
++        method: &str,
++        parameters: &glib::Variant,
++        invocation: gio::DBusMethodInvocation,
++    ) {
++        match method {
++            "GetLayout" => {
++                let parent = parameters.child_value(0).get::<i32>().unwrap_or(0);
++                invocation.return_value(Some(&(1u32, Self::entry(parent)).to_variant()));
++            }
++            "GetGroupProperties" => {
++                let ids = parameters
++                    .child_value(0)
++                    .get::<Vec<i32>>()
++                    .unwrap_or_default();
++                let entries: Vec<(i32, HashMap<String, glib::Variant>)> = ids
++                    .into_iter()
++                    .filter_map(|id| {
++                        Self::entry(id)
++                            .child_value(1)
++                            .get::<HashMap<String, glib::Variant>>()
++                            .map(|properties| (id, properties))
++                    })
++                    .collect();
++                invocation.return_value(Some(&(entries,).to_variant()));
++            }
++            "GetProperty" => {
++                let id = parameters.child_value(0).get::<i32>().unwrap_or(0);
++                let name = parameters
++                    .child_value(1)
++                    .get::<String>()
++                    .unwrap_or_default();
++                let value = glib::VariantDict::new(Some(&Self::entry(id).child_value(1)))
++                    .lookup_value(&name, None)
++                    .unwrap_or_else(|| "".to_variant());
++                invocation.return_value(Some(&(value.to_variant(),).to_variant()));
++            }
++            "Event" => {
++                let id = parameters.child_value(0).get::<i32>().unwrap_or(0);
++                let event = parameters
++                    .child_value(1)
++                    .get::<String>()
++                    .unwrap_or_default();
++                invocation.return_value(None);
++                if event == "clicked" {
++                    self.menu_activated(id);
++                }
++            }
++            "EventGroup" => {
++                let events = parameters.child_value(0);
++                for index in 0..events.n_children() {
++                    let event = events.child_value(index);
++                    if event.child_value(1).get::<String>().as_deref() == Some("clicked") {
++                        self.menu_activated(event.child_value(0).get::<i32>().unwrap_or(0));
++                    }
++                }
++                invocation.return_value(Some(&(Vec::<i32>::new(),).to_variant()));
++            }
++            "AboutToShow" => invocation.return_value(Some(&(false,).to_variant())),
++            "AboutToShowGroup" => {
++                invocation.return_value(Some(&(Vec::<i32>::new(), Vec::<i32>::new()).to_variant()))
++            }
++            _ => invocation
++                .return_dbus_error("org.freedesktop.DBus.Error.UnknownMethod", "Unknown method"),
++        }
++    }
++
++    fn menu_activated(&self, id: i32) {
++        match id {
++            OPEN => self.activate("show"),
++            QUIT => self.activate("quit"),
++            _ => {}
++        }
++    }
++
++    fn activate(&self, action: &str) {
++        if let Some(app) = self.app.upgrade() {
++            app.activate_action(action, None);
++        }
++    }
++}
+diff --git a/src/application/lifecycle.rs b/src/application/lifecycle.rs
+index 1dd44e9..c7dc945 100644
+--- a/src/application/lifecycle.rs
++++ b/src/application/lifecycle.rs
+@@ -87,6 +87,7 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
+             }
+         });
+         app.add_action(&quit);
++        super::desktop::install(app, &context);
+         background::install(app, &window);
+         background::install_startup(app, &window, &toasts);
+         main_menu::install(app, &window);

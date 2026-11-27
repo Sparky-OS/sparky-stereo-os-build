@@ -1,0 +1,1025 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 13:27:18 -0300
+Subject: [PATCH] feat(i18n): translate the desktop integration
+
+Motivation: the tray, notification, metered-connection and Places strings
+were English only.
+
+Changes: their translations appended to po/pt_BR.po, and new catalogues for
+pl, fr, de, es, ja, ko, zh_CN and zh_TW holding these strings and the four
+existing ones the new interface reuses (Quit, Preferences and two
+configuration messages). KDE's own word is used for Places in each
+language. The desktop entries gain GenericName, Comment and Keywords in the
+same eight languages.
+
+Validation: msgfmt -c on every catalogue; the {account} placeholder is in
+every translation; the strings read in a pt_BR and a de_DE session.
+
+Limitations: the Flatpak manifests still install pt_BR only; translated by
+the packager, not yet read by native speakers.
+
+Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
+Origin: vendor, Sparky Stereo OS (branch order299 of the edition's DriveSync fork)
+Forwarded: no
+Last-Update: 2026-11-27
+---
+ data/com.rtosta.DriveSync.Devel.desktop | 24 +++++++
+ data/com.rtosta.DriveSync.desktop       | 24 +++++++
+ po/de.po                                | 96 +++++++++++++++++++++++++
+ po/es.po                                | 96 +++++++++++++++++++++++++
+ po/fr.po                                | 96 +++++++++++++++++++++++++
+ po/ja.po                                | 96 +++++++++++++++++++++++++
+ po/ko.po                                | 96 +++++++++++++++++++++++++
+ po/pl.po                                | 96 +++++++++++++++++++++++++
+ po/pt_BR.po                             | 70 ++++++++++++++++++
+ po/zh_CN.po                             | 96 +++++++++++++++++++++++++
+ po/zh_TW.po                             | 96 +++++++++++++++++++++++++
+ 11 files changed, 886 insertions(+)
+ create mode 100644 po/de.po
+ create mode 100644 po/es.po
+ create mode 100644 po/fr.po
+ create mode 100644 po/ja.po
+ create mode 100644 po/ko.po
+ create mode 100644 po/pl.po
+ create mode 100644 po/zh_CN.po
+ create mode 100644 po/zh_TW.po
+
+diff --git a/data/com.rtosta.DriveSync.Devel.desktop b/data/com.rtosta.DriveSync.Devel.desktop
+index 0c4f59a..ddb75bd 100644
+--- a/data/com.rtosta.DriveSync.Devel.desktop
++++ b/data/com.rtosta.DriveSync.Devel.desktop
+@@ -3,13 +3,37 @@ Type=Application
+ Name=DriveSync
+ GenericName=Google Drive Account Manager
+ GenericName[pt_BR]=Gerenciador de contas do Google Drive
++GenericName[pl]=Menedżer kont Dysku Google
++GenericName[fr]=Gestionnaire de comptes Google Drive
++GenericName[de]=Google-Drive-Kontoverwaltung
++GenericName[es]=Gestor de cuentas de Google Drive
++GenericName[ja]=Google ドライブ アカウント マネージャー
++GenericName[ko]=Google 드라이브 계정 관리자
++GenericName[zh_CN]=Google 云端硬盘账户管理器
++GenericName[zh_TW]=Google 雲端硬碟帳戶管理員
+ Comment=Connect and manage Google accounts
+ Comment[pt_BR]=Conecte e gerencie contas do Google
++Comment[pl]=Łącz konta Google i zarządzaj nimi
++Comment[fr]=Connecter et gérer des comptes Google
++Comment[de]=Google-Konten verbinden und verwalten
++Comment[es]=Conecta y gestiona cuentas de Google
++Comment[ja]=Google アカウントを接続して管理します
++Comment[ko]=Google 계정을 연결하고 관리합니다
++Comment[zh_CN]=连接并管理 Google 账户
++Comment[zh_TW]=連接並管理 Google 帳戶
+ Exec=drivesync
+ Icon=com.rtosta.DriveSync.Devel
+ Terminal=false
+ Categories=Network;Utility;
+ Keywords=Google;Drive;Cloud;Accounts;
+ Keywords[pt_BR]=Google;Drive;Nuvem;Contas;
++Keywords[pl]=Google;Dysk;Chmura;Konta;
++Keywords[fr]=Google;Drive;Nuage;Comptes;
++Keywords[de]=Google;Drive;Cloud;Konten;
++Keywords[es]=Google;Drive;Nube;Cuentas;
++Keywords[ja]=Google;ドライブ;クラウド;アカウント;
++Keywords[ko]=Google;드라이브;클라우드;계정;
++Keywords[zh_CN]=Google;云端硬盘;云;账户;
++Keywords[zh_TW]=Google;雲端硬碟;雲端;帳戶;
+ StartupNotify=true
+ X-GNOME-UsesNotifications=true
+diff --git a/data/com.rtosta.DriveSync.desktop b/data/com.rtosta.DriveSync.desktop
+index ebbc25f..f439c19 100644
+--- a/data/com.rtosta.DriveSync.desktop
++++ b/data/com.rtosta.DriveSync.desktop
+@@ -3,13 +3,37 @@ Type=Application
+ Name=DriveSync
+ GenericName=Google Drive Account Manager
+ GenericName[pt_BR]=Gerenciador de contas do Google Drive
++GenericName[pl]=Menedżer kont Dysku Google
++GenericName[fr]=Gestionnaire de comptes Google Drive
++GenericName[de]=Google-Drive-Kontoverwaltung
++GenericName[es]=Gestor de cuentas de Google Drive
++GenericName[ja]=Google ドライブ アカウント マネージャー
++GenericName[ko]=Google 드라이브 계정 관리자
++GenericName[zh_CN]=Google 云端硬盘账户管理器
++GenericName[zh_TW]=Google 雲端硬碟帳戶管理員
+ Comment=Connect and manage Google accounts
+ Comment[pt_BR]=Conecte e gerencie contas do Google
++Comment[pl]=Łącz konta Google i zarządzaj nimi
++Comment[fr]=Connecter et gérer des comptes Google
++Comment[de]=Google-Konten verbinden und verwalten
++Comment[es]=Conecta y gestiona cuentas de Google
++Comment[ja]=Google アカウントを接続して管理します
++Comment[ko]=Google 계정을 연결하고 관리합니다
++Comment[zh_CN]=连接并管理 Google 账户
++Comment[zh_TW]=連接並管理 Google 帳戶
+ Exec=drivesync
+ Icon=com.rtosta.DriveSync
+ Terminal=false
+ Categories=Network;Utility;
+ Keywords=Google;Drive;Cloud;Accounts;
+ Keywords[pt_BR]=Google;Drive;Nuvem;Contas;
++Keywords[pl]=Google;Dysk;Chmura;Konta;
++Keywords[fr]=Google;Drive;Nuage;Comptes;
++Keywords[de]=Google;Drive;Cloud;Konten;
++Keywords[es]=Google;Drive;Nube;Cuentas;
++Keywords[ja]=Google;ドライブ;クラウド;アカウント;
++Keywords[ko]=Google;드라이브;클라우드;계정;
++Keywords[zh_CN]=Google;云端硬盘;云;账户;
++Keywords[zh_TW]=Google;雲端硬碟;雲端;帳戶;
+ StartupNotify=true
+ X-GNOME-UsesNotifications=true
+diff --git a/po/de.po b/po/de.po
+new file mode 100644
+index 0000000..e0ce219
+--- /dev/null
++++ b/po/de.po
+@@ -0,0 +1,96 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: DriveSync\n"
++"Report-Msgid-Bugs-To: \n"
++"PO-Revision-Date: 2026-11-27 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: German\n"
++"Language: de\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=2; plural=(n != 1);\n"
++
++msgid "Synchronization is not running"
++msgstr "Die Synchronisation läuft nicht"
++
++msgid "Google Drive is up to date"
++msgstr "Google Drive ist auf dem neuesten Stand"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "Wird mit Google Drive synchronisiert …"
++
++msgid "A file changed on both sides"
++msgstr "Eine Datei wurde auf beiden Seiten geändert"
++
++msgid "DriveSync needs your decision"
++msgstr "DriveSync braucht Ihre Entscheidung"
++
++msgid "Synchronization failed"
++msgstr "Synchronisation fehlgeschlagen"
++
++msgid "Google Drive"
++msgstr "Google Drive"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "Die Synchronisation wartet, weil die Verbindung getaktet ist."
++
++msgid "Open DriveSync"
++msgstr "DriveSync öffnen"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account}: Die Änderungen wurden synchronisiert."
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account}: Ein Element konnte nicht synchronisiert werden. Es bleibt in DriveSync aufgeführt, bis es gelöst ist."
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account}: Wählen Sie, welche Version behalten werden soll. Nichts wurde überschrieben."
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account}: Die Synchronisation wartet, bis Sie den Ordner in DriveSync überprüfen."
++
++msgid "Synchronization waits"
++msgstr "Die Synchronisation wartet"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "Die Verbindung ist getaktet, daher lädt DriveSync nichts herunter oder hoch. Es setzt von selbst fort, sobald die Verbindung nicht mehr getaktet ist oder wenn Sie getaktete Verbindungen in den Einstellungen erlauben."
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "Die Synchronisation wartet: Die Verbindung ist getaktet"
++
++msgid "Quit"
++msgstr "Beenden"
++
++msgid "Network"
++msgstr "Netzwerk"
++
++msgid "Synchronize on Metered Connections"
++msgstr "Über getaktete Verbindungen synchronisieren"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "Wenn ausgeschaltet, wartet die Synchronisation, solange die Verbindung getaktet ist, und setzt danach von selbst fort"
++
++msgid "Add local folder to Places"
++msgstr "Lokalen Ordner zu den Orten hinzufügen"
++
++msgid "Google Drive ({account})"
++msgstr "Google Drive ({account})"
++
++msgid "The local folder was added to Places."
++msgstr "Der lokale Ordner wurde zu den Orten hinzugefügt."
++
++msgid "The local folder is already in Places."
++msgstr "Der lokale Ordner ist bereits unter den Orten."
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "Die Orte konnten nicht geändert werden. Es wurde nichts geschrieben."
++
++msgid "Preferences"
++msgstr "Einstellungen"
++
++msgid "The configuration is incomplete."
++msgstr "Die Konfiguration ist unvollständig."
++
++msgid "Saved configuration could not be read. Your account has been preserved."
++msgstr "Die gespeicherte Konfiguration konnte nicht gelesen werden. Ihr Konto wurde beibehalten."
+diff --git a/po/es.po b/po/es.po
+new file mode 100644
+index 0000000..5b16e1d
+--- /dev/null
++++ b/po/es.po
+@@ -0,0 +1,96 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: DriveSync\n"
++"Report-Msgid-Bugs-To: \n"
++"PO-Revision-Date: 2026-11-27 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: Spanish\n"
++"Language: es\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=2; plural=(n != 1);\n"
++
++msgid "Synchronization is not running"
++msgstr "La sincronización no está en marcha"
++
++msgid "Google Drive is up to date"
++msgstr "Google Drive está al día"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "Sincronizando con Google Drive…"
++
++msgid "A file changed on both sides"
++msgstr "Un archivo cambió en ambos lados"
++
++msgid "DriveSync needs your decision"
++msgstr "DriveSync necesita tu decisión"
++
++msgid "Synchronization failed"
++msgstr "La sincronización falló"
++
++msgid "Google Drive"
++msgstr "Google Drive"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "La sincronización espera porque la conexión es de uso medido."
++
++msgid "Open DriveSync"
++msgstr "Abrir DriveSync"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account}: los cambios se sincronizaron."
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account}: no se pudo sincronizar un elemento. Seguirá en la lista de DriveSync hasta que se resuelva."
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account}: elige qué versión conservar. No se sobrescribió nada."
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account}: la sincronización espera hasta que revises la carpeta en DriveSync."
++
++msgid "Synchronization waits"
++msgstr "La sincronización espera"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "La conexión es de uso medido, así que DriveSync no descarga ni sube nada. Continuará por sí solo en una conexión que no sea de uso medido, o cuando permitas las conexiones de uso medido en Preferencias."
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "La sincronización espera: la conexión es de uso medido"
++
++msgid "Quit"
++msgstr "Salir"
++
++msgid "Network"
++msgstr "Red"
++
++msgid "Synchronize on Metered Connections"
++msgstr "Sincronizar en conexiones de uso medido"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "Si está desactivado, la sincronización espera mientras la conexión sea de uso medido y después continúa por sí sola"
++
++msgid "Add local folder to Places"
++msgstr "Añadir la carpeta local a Lugares"
++
++msgid "Google Drive ({account})"
++msgstr "Google Drive ({account})"
++
++msgid "The local folder was added to Places."
++msgstr "La carpeta local se añadió a Lugares."
++
++msgid "The local folder is already in Places."
++msgstr "La carpeta local ya está en Lugares."
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "No se pudieron cambiar los Lugares. No se escribió nada."
++
++msgid "Preferences"
++msgstr "Preferencias"
++
++msgid "The configuration is incomplete."
++msgstr "La configuración está incompleta."
++
++msgid "Saved configuration could not be read. Your account has been preserved."
++msgstr "No se pudo leer la configuración guardada. Tu cuenta se ha conservado."
+diff --git a/po/fr.po b/po/fr.po
+new file mode 100644
+index 0000000..589b351
+--- /dev/null
++++ b/po/fr.po
+@@ -0,0 +1,96 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: DriveSync\n"
++"Report-Msgid-Bugs-To: \n"
++"PO-Revision-Date: 2026-11-27 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: French\n"
++"Language: fr\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=2; plural=(n > 1);\n"
++
++msgid "Synchronization is not running"
++msgstr "La synchronisation n'est pas en cours"
++
++msgid "Google Drive is up to date"
++msgstr "Google Drive est à jour"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "Synchronisation avec Google Drive…"
++
++msgid "A file changed on both sides"
++msgstr "Un fichier a changé des deux côtés"
++
++msgid "DriveSync needs your decision"
++msgstr "DriveSync attend votre décision"
++
++msgid "Synchronization failed"
++msgstr "La synchronisation a échoué"
++
++msgid "Google Drive"
++msgstr "Google Drive"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "La synchronisation attend, car la connexion est limitée."
++
++msgid "Open DriveSync"
++msgstr "Ouvrir DriveSync"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account} : les modifications ont été synchronisées."
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account} : un élément n'a pas pu être synchronisé. Il reste listé dans DriveSync jusqu'à ce qu'il soit résolu."
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account} : choisissez la version à conserver. Rien n'a été écrasé."
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account} : la synchronisation attend que vous vérifiiez le dossier dans DriveSync."
++
++msgid "Synchronization waits"
++msgstr "La synchronisation attend"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "La connexion est limitée : DriveSync ne télécharge ni n'envoie rien. Il reprend de lui-même sur une connexion non limitée, ou lorsque vous autorisez les connexions limitées dans les Préférences."
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "La synchronisation attend : la connexion est limitée"
++
++msgid "Quit"
++msgstr "Quitter"
++
++msgid "Network"
++msgstr "Réseau"
++
++msgid "Synchronize on Metered Connections"
++msgstr "Synchroniser sur les connexions limitées"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "Si désactivé, la synchronisation attend tant que la connexion est limitée, puis reprend d'elle-même"
++
++msgid "Add local folder to Places"
++msgstr "Ajouter le dossier local aux Emplacements"
++
++msgid "Google Drive ({account})"
++msgstr "Google Drive ({account})"
++
++msgid "The local folder was added to Places."
++msgstr "Le dossier local a été ajouté aux Emplacements."
++
++msgid "The local folder is already in Places."
++msgstr "Le dossier local est déjà dans les Emplacements."
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "Impossible de modifier les Emplacements. Rien n'a été écrit."
++
++msgid "Preferences"
++msgstr "Préférences"
++
++msgid "The configuration is incomplete."
++msgstr "La configuration est incomplète."
++
++msgid "Saved configuration could not be read. Your account has been preserved."
++msgstr "La configuration enregistrée n'a pas pu être lue. Votre compte a été conservé."
+diff --git a/po/ja.po b/po/ja.po
+new file mode 100644
+index 0000000..abc7368
+--- /dev/null
++++ b/po/ja.po
+@@ -0,0 +1,96 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: DriveSync\n"
++"Report-Msgid-Bugs-To: \n"
++"PO-Revision-Date: 2026-11-27 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: Japanese\n"
++"Language: ja\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++msgid "Synchronization is not running"
++msgstr "同期は実行されていません"
++
++msgid "Google Drive is up to date"
++msgstr "Google ドライブは最新の状態です"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "Google ドライブと同期しています…"
++
++msgid "A file changed on both sides"
++msgstr "ファイルが両側で変更されました"
++
++msgid "DriveSync needs your decision"
++msgstr "DriveSync はあなたの判断を必要としています"
++
++msgid "Synchronization failed"
++msgstr "同期に失敗しました"
++
++msgid "Google Drive"
++msgstr "Google ドライブ"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "接続が従量制課金のため、同期は待機しています。"
++
++msgid "Open DriveSync"
++msgstr "DriveSync を開く"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account}: 変更を同期しました。"
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account}: 項目を同期できませんでした。解決するまで DriveSync に表示されたままになります。"
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account}: 残すバージョンを選んでください。何も上書きされていません。"
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account}: DriveSync でフォルダーを確認するまで同期は待機します。"
++
++msgid "Synchronization waits"
++msgstr "同期は待機中です"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "接続が従量制課金のため、DriveSync はダウンロードもアップロードも行いません。従量制課金ではない接続になるか、設定で従量制課金接続を許可すると、自動的に再開します。"
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "同期は待機中です: 接続が従量制課金です"
++
++msgid "Quit"
++msgstr "終了"
++
++msgid "Network"
++msgstr "ネットワーク"
++
++msgid "Synchronize on Metered Connections"
++msgstr "従量制課金接続で同期する"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "オフのときは、接続が従量制課金の間は同期を待機し、その後自動的に再開します"
++
++msgid "Add local folder to Places"
++msgstr "ローカルフォルダーを場所に追加"
++
++msgid "Google Drive ({account})"
++msgstr "Google ドライブ ({account})"
++
++msgid "The local folder was added to Places."
++msgstr "ローカルフォルダーを場所に追加しました。"
++
++msgid "The local folder is already in Places."
++msgstr "ローカルフォルダーはすでに場所にあります。"
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "場所を変更できませんでした。何も書き込まれていません。"
++
++msgid "Preferences"
++msgstr "設定"
++
++msgid "The configuration is incomplete."
++msgstr "設定が不完全です。"
++
++msgid "Saved configuration could not be read. Your account has been preserved."
++msgstr "保存された設定を読み込めませんでした。アカウントは保持されています。"
+diff --git a/po/ko.po b/po/ko.po
+new file mode 100644
+index 0000000..d61e1b2
+--- /dev/null
++++ b/po/ko.po
+@@ -0,0 +1,96 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: DriveSync\n"
++"Report-Msgid-Bugs-To: \n"
++"PO-Revision-Date: 2026-11-27 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: Korean\n"
++"Language: ko\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++msgid "Synchronization is not running"
++msgstr "동기화가 실행되고 있지 않습니다"
++
++msgid "Google Drive is up to date"
++msgstr "Google 드라이브가 최신 상태입니다"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "Google 드라이브와 동기화하는 중…"
++
++msgid "A file changed on both sides"
++msgstr "파일이 양쪽에서 변경되었습니다"
++
++msgid "DriveSync needs your decision"
++msgstr "DriveSync에 결정이 필요합니다"
++
++msgid "Synchronization failed"
++msgstr "동기화에 실패했습니다"
++
++msgid "Google Drive"
++msgstr "Google 드라이브"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "데이터 통신 연결이므로 동기화가 대기 중입니다."
++
++msgid "Open DriveSync"
++msgstr "DriveSync 열기"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account}: 변경 사항을 동기화했습니다."
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account}: 항목을 동기화할 수 없습니다. 해결될 때까지 DriveSync 목록에 남아 있습니다."
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account}: 유지할 버전을 선택하세요. 아무것도 덮어쓰지 않았습니다."
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account}: DriveSync에서 폴더를 검토할 때까지 동기화가 대기합니다."
++
++msgid "Synchronization waits"
++msgstr "동기화 대기 중"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "데이터 통신 연결이므로 DriveSync는 다운로드나 업로드를 하지 않습니다. 데이터 통신 연결이 아닌 연결에서, 또는 환경 설정에서 데이터 통신 연결을 허용하면 자동으로 계속합니다."
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "동기화 대기 중: 데이터 통신 연결입니다"
++
++msgid "Quit"
++msgstr "끝내기"
++
++msgid "Network"
++msgstr "네트워크"
++
++msgid "Synchronize on Metered Connections"
++msgstr "데이터 통신 연결에서 동기화"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "끄면 데이터 통신 연결인 동안 동기화가 대기하고 이후 자동으로 계속합니다"
++
++msgid "Add local folder to Places"
++msgstr "로컬 폴더를 위치에 추가"
++
++msgid "Google Drive ({account})"
++msgstr "Google 드라이브 ({account})"
++
++msgid "The local folder was added to Places."
++msgstr "로컬 폴더를 위치에 추가했습니다."
++
++msgid "The local folder is already in Places."
++msgstr "로컬 폴더가 이미 위치에 있습니다."
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "위치를 변경할 수 없습니다. 아무것도 기록하지 않았습니다."
++
++msgid "Preferences"
++msgstr "환경 설정"
++
++msgid "The configuration is incomplete."
++msgstr "구성이 완료되지 않았습니다."
++
++msgid "Saved configuration could not be read. Your account has been preserved."
++msgstr "저장된 구성을 읽을 수 없습니다. 계정은 그대로 유지됩니다."
+diff --git a/po/pl.po b/po/pl.po
+new file mode 100644
+index 0000000..69485fa
+--- /dev/null
++++ b/po/pl.po
+@@ -0,0 +1,96 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: DriveSync\n"
++"Report-Msgid-Bugs-To: \n"
++"PO-Revision-Date: 2026-11-27 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: Polish\n"
++"Language: pl\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=3; plural=(n==1 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
++
++msgid "Synchronization is not running"
++msgstr "Synchronizacja nie jest uruchomiona"
++
++msgid "Google Drive is up to date"
++msgstr "Dysk Google jest aktualny"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "Synchronizowanie z Dyskiem Google…"
++
++msgid "A file changed on both sides"
++msgstr "Plik zmienił się po obu stronach"
++
++msgid "DriveSync needs your decision"
++msgstr "DriveSync potrzebuje Twojej decyzji"
++
++msgid "Synchronization failed"
++msgstr "Synchronizacja nie powiodła się"
++
++msgid "Google Drive"
++msgstr "Dysk Google"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "Synchronizacja czeka, ponieważ połączenie jest taryfowe."
++
++msgid "Open DriveSync"
++msgstr "Otwórz DriveSync"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account}: zmiany zostały zsynchronizowane."
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account}: nie udało się zsynchronizować elementu. Pozostaje on na liście w DriveSync, dopóki problem nie zostanie rozwiązany."
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account}: wybierz, którą wersję zachować. Nic nie zostało nadpisane."
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account}: synchronizacja czeka, aż przejrzysz folder w DriveSync."
++
++msgid "Synchronization waits"
++msgstr "Synchronizacja czeka"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "Połączenie jest taryfowe, więc DriveSync niczego nie pobiera ani nie wysyła. Wznowi pracę samodzielnie po połączeniu, które nie jest taryfowe, albo gdy zezwolisz na połączenia taryfowe w Preferencjach."
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "Synchronizacja czeka: połączenie jest taryfowe"
++
++msgid "Quit"
++msgstr "Zakończ"
++
++msgid "Network"
++msgstr "Sieć"
++
++msgid "Synchronize on Metered Connections"
++msgstr "Synchronizuj przez połączenia taryfowe"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "Gdy wyłączone, synchronizacja czeka, dopóki połączenie jest taryfowe, a potem wznawia się samoczynnie"
++
++msgid "Add local folder to Places"
++msgstr "Dodaj lokalny folder do Miejsc"
++
++msgid "Google Drive ({account})"
++msgstr "Dysk Google ({account})"
++
++msgid "The local folder was added to Places."
++msgstr "Lokalny folder został dodany do Miejsc."
++
++msgid "The local folder is already in Places."
++msgstr "Lokalny folder jest już w Miejscach."
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "Nie udało się zmienić Miejsc. Nic nie zostało zapisane."
++
++msgid "Preferences"
++msgstr "Preferencje"
++
++msgid "The configuration is incomplete."
++msgstr "Konfiguracja jest niekompletna."
++
++msgid "Saved configuration could not be read. Your account has been preserved."
++msgstr "Nie udało się odczytać zapisanej konfiguracji. Twoje konto zostało zachowane."
+diff --git a/po/pt_BR.po b/po/pt_BR.po
+index 0d192f6..14d2c41 100644
+--- a/po/pt_BR.po
++++ b/po/pt_BR.po
+@@ -1971,3 +1971,73 @@ msgstr "Origem desconhecida"
+ 
+ msgid "Waiting for this verification for {seconds} s"
+ msgstr "Aguardando esta verificação há {seconds} s"
++
++msgid "Synchronization is not running"
++msgstr "A sincronização não está em execução"
++
++msgid "Google Drive is up to date"
++msgstr "O Google Drive está atualizado"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "Sincronizando com o Google Drive…"
++
++msgid "A file changed on both sides"
++msgstr "Um arquivo mudou nos dois lados"
++
++msgid "DriveSync needs your decision"
++msgstr "O DriveSync precisa da sua decisão"
++
++msgid "Google Drive"
++msgstr "Google Drive"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "A sincronização aguarda porque a conexão é limitada."
++
++msgid "Open DriveSync"
++msgstr "Abrir o DriveSync"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account}: as alterações foram sincronizadas."
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account}: um item não pôde ser sincronizado. Ele continua listado no DriveSync até ser resolvido."
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account}: escolha qual versão manter. Nada foi sobrescrito."
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account}: a sincronização aguarda até você revisar a pasta no DriveSync."
++
++msgid "Synchronization waits"
++msgstr "A sincronização aguarda"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "A conexão é limitada, então o DriveSync não baixa nem envia nada. Ele continua sozinho em uma conexão que não seja limitada ou quando você permitir conexões limitadas nas Preferências."
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "A sincronização aguarda: a conexão é limitada"
++
++msgid "Network"
++msgstr "Rede"
++
++msgid "Synchronize on Metered Connections"
++msgstr "Sincronizar em conexões limitadas"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "Quando desativado, a sincronização aguarda enquanto a conexão for limitada e depois continua sozinha"
++
++msgid "Add local folder to Places"
++msgstr "Adicionar a pasta local aos Locais"
++
++msgid "Google Drive ({account})"
++msgstr "Google Drive ({account})"
++
++msgid "The local folder was added to Places."
++msgstr "A pasta local foi adicionada aos Locais."
++
++msgid "The local folder is already in Places."
++msgstr "A pasta local já está nos Locais."
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "Não foi possível alterar os Locais. Nada foi gravado."
++
+diff --git a/po/zh_CN.po b/po/zh_CN.po
+new file mode 100644
+index 0000000..270bcb9
+--- /dev/null
++++ b/po/zh_CN.po
+@@ -0,0 +1,96 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: DriveSync\n"
++"Report-Msgid-Bugs-To: \n"
++"PO-Revision-Date: 2026-11-27 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: Chinese (simplified)\n"
++"Language: zh_CN\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++msgid "Synchronization is not running"
++msgstr "同步未在运行"
++
++msgid "Google Drive is up to date"
++msgstr "Google 云端硬盘已是最新"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "正在与 Google 云端硬盘同步…"
++
++msgid "A file changed on both sides"
++msgstr "有文件在两端都被更改"
++
++msgid "DriveSync needs your decision"
++msgstr "DriveSync 需要你做出决定"
++
++msgid "Synchronization failed"
++msgstr "同步失败"
++
++msgid "Google Drive"
++msgstr "Google 云端硬盘"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "由于连接按流量计费，同步正在等待。"
++
++msgid "Open DriveSync"
++msgstr "打开 DriveSync"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account}：更改已同步。"
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account}：有一个项目无法同步。在解决之前，它会一直列在 DriveSync 中。"
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account}：请选择要保留的版本。没有任何内容被覆盖。"
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account}：在你于 DriveSync 中检查该文件夹之前，同步会一直等待。"
++
++msgid "Synchronization waits"
++msgstr "同步正在等待"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "当前连接按流量计费，因此 DriveSync 不会下载或上传。连接不再按流量计费时，或你在“首选项”中允许按流量计费的连接后，它会自动继续。"
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "同步正在等待：连接按流量计费"
++
++msgid "Quit"
++msgstr "退出"
++
++msgid "Network"
++msgstr "网络"
++
++msgid "Synchronize on Metered Connections"
++msgstr "在按流量计费的连接上同步"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "关闭时，连接按流量计费期间同步会等待，之后自动继续"
++
++msgid "Add local folder to Places"
++msgstr "将本地文件夹添加到位置"
++
++msgid "Google Drive ({account})"
++msgstr "Google 云端硬盘（{account}）"
++
++msgid "The local folder was added to Places."
++msgstr "本地文件夹已添加到位置。"
++
++msgid "The local folder is already in Places."
++msgstr "本地文件夹已在位置中。"
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "无法更改位置。未写入任何内容。"
++
++msgid "Preferences"
++msgstr "首选项"
++
++msgid "The configuration is incomplete."
++msgstr "配置不完整。"
++
++msgid "Saved configuration could not be read. Your account has been preserved."
++msgstr "无法读取已保存的配置。你的账户已保留。"
+diff --git a/po/zh_TW.po b/po/zh_TW.po
+new file mode 100644
+index 0000000..a7bf90b
+--- /dev/null
++++ b/po/zh_TW.po
+@@ -0,0 +1,96 @@
++msgid ""
++msgstr ""
++"Project-Id-Version: DriveSync\n"
++"Report-Msgid-Bugs-To: \n"
++"PO-Revision-Date: 2026-11-27 00:00+0000\n"
++"Last-Translator: Sparky Stereo OS\n"
++"Language-Team: Chinese (traditional)\n"
++"Language: zh_TW\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++msgid "Synchronization is not running"
++msgstr "同步未在執行"
++
++msgid "Google Drive is up to date"
++msgstr "Google 雲端硬碟已是最新狀態"
++
++msgid "Synchronizing with Google Drive…"
++msgstr "正在與 Google 雲端硬碟同步…"
++
++msgid "A file changed on both sides"
++msgstr "有檔案在兩端都被變更"
++
++msgid "DriveSync needs your decision"
++msgstr "DriveSync 需要您做出決定"
++
++msgid "Synchronization failed"
++msgstr "同步失敗"
++
++msgid "Google Drive"
++msgstr "Google 雲端硬碟"
++
++msgid "Synchronization waits because the connection is metered."
++msgstr "由於連線為計量付費，同步正在等候。"
++
++msgid "Open DriveSync"
++msgstr "開啟 DriveSync"
++
++msgid "{account}: the changes were synchronized."
++msgstr "{account}：變更已同步。"
++
++msgid "{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved."
++msgstr "{account}：有一個項目無法同步。在解決之前，它會一直列在 DriveSync 中。"
++
++msgid "{account}: choose which version to keep. Nothing was overwritten."
++msgstr "{account}：請選擇要保留的版本。沒有任何內容被覆寫。"
++
++msgid "{account}: synchronization waits until you review the folder in DriveSync."
++msgstr "{account}：在您於 DriveSync 中檢查該資料夾之前，同步會一直等候。"
++
++msgid "Synchronization waits"
++msgstr "同步正在等候"
++
++msgid "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences."
++msgstr "目前連線為計量付費，因此 DriveSync 不會下載或上傳。連線不再計量付費時，或您在「偏好設定」中允許計量付費連線後，它會自動繼續。"
++
++msgid "Synchronization waits: the connection is metered"
++msgstr "同步正在等候：連線為計量付費"
++
++msgid "Quit"
++msgstr "結束"
++
++msgid "Network"
++msgstr "網路"
++
++msgid "Synchronize on Metered Connections"
++msgstr "在計量付費連線上同步"
++
++msgid "When off, synchronization waits while the connection is metered and continues by itself afterwards"
++msgstr "關閉時，連線為計量付費期間同步會等候，之後自動繼續"
++
++msgid "Add local folder to Places"
++msgstr "將本機資料夾加入位置"
++
++msgid "Google Drive ({account})"
++msgstr "Google 雲端硬碟（{account}）"
++
++msgid "The local folder was added to Places."
++msgstr "本機資料夾已加入位置。"
++
++msgid "The local folder is already in Places."
++msgstr "本機資料夾已在位置中。"
++
++msgid "Places could not be changed. Nothing was written."
++msgstr "無法變更位置。未寫入任何內容。"
++
++msgid "Preferences"
++msgstr "偏好設定"
++
++msgid "The configuration is incomplete."
++msgstr "設定不完整。"
++
++msgid "Saved configuration could not be read. Your account has been preserved."
++msgstr "無法讀取已儲存的設定。您的帳戶已保留。"

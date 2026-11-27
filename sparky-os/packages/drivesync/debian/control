@@ -1,0 +1,32 @@
+Source: drivesync
+Section: net
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14), cargo (>= 1.98~), rustc (>= 1.98~), pkgconf, libgtk-4-dev (>= 4.10), libadwaita-1-dev (>= 1.4),
+ gettext, appstream, desktop-file-utils, python3
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://github.com/rafatosta/drivesync
+
+Package: drivesync
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, kwallet6 | gnome-keyring
+Description: Synchronize chosen folders with Google Drive
+ DriveSync connects Google accounts and keeps folders you choose on this
+ computer in step with folders on Google Drive: uploads, downloads, renames
+ and moves, with conflicts kept for you to decide and permanent deletion
+ never used. Credentials are kept by the desktop's Secret Service (KDE
+ Wallet or GNOME Keyring), never in a file.
+ .
+ This build shows DriveSync in Plasma's system tray, reports completed,
+ failed and conflicting synchronization as Plasma notifications, adds the
+ synchronized folder to Dolphin's Places when asked, and holds
+ synchronization while the connection is metered. Its interface is in the
+ edition's ten languages.
+ .
+ Built from the source of one commit of DriveSync's development branch with
+ its Rust crates vendored, not from upstream's Flatpak. DriveSync is an early
+ technical preview by its author.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Pawel "pavroo"
+ Pijanowski). Upstream: Rafael Tosta.

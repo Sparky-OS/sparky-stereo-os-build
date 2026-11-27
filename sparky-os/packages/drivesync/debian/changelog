@@ -1,0 +1,21 @@
+drivesync (0.1.0+git20261126.082e743-1) unstable; urgency=medium
+
+  * The edition's build of DriveSync (Rafael Tosta, github.com/rafatosta/drivesync, GPL-3.0-only), the Google Drive client
+    of the final user image (queue row 299). DriveSync has no release yet: built from commit
+    082e743ac3eb6755cb4970f768491335281adffa of its main branch (2026-11-26), pinned in the recipe by the archive's
+    SHA-256, the commit and the git tree id 78313f02941ac75dd4b6b993923eb09fcbcb5e22, with its Rust crates vendored and
+    no network in the build. Debian has no DriveSync, and its own Rust crates are other versions (gtk4 0.11, libadwaita
+    0.9, reqwest 0.13, rusqlite 0.40, zbus 5 against the lock's 0.10, 0.8, 0.12, 0.37 and 4).
+  * Eight patches of the edition, written in the author's own commit style on the fork branch order299 so he can take
+    them, nothing sent: the data directory set at build time (oauth.json and the catalogues under /usr/share), server
+    certificates verified against the system's store, a StatusNotifierItem in Plasma's system tray, notifications for
+    completed, failed and conflicting synchronization, synchronization held on a metered connection (with a setting,
+    off by default), the synchronized folder added to KDE's Places when the person asks, the new strings and the
+    desktop entry in the edition's ten languages, and the AppStream licence corrected from a placeholder to
+    GPL-3.0-only.
+  * Credentials stay in the desktop's Secret Service, as upstream keeps them (KDE Wallet or GNOME Keyring: a Depends);
+    there is no file fallback.
+  * No Google OAuth client is shipped: sign-in says "Google sign-in is not configured for this installation." until
+    /usr/share/drivesync/oauth.json exists (README.Debian).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 27 Nov 2026 16:00:00 +0000

@@ -1,0 +1,37 @@
+DriveSync on Sparky Stereo OS
+=============================
+
+Signing in to Google
+--------------------
+
+DriveSync signs in with an OAuth client registered with Google by whoever
+distributes it. Its author's Flatpak carries his own client; this package
+carries none, so until one is provided the window says:
+
+    Google sign-in is not configured for this installation.
+
+DriveSync reads the client from /usr/share/drivesync/oauth.json (the JSON file
+Google's console gives for a Desktop client, "installed" section), or from the
+file named by the DRIVESYNC_GOOGLE_OAUTH_FILE environment variable.
+
+Credentials
+-----------
+
+Tokens are kept by the desktop's Secret Service (KDE Wallet or GNOME Keyring),
+never in a file. When the Secret Service is unavailable or locked, DriveSync
+says "Secure credential storage is unavailable. Unlock your keyring and try
+again." and stores nothing.
+
+What this build adds
+--------------------
+
+- A system tray entry (StatusNotifierItem) with Open DriveSync and Quit; with a
+  tray, closing the window keeps DriveSync there.
+- Plasma notifications when a run finishes with changes, when an item fails and
+  when a file changed on both sides.
+- On a metered connection synchronization waits and says so; Preferences >
+  Background > "Synchronize on Metered Connections" changes that.
+- The account menu's "Add local folder to Places" adds the synchronized folder
+  to Dolphin's Places and every KDE file dialog.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 27 Nov 2026 16:00:00 +0000

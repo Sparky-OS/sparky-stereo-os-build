@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 13:27:18 -0300
+Subject: [PATCH] feat(desktop): add the local folder to the file manager's
+ Places
+
+Motivation: on KDE the synchronized folder is reached only through
+DriveSync's own menu; Dolphin, the Places panel and every KDE file dialog
+list the places of $XDG_DATA_HOME/user-places.xbel, where the folder is
+missing.
+
+Changes: the account menu offers "Add local folder to Places" where that
+file exists. The action appends one XBEL bookmark (the freedesktop.org icon
+extension when the file declares it, KDE's ID and isSystemItem metadata)
+before the closing element, keeps the rest of the file byte for byte,
+replaces it atomically, and never adds the same folder twice. It runs only
+when the person chooses it.
+
+Validation: cargo fmt --check, cargo clippy -D warnings, a unit test for
+escaping, idempotence and preservation; in a Plasma session Dolphin shows
+the entry under Places after the action.
+
+Limitations: overlay icons per file in Dolphin would need a file-state
+interface from the engine and a KOverlayIconPlugin; not part of this
+change.
+
+Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
+Origin: vendor, Sparky Stereo OS (branch order299 of the edition's DriveSync fork)
+Forwarded: no
+Last-Update: 2026-11-27
+---
+ src/services/mod.rs                    |  1 +
+ src/services/places.rs                 | 86 ++++++++++++++++++++++++++
+ src/ui/dashboard/pages/account_menu.rs | 44 +++++++++++++
+ 3 files changed, 131 insertions(+)
+ create mode 100644 src/services/places.rs
+
+diff --git a/src/services/mod.rs b/src/services/mod.rs
+index 7cce251..6054768 100644
+--- a/src/services/mod.rs
++++ b/src/services/mod.rs
+@@ -2,6 +2,7 @@
+ pub(crate) mod accounts;
+ pub(crate) mod background;
+ pub(crate) mod network;
++pub(crate) mod places;
+ pub(crate) mod preferences;
+ pub(crate) mod setup;
+ 
+diff --git a/src/services/places.rs b/src/services/places.rs
+new file mode 100644
+index 0000000..eded6b9
+--- /dev/null
++++ b/src/services/places.rs
+@@ -0,0 +1,86 @@
++//! The synchronized folder as an entry of the file manager's Places on KDE.
++//!
++//! KDE file dialogs, Dolphin and the Places panel read `$XDG_DATA_HOME/user-places.xbel`
++//! (XBEL with the freedesktop.org bookmark extensions). An entry is added only when the
++//! person asks for it and only to a file KDE already created; the rest of the file is
++//! kept byte for byte, and the file is replaced atomically.
++use adw::gtk::glib;
++use std::path::PathBuf;
++
++fn file() -> PathBuf {
++    glib::user_data_dir().join("user-places.xbel")
++}
++
++/// True when the desktop keeps KDE Places for this person.
++pub(crate) fn available() -> bool {
++    file().is_file()
++}
++
++fn escape(text: &str) -> String {
++    text.replace('&', "&amp;")
++        .replace('<', "&lt;")
++        .replace('>', "&gt;")
++        .replace('"', "&quot;")
++}
++
++/// Adds `uri` under `title`. Returns `Ok(false)` when the entry already exists.
++pub(crate) fn add(uri: &str, title: &str) -> Result<bool, String> {
++    let path = file();
++    let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
++    let href = escape(uri);
++    if text.contains(&format!("href=\"{href}\"")) {
++        return Ok(false);
++    }
++    let end = text
++        .rfind("</xbel>")
++        .ok_or_else(|| "user-places.xbel has no closing xbel element".to_owned())?;
++    let icon = if text.contains("xmlns:bookmark=") {
++        "   <metadata owner=\"http://freedesktop.org\">\n    <bookmark:icon name=\"folder-gdrive\"/>\n   </metadata>\n"
++    } else {
++        ""
++    };
++    let id = format!("{}/{}", glib::real_time() / 1_000_000, std::process::id());
++    let entry = format!(
++        " <bookmark href=\"{href}\">\n  <title>{}</title>\n  <info>\n{icon}   <metadata owner=\"http://www.kde.org\">\n    <ID>{id}</ID>\n    <isSystemItem>false</isSystemItem>\n   </metadata>\n  </info>\n </bookmark>\n",
++        escape(title)
++    );
++    let mut updated = String::with_capacity(text.len() + entry.len());
++    updated.push_str(&text[..end]);
++    updated.push_str(&entry);
++    updated.push_str(&text[end..]);
++    glib::file_set_contents(&path, updated.as_bytes()).map_err(|error| error.to_string())?;
++    Ok(true)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn adds_once_and_keeps_the_rest() {
++        let home = std::env::temp_dir().join(format!("drivesync-places-{}", std::process::id()));
++        std::fs::create_dir_all(&home).unwrap();
++        std::env::set_var("XDG_DATA_HOME", &home);
++        let original = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbel xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\">\n <bookmark href=\"file:///home/a\">\n  <title>Home</title>\n </bookmark>\n</xbel>\n";
++        let path = home.join("user-places.xbel");
++        std::fs::write(&path, original).unwrap();
++        if glib::user_data_dir() != home {
++            // GLib caches the data directory at first use; nothing more can be checked here.
++            return;
++        }
++        assert_eq!(
++            add("file:///home/a/Drive%20&%20more", "Drive <A>"),
++            Ok(true)
++        );
++        assert_eq!(
++            add("file:///home/a/Drive%20&%20more", "Drive <A>"),
++            Ok(false)
++        );
++        let text = std::fs::read_to_string(&path).unwrap();
++        assert!(text.starts_with(&original[..original.len() - "</xbel>\n".len()]));
++        assert!(text.contains("href=\"file:///home/a/Drive%20&amp;%20more\""));
++        assert!(text.contains("<title>Drive &lt;A&gt;</title>"));
++        assert!(text.ends_with("</xbel>\n"));
++        std::fs::remove_dir_all(&home).unwrap();
++    }
++}
+diff --git a/src/ui/dashboard/pages/account_menu.rs b/src/ui/dashboard/pages/account_menu.rs
+index f6d87b1..6ca7a90 100644
+--- a/src/ui/dashboard/pages/account_menu.rs
++++ b/src/ui/dashboard/pages/account_menu.rs
+@@ -18,8 +18,13 @@ pub(super) fn build(
+         (gettext("Configure folders"), "configure"),
+         (gettext("Open local folder"), "local"),
+         (gettext("Open Google Drive folder"), "remote"),
++        (gettext("Add local folder to Places"), "places"),
+         (gettext("Sign Out"), "sign-out"),
+     ] {
++        // Places exist only where KDE keeps them for this person.
++        if action == "places" && !crate::services::places::available() {
++            continue;
++        }
+         menu.append(Some(&label), Some(&format!("account-menu.{action}")));
+     }
+     let button = gtk::MenuButton::builder()
+@@ -91,6 +96,45 @@ pub(super) fn build(
+         });
+         group.add_action(&action);
+     }
++    let places = gio::SimpleAction::new("places", None);
++    {
++        let id = account.id.clone();
++        let name = account
++            .display_name
++            .clone()
++            .or_else(|| account.email.clone())
++            .unwrap_or_default();
++        let feedback = feedback.clone();
++        places.connect_activate(move |_, _| {
++            let id = id.clone();
++            let name = name.clone();
++            let feedback = feedback.clone();
++            glib::spawn_future_local(async move {
++                let message = match crate::services::configuration::load(&id).await {
++                    Ok(Some(config)) => {
++                        let title = if name.is_empty() {
++                            gettext("Google Drive")
++                        } else {
++                            gettext("Google Drive ({account})").replace("{account}", &name)
++                        };
++                        match crate::services::places::add(&config.local_uri, &title) {
++                            Ok(true) => gettext("The local folder was added to Places."),
++                            Ok(false) => gettext("The local folder is already in Places."),
++                            Err(_) => gettext("Places could not be changed. Nothing was written."),
++                        }
++                    }
++                    Ok(None) => gettext("The configuration is incomplete."),
++                    Err(_) => gettext(
++                        "Saved configuration could not be read. Your account has been preserved.",
++                    ),
++                };
++                if let Some(feedback) = feedback.upgrade() {
++                    feedback.set_label(&message);
++                }
++            });
++        });
++    }
++    group.add_action(&places);
+     let action = gio::SimpleAction::new("sign-out", None);
+     let weak_button = button.downgrade();
+     let context = context.clone();

@@ -1,0 +1,312 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 13:27:18 -0300
+Subject: [PATCH] feat(desktop): notify completed, failed and conflicting
+ synchronization
+
+Motivation: a person who closed the window learns about a failure or a
+conflict only by opening DriveSync again; nothing on the desktop says that a
+run finished, failed or needs a decision.
+
+Changes: each account's status is followed on transitions only: a run that
+dispatched at least one operation and returns to idle posts "Google Drive is
+up to date"; a non-retryable failure, a worker that could not start, a
+conflict or a folder that needs a decision each post one notification with
+Open DriveSync, replaced rather than repeated per account and kind. A later
+completed run withdraws the account's earlier failure and conflict
+notifications. The item that needs attention stays listed in the window, as
+before; nothing is retried, resolved or overwritten by a notification.
+
+Validation: cargo fmt --check, cargo clippy -D warnings, unit tests for the
+transitions (one completion per run with changes, none for an idle check,
+failures and conflicts on entry only); in a Plasma 6.7 session against a
+local stand-in of Google's endpoints the three notifications reach Plasma's
+notification server with DriveSync's desktop entry.
+
+Limitations: the stand-in's 403 storageQuotaExceeded reaches the person as
+"an item could not be synchronized": the engine treats an unlisted Google
+error during a mutation as an uncertain effect, so the quota reason itself
+is not carried to the status.
+
+Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
+Origin: vendor, Sparky Stereo OS (branch order299 of the edition's DriveSync fork)
+Forwarded: no
+Last-Update: 2026-11-27
+---
+ src/application/desktop/mod.rs           | 30 ++++++---
+ src/application/desktop/notifications.rs | 72 ++++++++++++++++++++
+ src/application/desktop/status.rs        | 85 +++++++++++++++++++++++-
+ 3 files changed, 176 insertions(+), 11 deletions(-)
+ create mode 100644 src/application/desktop/notifications.rs
+
+diff --git a/src/application/desktop/mod.rs b/src/application/desktop/mod.rs
+index 45195f7..244976d 100644
+--- a/src/application/desktop/mod.rs
++++ b/src/application/desktop/mod.rs
+@@ -1,7 +1,9 @@
+-//! Desktop integration outside the window: a status notifier item in the system tray.
++//! Desktop integration outside the window: a status notifier item in the system tray and
++//! notifications for synchronization outcomes.
+ //!
+-//! It observes the public Engine API only; it owns no credentials and decides nothing
+-//! about synchronization.
++//! Every part observes the public Engine API only; none of them owns credentials or decides
++//! what to synchronize.
++mod notifications;
+ mod status;
+ mod tray;
+ 
+@@ -9,7 +11,8 @@ use super::Context;
+ use adw::gtk::glib;
+ use drivesync_engine::{Account, Engine, ListAccountsRequest};
+ use gettextrs::gettext;
+-use status::{classify, Phase};
++use notifications::Notifier;
++use status::{Phase, Tracker};
+ use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
+ use tray::Tray;
+ 
+@@ -30,6 +33,7 @@ struct Watched {
+ 
+ struct Shared {
+     tray: Tray,
++    notifier: Notifier,
+     accounts: RefCell<HashMap<String, Watched>>,
+ }
+ 
+@@ -71,6 +75,7 @@ pub(crate) fn install(app: &adw::Application, context: &Context) {
+     TRAY.with(|slot| *slot.borrow_mut() = Some(tray.clone()));
+     let shared = Rc::new(Shared {
+         tray,
++        notifier: Notifier::new(app),
+         accounts: RefCell::default(),
+     });
+     let context = context.clone();
+@@ -140,23 +145,28 @@ async fn follow_accounts(shared: &Rc<Shared>, engine: &Engine) {
+     shared.refresh();
+ }
+ 
+-/// Follows one account's worker for the tray.
++/// Follows one account's worker and reports its transitions.
+ async fn watch(shared: std::rc::Weak<Shared>, engine: Engine, account: Account) {
+     let mut monitor = engine.monitor_synchronization(account.id.clone());
++    let mut tracker = Tracker::default();
+     loop {
+-        let phase = match monitor.current().await {
+-            Ok(status) => classify(&status),
+-            Err(_) => Phase::Failed,
++        let event = match monitor.current().await {
++            Ok(status) => tracker.update(&status),
++            Err(_) => tracker.fail(),
+         };
+         let Some(shared) = shared.upgrade() else {
+             return;
+         };
+-        {
++        let name = {
+             let mut accounts = shared.accounts.borrow_mut();
+             let Some(entry) = accounts.get_mut(&account.id.0) else {
+                 return;
+             };
+-            entry.phase = phase;
++            entry.phase = tracker.phase();
++            entry.name.clone()
++        };
++        if let Some(event) = event {
++            shared.notifier.event(&account.id.0, &name, event);
+         }
+         shared.refresh();
+         drop(shared);
+diff --git a/src/application/desktop/notifications.rs b/src/application/desktop/notifications.rs
+new file mode 100644
+index 0000000..d82c6b8
+--- /dev/null
++++ b/src/application/desktop/notifications.rs
+@@ -0,0 +1,72 @@
++//! Desktop notifications for synchronization outcomes.
++//!
++//! Each account keeps one notification per kind, replaced rather than repeated, and every
++//! notification opens the window, where the item that needs attention stays listed.
++use super::status::Event;
++use adw::{gtk::gio, prelude::*};
++use gettextrs::gettext;
++
++pub(crate) struct Notifier {
++    app: adw::gtk::glib::WeakRef<adw::Application>,
++}
++
++impl Notifier {
++    pub(crate) fn new(app: &adw::Application) -> Self {
++        Self {
++            app: app.downgrade(),
++        }
++    }
++
++    fn send(&self, id: &str, notification: &gio::Notification) {
++        if let Some(app) = self.app.upgrade() {
++            notification.set_default_action("app.show");
++            notification.add_button(&gettext("Open DriveSync"), "app.show");
++            app.send_notification(Some(id), notification);
++        }
++    }
++
++    /// Reports one account's transition. `account` is the name the person gave it.
++    pub(crate) fn event(&self, account_id: &str, account: &str, event: Event) {
++        let (kind, title, body, priority) = match event {
++            Event::Completed => (
++                "completed",
++                gettext("Google Drive is up to date"),
++                gettext("{account}: the changes were synchronized.").replace("{account}", account),
++                gio::NotificationPriority::Normal,
++            ),
++            Event::Failed => (
++                "failed",
++                gettext("Synchronization failed"),
++                gettext("{account}: an item could not be synchronized. It stays listed in DriveSync until it is resolved.")
++                    .replace("{account}", account),
++                gio::NotificationPriority::High,
++            ),
++            Event::Conflict => (
++                "conflict",
++                gettext("A file changed on both sides"),
++                gettext("{account}: choose which version to keep. Nothing was overwritten.")
++                    .replace("{account}", account),
++                gio::NotificationPriority::High,
++            ),
++            Event::Attention => (
++                "attention",
++                gettext("DriveSync needs your decision"),
++                gettext("{account}: synchronization waits until you review the folder in DriveSync.")
++                    .replace("{account}", account),
++                gio::NotificationPriority::High,
++            ),
++        };
++        let notification = gio::Notification::new(&title);
++        notification.set_body(Some(&body));
++        notification.set_priority(priority);
++        if let Some(app) = self.app.upgrade() {
++            // A completed run supersedes an earlier failure or conflict of the same account.
++            if event == Event::Completed {
++                for old in ["failed", "conflict", "attention"] {
++                    app.withdraw_notification(&format!("sync-{old}-{account_id}"));
++                }
++            }
++        }
++        self.send(&format!("sync-{kind}-{account_id}"), &notification);
++    }
++}
+diff --git a/src/application/desktop/status.rs b/src/application/desktop/status.rs
+index 188d7b5..b2007fd 100644
+--- a/src/application/desktop/status.rs
++++ b/src/application/desktop/status.rs
+@@ -1,7 +1,8 @@
+ //! Account-level summary of synchronization status for desktop surfaces.
+ //!
+ //! The summary is derived only from the public status; it never decides or retries
+-//! synchronization.
++//! synchronization. Events are emitted on transitions so a surface reports each
++//! completion, failure or conflict once instead of on every status refresh.
+ use drivesync_engine::{
+     SynchronizationIssueKind as Kind, SynchronizationState as State, SynchronizationStatus,
+ };
+@@ -24,6 +25,15 @@ pub(crate) enum Phase {
+     Failed,
+ }
+ 
++/// A transition worth one notification.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Event {
++    Completed,
++    Failed,
++    Conflict,
++    Attention,
++}
++
+ /// Classifies one status. Retryable waits stay `Working`; only blockers that need the
+ /// person, or failures that are not retried, leave it.
+ pub(crate) fn classify(status: &SynchronizationStatus) -> Phase {
+@@ -84,6 +94,52 @@ impl Phase {
+     }
+ }
+ 
++/// Follows one account's statuses and reports transitions.
++#[derive(Debug, Default)]
++pub(crate) struct Tracker {
++    phase: Phase,
++    /// A confirmed operation was dispatched since the account was last idle.
++    changed: bool,
++}
++
++impl Tracker {
++    pub(crate) fn phase(&self) -> Phase {
++        self.phase
++    }
++
++    /// Records that the account's worker could not be opened.
++    pub(crate) fn fail(&mut self) -> Option<Event> {
++        self.changed = false;
++        (std::mem::replace(&mut self.phase, Phase::Failed) != Phase::Failed)
++            .then_some(Event::Failed)
++    }
++
++    /// Records a status and returns the event its transition deserves, if any.
++    pub(crate) fn update(&mut self, status: &SynchronizationStatus) -> Option<Event> {
++        let next = classify(status);
++        if status.current_operation.is_some() {
++            self.changed = true;
++        }
++        let previous = std::mem::replace(&mut self.phase, next);
++        if previous == next {
++            return None;
++        }
++        match next {
++            Phase::Idle if previous == Phase::Working && std::mem::take(&mut self.changed) => {
++                Some(Event::Completed)
++            }
++            Phase::Idle | Phase::Stopped => {
++                self.changed = false;
++                None
++            }
++            Phase::Failed => Some(Event::Failed),
++            Phase::Conflict => Some(Event::Conflict),
++            Phase::Attention => Some(Event::Attention),
++            Phase::Working => None,
++        }
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -148,4 +204,31 @@ mod tests {
+             Phase::Conflict
+         );
+     }
++
++    #[test]
++    fn completion_is_reported_once_and_only_after_changes() {
++        let mut tracker = Tracker::default();
++        assert_eq!(tracker.update(&status(State::Running, None, false)), None);
++        assert_eq!(tracker.update(&status(State::Idle, None, false)), None);
++        assert_eq!(tracker.update(&status(State::Running, None, true)), None);
++        assert_eq!(
++            tracker.update(&status(State::Idle, None, false)),
++            Some(Event::Completed)
++        );
++        assert_eq!(tracker.update(&status(State::Idle, None, false)), None);
++    }
++
++    #[test]
++    fn failures_and_conflicts_are_reported_on_entry() {
++        let mut tracker = Tracker::default();
++        let failed = status(State::Failed, None, false);
++        assert_eq!(tracker.update(&failed), Some(Event::Failed));
++        assert_eq!(tracker.update(&failed), None);
++        let conflict = status(State::Waiting, Some((Kind::Conflict, false)), false);
++        assert_eq!(tracker.update(&conflict), Some(Event::Conflict));
++        assert_eq!(
++            Phase::most_urgent([Phase::Idle, Phase::Conflict, Phase::Working]),
++            Phase::Conflict
++        );
++    }
+ }

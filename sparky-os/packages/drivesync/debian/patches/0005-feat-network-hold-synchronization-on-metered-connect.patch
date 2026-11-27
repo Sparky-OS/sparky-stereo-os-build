@@ -1,0 +1,407 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 13:27:18 -0300
+Subject: [PATCH] feat(network): hold synchronization on metered connections
+
+Motivation: synchronization downloads and uploads whole files at any time.
+On a connection the desktop marks as metered (a phone hotspot, a capped
+plan) that spends the person's data without their choice.
+
+Changes: while GLib's network monitor reports the connection as metered,
+saved scopes are not started at launch and running ones are stopped through
+stop_synchronization; when the connection is no longer metered they are
+started again with the saved configuration. The person is told once by a
+notification, by a banner in the window (with a button to Preferences) and
+by the tray's tooltip. Preferences > Background gains "Synchronize on
+Metered Connections" (off by default); turning it on applies at once.
+Nothing is deleted and no configuration changes.
+
+Validation: cargo fmt --check, cargo clippy -D warnings, the preferences
+round-trip test; in a Plasma session with NetworkManager's Metered property
+switched on and off, the workers stop and start again, the banner, the tray
+and the notification say so, and the stand-in sees no Drive request while
+the connection is metered.
+
+Limitations: GLib reads the metered state from NetworkManager (or the
+network portal in a sandbox); without either it reports not metered.
+
+Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
+Origin: vendor, Sparky Stereo OS (branch order299 of the edition's DriveSync fork)
+Forwarded: no
+Last-Update: 2026-11-27
+---
+ src/application/desktop/mod.rs           | 98 ++++++++++++++++++++++--
+ src/application/desktop/notifications.rs | 18 +++++
+ src/application/lifecycle.rs             |  2 +-
+ src/services/configuration.rs            |  5 ++
+ src/services/mod.rs                      |  1 +
+ src/services/network.rs                  | 14 ++++
+ src/services/preferences.rs              | 10 +++
+ src/ui/preferences/dialog.rs             | 23 +++++-
+ 8 files changed, 161 insertions(+), 10 deletions(-)
+ create mode 100644 src/services/network.rs
+
+diff --git a/src/application/desktop/mod.rs b/src/application/desktop/mod.rs
+index 244976d..13fffb4 100644
+--- a/src/application/desktop/mod.rs
++++ b/src/application/desktop/mod.rs
+@@ -1,14 +1,18 @@
+-//! Desktop integration outside the window: a status notifier item in the system tray and
+-//! notifications for synchronization outcomes.
++//! Desktop integration outside the window: a status notifier item in the system tray,
++//! notifications for synchronization outcomes and the metered-connection policy.
+ //!
+-//! Every part observes the public Engine API only; none of them owns credentials or decides
+-//! what to synchronize.
++//! Every part observes the public Engine API only. None of them owns credentials or
++//! decides what to synchronize; the metered policy only holds or restores saved scopes.
+ mod notifications;
+ mod status;
+ mod tray;
+ 
+ use super::Context;
+-use adw::gtk::glib;
++use crate::services::{configuration, network};
++use adw::{
++    gtk::{gio, glib},
++    prelude::*,
++};
+ use drivesync_engine::{Account, Engine, ListAccountsRequest};
+ use gettextrs::gettext;
+ use notifications::Notifier;
+@@ -34,19 +38,25 @@ struct Watched {
+ struct Shared {
+     tray: Tray,
+     notifier: Notifier,
++    banner: glib::WeakRef<adw::Banner>,
+     accounts: RefCell<HashMap<String, Watched>>,
++    held: RefCell<bool>,
+ }
+ 
+ impl Shared {
+     fn refresh(&self) {
+         let accounts = self.accounts.borrow();
++        let held = *self.held.borrow();
+         let phase = Phase::most_urgent(accounts.values().map(|watched| watched.phase));
+         let mut lines: Vec<String> = accounts
+             .values()
+             .map(|watched| format!("{}: {}", watched.name, describe(watched.phase)))
+             .collect();
+         lines.sort();
+-        self.tray.set_status(phase, false, lines.join("\n"));
++        self.tray.set_status(phase, held, lines.join("\n"));
++        if let Some(banner) = self.banner.upgrade() {
++            banner.set_revealed(held);
++        }
+     }
+ }
+ 
+@@ -69,14 +79,39 @@ fn account_name(account: &Account) -> String {
+         .unwrap_or_else(|| gettext("Google Drive"))
+ }
+ 
+-/// Starts the tray item at once and the status observers when the Engine becomes available.
+-pub(crate) fn install(app: &adw::Application, context: &Context) {
++/// Adds the metered-connection banner above the window's content.
++fn banner(window: &adw::ApplicationWindow) -> adw::Banner {
++    let banner = adw::Banner::builder()
++        .title(gettext(
++            "Synchronization waits because the connection is metered.",
++        ))
++        .button_label(gettext("Preferences"))
++        .action_name("app.preferences")
++        .revealed(false)
++        .build();
++    banner.set_widget_name("drivesync-metered-banner");
++    if let Some(content) = window.content() {
++        let column = adw::gtk::Box::new(adw::gtk::Orientation::Vertical, 0);
++        window.set_content(None::<&adw::gtk::Widget>);
++        content.set_vexpand(true);
++        column.append(&banner);
++        column.append(&content);
++        window.set_content(Some(&column));
++    }
++    banner
++}
++
++/// Starts the tray item at once and the status and network observers when the Engine
++/// becomes available.
++pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow, context: &Context) {
+     let tray = Tray::new(app);
+     TRAY.with(|slot| *slot.borrow_mut() = Some(tray.clone()));
+     let shared = Rc::new(Shared {
+         tray,
+         notifier: Notifier::new(app),
++        banner: banner(window).downgrade(),
+         accounts: RefCell::default(),
++        held: RefCell::new(false),
+     });
+     let context = context.clone();
+     glib::spawn_future_local(async move {
+@@ -88,10 +123,33 @@ pub(crate) fn install(app: &adw::Application, context: &Context) {
+         };
+         start(shared, engine);
+     });
++    let _ = app;
+ }
+ 
+ fn start(shared: Rc<Shared>, engine: Engine) {
++    // Startup already skipped saved scopes on a metered connection; say so now.
++    if network::held() {
++        *shared.held.borrow_mut() = true;
++        shared.notifier.metered(true);
++    }
+     shared.refresh();
++    let monitor = gio::NetworkMonitor::default();
++    {
++        let shared = shared.clone();
++        let engine = engine.clone();
++        monitor.connect_network_metered_notify(move |_| {
++            glib::spawn_future_local(apply_policy(shared.clone(), engine.clone()));
++        });
++    }
++    if let Some(app) = gio::Application::default().and_downcast::<adw::Application>() {
++        let action = gio::SimpleAction::new("network-policy", None);
++        let shared = shared.clone();
++        let engine = engine.clone();
++        action.connect_activate(move |_, _| {
++            glib::spawn_future_local(apply_policy(shared.clone(), engine.clone()));
++        });
++        app.add_action(&action);
++    }
+     glib::spawn_future_local(async move {
+         loop {
+             follow_accounts(&shared, &engine).await;
+@@ -100,6 +158,30 @@ fn start(shared: Rc<Shared>, engine: Engine) {
+     });
+ }
+ 
++/// Holds or restores every saved scope when the policy's answer changes.
++async fn apply_policy(shared: Rc<Shared>, engine: Engine) {
++    let held = network::held();
++    if shared.held.replace(held) == held {
++        return;
++    }
++    if let Ok(result) = engine
++        .list_accounts(ListAccountsRequest { provider: None })
++        .await
++    {
++        if held {
++            for account in &result.accounts {
++                if let Ok(Some(_)) = configuration::load(&account.id).await {
++                    let _ = engine.stop_synchronization(account.id.clone()).await;
++                }
++            }
++        } else {
++            configuration::restore_synchronization(&engine, &result.accounts).await;
++        }
++    }
++    shared.notifier.metered(held);
++    shared.refresh();
++}
++
+ /// Starts a watcher for each new account and drops the ones that were removed.
+ async fn follow_accounts(shared: &Rc<Shared>, engine: &Engine) {
+     let Ok(result) = engine
+diff --git a/src/application/desktop/notifications.rs b/src/application/desktop/notifications.rs
+index d82c6b8..224c663 100644
+--- a/src/application/desktop/notifications.rs
++++ b/src/application/desktop/notifications.rs
+@@ -10,6 +10,8 @@ pub(crate) struct Notifier {
+     app: adw::gtk::glib::WeakRef<adw::Application>,
+ }
+ 
++const METERED: &str = "network-metered";
++
+ impl Notifier {
+     pub(crate) fn new(app: &adw::Application) -> Self {
+         Self {
+@@ -69,4 +71,20 @@ impl Notifier {
+         }
+         self.send(&format!("sync-{kind}-{account_id}"), &notification);
+     }
++
++    /// Says once that synchronization waits on a metered connection.
++    pub(crate) fn metered(&self, held: bool) {
++        let Some(app) = self.app.upgrade() else {
++            return;
++        };
++        if !held {
++            app.withdraw_notification(METERED);
++            return;
++        }
++        let notification = gio::Notification::new(&gettext("Synchronization waits"));
++        notification.set_body(Some(&gettext(
++            "The connection is metered, so DriveSync does not download or upload. It continues by itself on a connection that is not metered, or when you allow metered connections in Preferences.",
++        )));
++        self.send(METERED, &notification);
++    }
+ }
+diff --git a/src/application/lifecycle.rs b/src/application/lifecycle.rs
+index c7dc945..dc9fad0 100644
+--- a/src/application/lifecycle.rs
++++ b/src/application/lifecycle.rs
+@@ -87,7 +87,7 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
+             }
+         });
+         app.add_action(&quit);
+-        super::desktop::install(app, &context);
++        super::desktop::install(app, &window, &context);
+         background::install(app, &window);
+         background::install_startup(app, &window, &toasts);
+         main_menu::install(app, &window);
+diff --git a/src/services/configuration.rs b/src/services/configuration.rs
+index 6ef3461..9ab273f 100644
+--- a/src/services/configuration.rs
++++ b/src/services/configuration.rs
+@@ -85,6 +85,11 @@ pub(crate) async fn restore_synchronization(engine: &Engine, accounts: &[Account
+ }
+ 
+ async fn apply_synchronization(engine: &Engine, config: &Configuration) {
++    // A metered connection holds every saved scope; the desktop integration starts them
++    // again when the connection is no longer metered and says so meanwhile.
++    if super::network::held() {
++        return;
++    }
+     // Configuration validation guarantees a native path. The Engine publishes startup failures
+     // separately from the result of saving the settings.
+     if let Some(local_root) = gio::File::for_uri(&config.local_uri).path() {
+diff --git a/src/services/mod.rs b/src/services/mod.rs
+index 1c360f7..7cce251 100644
+--- a/src/services/mod.rs
++++ b/src/services/mod.rs
+@@ -1,6 +1,7 @@
+ //! Nonvisual desktop services and engine integration.
+ pub(crate) mod accounts;
+ pub(crate) mod background;
++pub(crate) mod network;
+ pub(crate) mod preferences;
+ pub(crate) mod setup;
+ 
+diff --git a/src/services/network.rs b/src/services/network.rs
+new file mode 100644
+index 0000000..37a0208
+--- /dev/null
++++ b/src/services/network.rs
+@@ -0,0 +1,14 @@
++//! Metered-connection policy. Synchronization waits while the desktop reports the
++//! connection as metered, unless the person allowed metered connections in Preferences.
++//! The metered state is GLib's network monitor (NetworkManager on most desktops).
++use adw::gtk::gio::{self, prelude::*};
++
++/// True when saved synchronization scopes must not run now.
++pub(crate) fn held() -> bool {
++    !super::preferences::Preferences::load().sync_on_metered && metered()
++}
++
++/// The desktop's current metered state.
++pub(crate) fn metered() -> bool {
++    gio::NetworkMonitor::default().is_network_metered()
++}
+diff --git a/src/services/preferences.rs b/src/services/preferences.rs
+index 98cc92b..b554a1a 100644
+--- a/src/services/preferences.rs
++++ b/src/services/preferences.rs
+@@ -48,6 +48,9 @@ pub(crate) struct Preferences {
+     pub keep_running: bool,
+     /// Posts a notification when the window is hidden and DriveSync keeps running.
+     pub notify_on_close: bool,
++    /// Synchronizes on a metered connection; otherwise synchronization waits until the
++    /// connection is no longer metered.
++    pub sync_on_metered: bool,
+ }
+ 
+ impl Default for Preferences {
+@@ -56,6 +59,7 @@ impl Default for Preferences {
+             color_scheme: ColorScheme::default(),
+             keep_running: true,
+             notify_on_close: true,
++            sync_on_metered: false,
+         }
+     }
+ }
+@@ -99,6 +103,9 @@ impl Preferences {
+             notify_on_close: file
+                 .boolean(GROUP, "notify-on-close")
+                 .unwrap_or(defaults.notify_on_close),
++            sync_on_metered: file
++                .boolean(GROUP, "sync-on-metered")
++                .unwrap_or(defaults.sync_on_metered),
+         }
+     }
+ 
+@@ -107,6 +114,7 @@ impl Preferences {
+         file.set_string(GROUP, "color-scheme", self.color_scheme.key());
+         file.set_boolean(GROUP, "keep-running", self.keep_running);
+         file.set_boolean(GROUP, "notify-on-close", self.notify_on_close);
++        file.set_boolean(GROUP, "sync-on-metered", self.sync_on_metered);
+         file
+     }
+ }
+@@ -121,12 +129,14 @@ mod tests {
+             color_scheme: ColorScheme::Dark,
+             keep_running: false,
+             notify_on_close: false,
++            sync_on_metered: true,
+         };
+         assert_eq!(Preferences::from_key_file(&value.to_key_file()), value);
+         let invalid = glib::KeyFile::new();
+         invalid.set_string(GROUP, "color-scheme", "neon");
+         invalid.set_string(GROUP, "notify-on-close", "maybe");
+         invalid.set_string(GROUP, "keep-running", "maybe");
++        invalid.set_string(GROUP, "sync-on-metered", "maybe");
+         assert_eq!(Preferences::from_key_file(&invalid), Preferences::default());
+     }
+ }
+diff --git a/src/ui/preferences/dialog.rs b/src/ui/preferences/dialog.rs
+index 15820bf..f16ad6b 100644
+--- a/src/ui/preferences/dialog.rs
++++ b/src/ui/preferences/dialog.rs
+@@ -154,6 +154,19 @@ fn build_with_context(
+     notify.set_widget_name("preferences-notify");
+     background.add(&notify);
+     background_page.add(&background);
++    let network = adw::PreferencesGroup::builder()
++        .title(gettextrs::gettext("Network"))
++        .build();
++    let metered = adw::SwitchRow::builder()
++        .title(gettextrs::gettext("Synchronize on Metered Connections"))
++        .subtitle(gettextrs::gettext(
++            "When off, synchronization waits while the connection is metered and continues by itself afterwards",
++        ))
++        .active(current.sync_on_metered)
++        .build();
++    metered.set_widget_name("preferences-sync-on-metered");
++    network.add(&metered);
++    background_page.add(&network);
+     pages.add_named(&background_page, Some("background"));
+ 
+     pages.add_named(
+@@ -163,7 +176,7 @@ fn build_with_context(
+     let sections = [
+         ("accounts", "Accounts", "avatar-default-symbolic", "accounts nickname name local remote folder configuration"),
+         ("appearance", "Appearance", "preferences-desktop-appearance-symbolic", "color scheme choose between the system setting follow system light or dark"),
+-        ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed "),
++        ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed network metered connection"),
+     ];
+     for (_, title, icon, _) in sections {
+         let row = adw::ActionRow::builder()
+@@ -261,10 +274,18 @@ fn build_with_context(
+         value.keep_running = row.is_active();
+         save_keep(value.save());
+     });
++    let save_notify = report.clone();
+     notify.connect_active_notify(move |row| {
+         let mut value = Preferences::load();
+         value.notify_on_close = row.is_active();
++        save_notify(value.save());
++    });
++    metered.connect_active_notify(move |row| {
++        let mut value = Preferences::load();
++        value.sync_on_metered = row.is_active();
+         report(value.save());
++        // The desktop integration starts or holds synchronization for the new choice.
++        let _ = row.activate_action("app.network-policy", None);
+     });
+     page
+ }

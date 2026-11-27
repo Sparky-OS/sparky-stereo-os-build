@@ -1,0 +1,58 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/27
+# Copyright 2026 under the GNU GPL3 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# no network, the vendored crates, Cargo.toml and Cargo.lock as debian/patches leave them (go-release-packaging.md and the
+# Rust adapter's page)
+export CARGO_HOME = $(CURDIR)/debian/.cargo-home
+export CARGO_TARGET_DIR = $(CURDIR)/debian/.target
+export CARGO_NET_OFFLINE = true
+export CARGO_BUILD_JOBS = $(shell nproc)
+export HOME = $(CURDIR)/debian/.home
+# the production identity (desktop entry, notifications, tray), the distribution's data directory (patch 0001), and the
+# source revision About shows: upstream's commit, marked modified because debian/patches change it
+export DRIVESYNC_APP_ID = com.rtosta.DriveSync
+export DRIVESYNC_DATADIR = /usr/share
+export DRIVESYNC_BUILD_REVISION = 082e743ac3eb6755cb4970f768491335281adffa-modified
+LANGS = pl pt_BR fr de es ja ko zh_CN zh_TW
+# three engine tests expect a file's identity to stay the same between two scans of a Btrfs tree; on ext4 build trees they
+# fail on upstream's commit as on ours (lane 299's evidence), so they are skipped by name and every other test runs
+SKIP = --skip hashes_are_reused_only_for_stable_native_file_evidence \
+	--skip native_events_recheck_dirty_files_and_rebuild_on_directory_changes \
+	--skip office_edit_without_provider_sha256_replaces_local_bytes_verified_by_observation
+
+%:
+	dh $@ --buildsystem=none
+
+# debian/copyright is generated from the crate table; the build stops when the committed file differs
+override_dh_auto_build:
+	python3 debian/gen-copyright.py debian/copyright-head.txt debian/crate-licences.tsv | cmp - debian/copyright
+	mkdir -p $(CARGO_HOME) $(HOME)
+	sed 's|^directory = .*|directory = "$(CURDIR)/vendor"|' debian/cargo-config.toml > $(CARGO_HOME)/config.toml
+	python3 debian/strip-missing-checksums.py vendor
+	cargo --version
+	cargo build -p drivesync --release --offline --locked
+	set -e; for l in $(LANGS); do msgfmt --check -o debian/.target/drivesync-$$l.mo po/$$l.po; done
+
+override_dh_auto_test:
+	cargo test --release --offline --locked --workspace -- $(SKIP)
+	desktop-file-validate data/com.rtosta.DriveSync.desktop
+	appstreamcli validate --no-net --pedantic data/com.rtosta.DriveSync.metainfo.xml || appstreamcli validate --no-net data/com.rtosta.DriveSync.metainfo.xml
+
+# the Rust program carries DWARF 5 sections dwz does not read
+override_dh_dwz:
+
+override_dh_auto_install:
+	install -Dm755 debian/.target/release/drivesync debian/drivesync/usr/bin/drivesync
+	install -Dm644 data/com.rtosta.DriveSync.desktop debian/drivesync/usr/share/applications/com.rtosta.DriveSync.desktop
+	install -Dm644 data/com.rtosta.DriveSync.metainfo.xml debian/drivesync/usr/share/metainfo/com.rtosta.DriveSync.metainfo.xml
+	install -Dm644 data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg debian/drivesync/usr/share/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg
+	install -Dm644 data/icons/hicolor/symbolic/apps/com.rtosta.DriveSync-symbolic.svg debian/drivesync/usr/share/icons/hicolor/symbolic/apps/com.rtosta.DriveSync-symbolic.svg
+	set -e; for l in $(LANGS); do install -Dm644 debian/.target/drivesync-$$l.mo debian/drivesync/usr/share/locale/$$l/LC_MESSAGES/drivesync.mo; done
+	mkdir -p debian/drivesync/usr/share/doc/drivesync
+	cp -a debian/vendor-licences debian/drivesync/usr/share/doc/drivesync/vendor-licences
+
+override_dh_clean:
+	dh_clean
+	rm -rf debian/.cargo-home debian/.target debian/.home

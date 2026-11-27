@@ -1,0 +1,26 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: DriveSync
+Upstream-Contact: Rafael Tosta (https://github.com/rafatosta)
+Source: https://github.com/rafatosta/drivesync
+Comment: DriveSync itself is under the GNU General Public License version 3 only. The program is one Rust binary that
+ also links the crates in vendor/ (298, listed below by the licence each one's Cargo.toml states; all of them can be
+ combined with GPL-3.0-only). The stanzas of vendor/ are generated (sparky-os/packages/drivesync/debian/gen-copyright.py
+ in the edition's build repository) from the table debian/crate-licences.tsv, which pins every crate's legal files by
+ SHA-256; the files themselves (they carry their authors' names and addresses) are not kept in git, build.sh takes them
+ from the vendor tree and stops unless each has the pinned hash, and they are installed in
+ /usr/share/doc/drivesync/vendor-licences. The build stops when this file differs from what the generator gives.
+
+Files: *
+Copyright: 2026 Rafael Tosta Santos
+License: GPL-3
+
+Files: engine/src/providers/google/assets/*
+Copyright: Google LLC
+License: GPL-3
+Comment: Google Drive's product mark, embedded by the provider catalogue as upstream ships it; DriveSync is an independent
+ project and is not affiliated with Google (README.md). The mark is Google's; the licence line follows the tree.
+
+Files: debian/*
+Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+License: GPL-3
+Comment: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Pawel "pavroo" Pijanowski).

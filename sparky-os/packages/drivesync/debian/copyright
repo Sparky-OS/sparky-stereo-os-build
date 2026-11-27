@@ -1,0 +1,499 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: DriveSync
+Upstream-Contact: Rafael Tosta (https://github.com/rafatosta)
+Source: https://github.com/rafatosta/drivesync
+Comment: DriveSync itself is under the GNU General Public License version 3 only. The program is one Rust binary that
+ also links the crates in vendor/ (298, listed below by the licence each one's Cargo.toml states; all of them can be
+ combined with GPL-3.0-only). The stanzas of vendor/ are generated (sparky-os/packages/drivesync/debian/gen-copyright.py
+ in the edition's build repository) from the table debian/crate-licences.tsv, which pins every crate's legal files by
+ SHA-256; the files themselves (they carry their authors' names and addresses) are not kept in git, build.sh takes them
+ from the vendor tree and stops unless each has the pinned hash, and they are installed in
+ /usr/share/doc/drivesync/vendor-licences. The build stops when this file differs from what the generator gives.
+
+Files: *
+Copyright: 2026 Rafael Tosta Santos
+License: GPL-3
+
+Files: engine/src/providers/google/assets/*
+Copyright: Google LLC
+License: GPL-3
+Comment: Google Drive's product mark, embedded by the provider catalogue as upstream ships it; DriveSync is an independent
+ project and is not affiliated with Google (README.md). The mark is Google's; the licence line follows the tree.
+
+Files: debian/*
+Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+License: GPL-3
+Comment: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Pawel "pavroo" Pijanowski).
+# Crates whose package holds no legal file (the licence is the one their Cargo.toml states): block malloc_buf objc-foundation objc_id r-efi winapi-i686-pc-windows-gnu winapi-x86_64-pc-windows-gnu
+
+
+Files: vendor/unicode-ident/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Expat or Apache-2.0, and Unicode-3.0
+Comment: Cargo.toml license field: (MIT OR Apache-2.0) AND Unicode-3.0
+
+Files: vendor/sync_wrapper/*
+  vendor/temp-dir/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Apache-2.0
+Comment: Cargo.toml license field: Apache-2.0
+
+Files: vendor/ring/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Apache-2.0 and ISC
+Comment: Cargo.toml license field: Apache-2.0 AND ISC
+
+Files: vendor/ryu/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Apache-2.0 or BSL-1.0
+Comment: Cargo.toml license field: Apache-2.0 OR BSL-1.0
+
+Files: vendor/hyper-rustls/*
+  vendor/rustls/*
+  vendor/rustls-native-certs/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Apache-2.0 or ISC or Expat
+Comment: Cargo.toml license field: Apache-2.0 OR ISC OR MIT
+
+Files: vendor/async-channel/*
+  vendor/async-executor/*
+  vendor/async-fs/*
+  vendor/async-io/*
+  vendor/async-lock/*
+  vendor/async-process/*
+  vendor/async-signal/*
+  vendor/async-task/*
+  vendor/atomic-waker/*
+  vendor/autocfg/*
+  vendor/blocking/*
+  vendor/concurrent-queue/*
+  vendor/equivalent/*
+  vendor/event-listener/*
+  vendor/event-listener-strategy/*
+  vendor/fastrand/*
+  vendor/futures-lite/*
+  vendor/idna_adapter/*
+  vendor/indexmap/*
+  vendor/parking/*
+  vendor/pin-project-lite/*
+  vendor/polling/*
+  vendor/rustc-hash/*
+  vendor/utf8_iter/*
+  vendor/utf_types/*
+  vendor/zeroize/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Apache-2.0 or Expat
+Comment: Cargo.toml license field: Apache-2.0 OR MIT
+
+Files: vendor/target-lexicon/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Apache-2.0-with-LLVM-exception
+Comment: Cargo.toml license field: Apache-2.0 WITH LLVM-exception
+
+Files: vendor/linux-raw-sys/*
+  vendor/rustix/*
+  vendor/wasi/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Apache-2.0-with-LLVM-exception or Apache-2.0 or Expat
+Comment: Cargo.toml license field: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+
+Files: vendor/zerocopy/*
+  vendor/zerocopy-derive/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: BSD-2-Clause or Apache-2.0 or Expat
+Comment: Cargo.toml license field: BSD-2-Clause OR Apache-2.0 OR MIT
+
+Files: vendor/subtle/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: BSD-3-Clause
+Comment: Cargo.toml license field: BSD-3-Clause
+
+Files: vendor/rustls-webpki/*
+  vendor/simple_asn1/*
+  vendor/untrusted/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: ISC
+Comment: Cargo.toml license field: ISC
+
+Files: vendor/block/*
+  vendor/bytes/*
+  vendor/cairo-rs/*
+  vendor/cairo-sys-rs/*
+  vendor/cfg_aliases/*
+  vendor/endi/*
+  vendor/gdk-pixbuf/*
+  vendor/gdk-pixbuf-sys/*
+  vendor/gdk4/*
+  vendor/gdk4-sys/*
+  vendor/generic-array/*
+  vendor/gettext-rs/*
+  vendor/gettext-sys/*
+  vendor/gio/*
+  vendor/gio-sys/*
+  vendor/glib/*
+  vendor/glib-macros/*
+  vendor/glib-sys/*
+  vendor/gobject-sys/*
+  vendor/graphene-rs/*
+  vendor/graphene-sys/*
+  vendor/gsk4/*
+  vendor/gsk4-sys/*
+  vendor/gtk4/*
+  vendor/gtk4-macros/*
+  vendor/gtk4-sys/*
+  vendor/http-body/*
+  vendor/http-body-util/*
+  vendor/hyper/*
+  vendor/hyper-util/*
+  vendor/jsonwebtoken/*
+  vendor/libadwaita/*
+  vendor/libadwaita-sys/*
+  vendor/libsqlite3-sys/*
+  vendor/locale_config/*
+  vendor/malloc_buf/*
+  vendor/memoffset/*
+  vendor/mio/*
+  vendor/nix/*
+  vendor/objc/*
+  vendor/objc-foundation/*
+  vendor/objc_id/*
+  vendor/pango/*
+  vendor/pango-sys/*
+  vendor/pem/*
+  vendor/rusqlite/*
+  vendor/schannel/*
+  vendor/slab/*
+  vendor/synstructure/*
+  vendor/tokio/*
+  vendor/tokio-macros/*
+  vendor/tower/*
+  vendor/tower-http/*
+  vendor/tower-layer/*
+  vendor/tower-service/*
+  vendor/tracing/*
+  vendor/tracing-attributes/*
+  vendor/tracing-core/*
+  vendor/try-lock/*
+  vendor/uds_windows/*
+  vendor/version-compare/*
+  vendor/want/*
+  vendor/winnow/*
+  vendor/xdg-home/*
+  vendor/zbus/*
+  vendor/zbus_macros/*
+  vendor/zbus_names/*
+  vendor/zmij/*
+  vendor/zvariant/*
+  vendor/zvariant_derive/*
+  vendor/zvariant_utils/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Expat
+Comment: Cargo.toml license field: MIT
+
+Files: vendor/aes/*
+  vendor/async-broadcast/*
+  vendor/async-recursion/*
+  vendor/async-trait/*
+  vendor/base64/*
+  vendor/base64-0.22.1/*
+  vendor/bitflags/*
+  vendor/block-buffer/*
+  vendor/block-padding/*
+  vendor/bumpalo/*
+  vendor/cbc/*
+  vendor/cc/*
+  vendor/cfg-expr/*
+  vendor/cfg-if/*
+  vendor/chacha20/*
+  vendor/cipher/*
+  vendor/core-foundation/*
+  vendor/core-foundation-sys/*
+  vendor/cpufeatures/*
+  vendor/cpufeatures-0.2.17/*
+  vendor/crossbeam-utils/*
+  vendor/crypto-common/*
+  vendor/deranged/*
+  vendor/digest/*
+  vendor/displaydoc/*
+  vendor/enumflags2/*
+  vendor/enumflags2_derive/*
+  vendor/errno/*
+  vendor/field-offset/*
+  vendor/find-msvc-tools/*
+  vendor/form_urlencoded/*
+  vendor/futures-channel/*
+  vendor/futures-core/*
+  vendor/futures-executor/*
+  vendor/futures-io/*
+  vendor/futures-macro/*
+  vendor/futures-sink/*
+  vendor/futures-task/*
+  vendor/futures-util/*
+  vendor/getrandom/*
+  vendor/getrandom-0.2.17/*
+  vendor/hashbrown/*
+  vendor/hashbrown-0.15.5/*
+  vendor/hashlink/*
+  vendor/heck/*
+  vendor/hermit-abi/*
+  vendor/hex/*
+  vendor/hkdf/*
+  vendor/hmac/*
+  vendor/http/*
+  vendor/httparse/*
+  vendor/httpdate/*
+  vendor/idna/*
+  vendor/inout/*
+  vendor/ipnet/*
+  vendor/itoa/*
+  vendor/js-sys/*
+  vendor/lazy_static/*
+  vendor/libc/*
+  vendor/log/*
+  vendor/md-5/*
+  vendor/num/*
+  vendor/num-bigint/*
+  vendor/num-complex/*
+  vendor/num-conv/*
+  vendor/num-integer/*
+  vendor/num-iter/*
+  vendor/num-rational/*
+  vendor/num-traits/*
+  vendor/once_cell/*
+  vendor/openssl-probe/*
+  vendor/ordered-stream/*
+  vendor/percent-encoding/*
+  vendor/piper/*
+  vendor/pkg-config/*
+  vendor/powerfmt/*
+  vendor/ppv-lite86/*
+  vendor/proc-macro-crate/*
+  vendor/proc-macro2/*
+  vendor/quinn/*
+  vendor/quinn-proto/*
+  vendor/quinn-udp/*
+  vendor/quote/*
+  vendor/rand/*
+  vendor/rand-0.8.8/*
+  vendor/rand_chacha/*
+  vendor/rand_core/*
+  vendor/rand_core-0.6.4/*
+  vendor/rand_pcg/*
+  vendor/regex/*
+  vendor/regex-automata/*
+  vendor/regex-syntax/*
+  vendor/reqwest/*
+  vendor/rustc_version/*
+  vendor/rustls-pki-types/*
+  vendor/rustversion/*
+  vendor/secret-service/*
+  vendor/security-framework/*
+  vendor/security-framework-sys/*
+  vendor/semver/*
+  vendor/serde/*
+  vendor/serde_core/*
+  vendor/serde_derive/*
+  vendor/serde_json/*
+  vendor/serde_repr/*
+  vendor/serde_spanned/*
+  vendor/sha1/*
+  vendor/sha2/*
+  vendor/shlex/*
+  vendor/signal-hook-registry/*
+  vendor/smallvec/*
+  vendor/socket2/*
+  vendor/stable_deref_trait/*
+  vendor/static_assertions/*
+  vendor/syn/*
+  vendor/syn-2.0.119/*
+  vendor/system-deps/*
+  vendor/tempfile/*
+  vendor/thiserror/*
+  vendor/thiserror-impl/*
+  vendor/time/*
+  vendor/time-core/*
+  vendor/time-macros/*
+  vendor/tokio-rustls/*
+  vendor/toml/*
+  vendor/toml_datetime/*
+  vendor/toml_edit/*
+  vendor/toml_parser/*
+  vendor/toml_writer/*
+  vendor/typenum/*
+  vendor/url/*
+  vendor/wasm-bindgen/*
+  vendor/wasm-bindgen-futures/*
+  vendor/wasm-bindgen-macro/*
+  vendor/wasm-bindgen-macro-support/*
+  vendor/wasm-bindgen-shared/*
+  vendor/web-sys/*
+  vendor/web-time/*
+  vendor/windows-link/*
+  vendor/windows-sys/*
+  vendor/windows-sys-0.52.0/*
+  vendor/windows-sys-0.59.0/*
+  vendor/windows-targets/*
+  vendor/windows_aarch64_gnullvm/*
+  vendor/windows_aarch64_msvc/*
+  vendor/windows_i686_gnu/*
+  vendor/windows_i686_gnullvm/*
+  vendor/windows_i686_msvc/*
+  vendor/windows_x86_64_gnu/*
+  vendor/windows_x86_64_gnullvm/*
+  vendor/windows_x86_64_msvc/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Expat or Apache-2.0
+Comment: Cargo.toml license field: MIT OR Apache-2.0
+
+Files: vendor/r-efi/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Expat or Apache-2.0 or LGPL-2.1+
+Comment: Cargo.toml license field: MIT OR Apache-2.0 OR LGPL-2.1-or-later
+
+Files: vendor/lru-slab/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Expat or Apache-2.0 or Zlib
+Comment: Cargo.toml license field: MIT OR Apache-2.0 OR Zlib
+
+Files: vendor/fallible-iterator/*
+  vendor/fallible-streaming-iterator/*
+  vendor/serde_urlencoded/*
+  vendor/vcpkg/*
+  vendor/version_check/*
+  vendor/winapi/*
+  vendor/winapi-i686-pc-windows-gnu/*
+  vendor/winapi-x86_64-pc-windows-gnu/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Expat or Apache-2.0
+Comment: Cargo.toml license field: MIT/Apache-2.0
+
+Files: vendor/icu_collections/*
+  vendor/icu_locale_core/*
+  vendor/icu_normalizer/*
+  vendor/icu_normalizer_data/*
+  vendor/icu_properties/*
+  vendor/icu_properties_data/*
+  vendor/icu_provider/*
+  vendor/litemap/*
+  vendor/potential_utf/*
+  vendor/tinystr/*
+  vendor/writeable/*
+  vendor/yoke/*
+  vendor/yoke-derive/*
+  vendor/zerofrom/*
+  vendor/zerofrom-derive/*
+  vendor/zerotrie/*
+  vendor/zerovec/*
+  vendor/zerovec-derive/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Unicode-3.0
+Comment: Cargo.toml license field: Unicode-3.0
+
+Files: vendor/aho-corasick/*
+  vendor/memchr/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Unlicense or Expat
+Comment: Cargo.toml license field: Unlicense OR MIT
+
+Files: vendor/foldhash/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Zlib
+Comment: Cargo.toml license field: Zlib
+
+Files: vendor/tinyvec/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/drivesync/vendor-licences/
+License: Zlib or Apache-2.0 or Expat
+Comment: Cargo.toml license field: Zlib OR Apache-2.0 OR MIT
+
+
+License: Apache-2.0
+ On Debian systems, the full text can be found in /usr/share/common-licenses/Apache-2.0.
+
+License: Apache-2.0-with-LLVM-exception
+ Apache-2.0 with the LLVM exception; see Apache-2.0 and the legal file of the crates that state it.
+
+License: BSD-2-Clause
+ Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+ following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+ disclaimer in the documentation and/or other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+ NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSD-3-Clause
+ Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+ following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+ disclaimer in the documentation and/or other materials provided with the distribution.
+ .
+ 3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived
+ from this software without specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+ NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSL-1.0
+ The text is the legal file of each crate that states this licence, installed in /usr/share/doc/drivesync/vendor-licences/CRATE/ (its SHA-256 is pinned in debian/crate-licences.tsv).
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+ documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to
+ use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+ Software is furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+ FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+License: GPL-3
+ On Debian systems, the full text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
+
+License: ISC
+ Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted,
+ provided that the above copyright notice and this permission notice appear in all copies.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED
+ WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR
+ CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+ NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+License: LGPL-2.1+
+ On Debian systems, the full text can be found in /usr/share/common-licenses/LGPL-2.1.
+
+License: Unicode-3.0
+ The text is the legal file of each crate that states this licence, installed in /usr/share/doc/drivesync/vendor-licences/CRATE/ (its SHA-256 is pinned in debian/crate-licences.tsv).
+
+License: Unlicense
+ The text is the legal file of each crate that states this licence, installed in /usr/share/doc/drivesync/vendor-licences/CRATE/ (its SHA-256 is pinned in debian/crate-licences.tsv).
+
+License: Zlib
+ This software is provided 'as-is', without any express or implied warranty. In no event will the authors be held liable
+ for any damages arising from the use of this software.
+ .
+ Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and
+ redistribute it freely, subject to the following restrictions:
+ .
+ 1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use
+ this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
+ .
+ 2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
+ .
+ 3. This notice may not be removed or altered from any source distribution.
