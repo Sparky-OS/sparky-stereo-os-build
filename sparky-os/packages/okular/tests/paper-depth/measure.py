@@ -42,7 +42,8 @@ try:
                 windows = json.loads(line).get("windows") or []
 except (OSError, ValueError):
     pass
-names = ("okular",) if kind == "okular" else ("paper-depth-preview",)
+names = {"okular": ("okular",), "preview": ("paper-depth-preview",),
+         "words": ("calligrawords", "calligra words")}[kind]
 program = [w for w in windows if any(n in (w.get("caption", "") + " " + w.get("cls", "")).lower() for n in names)
            and w.get("normal") and not w.get("deleted")]
 frame = program[0]["fg"] if program else [0, 0, 1920, 1080]
@@ -61,6 +62,8 @@ def is_desk(pixels):
 
 def is_paper(pixels):
     white = (pixels >= 250).all(axis=-1)
+    if kind == "words":
+        return white
     pure = (pixels.max(axis=-1) >= 200) & (pixels.min(axis=-1) <= 60) & ~is_desk(pixels)
     return white | pure
 
@@ -148,6 +151,40 @@ def shadow_rows(px0, px1, py1):
     return found
 
 
+def words_pages_and_desk():
+    # The proof's style supplies a patterned brush to KWCanvas. It reaches the
+    # painted gap between pages through Words' ordinary eraseRect() call.
+    canvas_area = left[y0:y1, x0:x1]
+    ink = (canvas_area[:, :, 1] == 24) & (canvas_area[:, :, 2] == 140)
+    rows, columns = np.nonzero(ink)
+    if not len(rows):
+        return [], None
+    cx0, cx1 = x0 + int(columns.min()), x0 + int(columns.max())
+    cy0, cy1 = y0 + int(rows.min()), y0 + int(rows.max())
+    desk = disparity([cx0 + 24, cy0, cx1 - 24, cy1])
+
+    # Keep white page runs inside the canvas width. Blank white around the
+    # canvas may also form a run, but has no shift that can be measured.
+    top = y0 + 84
+    stripe = left[top:y1 - 60, cx0 + 8:cx1 - 8]
+    visible = np.flatnonzero(is_paper(stripe).mean(axis=1) > 0.6)
+    page_boxes = []
+    for band in np.split(visible, np.nonzero(np.diff(visible) > 1)[0] + 1):
+        if len(band) <= 45:
+            continue
+        a, b = top + int(band[0]), top + int(band[-1])
+        box = [cx0, a, cx1, b]
+        measured = disparity([cx0 + 8, a + 4, cx1 - 8, b - 4])
+        if measured and measured["shift"] is not None:
+            page_boxes.append(box)
+    return page_boxes, desk
+
+
+if kind == "words":
+    pages, result["desk"] = words_pages_and_desk()
+    result["pages"] = pages
+
+
 def cut_at_top(px0, px1, py0):
     """Whether the page's top is cut by something above it that is neither its outline (near black), its desk nor paper."""
     xm = (px0 + px1) // 2
@@ -159,11 +196,23 @@ measures = []
 for i, (px0, py0, px1, py1) in enumerate(pages):
     entry = {"page": i, "box": [px0, py0, px1, py1]}
     entry["paper"] = disparity([px0 + 8, py0 + 8, px1 - 8, py1 - 8])
-    rows_below = shadow_rows(px0, px1, py1)
+    rows_below = [] if kind == "words" else shadow_rows(px0, px1, py1)
     if rows_below:
         entry["shadow_rows"] = [rows_below[0], rows_below[-1]]
         entry["desk"] = disparity([px0 - 40, rows_below[0], px0 + 60, rows_below[-1]])
-    if cut_at_top(px0, px1, py0):
+    if kind == "words" and i == 0:
+        # The page's vertical edge reaches the first canvas row only when
+        # scrolling has carried the page under the toolbar.
+        canvas_top = y0 + 85
+        edges = []
+        for eye in (left, right):
+            row = eye[canvas_top, px1 - 8:px1 + 16]
+            shadow = np.flatnonzero(row.max(axis=1) < 225)
+            edges.append(int(px1 - 8 + shadow[0]) if len(shadow) else None)
+        if edges[0] is not None:
+            entry["paper_at_cut"] = disparity([px0 + 8, canvas_top, px1 - 8, canvas_top + 31])
+            entry["right_edge_at_cut"] = edges
+    elif kind != "words" and cut_at_top(px0, px1, py0):
         entry["paper_at_cut"] = disparity([px0 + 8, py0, px1 - 8, py0 + 20])
         edges = []
         for eye in (left, right):

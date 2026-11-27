@@ -1,0 +1,133 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Draw declared widget rectangles in graphics effect sources
+
+Effects continue to own the final composite and its bounds. Render their
+source with the current eye's rectangle depths and refresh the source
+cache per eye. Calligra Words uses this path for its canvas shadow.
+
+Assisted-by: gpt-6.2-sol via Codex
+
+diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
+--- a/src/widgets/kernel/qwidget.cpp
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -5631,6 +5631,10 @@
+         QWidgetEffectSourcePrivate *sourced = static_cast<QWidgetEffectSourcePrivate *>
+                                                          (source->d_func());
+         if (!sourced->context) {
++            const bool stereoSource = repaintManager && qt_widget_stereo_eye()
++                && q->property("_q_stereo_depth_rects").isValid();
++            if (stereoSource)
++                sourced->invalidateCache();
+             const QRegion effectRgn((flags & UseEffectRegionBounds) ? rgn.boundingRect() : rgn);
+             QWidgetPaintContext context(pdev, effectRgn, offset, flags, sharedPainter, repaintManager);
+             sourced->context = &context;
+@@ -5655,6 +5659,9 @@
+                 sharedPainter->restore();
+             }
+             sourced->context = nullptr;
++            // The next paint may be mono or for the other eye.
++            if (stereoSource)
++                sourced->invalidateCache();
+ 
+             if (repaintManager)
+                 repaintManager->markNeedsFlush(q, effectRgn, offset);
+@@ -6068,8 +6075,11 @@
+     if (!eye || sharedPainter || rgn.isEmpty())
+         return false;
+ #if QT_CONFIG(graphicseffect)
+-    if (graphicsEffect && graphicsEffect->isEnabled())
+-        return false;
++    if (graphicsEffect && graphicsEffect->isEnabled()) {
++        const auto *source = static_cast<QWidgetEffectSourcePrivate *>(graphicsEffect->d_func()->source->d_func());
++        if (!source->context)
++            return false; // the effect owns the paint, including its source
++    }
+ #endif
+     const QVariantList declared = q->property("_q_stereo_depth_rects").toList();
+     if (declared.isEmpty())
+@@ -6206,6 +6216,11 @@
+     if (wd->extra && wd->extra->hasMask)
+         toBePainted &= wd->extra->mask;
+ 
++    if (context->repaintManager
++        && wd->paintStereoDepthRects(context->pdev, toBePainted, context->offset, context->flags,
++                                     context->sharedPainter, context->repaintManager)) {
++        return;
++    }
+     wd->drawWidget(context->pdev, toBePainted, context->offset, context->flags,
+                    context->sharedPainter, context->repaintManager);
+ }
+@@ -6252,6 +6267,19 @@
+     pixmap.setDevicePixelRatio(dpr);
+ 
+     pixmap.fill(Qt::transparent);
++    if (context && context->repaintManager && !context->sharedPainter && qt_widget_stereo_eye()) {
++        QWidgetPrivate *wd = qt_widget_private(m_widget);
++        QRegion sourceRegion(m_widget->rect());
++        if (wd->extra && wd->extra->hasMask)
++            sourceRegion &= wd->extra->mask;
++        // Match the backing-store flags and origin of render(..., DrawChildren).
++        const auto sourceFlags = QWidgetPrivate::DrawPaintOnScreen | QWidgetPrivate::DrawInvisible
++            | QWidgetPrivate::DrawRecursive | QWidgetPrivate::DontSetCompositionMode;
++        const QPoint sourceOffset = pixmapOffset - sourceRegion.boundingRect().topLeft();
++        if (wd->paintStereoDepthRects(&pixmap, sourceRegion, sourceOffset, sourceFlags, nullptr, nullptr)) {
++            return pixmap;
++        }
++    }
+     m_widget->render(&pixmap, pixmapOffset, QRegion(), QWidget::DrawChildren);
+     return pixmap;
+ }
+diff --git a/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp b/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
+--- a/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
++++ b/tests/auto/widgets/kernel/qwidgetrepaintmanager/tst_qwidgetrepaintmanager.cpp
+@@ -4,6 +4,9 @@
+ 
+ #include <QTest>
+ #include <QPainter>
++#if QT_CONFIG(graphicseffect)
++#include <QGraphicsDropShadowEffect>
++#endif
+ #include <QScrollArea>
+ #include <QScrollBar>
+ #include <QApplication>
+@@ -264,6 +267,7 @@
+     void evaluateRhi();
+     void rhiRecreateMaintainsWindowProperties();
+     void paintOncePerEye();
++    void paintRectsAtTheirDepth_data();
+     void paintRectsAtTheirDepth();
+ 
+ #if defined(QT_BUILD_INTERNAL)
+@@ -1227,6 +1231,15 @@
+     widget at the view's plane, nothing moved outside the view. With the limit at 0, or the window
+     not awake, it is painted once, exactly as before.
+ */
++void tst_QWidgetRepaintManager::paintRectsAtTheirDepth_data()
++{
++    QTest::addColumn<bool>("shadow");
++    QTest::newRow("plain") << false;
++#if QT_CONFIG(graphicseffect)
++    QTest::newRow("canvas-shadow") << true;
++#endif
++}
++
+ void tst_QWidgetRepaintManager::paintRectsAtTheirDepth()
+ {
+     if (QGuiApplication::platformName() != QLatin1String("offscreen"))
+@@ -1240,6 +1253,16 @@
+     window.setAutoFillBackground(true);
+     auto *view = new PaperView(&window);
+     view->setGeometry(10, 10, 100, 40);
++#if QT_CONFIG(graphicseffect)
++    QFETCH(bool, shadow);
++    if (shadow) {
++        auto *effect = new QGraphicsDropShadowEffect(view);
++        effect->setBlurRadius(8);
++        effect->setOffset(0);
++        effect->setColor(Qt::black);
++        view->setGraphicsEffect(effect);
++    }
++#endif
+     filled(view, QRect(80, 30, 10, 5), Qt::yellow);
+     window.show();
+     QVERIFY(QTest::qWaitForWindowExposed(&window));

@@ -1,0 +1,65 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Expose ElementLimit in the 3D Depth page
+
+Edit the shared setting alongside the desktop limits and describe it in the edition's languages.
+
+Assisted-by: gpt-6.2-sol via Codex
+
+diff --git a/src/kcms/stereodepth/kwinstereodepthsettings.kcfg b/src/kcms/stereodepth/kwinstereodepthsettings.kcfg
+--- a/src/kcms/stereodepth/kwinstereodepthsettings.kcfg
++++ b/src/kcms/stereodepth/kwinstereodepthsettings.kcfg
+@@ -14,6 +14,10 @@
+       <default>4</default>
+       <min>0</min>
+       <max>12</max>
++    </entry>
++    <entry name="ElementLimit" type="Double">
++      <default>1</default>
++      <min>0</min>
+     </entry>
+     <entry name="PopupBorder" type="Double">
+       <default>10</default>
+diff --git a/src/kcms/stereodepth/ui/main.qml b/src/kcms/stereodepth/ui/main.qml
+--- a/src/kcms/stereodepth/ui/main.qml
++++ b/src/kcms/stereodepth/ui/main.qml
+@@ -102,8 +102,40 @@
+             text: i18n("Menus, dialogs and tooltips of the active window come forward by up to this much. More pop-out: things near the screen's edges and long reading get harder.")
+         }
+ 
++        QQC2.TextField {
++            id: elementLimitField
++            objectName: "elementLimitField"
++            Kirigami.FormData.label: i18nc("@label:textbox", "Element limit:")
++            inputMethodHints: Qt.ImhFormattedNumbersOnly
++            validator: DoubleValidator {
++                bottom: 0
++                notation: DoubleValidator.StandardNotation
++            }
++            Binding on text {
++                when: !elementLimitField.activeFocus
++                value: Number(kcm.settings.elementLimit).toLocaleString(Qt.locale(), "g", 12)
++                restoreMode: Binding.RestoreNone
++            }
++            onTextEdited: {
++                if (acceptableInput) {
++                    kcm.settings.elementLimit = Number.fromLocaleString(Qt.locale(), text)
++                }
++            }
++            KCM.SettingStateBinding {
++                configObject: kcm.settings
++                settingName: "ElementLimit"
++            }
++        }
++        QQC2.Label {
++            Layout.fillWidth: true
++            Layout.maximumWidth: Kirigami.Units.gridUnit * 30
++            wrapMode: Text.Wrap
++            font: Kirigami.Theme.smallFont
++            text: i18n("Sets how far parts inside a window move in depth, for example a page over its desk or a button over its panel. Zero keeps them flat.")
++        }
++
+         RowLayout {
+             Kirigami.FormData.label: i18nc("@label:slider", "Popup border:")
+             QQC2.Slider {
+                 id: popupBorderSlider
+                 from: 0

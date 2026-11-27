@@ -27,6 +27,14 @@ printf '[General]\nShowOSD=false\n[PageView]\nUseCustomBackgroundColor=true\nBac
 # no notice over presentation mode (KMessageBox's "do not show again"), no wallet started by Okular
 printf '[General]\nShowSidebar=false\nShowBottomBar=false\n[Notification Messages]\npresentationInfo=false\n' > "$XDG_CONFIG_HOME/okularrc"
 printf '[Wallet]\nEnabled=false\n' > "$XDG_CONFIG_HOME/kwalletrc"
+if [ "${M2:-0}" = 1 ]; then
+    python3 -I /tests/make-m2-fixture.py /tmp/display.edid /tmp/two-pages.odt
+    # Open the 2D comparison document in the same read-only viewing state.
+    if [ "$CASE" = words-2d ]; then chmod a-w /tmp/two-pages.odt || exit 1; fi
+    case "$CASE" in *-display|probe-override) export KWIN_VIRTUAL_OUTPUT_EDIDS=/tmp/display.edid ;; esac
+    printf '[Interface]\nZoom=100\nZoomMode=0\n' > "$XDG_CONFIG_HOME/calligrawordsrc"
+    cp "$XDG_CONFIG_HOME/calligrawordsrc" "$XDG_CONFIG_HOME/calligrarc"
+fi
 pdf=/tmp/two-pages.pdf
 python3 -I /tests/make-pdf.py "$pdf" 300 200
 if [ "$CASE" = okular-scrolled ]; then
@@ -52,10 +60,49 @@ if [ "${CASE##*-}" != 2d ]; then
 	kd "output.$o.mode.$m" > "$OUT/mode.txt" 2>&1; sleep 1
 fi
 kd -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' > "$OUT/outputs.txt"
+if [ "$CASE" = probe-override ]; then
+    # A fresh virtual session has exactly one output and records its permanent UUID here.
+    cp "$XDG_CONFIG_HOME/kwinoutputconfig.json" "$OUT/kwinoutputconfig.json"
+    uuid=$(python3 -I - "$OUT/kwinoutputconfig.json" <<'PYUUID'
+import json
+import sys
+with open(sys.argv[1]) as stream:
+    outputs = next(group["data"] for group in json.load(stream) if group["name"] == "outputs")
+assert len(outputs) == 1
+print(outputs[0]["uuid"])
+PYUUID
+) || exit 1
+    printf '\n[StereoDepth][%s]\nPoppedLimit=16\n' "$uuid" >> "$XDG_CONFIG_HOME/kwinrc"
+    dbus-send --session --type=method_call --dest=org.kde.KWin /KWin org.kde.KWin.reconfigure || exit 1
+    sleep 1
+fi
 env=(WAYLAND_DISPLAY=sub QT_QPA_PLATFORM=wayland LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
 	__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json)
 place() { python3 -I /tests/kwin_script.py "$OUT/kwin.log" "$1"; sleep 1.5; }
+input() { WAYLAND_DISPLAY=sub /out/bin/input "$@"; }
 case $CASE in
+probe-override)
+    env "${env[@]}" WAYLAND_DEBUG=client /out/bin/preview probe > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
+    sleep 5
+    place 'var w = workspace.activeWindow; w.frameGeometry = {x: 60, y: 40, width: 900, height: 520};' ;;
+words-*)
+    words_env=()
+    # KoDpi caches the active widget's DPI at first use, or 75 if the window has yet to activate.
+    # Give both startup paths the same DPI for the pixel comparison.
+    if [ "$CASE" = words-2d ]; then words_env=(QT_FONT_DPI=75); fi
+    env "${env[@]}" "${words_env[@]}" WAYLAND_DEBUG=client QT_PLUGIN_PATH=/out/bin calligrawords -style PaperDepth /tmp/two-pages.odt > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
+    sleep 8
+    if [ "$CASE" = words-scrolled ]; then
+        place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 575};'
+        input drag 708 175 708 224 || exit 1
+    else
+        place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 960};'
+    fi
+    if [ "$CASE" = words-2d ]; then
+        # Focus the zoom slider at its current 100% handle so the canvas caret stops blinking.
+        input click 706 964 || exit 1
+    fi
+    sleep 2 ;;
 okular-presentation)
 	env "${env[@]}" WAYLAND_DEBUG=client okular --presentation /tmp/two-pages.pdf > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
 	sleep 9
@@ -74,6 +121,41 @@ preview-*)
 	place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 960};'
 	sleep 2 ;;
 esac
+if [ "$CASE" = okular-kcm ]; then
+    env "${env[@]}" WAYLAND_DEBUG=client kcmshell6 kcm_kwinstereodepth > "$OUT/kcm.out" 2> "$OUT/kcm.err" & kcm=$!
+    # Select the KCM by caption. The viewer may still own focus while it launches.
+    for attempt in 1 2 3; do
+        place 'var ws = workspace.stackingOrder; for (var i = 0; i < ws.length; i++) { var w = ws[i]; if (w.caption === "3D Depth") { w.setMaximize(false, false); w.frameGeometry = {x: 175, y: 95, width: 1000, height: 850}; workspace.activeWindow = w; } }'
+        python3 -I /tests/kwin_windows.py "$OUT/kwin.log" > "$OUT/kcm-windows.json"
+        if python3 -I - "$OUT/kcm-windows.json" <<'PYKCM'
+import json
+import sys
+with open(sys.argv[1]) as stream:
+    frames = [w["fg"] for w in json.load(stream)["windows"] if w["caption"] == "3D Depth"]
+sys.exit(0 if frames == [[175, 95, 1000, 850]] else 1)
+PYKCM
+        then
+            break
+        fi
+        [ "$attempt" != 3 ] || exit 1
+    done
+    python3 -I /tests/capture.py "$OUT/kcm.png" > "$OUT/kcm-capture.json" 2> "$OUT/kcm-capture.err"
+    # Click the field in the stand-alone KCM, replace its value with 6, then Apply.
+    read -r field_x field_y <<< "${KCM_FIELD_XY:-655 409}"
+    read -r apply_x apply_y <<< "${KCM_APPLY_XY:-1035 924}"
+    input click "$field_x" "$field_y" || exit 1
+    sleep 0.5
+    input keys 107 14 7 || exit 1
+    sleep 0.5
+    python3 -I /tests/capture.py "$OUT/kcm-edited.png" > "$OUT/kcm-edited.json" 2> "$OUT/kcm-edited.err"
+    input click "$apply_x" "$apply_y" || exit 1
+    sleep 2
+    cp "$XDG_CONFIG_HOME/kwinrc" "$OUT/kwinrc"
+    grep -qx 'ElementLimit=6' "$OUT/kwinrc" || { echo "KCM did not save ElementLimit=6" >&2; exit 1; }
+    kill "$kcm" 2>/dev/null
+    wait "$kcm" 2>/dev/null
+    sleep 3
+fi
 if [ "${CASE##*-}" = background ]; then
 	# another window comes over the right of the screen and takes the focus: the program lies behind it
 	env "${env[@]}" /out/bin/preview all > "$OUT/other.out" 2> "$OUT/other.err" & other=$!
@@ -84,6 +166,10 @@ fi
 python3 -I /tests/kwin_windows.py "$OUT/kwin.log" > "$OUT/windows.json" 2> "$OUT/windows.err"
 python3 -I /tests/capture.py "$OUT/shot.png" > "$OUT/capture.json" 2> "$OUT/capture.err"
 kill "$prog" 2>/dev/null; wait "$prog" 2>/dev/null
+if [ "$CASE" = words-2d ]; then
+    # Read the unmodified platform DPI with a plain QWidget in the same KWin session.
+    env -u QT_FONT_DPI "${env[@]}" /out/bin/preview screen-info > "$OUT/screen-info.json" 2> "$OUT/screen-info.err" || exit 1
+fi
 [ -n "${other:-}" ] && { kill "$other" 2>/dev/null; wait "$other" 2>/dev/null; }
 kill "$kwin" 2>/dev/null; wait "$kwin" 2>/dev/null
 grep -a -E 'kde_stereo|element_limit|depth_state|set_desktop_depth|set_content|get_depth' "$OUT/program.err" > "$OUT/wire.txt" 2>/dev/null

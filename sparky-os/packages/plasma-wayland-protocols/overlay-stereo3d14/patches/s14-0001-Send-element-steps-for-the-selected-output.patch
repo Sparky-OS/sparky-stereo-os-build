@@ -1,0 +1,64 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Send element steps for the selected output
+
+Carry both directional steps in the staged version 7 event.
+
+Assisted-by: gpt-6.2-sol via Codex
+
+diff --git a/src/protocols/kde-stereo-content-v1.xml b/src/protocols/kde-stereo-content-v1.xml
+--- a/src/protocols/kde-stereo-content-v1.xml
++++ b/src/protocols/kde-stereo-content-v1.xml
+@@ -151,11 +151,10 @@
+     depth on the same screen. Before version 5 the client reads the user's
+     settings itself.
+ 
+-    Since version 7 the compositor also tells the client the user's element
+-    limit (element_limit): how far an element drawn inside the surface may
+-    lie in front of or behind what it lies on, a pixel or so, where the
+-    depth limits above are for the desktop's own surfaces. A toolkit that
+-    draws a surface's elements at their own depths takes its steps from it.
++    Since version 7 the compositor also sends the element steps for the
++    surface's selected output (element_limit). A toolkit uses these for
++    elements inside its surface. The desktop depth limits above apply to
++    the desktop's own surfaces.
+ 
+     A surface may have any number of these objects. The depth state is sent
+     to each of them. The surface is marked as desktop depth while any of
+@@ -287,16 +286,15 @@
+       value changes; depth_limits ends the group, and all three describe the
+       same selected output.
+ 
+-      limit is how far an element drawn inside the surface (a button, a
+-      field, a page) may lie in front of or behind the surface it lies on,
+-      in pixels of a view 1920 wide: the user's element limit, one step of
+-      depth inside a window. Zero means the elements inside the surface lie
+-      flat. The compositor gives it as the user set it; a client converts
+-      it to its buffer's pixels as it converts the depth limits, through the
+-      shared stereo_depth_limits_for_buffer conversion, and never rescales
+-      it by the size of its window or of an element.
+-    </description>
+-    <arg name="limit" type="fixed" summary="the element limit, pixels of a view 1920 wide"/>
++      behind and in_front are the non-negative distances an element may lie
++      behind or in front of what it lies on. They are the user's element
++      limit multiplied by the selected output's sunk and popped factors,
++      respectively, in pixels of a view 1920 wide. Zero disables movement
++      in that direction. Clients convert the steps to buffer pixels the
++      same way as depth_limits, using the selected output width.
++    </description>
++    <arg name="behind" type="fixed" summary="distance behind, pixels of a view 1920 wide"/>
++    <arg name="in_front" type="fixed" summary="distance in front, pixels of a view 1920 wide"/>
+   </event>
+ 
+ </interface>
+diff --git a/tests/virtual-stereo-contract.py b/tests/virtual-stereo-contract.py
+--- a/tests/virtual-stereo-contract.py
++++ b/tests/virtual-stereo-contract.py
+@@ -34,7 +34,7 @@
+         self.assertEqual([(a.get('name'), a.get('type')) for a in width.findall('arg')], [('width', 'uint')])
+         element = depth.find("event[@name='element_limit']")
+         self.assertEqual(element.get('since'), '7')
+-        self.assertEqual([(a.get('name'), a.get('type')) for a in element.findall('arg')], [('limit', 'fixed')])
++        self.assertEqual([(a.get('name'), a.get('type')) for a in element.findall('arg')], [('behind', 'fixed'), ('in_front', 'fixed')])
+         # an event's opcode is its place: new events only ever join at the end
+         self.assertEqual([e.get('name') for e in depth.findall('event')],
+                          ['depth_state', 'depth_limits', 'output_width', 'element_limit'])

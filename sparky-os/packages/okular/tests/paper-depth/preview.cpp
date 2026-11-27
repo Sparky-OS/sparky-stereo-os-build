@@ -7,15 +7,45 @@
 // The program prints its view's geometry once shown: "PREVIEW viewport X Y W H" in window coordinates.
 #include <QApplication>
 #include <QGraphicsView>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMainWindow>
 #include <QPageLayout>
 #include <QPainter>
 #include <QPrintPreviewWidget>
 #include <QPrinter>
+#include <QScreen>
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
+#include <QVariant>
 #include <cstdio>
+
+class ElementProbe : public QWidget
+{
+public:
+    using QWidget::QWidget;
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        setProperty("_q_stereo_depth_rects", QVariantList{
+            QVariantMap{{QStringLiteral("rect"), rect()}, {QStringLiteral("depth"), -1.0}},
+            QVariantMap{{QStringLiteral("rect"), QRect(200, 70, 320, 220)}, {QStringLiteral("depth"), 1.0}},
+        });
+    }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.fillRect(rect(), Qt::gray);
+        painter.fillRect(QRect(80, 70, 6, 220), Qt::red);
+        painter.fillRect(QRect(200, 70, 320, 220), Qt::white);
+        painter.fillRect(QRect(332, 92, 6, 176), Qt::green);
+    }
+};
 
 int main(int argc, char **argv)
 {
@@ -23,6 +53,36 @@ int main(int argc, char **argv)
     const QString mode = argc > 1 ? QString::fromLatin1(argv[1]) : QStringLiteral("all");
     const double zoom = argc > 2 ? QString::fromLatin1(argv[2]).toDouble() : 2.0;
     const double scroll = argc > 3 ? QString::fromLatin1(argv[3]).toDouble() : 0.3;
+
+    if (mode == QLatin1String("screen-info")) {
+        QWidget widget;
+        widget.show();
+        QTimer::singleShot(500, &widget, [&] {
+            const QScreen *screen = widget.screen();
+            const QSizeF mm = screen->physicalSize();
+            const QJsonObject info{
+                {QStringLiteral("geometry"), QJsonArray{screen->size().width(), screen->size().height()}},
+                {QStringLiteral("physicalSize"), QJsonArray{mm.width(), mm.height()}},
+                {QStringLiteral("physicalDotsPerInch"), screen->physicalDotsPerInch()},
+                {QStringLiteral("logicalDotsPerInch"), screen->logicalDotsPerInch()},
+                {QStringLiteral("devicePixelRatio"), screen->devicePixelRatio()},
+                {QStringLiteral("widgetLogicalDpi"), QJsonArray{widget.logicalDpiX(), widget.logicalDpiY()}},
+            };
+            std::fputs(QJsonDocument(info).toJson(QJsonDocument::Compact).constData(), stdout);
+            std::fputc('\n', stdout);
+            app.quit();
+        });
+        return app.exec();
+    }
+
+    if (mode == QLatin1String("probe")) {
+        QMainWindow window;
+        window.setWindowTitle(QStringLiteral("paper-depth-element-probe"));
+        window.setCentralWidget(new ElementProbe(&window));
+        window.resize(900, 520);
+        window.show();
+        return app.exec();
+    }
 
     QPrinter printer(QPrinter::ScreenResolution);
     printer.setOutputFormat(QPrinter::PdfFormat);
