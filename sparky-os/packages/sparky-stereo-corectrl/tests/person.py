@@ -82,49 +82,52 @@ class FakeBus:
         return self.live.get(action)
 
 
-def watch(caller, lact_start=False):
+def watch(lact_start=False):
     w = ko.Watch.__new__(ko.Watch)
     w.bus = FakeBus()
     w.expected = {}
-    w.caller = lambda sender: caller
     w.lactd_just_started = lambda: lact_start
     w.changed = lambda *a: None
     return w
 
 
 kept({"amdgpu_dpm": True})
-watch("lact").action_call(":1.9", "amdgpu_dpm", False, 0)
+watch().action_call(":1.9", "amdgpu_dpm", False, "lact")
 check("LACT turns it off at its start: the person's choice stays on", ko.read_json(ko.PERSON), {"amdgpu_dpm": True})
-watch("us").action_call(":1.2", "amdgpu_dpm", False, 0)
+watch().action_call(":1.2", "amdgpu_dpm", False, "us")
 check("this service turns it off while a card is held: the person's choice stays on", ko.read_json(ko.PERSON), {"amdgpu_dpm": True})
-watch("person").action_call(":1.40", "amdgpu_dpm", False, 0)
+watch().action_call(":1.40", "amdgpu_dpm", False, "person")
 check("the person turns it off: kept off", ko.read_json(ko.PERSON), {"amdgpu_dpm": False})
-watch("person").action_call(":1.41", "amdgpu_dpm", True, 0)
+watch().action_call(":1.41", "amdgpu_dpm", True, "person")
 check("the person turns it on (during a hold too): kept on", ko.read_json(ko.PERSON), {"amdgpu_dpm": True})
-watch(None, lact_start=True).action_call(":1.42", "amdgpu_dpm", False, 0)
+watch(lact_start=True).action_call(":1.42", "amdgpu_dpm", False, None)
 check("a caller already gone, off, lactd just started: LACT's", ko.read_json(ko.PERSON), {"amdgpu_dpm": True})
-watch(None, lact_start=False).action_call(":1.43", "amdgpu_dpm", False, 0)
+watch(lact_start=False).action_call(":1.43", "amdgpu_dpm", False, None)
 check("a caller already gone, off, lactd not starting: the person's", ko.read_json(ko.PERSON), {"amdgpu_dpm": False})
-watch(None, lact_start=True).action_call(":1.44", "amdgpu_dpm", True, 0)
+watch(lact_start=True).action_call(":1.44", "amdgpu_dpm", True, None)
 check("a caller already gone, on: the person's (LACT only turns it off)", ko.read_json(ko.PERSON), {"amdgpu_dpm": True})
-watch("person").action_call(":1.45", "trickle_charge", False, 0)
+watch().action_call(":1.45", "trickle_charge", False, "person")
 check("an action this service does not set: nothing kept", ko.read_json(ko.PERSON), {"amdgpu_dpm": True})
 
 # without the monitor: a change this service did not make
-w = watch(None, lact_start=True)
+w = watch(lact_start=True)
 w.expected = {"amdgpu_dpm": True}
 w.bus.live = {"amdgpu_dpm": False}
 w.unmonitored_changes()
 check("no monitor, off while lactd starts: LACT's", ko.read_json(ko.PERSON), {"amdgpu_dpm": True})
-w = watch(None, lact_start=False)
+w = watch(lact_start=False)
 w.expected = {"amdgpu_dpm": True}
 w.bus.live = {"amdgpu_dpm": False}
 w.unmonitored_changes()
 check("no monitor, off at another time: the person's", ko.read_json(ko.PERSON), {"amdgpu_dpm": False})
-w = watch(None)
+w = watch()
 w.expected = {}
 w.bus.live = {"amdgpu_dpm": True}
 w.unmonitored_changes()
 check("no monitor, nothing seen yet: nothing taken", ko.read_json(ko.PERSON), {"amdgpu_dpm": False})
+# who a process is (classify, run on the bus thread as soon as the call is seen)
+check("this process is this service", ko.classify(os.getpid()), "us")
+check("a caller gone before it was asked", ko.classify(None), None)
+check("another process (the init process here) is a person", ko.classify(1) in ("person", "lact"), True)
 print("%d failed" % failed)
 sys.exit(1 if failed else 0)

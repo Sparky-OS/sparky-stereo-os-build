@@ -824,6 +824,21 @@ def tell(notices, running=()):
 
 # --- the service ------------------------------------------------------------------------------------------------------------
 
+def classify(pid):
+    """Who called SetActionEnabled: "lact" for LACT's daemon (its program, or the lactd unit's cgroup), "us" for this service,
+    "person" for anyone else (powerprofilesctl, the Graphics page, Hardware Setup), None for a caller that left the bus
+    before it could be asked."""
+    if pid is None:
+        return None
+    try:
+        exe = os.readlink("/proc/%d/exe" % pid).removesuffix(" (deleted)")
+    except OSError:
+        exe = ""
+    if exe == LACT_PROGRAM or "/lactd.service" in read("/proc/%d/cgroup" % pid):
+        return "lact"
+    return "us" if pid == os.getpid() else "person"
+
+
 def notify_ready():
     """sd_notify(3) READY=1, so that units ordered after this one (lactd) start only once its bus monitor listens."""
     path = os.environ.get("NOTIFY_SOCKET", "")
@@ -850,6 +865,7 @@ class Watch:
         self.monitor = None
         self.expected = {}
         conn = self.bus.bus
+        self.unique_name = conn.get_unique_name()
         for name in ("org.corectrl.helper", "com.redhat.tuned", "org.freedesktop.UPower.PowerProfiles"):
             conn.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged", "/org/freedesktop/DBus",
                                   name, Gio.DBusSignalFlags.NONE, self.changed, None)
@@ -905,33 +921,36 @@ class Watch:
         self.GLib.timeout_add(1000, lambda: self.start_monitor() and False)
 
     def monitored(self, conn, message, incoming, *data):
-        # runs on GDBus's own thread: hand the call over to the main loop, and drop every method call that arrives (never
-        # answered); what this connection sends (BecomeMonitor itself) and replies and signals pass
+        # runs on GDBus's own thread. The caller's process is asked for at once from here, by an asynchronous call answered
+        # on this same thread: LACT's start-up connection closes right after the daemon's reply, and at boot the main loop
+        # was seen busy for longer than that (the A10, 0.19 s). Every method call that arrives is dropped (a monitor never
+        # answers); what this connection sends (BecomeMonitor itself), replies and signals pass.
         if not incoming or message.get_message_type() != self.Gio.DBusMessageType.METHOD_CALL:
             return message
         if message.get_member() == "SetActionEnabled":
             body = message.get_body()
             if body is not None and body.get_type_string() == "(sb)":
                 action, enabled = body.unpack()
-                self.GLib.idle_add(self.action_call, message.get_sender(), action, enabled, time.monotonic(),
-                                   priority=self.GLib.PRIORITY_DEFAULT)
+                sender = message.get_sender()
+                if sender == self.unique_name:
+                    self.hand_over(sender, action, enabled, "us")
+                else:
+                    self.bus.bus.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                                      "GetConnectionUnixProcessID", self.GLib.Variant("(s)", (sender,)),
+                                      self.GLib.VariantType("(u)"), self.Gio.DBusCallFlags.NONE, 2000, None,
+                                      self.caller_found, (sender, action, enabled))
         return None
 
-    def caller(self, sender):
-        """"lact" for LACT's daemon, "us" for this service, "person" for anyone else (powerprofilesctl, the Graphics page,
-        Hardware Setup), None when the caller left before it could be asked."""
-        if sender == self.bus.bus.get_unique_name():
-            return "us"
-        pid = self.bus.pid_of(sender)
-        if pid is None:
-            return None
+    def caller_found(self, conn, result, data):
+        sender, action, enabled = data
         try:
-            exe = os.readlink("/proc/%d/exe" % pid).removesuffix(" (deleted)")
-        except OSError:
-            exe = ""
-        if exe == LACT_PROGRAM or "/lactd.service" in read("/proc/%d/cgroup" % pid):
-            return "lact"
-        return "us" if pid == os.getpid() else "person"
+            pid = conn.call_finish(result).unpack()[0]
+        except Exception:
+            pid = None
+        self.hand_over(sender, action, enabled, classify(pid))
+
+    def hand_over(self, sender, action, enabled, who):
+        self.GLib.idle_add(self.action_call, sender, action, enabled, who, priority=self.GLib.PRIORITY_DEFAULT)
 
     def lactd_just_started(self):
         out = subprocess.run(["systemctl", "show", "-P", "ActiveEnterTimestampMonotonic", "lactd.service"], capture_output=True, text=True)
@@ -941,10 +960,9 @@ class Watch:
             return False
         return since > 0 and time.monotonic() * 1e6 - since < 30e6
 
-    def action_call(self, sender, action, enabled, seen):
+    def action_call(self, sender, action, enabled, who):
         if action not in ACTIONS:
             return False
-        who = self.caller(sender)
         if who is None:
             # LACT turns the action off once, at its start; a caller gone that fast at that moment is taken for LACT
             who = "lact" if (not enabled and self.lactd_just_started()) else "person"
