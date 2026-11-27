@@ -195,6 +195,14 @@ def _run(command, **kw):
     return subprocess.run(command, capture_output=True, text=True, timeout=kw.pop('timeout', 60), **kw)
 
 
+def _tool(name):
+    """A tool by its full path: a desktop session's PATH has no sbin, where kmod puts modinfo."""
+    for folder in os.environ.get('PATH', '').split(':') + ['/usr/sbin', '/sbin', '/usr/bin', '/bin']:
+        if folder and os.access(os.path.join(folder, name), os.X_OK):
+            return os.path.join(folder, name)
+    return name
+
+
 # ------------------------------------------------------------------ where GRUB can keep a one-time request
 def grub_place():
     """('grubenv', None), ('esp', 'UUID'), or ('none', why). Debian's own rule for /boot/grub (check_writable in
@@ -600,12 +608,34 @@ def _module_signers():
             continue
         signer = key = ''
         try:
-            done = _run(['modinfo', '-F', 'signer', name], timeout=30)
+            done = _run([_tool('modinfo'), '-F', 'signer', name], timeout=30)
             signer = done.stdout.strip()
-            key = _run(['modinfo', '-F', 'sig_key', name], timeout=30).stdout.strip()
+            key = _run([_tool('modinfo'), '-F', 'sig_key', name], timeout=30).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             pass
         found.append((name, signer if 'E' not in taint else '', key.replace(':', '').upper()))
+    return found
+
+
+def _refused_names():
+    """The modules this start's kernel refused (systemd-modules-load and udev: "Failed to insert module 'NAME': Key was
+    rejected by service"; modprobe: "could not insert 'NAME': Key was rejected by service"), from this boot's journal."""
+    try:
+        done = _run([_tool('journalctl'), '-b', '-o', 'cat', '--no-pager', '-g', 'Key was rejected by service'], timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return sorted(set(re.findall(r"insert (?:module )?'([\w-]+)'", done.stdout)))
+
+
+def _unverified_loaded():
+    """Loaded modules whose signature the kernel could not verify (taint E): lockdown refuses them."""
+    found = []
+    try:
+        for name in os.listdir(SYSFS + '/module'):
+            if 'E' in (_read(os.path.join(SYSFS, 'module', name, 'taint')) or ''):
+                found.append(name)
+    except OSError:
+        pass
     return found
 
 
@@ -619,7 +649,7 @@ def _unsigned_installed():
             if not re.search(r'\.ko(\.(xz|zst|gz))?$', name):
                 continue
             try:
-                done = _run(['modinfo', '-F', 'sig_id', os.path.join(folder, name)], timeout=30)
+                done = _run([_tool('modinfo'), '-F', 'sig_id', os.path.join(folder, name)], timeout=30)
             except (OSError, subprocess.SubprocessError):
                 continue
             if done.returncode == 0 and not done.stdout.strip():
@@ -739,7 +769,10 @@ def check(as_root=None):
 
     # modules installed for this kernel outside its tree with no signature: lockdown refuses them (LOCKDOWN_MODULE_SIGNATURE
     # is below LOCKDOWN_INTEGRITY_MAX, include/linux/security.h), so in the anti-cheat start they do not load
-    blocked = _unsigned_installed()
+    if anticheat:
+        blocked = sorted(set(_refused_names() + _unsigned_installed()))
+    else:
+        blocked = sorted(set(_unverified_loaded() + _unsigned_installed()))
     if blocked:
         rows.append(('modules-refused', 'not-met', text(s, 'LOCAL176' if anticheat else 'LOCAL175', ', '.join(blocked))))
 

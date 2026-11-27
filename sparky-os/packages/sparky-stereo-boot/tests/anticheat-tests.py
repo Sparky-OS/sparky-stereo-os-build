@@ -336,6 +336,9 @@ check('check: BPF LSM missing, not met', got['bpf-lsm'][0] == 'not-met')
 check('check: the usual start says so', got['start'][1] == 'This is the usual start, with hibernation.')
 check('check: no hibernation row when hibernation is available', 'hibernation' not in got)
 
+code, got, _ = rows(check_root(modules=[('dkmsmod', 'OE')], cmdline='root=UUID=1 ro quiet'), keys + '/signed.efi')
+check('check: a module loaded with a signature the kernel could not verify is named for the anti-cheat start',
+      got.get('modules-refused', ('',))[0] == 'not-met' and 'dkmsmod' in got['modules-refused'][1], str(got.get('modules-refused')))
 code, got, _ = rows(check_root(tainted=str(8192 | 4096)), keys + '/signed.efi')
 check('check: an unsigned module loaded earlier in this start, the taint bit', got.get('modules-loaded', ('',))[0] == 'not-met',
       str(got.get('modules-loaded')))
