@@ -11,8 +11,9 @@ both ends.
   specific (button:hover:not(:checked):not(:active)); every classic rule carries PAD, five :not() of classes no widget
   has, so it outranks them without listing each of Breeze's cases.
 - Scroll arrows: GTK 2 and GTK 3 have the four steppers of GtkRange (backward, forward and their secondary twins at the
-  other end); together is the secondary backward stepper beside the forward one, apart the two plain ones. GTK 4 has
-  no scroll arrows (its library has no stepper at all), so both of its themes draw the bar the same, scroll box and track.
+  other end); together is the secondary backward stepper beside the forward one, apart the two plain ones. GTK 4's own
+  library has none; the edition's GTK 4 (gtk4 +stereo3d4) gives GtkScrollbar the same four as stepper nodes, each taking
+  room only when a theme gives it a size, so the GTK 4 themes size the two their placement shows (gtk4_stepper_sizes).
 GPL-3.0-only."""
 import configparser
 import shutil
@@ -169,6 +170,19 @@ def icon_states(selector, pics, base, checked=None, mixed=None, size=13, gtk=3):
     return rules
 
 
+def gtk4_stepper_sizes(together):
+    """GTK 4's four steppers in their order along the bar (backward, secondary forward, the range, secondary backward,
+    forward): a stepper takes room only when given a size, so these rules show the two of the placement, 16 pixels
+    square as in GTK 2 and GTK 3, and keep the other two at nothing."""
+    sb = f"scrollbar{PAD}"
+    a, b = f"{sb} > stepper.up:first-child", f"{sb} > stepper.down:nth-child(2)"
+    c, d = f"{sb} > range + stepper.up", f"{sb} > stepper.down:last-child"
+    shown = (c, d) if together else (a, d)
+    hidden = [s for s in (a, b, c, d) if s not in shown]
+    return [f"{', '.join(hidden)} {{ min-width: 0; min-height: 0; padding: 0; margin: 0; }}",
+            f"{', '.join(shown)} {{ min-width: 16px; min-height: 16px; padding: 0; margin: 0; }}"]
+
+
 def classic_css(pics, together, gtk):
     """The classic controls over Breeze, for GTK 3 or GTK 4 (gtk = 3 or 4)."""
     face, view = "@theme_bg_color_breeze", "@theme_base_color_breeze"
@@ -277,6 +291,16 @@ def classic_css(pics, together, gtk):
                 css.append(f"{sb}{PAD}.{orient} button.{cls}{pseudo} {{ min-width: 16px; min-height: 16px; padding: 0; margin: 0; "
                            f"border: none; border-radius: 0; box-shadow: none; -gtk-icon-source: none; color: transparent; "
                            f"background: {img('sarrowbox-' + d + '-' + state)} no-repeat center; }}")
+    else:
+        # GTK 4 (the edition's): GTK 3's names, stepper.up and stepper.down, and the same pictures; the sizes say which show
+        for orient, d, cls in (("vertical", "up", "up"), ("vertical", "down", "down"), ("horizontal", "left", "up"),
+                               ("horizontal", "right", "down")):
+            for state, pseudo in STATE_GTK3.items():
+                if state == "toggled":
+                    continue
+                css.append(f"{sb}{PAD}.{orient} > stepper.{cls}{pseudo} {{ border: none; border-radius: 0; box-shadow: none; "
+                           f"-gtk-icon-source: none; background: {img('sarrowbox-' + d + '-' + state)} no-repeat center; }}")
+        css += gtk4_stepper_sizes(together)
     # menus, the menu bar and their items; tool tips
     if gtk == 3:
         css += [f"menu{PAD}, .menu{PAD}, .context-menu{PAD} {{ {bimg(pics, 'menu-normal')} padding: 2px 0; "
@@ -575,7 +599,7 @@ def write_theme(accent):
     (base / "gtk-2.0").mkdir()
     (base / "gtk-2.0" / "gtkrc").write_text(gtkrc(pics, True, scheme_colours(scheme), gtk_name(accent)))
     (base / "index.theme").write_text(INDEX.format(name=gtk_name(accent), accent=accent, arrows="together at the end"))
-    # the Apart theme: the same theme, the scroll arrows at both ends (GTK 2 and GTK 3; GTK 4 has none)
+    # the Apart theme: the same theme, the scroll arrows at both ends
     apart = THEMES / gtk_name(accent, False)
     if apart.exists():
         shutil.rmtree(apart)
@@ -588,8 +612,9 @@ def write_theme(accent):
         "-GtkScrollbar-has-secondary-backward-stepper: false; -GtkScrollbar-has-secondary-forward-stepper: false; }\n")
     (apart / "gtk-4.0" / "gtk.css").write_text(
         "/* SPDX-License-Identifier: GPL-3.0-only */\n"
-        "/* GTK 4 has no scroll arrows: the same drawing as the theme the arrows are together in. */\n"
-        f'@import url("../../{gtk_name(accent)}/gtk-4.0/gtk.css");\n')
+        f'@import url("../../{gtk_name(accent)}/gtk-4.0/gtk.css");\n'
+        "/* the edition's GTK 4 steppers: the backward one at the start, the forward one at the end */\n"
+        + "\n".join(gtk4_stepper_sizes(False)) + "\n")
     (apart / "gtk-2.0" / "gtkrc").write_text(
         f"# {gtk_name(accent, False)} for GTK 2: {gtk_name(accent)} with the scroll arrows at both ends. GPL-3.0-only.\n"
         f'include "../../{gtk_name(accent)}/gtk-2.0/gtkrc"\n'

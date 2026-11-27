@@ -1,3 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* GTK 4 has no scroll arrows: the same drawing as the theme the arrows are together in. */
 @import url("../../Kubabbar-Glass-9-Ivy/gtk-4.0/gtk.css");
+/* the edition's GTK 4 steppers: the backward one at the start, the forward one at the end */
+scrollbar:not(.kg9-a):not(.kg9-b):not(.kg9-c):not(.kg9-d):not(.kg9-e) > stepper.down:nth-child(2), scrollbar:not(.kg9-a):not(.kg9-b):not(.kg9-c):not(.kg9-d):not(.kg9-e) > range + stepper.up { min-width: 0; min-height: 0; padding: 0; margin: 0; }
+scrollbar:not(.kg9-a):not(.kg9-b):not(.kg9-c):not(.kg9-d):not(.kg9-e) > stepper.up:first-child, scrollbar:not(.kg9-a):not(.kg9-b):not(.kg9-c):not(.kg9-d):not(.kg9-e) > stepper.down:last-child { min-width: 16px; min-height: 16px; padding: 0; margin: 0; }
