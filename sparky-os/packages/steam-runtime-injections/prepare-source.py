@@ -48,7 +48,7 @@ def main():
             stream.write(patch_name + '\n')
         run('dpkg-source', '--before-build', str(tree))
         authored = toolkit.parent / 'gl-stereo'
-        for name in ('gl-stereo-run', 'savers/controller.py', 'tests/launcher.py'):
+        for name in ('gl-stereo-run', 'savers/controller.py', 'tests/launcher.py', 'packaging/qualify-package.sh'):
             if (tree / name).read_bytes() != (authored / name).read_bytes():
                 raise ValueError(f'{name}: the patched round source differs from gl-stereo in the recipe checkout')
     else:
