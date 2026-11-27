@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Prepare the published sources for the Steam Runtime fixes."""
+"""Prepare the distribution sources for the Steam Runtime fixes."""
 import argparse
 import datetime
 from email.utils import format_datetime
@@ -9,7 +9,7 @@ import shutil
 import subprocess
 
 SOURCES = {
-    'gl-stereo': ('0.4.5-1+lc1', '0.4.5-2+lc1',
+    'gl-stereo': ('0.4.6-1+lc1', '0.4.6-2+lc1',
                   'Pass the declaration dependency with the GL interposer into Steam Runtime.'),
     'dxvk': ('2.7.1-4+stereo3d5+lc1', '2.7.1-4+stereo3d6+lc1',
              'Install prefix-local DXVK DLLs so games load them inside Steam Runtime.'),
@@ -38,6 +38,7 @@ def main():
     for tarball in sorted(old_dsc.parent.glob(f'{args.name}_*.orig*.tar.*')):
         shutil.copy2(tarball, output / tarball.name)
     patch = Path(__file__).with_name(args.name + '.patch')
+    toolkit = Path(__file__).resolve().parents[2]
     if args.name == 'gl-stereo':
         series = tree / 'debian/patches/series'
         series.parent.mkdir(exist_ok=True)
@@ -46,9 +47,12 @@ def main():
         with series.open('a') as stream:
             stream.write(patch_name + '\n')
         run('dpkg-source', '--before-build', str(tree))
+        authored = toolkit.parent / 'gl-stereo'
+        for name in ('gl-stereo-run', 'savers/controller.py', 'tests/launcher.py'):
+            if (tree / name).read_bytes() != (authored / name).read_bytes():
+                raise ValueError(f'{name}: the patched round source differs from gl-stereo in the recipe checkout')
     else:
         run('patch', '--batch', '--fuzz=0', '-p1', '-i', str(patch.resolve()), cwd=tree)
-    toolkit = Path(__file__).resolve().parents[2]
     if args.name == 'dxvk':
         # The published source has separate orig components and no vendor.xz.
         # Remove the inherited dpkg-source entry for that absent file.
