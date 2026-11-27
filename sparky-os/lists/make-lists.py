@@ -90,6 +90,7 @@ group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", ap
     # ORDER 252a: installed consumers for speech, privileged/cloud files, diffs and Markdown.
     'qt6-speech-speechd-plugin', 'speech-dispatcher', 'speech-dispatcher-espeak-ng',
     'kio-admin', 'kio-gdrive', 'kompare', 'markdownpart',
+    'drivesync',   # Google Drive synchronization beside KIO GDrive's browsing (queue row 299: "Add this to the final user ISO")
     'coolercontrol',   # fans and pumps (GPL-3; its repository is the vendor's: to package)
     # stereo editing and 3D work (Daniel, 2026-10-02): ours to package first, then Debian's
     'stereophotoview', 'sview', 'blender', 'freecad', 'paraview', 'hugin-tools', 'libimage-exiftool-perl',
