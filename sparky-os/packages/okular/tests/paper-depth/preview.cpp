@@ -7,11 +7,15 @@
 // The program prints its view's geometry once shown: "PREVIEW viewport X Y W H" in window coordinates.
 #include <QApplication>
 #include <QGraphicsView>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMainWindow>
 #include <QPageLayout>
 #include <QPainter>
 #include <QPrintPreviewWidget>
 #include <QPrinter>
+#include <QScreen>
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
@@ -49,6 +53,27 @@ int main(int argc, char **argv)
     const QString mode = argc > 1 ? QString::fromLatin1(argv[1]) : QStringLiteral("all");
     const double zoom = argc > 2 ? QString::fromLatin1(argv[2]).toDouble() : 2.0;
     const double scroll = argc > 3 ? QString::fromLatin1(argv[3]).toDouble() : 0.3;
+
+    if (mode == QLatin1String("screen-info")) {
+        QWidget widget;
+        widget.show();
+        QTimer::singleShot(500, &widget, [&] {
+            const QScreen *screen = widget.screen();
+            const QSizeF mm = screen->physicalSize();
+            const QJsonObject info{
+                {QStringLiteral("geometry"), QJsonArray{screen->size().width(), screen->size().height()}},
+                {QStringLiteral("physicalSize"), QJsonArray{mm.width(), mm.height()}},
+                {QStringLiteral("physicalDotsPerInch"), screen->physicalDotsPerInch()},
+                {QStringLiteral("logicalDotsPerInch"), screen->logicalDotsPerInch()},
+                {QStringLiteral("devicePixelRatio"), screen->devicePixelRatio()},
+                {QStringLiteral("widgetLogicalDpi"), QJsonArray{widget.logicalDpiX(), widget.logicalDpiY()}},
+            };
+            std::fputs(QJsonDocument(info).toJson(QJsonDocument::Compact).constData(), stdout);
+            std::fputc('\n', stdout);
+            app.quit();
+        });
+        return app.exec();
+    }
 
     if (mode == QLatin1String("probe")) {
         QMainWindow window;

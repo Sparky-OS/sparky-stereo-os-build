@@ -29,6 +29,8 @@ printf '[General]\nShowSidebar=false\nShowBottomBar=false\n[Notification Message
 printf '[Wallet]\nEnabled=false\n' > "$XDG_CONFIG_HOME/kwalletrc"
 if [ "${M2:-0}" = 1 ]; then
     python3 -I /tests/make-m2-fixture.py /tmp/display.edid /tmp/two-pages.odt
+    # The 2D screenshot should not depend on the Words text tool's own caret timer.
+    if [ "$CASE" = words-2d ]; then chmod a-w /tmp/two-pages.odt || exit 1; fi
     case "$CASE" in *-display|probe-override) export KWIN_VIRTUAL_OUTPUT_EDIDS=/tmp/display.edid ;; esac
     printf '[Interface]\nZoom=100\nZoomMode=0\n' > "$XDG_CONFIG_HOME/calligrawordsrc"
     cp "$XDG_CONFIG_HOME/calligrawordsrc" "$XDG_CONFIG_HOME/calligrarc"
@@ -84,7 +86,11 @@ probe-override)
     sleep 5
     place 'var w = workspace.activeWindow; w.frameGeometry = {x: 60, y: 40, width: 900, height: 520};' ;;
 words-*)
-    env "${env[@]}" WAYLAND_DEBUG=client QT_PLUGIN_PATH=/out/bin calligrawords -style PaperDepth /tmp/two-pages.odt > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
+    words_env=()
+    # KoDpi caches the active widget's DPI at first use, or 75 if the window has yet to activate.
+    # Give both startup paths the same DPI for the pixel comparison.
+    if [ "$CASE" = words-2d ]; then words_env=(QT_FONT_DPI=75); fi
+    env "${env[@]}" "${words_env[@]}" WAYLAND_DEBUG=client QT_PLUGIN_PATH=/out/bin calligrawords -style PaperDepth /tmp/two-pages.odt > "$OUT/program.out" 2> "$OUT/program.err" & prog=$!
     sleep 8
     if [ "$CASE" = words-scrolled ]; then
         place 'var w = workspace.activeWindow; w.setMaximize(false, false); w.frameGeometry = {x: 60, y: 40, width: 1500, height: 575};'
@@ -156,6 +162,10 @@ fi
 python3 -I /tests/kwin_windows.py "$OUT/kwin.log" > "$OUT/windows.json" 2> "$OUT/windows.err"
 python3 -I /tests/capture.py "$OUT/shot.png" > "$OUT/capture.json" 2> "$OUT/capture.err"
 kill "$prog" 2>/dev/null; wait "$prog" 2>/dev/null
+if [ "$CASE" = words-2d ]; then
+    # Read the unmodified platform DPI with a plain QWidget in the same KWin session.
+    env -u QT_FONT_DPI "${env[@]}" /out/bin/preview screen-info > "$OUT/screen-info.json" 2> "$OUT/screen-info.err" || exit 1
+fi
 [ -n "${other:-}" ] && { kill "$other" 2>/dev/null; wait "$other" 2>/dev/null; }
 kill "$kwin" 2>/dev/null; wait "$kwin" 2>/dev/null
 grep -a -E 'kde_stereo|element_limit|depth_state|set_desktop_depth|set_content|get_depth' "$OUT/program.err" > "$OUT/wire.txt" 2>/dev/null

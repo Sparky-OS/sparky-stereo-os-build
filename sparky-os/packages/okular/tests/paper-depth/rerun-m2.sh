@@ -10,6 +10,11 @@ prefix=${PREFIX:?use the lane prefix}
 red_image=$prefix:paper-depth-red
 green_image=$prefix:paper-depth-green
 [ -z "$(ls -A "$out")" ] || { echo "$out is not empty" >&2; exit 2; }
+record_load() {
+    printf 'load at %s %s: %s\n' "$1" "$(date -u +%FT%TZ)" "$(cut -d' ' -f1-3 /proc/loadavg)" >> "$out/load.txt"
+}
+record_load start
+trap 'record_load end' EXIT
 
 df -B1 --output=avail / /mnt/build /K3D | tee "$out/disk-before-red-image.txt"
 WITH_WORDS=1 PREFIX=$prefix-red "$here/rig-image.sh" "$base" "$red_image" "$repo" \

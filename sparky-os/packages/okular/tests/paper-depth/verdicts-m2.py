@@ -90,6 +90,8 @@ for label, directory in (("Debian Words", red), ("Stereo Words", green)):
     check(f"{label} both background papers follow the window", marks(background, "paper"),
           [background_shift, background_shift])
     match_all(f"{label} background desk follows the window", marks(background, "desk"), background_shift)
+check("Plain Qt widget sees the same 2D output metrics on both platforms",
+      read(green, "words-2d", "screen-info.json"), read(red, "words-2d", "screen-info.json"))
 check("Words 2D output matches Debian pixel for pixel", read(green, "words-2d", "baseline.json")["differing"], 0)
 
 sys.exit(1 if failures else 0)
