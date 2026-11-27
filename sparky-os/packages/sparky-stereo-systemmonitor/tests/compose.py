@@ -110,13 +110,15 @@ ALL = {"usage": ["usage"], "memory": ["usedVram", "totalVram"], "temperature": [
 WORD = {"usage": "LOCAL9", "memory": "LOCAL10", "temperature": "LOCAL11", "power": "LOCAL12"}
 try:
     from PIL import ImageFont
-    LAT = ImageFont.truetype("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", 13.333)
-    CJK = ImageFont.truetype("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 13.333, index=0)
+    LAT = ImageFont.truetype("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", 14.667)
+    CJK = ImageFont.truetype("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 14.667, index=0)
 except (ImportError, OSError) as error:
     sys.exit("the title width check needs python3-pil, fonts-noto-core and fonts-noto-cjk: %s" % error)
-# System Monitor's sidebar at its default width leaves about 126 px of text at Noto Sans 10 pt (measured on screen:
-# KDE's entries render 2-3 px under their full width, cut ones stop at 124-126 px); the presets' titles stay at 124
-SIDEBAR_TEXT = 124
+# System Monitor's sidebar at its default width keeps about 126 px for an entry's text whatever the font size (measured
+# on screen: cut entries stop at 124-127 px at 10 and at 11 pt); a fresh account made from SparkyLinux's
+# /etc/skel/.config/kdeglobals draws at Noto Sans 11 pt (14.667 px at 96 dpi), KDE's own default is 10 pt. Every title
+# stays at 120 px or less at 11 pt.
+SIDEBAR_TEXT = 120
 
 
 def width(text):

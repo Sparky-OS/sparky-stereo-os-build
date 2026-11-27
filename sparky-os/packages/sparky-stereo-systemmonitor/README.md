@@ -21,14 +21,14 @@ At a person's login, `/usr/libexec/sparky-stereo-systemmonitor/overview-pages --
 - for each card, whether its driver reports usage, video memory, temperature and power: AMD from `gpu_busy_percent`, `mem_info_vram_used` and `mem_info_vram_total`, and the `amdgpu` hwmon chip's `temp1` and `power1` (`power1_input` or `power1_average`); NVIDIA from `nvidia-smi dmon -s pucm`, where a column printed as `-` is not reported (ksystemstats reads it as 0); Intel usage only, from the i915 PMU through `ksystemstats_intel_helper`, which needs its CAP_PERFMON or `perf_event_paranoid` at 0 or below;
 - the processor threads, from `/proc/cpuinfo`.
 
-It writes the presets into the person's System Monitor folder (`~/.local/share/plasma-systemmonitor`), titled by what they show so the title fits the sidebar at its default width in each of the ten languages:
+It writes the presets into the person's System Monitor folder (`~/.local/share/plasma-systemmonitor`), titled by what they show so the title fits the sidebar at its default width in each of the ten languages, at KDE's 10 pt and at the 11 pt SparkyLinux's account template gives:
 
 | Preset (English title) | For |
 |---|---|
-| 1 GPU, all threads | one card (the card that draws the desktop), up to 8 threads in one chart, a line for each |
-| 1 GPU, per thread | one card, a chart for each thread |
-| N GPUs, all threads | every display device, side by side, four to a row (only with two or more) |
-| N GPUs, per thread | every display device, and a chart for each thread (only with two or more) |
+| 1 GPU, CPU | one card (the card that draws the desktop), the processor's threads in one chart, a line for each (up to 8 threads) |
+| 1 GPU, threads | one card, a chart for each thread |
+| N GPUs, CPU | every display device, side by side, four to a row (only with two or more) |
+| N GPUs, threads | every display device, and a chart for each thread (only with two or more) |
 
 Each thread is labelled "Thread N", N its processor number plus one, one label per logical processor; the per-thread charts are laid out in the page's own rows, not in KDE's facegrid, whose cells share one configuration group and showed two threads under one name.
 Every preset keeps KDE's Memory, Swap, Disks, Networks and Applications.
@@ -51,7 +51,7 @@ When the computer cannot be read (no PCI devices in sysfs, no processor in `/pro
 
 Tests:
 -------------
-`tests/run.sh` in a Debian testing container with python3, libkf6config-bin, ksystemstats and sparky-stereo-problems: the ten catalogues (`tests/catalogs.py`), then `tests/compose.py` on fixture computers (`tests/machines.py`: the two test targets as read on 2026-11-27, and synthetic computers with real IDs: Intel with and without perf, Intel on xe, an Intel and NVIDIA laptop whose NVIDIA reports no power, nouveau, NVIDIA without nvidia-smi, a virtual machine, a server with a BMC, five AMD cards, SMT with core ids with gaps and a processor offline, a computer with no PCI devices) and the login flow; each title is measured in its language's font against the sidebar's room.
+`tests/run.sh` in a Debian testing container with python3, libkf6config-bin, ksystemstats and sparky-stereo-problems: the ten catalogues (`tests/catalogs.py`), then `tests/compose.py` on fixture computers (`tests/machines.py`: the two test targets as read on 2026-11-27, and synthetic computers with real IDs: Intel with and without perf, Intel on xe, an Intel and NVIDIA laptop whose NVIDIA reports no power, nouveau, NVIDIA without nvidia-smi, a virtual machine, a server with a BMC, five AMD cards, SMT with core ids with gaps and a processor offline, a computer with no PCI devices) and the login flow; each title is measured in its language's font at 11 pt against the sidebar's room.
 
 Credits:
 -------------
