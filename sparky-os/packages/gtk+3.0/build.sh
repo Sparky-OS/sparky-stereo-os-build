@@ -14,10 +14,13 @@
 #   IMAGE     the build image (default sparky-lc-migration:20261020)
 # GTK's own test suite is not run in this build (nocheck): the lane's proof runs it on the tree before and after the
 # patches, as Debian's build runs it.
+# libgtk-3-0-udeb is not built (noudeb, as +stereo3d1's build-in-container.sh): Debian-Installer's GTK front end, which
+# the edition's installer, Calamares, does not use; its udeb dependencies cannot be solved with the deb packages in one
+# link-gate root (libc6-udeb and libc6 ship the same files), and the gate stops on it.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/../.." && pwd)
-[ $# -ge 3 ] || { sed -n '/^#   build.sh/,/^# patches, as/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
+[ $# -ge 3 ] || { sed -n '/^#   build.sh/,/^# link-gate root/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
 WORK=$(mkdir -p "$1" && cd "$1" && pwd) PREV=$(realpath "$2") REPO=$(realpath "$3") IMG=${4:-sparky-lc-migration:20261020}
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 if [ -z "${SPARKY_LC_ARCHIVE_DIR:-}" ]; then
@@ -32,4 +35,5 @@ bash "$HERE/make-source-2.sh" "$PREV" "$WORK/source" "$IMG"
 mkdir -p "$WORK/previous"
 find "$PREV" -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*' -exec cp {} "$WORK/previous/" \;
 SPARKY_LC_PREVIOUS_DIR=$WORK/previous SPARKY_DEB_BUILD_OPTIONS=${SPARKY_DEB_BUILD_OPTIONS:-nocheck} \
+	SPARKY_DEB_BUILD_PROFILES=${SPARKY_DEB_BUILD_PROFILES:-noudeb} \
 	bash "$TOP/release/build-from-lc-dsc.sh" "$WORK/source/gtk+3.0_3.24.52-3+stereo3d2+lc1.dsc" amd64 "$IMG" "$REPO" "$WORK/out"
