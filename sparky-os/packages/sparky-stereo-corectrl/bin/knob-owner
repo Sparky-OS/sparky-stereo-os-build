@@ -80,6 +80,15 @@ def log(text):
     print("knob-owner: " + text, file=sys.stderr, flush=True)
 
 
+LOGGED = set()
+
+
+def log_once(text):
+    if text not in LOGGED:
+        LOGGED.add(text)
+        log(text)
+
+
 def read(path, default=""):
     try:
         with open(path) as f:
@@ -294,7 +303,9 @@ def config_home(pid):
 
 
 def corectrl_folders():
-    """The profile folders of the CoreCtrl windows running on this machine (CoreCtrl's own program, any person)."""
+    """The profile folders of the CoreCtrl windows running on this machine (CoreCtrl's own program, any person), each read
+    through the CoreCtrl process's own root (/proc/PID/root): the folder as CoreCtrl sees it, whatever this service's own
+    view (its PrivateTmp hides a person's /tmp; ProtectHome keeps the homes read only)."""
     if FIXTURE is not None:
         config = fixture("corectrl-config")
         return [ROOT + config + "/corectrl/profiles"] if config else []
@@ -310,7 +321,7 @@ def corectrl_folders():
             continue
         config = config_home(pid)
         if config:
-            folder = os.path.join(config, "corectrl", "profiles")
+            folder = "/proc/%s/root%s" % (pid, os.path.join(config, "corectrl", "profiles"))
             if folder not in folders:
                 folders.append(folder)
     return folders
@@ -461,7 +472,11 @@ def corectrl_facts(bus, cards, apps=None):
     folders = corectrl_folders()
     out["folders"] = folders
     stacks = []
+    if not folders:
+        log_once("no CoreCtrl window was found while its helper is started; CoreCtrl's defaults are taken (every setting held)")
     for folder in folders or [None]:
+        if folder and not os.path.isdir(folder):
+            log_once("CoreCtrl's profiles at %s cannot be read; CoreCtrl's defaults are taken (every setting held)" % folder)
         profiles, unreadable = load_profiles(folder) if folder else ([], [])
         out["unreadable"] += unreadable
         glob = next((p for p in profiles if p["exe"] == GLOBAL), None)
