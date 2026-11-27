@@ -36,7 +36,7 @@ When the program lets go, the daemon gets the setting back (power-profiles-daemo
 
 Known limits, said where they apply:
 - tuned's video plugin has no runtime instances, so a radeon-driven card's power method cannot be taken from tuned: said (LOCAL6).
-- At a tuned profile switch tuned writes the governor once before the processors are taken again.
+- At each of tuned's own profile switches tuned writes its profile's governor, and when the processors are taken again (about 60 ms later on the bench) it writes back the value it found, as tuned does whenever a device leaves an instance; between switches it writes nothing. Keeping tuned off at the switch itself needs tuned to know the held devices when it loads a profile.
 - CoreCtrl's per-profile switch for a component is not read: while CoreCtrl runs it holds the processor and every AMD card.
 - CoreCtrl and LACT on the same card: both write; said (LOCAL4), and the card is left to the person.
 
