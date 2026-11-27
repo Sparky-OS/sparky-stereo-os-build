@@ -48,6 +48,7 @@ def main():
         run('dpkg-source', '--before-build', str(tree))
     else:
         run('patch', '--batch', '--fuzz=0', '-p1', '-i', str(patch.resolve()), cwd=tree)
+    toolkit = Path(__file__).resolve().parents[2]
     if args.name == 'dxvk':
         # The published source has separate orig components and no vendor.xz.
         # Remove the inherited dpkg-source entry for that absent file.
@@ -55,6 +56,12 @@ def main():
         if listing.read_text().strip() != 'debian/vendor.xz' or (tree / 'debian/vendor.xz').exists():
             raise ValueError('Review the changed DXVK vendor input before preparing the source')
         listing.unlink()
+        # Use the edition's current link and start gate with its configured disk floors.
+        destination = tree / 'debian/sparky-lean-toolkit'
+        for pattern in ('*.py', '*.java', '*.zig', 'smoke.tsv'):
+            for path in (toolkit / 'lean').glob(pattern):
+                shutil.copy2(path, destination / 'lean' / path.name)
+        shutil.copy2(toolkit / 'repo/provenance.sh', destination / 'provenance.sh')
 
     changelog = tree / 'debian/changelog'
     timestamp = format_datetime(datetime.datetime.fromtimestamp(args.epoch, datetime.timezone.utc))
@@ -62,7 +69,6 @@ def main():
                f'  * {summary}\n\n'
                f' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {timestamp}\n\n')
     changelog.write_text(heading + changelog.read_text())
-    toolkit = Path(__file__).resolve().parents[2]
     run('python3', str(toolkit / 'repo/reproducible.py'), 'normalize-tree', str(args.epoch), str(tree))
     run('dpkg-source', '-b', 'tree', cwd=output)
 
