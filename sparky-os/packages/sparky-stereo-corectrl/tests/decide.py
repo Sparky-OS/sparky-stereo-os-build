@@ -22,7 +22,7 @@ def write(root, path, text):
 
 
 def machine(cpu="acpi-cpufreq", cards=(("card0", SLOT, "amdgpu", "0x1002"),), corectrl="no", lactd="inactive", lact=None,
-            ppd="inactive", dpm=None, tuned="inactive"):
+            ppd="inactive", dpm=None, tuned="inactive", record=None):
     root = tempfile.mkdtemp(prefix="knob-owner-")
     write(root, "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor", "schedutil\n")
     if cpu in ("amd_pstate", "intel_pstate"):
@@ -39,6 +39,8 @@ def machine(cpu="acpi-cpufreq", cards=(("card0", SLOT, "amdgpu", "0x1002"),), co
         write(root, "/etc/lact/config.yaml", lact)
     if dpm is not None:
         write(root, "/var/lib/power-profiles-daemon/state.ini", "[State]\nProfile=balanced\n\n[Actions]\namdgpu_dpm=%s\n" % dpm)
+    if record is not None:
+        write(root, "/var/lib/sparky-stereo-corectrl/ppd-actions-off.json", record)
     for name, value in (("corectrl", corectrl), ("lactd", lactd), ("power-profiles-daemon", ppd), ("tuned", tuned)):
         write(root, "/fixture/" + name, value + "\n")
     return root
@@ -60,48 +62,51 @@ CARD = "card0 (PCI %s)" % SLOT
 KEY = "0000-03-00.0"
 
 CASES = [
-    # name, machine, ppd_args, tuned_cpu, notices
+    # name, machine, ppd_args, ppd_actions_off, tuned_cpu, notices
     ("a10: no processor driver of power-profiles-daemon, amdgpu_dpm off, CoreCtrl running",
-     machine(corectrl="started", ppd="active"), [], False, {}),
+     machine(corectrl="started", ppd="active"), [], [], False, {}),
     ("zen: amd_pstate active, CoreCtrl running", machine(cpu="amd_pstate", corectrl="started", ppd="active"),
-     ["--block-driver=amd_pstate", "--block-driver=intel_pstate"], False, {"cpu": ["LOCAL2", "CoreCtrl"]}),
-    ("zen: amd_pstate active, CoreCtrl not running", machine(cpu="amd_pstate", ppd="active"), [], False, {}),
+     ["--block-driver=amd_pstate", "--block-driver=intel_pstate"], [], False, {"cpu": ["LOCAL2", "CoreCtrl"]}),
+    ("zen: amd_pstate active, CoreCtrl not running", machine(cpu="amd_pstate", ppd="active"), [], [], False, {}),
     ("intel_pstate active, CoreCtrl running", machine(cpu="intel_pstate", corectrl="started", ppd="active"),
-     ["--block-driver=amd_pstate", "--block-driver=intel_pstate"], False, {"cpu": ["LOCAL2", "CoreCtrl"]}),
+     ["--block-driver=amd_pstate", "--block-driver=intel_pstate"], [], False, {"cpu": ["LOCAL2", "CoreCtrl"]}),
     ("amdgpu_dpm turned on, CoreCtrl running", machine(corectrl="started", ppd="active", dpm="true"),
-     ["--block-action=amdgpu_dpm"], False, {"card-" + KEY: ["LOCAL3", "CoreCtrl", CARD]}),
-    ("amdgpu_dpm turned off in the state file, CoreCtrl running", machine(corectrl="started", ppd="active", dpm="false"), [], False, {}),
+     [], ["amdgpu_dpm"], False, {"card-" + KEY: ["LOCAL3", "CoreCtrl", CARD]}),
+    ("amdgpu_dpm turned off in the state file, CoreCtrl running", machine(corectrl="started", ppd="active", dpm="false"), [], [], False, {}),
     ("LACT holds the card (default list), amdgpu_dpm on", machine(lactd="active", lact=LACT_DEFAULT, ppd="active", dpm="true"),
-     ["--block-action=amdgpu_dpm"], False, {"card-" + KEY: ["LOCAL3", "LACT", CARD]}),
+     [], ["amdgpu_dpm"], False, {"card-" + KEY: ["LOCAL3", "LACT", CARD]}),
     ("LACT holds the card (current profile), amdgpu_dpm on", machine(lactd="active", lact=LACT_PROFILE, ppd="active", dpm="true"),
-     ["--block-action=amdgpu_dpm"], False, {"card-" + KEY: ["LOCAL3", "LACT", CARD]}),
-    ("LACT's settings name another card", machine(lactd="active", lact=LACT_OTHER, ppd="active", dpm="true"), [], False, {}),
-    ("LACT with no card settings (as installed)", machine(lactd="active", lact=LACT_EMPTY, ppd="active", dpm="true"), [], False, {}),
-    ("lactd stopped", machine(lactd="inactive", lact=LACT_DEFAULT, ppd="active", dpm="true"), [], False, {}),
-    ("CoreCtrl and LACT on one card", machine(corectrl="started", lactd="active", lact=LACT_DEFAULT, ppd="active"), [], False,
+     [], ["amdgpu_dpm"], False, {"card-" + KEY: ["LOCAL3", "LACT", CARD]}),
+    ("LACT's settings name another card", machine(lactd="active", lact=LACT_OTHER, ppd="active", dpm="true"), [], [], False, {}),
+    ("LACT with no card settings (as installed)", machine(lactd="active", lact=LACT_EMPTY, ppd="active", dpm="true"), [], [], False, {}),
+    ("lactd stopped", machine(lactd="inactive", lact=LACT_DEFAULT, ppd="active", dpm="true"), [], [], False, {}),
+    ("CoreCtrl and LACT on one card", machine(corectrl="started", lactd="active", lact=LACT_DEFAULT, ppd="active"), [], [], False,
      {"both-" + KEY: ["LOCAL4", "CoreCtrl", "LACT", CARD]}),
-    ("LACT's settings unreadable", machine(lactd="active", lact="gpus: [\n", ppd="active"), [], False,
+    ("LACT's settings unreadable", machine(lactd="active", lact="gpus: [\n", ppd="active"), [], [], False,
      {"lact-config": ["LOCAL8", "/etc/lact/config.yaml"]}),
     ("tuned instead of power-profiles-daemon, CoreCtrl running", machine(cpu="amd_pstate", corectrl="started", ppd="absent", tuned="active"),
-     [], True, {"cpu": ["LOCAL2", "CoreCtrl"]}),
+     [], [], True, {"cpu": ["LOCAL2", "CoreCtrl"]}),
     ("tuned with a radeon card, CoreCtrl running", machine(cards=(("card0", SLOT, "radeon", "0x1002"),), corectrl="started", ppd="absent", tuned="active"),
-     [], True, {"cpu": ["LOCAL2", "CoreCtrl"], "tuned-radeon-" + KEY: ["LOCAL6", CARD, "CoreCtrl"]}),
+     [], [], True, {"cpu": ["LOCAL2", "CoreCtrl"], "tuned-radeon-" + KEY: ["LOCAL6", CARD, "CoreCtrl"]}),
     ("an NVIDIA card is not an AMD card", machine(cards=(("card0", SLOT, "nvidia", "0x10de"),), corectrl="started", ppd="active", dpm="true"),
-     [], False, {}),
-    ("power-profiles-daemon not installed, no tuned", machine(cpu="amd_pstate", corectrl="started", ppd="absent"), [], False, {}),
+     [], [], False, {}),
+    ("power-profiles-daemon not installed, no tuned", machine(cpu="amd_pstate", corectrl="started", ppd="absent"), [], [], False, {}),
+    ("amdgpu_dpm turned off here earlier (the person's choice recorded), CoreCtrl running",
+     machine(corectrl="started", ppd="active", dpm="false", record='{"amdgpu_dpm": true}'), [], ["amdgpu_dpm"], False,
+     {"card-" + KEY: ["LOCAL3", "CoreCtrl", CARD]}),
 ]
 
 
 def main():
     failed = 0
-    for name, root, ppd, tuned, notices in CASES:
+    for name, root, ppd, off, tuned, notices in CASES:
         got = plan(root)
-        ok = got["ppd_args"] == ppd and got["tuned_cpu"] == tuned and got["notices"] == notices
+        ok = got["ppd_args"] == ppd and got["ppd_actions_off"] == off and got["tuned_cpu"] == tuned and got["notices"] == notices
         print("%s  %s" % ("ok  " if ok else "FAIL", name))
         if not ok:
             failed += 1
-            print("      want ppd %s tuned %s notices %s" % (ppd, tuned, notices))
-            print("      got  ppd %s tuned %s notices %s" % (got["ppd_args"], got["tuned_cpu"], got["notices"]))
+            print("      want ppd %s off %s tuned %s notices %s" % (ppd, off, tuned, notices))
+            print("      got  ppd %s off %s tuned %s notices %s" % (got["ppd_args"], got["ppd_actions_off"], got["tuned_cpu"], got["notices"]))
     print("%d of %d cases failed" % (failed, len(CASES)))
     return 1 if failed else 0
 

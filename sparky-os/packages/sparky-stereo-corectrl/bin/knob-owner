@@ -11,9 +11,11 @@
 # plugin. Two writers make the power profile shown in Plasma a lie for half a second at a time, and nobody is told.
 # While CoreCtrl or LACT holds a setting, this keeps the power profile's daemon off it and tells the person once which program
 # holds it; when the program lets go, the daemon gets the setting back.
-#   power-profiles-daemon: a runtime drop-in (/run) adds --block-driver=amd_pstate --block-driver=intel_pstate, and
-#                          --block-action=amdgpu_dpm, to its own command line, then restarts it (its options in
-#                          src/power-profiles-daemon.c; it has no runtime switch for a driver)
+#   power-profiles-daemon: a runtime drop-in (/run) adds --block-driver=amd_pstate --block-driver=intel_pstate to its own
+#                          command line, then restarts it (it has no runtime switch for a driver); its amdgpu_dpm action is
+#                          turned off through its own SetActionEnabled and back on when the hold ends, from the person's
+#                          choice recorded here (a --block-action would be saved as the person's "off": save_configuration
+#                          writes each action's runtime state into [Actions], src/power-profiles-daemon.c)
 #   tuned:                 a runtime cpu instance of its own takes the held processors from the profile's cpu instance
 #                          (controller.py instance_create, instance_acquire_devices); a radeon card cannot be taken
 #                          (its video plugin has no runtime instances), which is said
@@ -44,7 +46,9 @@ LACT_CONFIG = ROOT + "/etc/lact/config.yaml"
 CORECTRL_HELPER = "/usr/libexec/corectrl/corectrl_helper"
 LACT_PROGRAM = "/usr/bin/lact"
 CPU_DRIVERS = ("amd_pstate", "intel_pstate")
-OURS = ["--block-driver=amd_pstate", "--block-driver=intel_pstate", "--block-action=amdgpu_dpm"]
+OURS = ["--block-driver=amd_pstate", "--block-driver=intel_pstate"]
+ACTIONS_OFF = STATE + "/ppd-actions-off.json"   # the person's choice of each action this turned off, to give back
+PPD_BUS = ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.UPower.PowerProfiles")
 TUNED_INSTANCE = "sparky_stereo_knob_owner"
 PROGRAMS = {"CoreCtrl": CORECTRL_HELPER, "LACT": LACT_PROGRAM}
 
@@ -108,6 +112,20 @@ def ppd_action_enabled(action):
         return config.getboolean("Actions", action, fallback=False)
     except (configparser.Error, ValueError):
         return False
+
+
+def actions_off():
+    try:
+        with open(ACTIONS_OFF) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def ppd_preference(action):
+    """The person's choice for an action: as recorded when it was turned off here, else power-profiles-daemon's own file."""
+    recorded = actions_off()
+    return recorded[action] if action in recorded else ppd_action_enabled(action)
 
 
 def lact_slots():
@@ -192,7 +210,7 @@ def facts(bus):
         "cards": amd_cards(),
         "ppd_loaded": bus.unit_loaded(PPD_UNIT),
         "ppd_cpu_driver": ppd_cpu_driver(),
-        "ppd_amdgpu_dpm": ppd_action_enabled("amdgpu_dpm"),
+        "ppd_amdgpu_dpm": ppd_preference("amdgpu_dpm"),
         "tuned": bus.has_owner("com.redhat.tuned"),
     }
 
@@ -217,11 +235,12 @@ def decide(f):
             holders[slot].append("LACT")
     held_cards = [slot for slot in sorted(cards) if holders[slot]]
     ppd = []
+    ppd_off = []
     if f["ppd_loaded"]:
         if holders["cpu"] and f["ppd_cpu_driver"]:
             ppd += ["--block-driver=%s" % d for d in CPU_DRIVERS]
         if held_cards and f["ppd_amdgpu_dpm"]:
-            ppd.append("--block-action=amdgpu_dpm")
+            ppd_off.append("amdgpu_dpm")
     tuned_cpu = bool(holders["cpu"]) and f["tuned"]
     notices = {}
     if (ppd and ppd[0].startswith("--block-driver")) or tuned_cpu:
@@ -230,13 +249,14 @@ def decide(f):
         name = "%s (PCI %s)" % (cards[slot]["card"], slot)
         if len(holders[slot]) > 1:
             notices["both-" + key_of(slot)] = ["LOCAL4", holders[slot][0], holders[slot][1], name]
-        if "--block-action=amdgpu_dpm" in ppd:
+        if "amdgpu_dpm" in ppd_off:
             notices["card-" + key_of(slot)] = ["LOCAL3", holders[slot][0], name]
         if f["tuned"] and cards[slot]["driver"] == "radeon":
             notices["tuned-radeon-" + key_of(slot)] = ["LOCAL6", name, holders[slot][0]]
     if f["lactd"] and f["lact_slots"] is None:
         notices["lact-config"] = ["LOCAL8", LACT_CONFIG[len(ROOT):]]
-    return {"holders": {k: v for k, v in holders.items() if v}, "ppd_args": ppd, "tuned_cpu": tuned_cpu, "notices": notices}
+    return {"holders": {k: v for k, v in holders.items() if v}, "ppd_args": ppd, "ppd_actions_off": ppd_off,
+            "tuned_cpu": tuned_cpu, "notices": notices}
 
 
 # --- doing it -------------------------------------------------------------------------------------------------------------
@@ -302,6 +322,34 @@ def apply_ppd(args):
     if not stopping:
         engine(["run", "--machine", PKG, "ppd-restart", "LOCAL5", "--", "systemctl", "try-restart", PPD_UNIT])
     log("power-profiles-daemon %s" % ("now runs with " + " ".join(args) if args else "has its settings back"))
+    return True
+
+
+def apply_ppd_actions(bus, off):
+    """Turns each held action off through power-profiles-daemon's SetActionEnabled, recording the person's choice first, and
+    gives that choice back when the hold ends. Needs the daemon running (it is never started for this)."""
+    from gi.repository import GLib
+    if not bus.has_owner(PPD_BUS[0]):
+        return False
+    recorded = actions_off()
+    changed = False
+    for action in sorted(set(off) | set(recorded)):
+        if action in off:
+            if action not in recorded:
+                recorded[action] = True
+                changed = True
+            if ppd_action_enabled(action):
+                bus.call(*PPD_BUS, "SetActionEnabled", GLib.Variant("(sb)", (action, False)))
+                log("power-profiles-daemon's %s is off while its card is held" % action)
+        else:
+            bus.call(*PPD_BUS, "SetActionEnabled", GLib.Variant("(sb)", (action, recorded.pop(action))))
+            changed = True
+            log("power-profiles-daemon's %s is the person's again" % action)
+    if changed:
+        os.makedirs(STATE, exist_ok=True)
+        with open(ACTIONS_OFF + ".new", "w") as f:
+            json.dump(recorded, f)
+        os.replace(ACTIONS_OFF + ".new", ACTIONS_OFF)
     return True
 
 
@@ -438,6 +486,7 @@ class Watch:
         plan = decide(f)
         try:
             apply_ppd(plan["ppd_args"])
+            apply_ppd_actions(self.bus, plan["ppd_actions_off"])
         except Exception as error:
             log("power-profiles-daemon: %s" % error)
             engine(["keep", "--machine", PKG, "ppd", "LOCAL9", str(error)])
@@ -456,6 +505,7 @@ class Watch:
     def stop(self, *args):
         try:
             apply_ppd([])
+            apply_ppd_actions(self.bus, [])
             if self.bus.has_owner("com.redhat.tuned"):
                 apply_tuned(self.bus, False)
         finally:

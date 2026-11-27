@@ -27,11 +27,11 @@ To see the window at login: untick "Start minimized on system tray" in CoreCtrl.
 | Setting | Held by | Kept off it |
 | --- | --- | --- |
 | The processor's governor and energy preference | CoreCtrl, from the moment its helper is started until it stops | power-profiles-daemon's amd_pstate and intel_pstate drivers (`--block-driver`, a runtime drop-in in `/run`); tuned's cpu plugin (a runtime cpu instance of ours takes the processors) |
-| An AMD card's power level | CoreCtrl while its helper runs (every AMD card); LACT for each card its current settings name | power-profiles-daemon's amdgpu_dpm action (`--block-action`), when the person turned it on |
+| An AMD card's power level | CoreCtrl while its helper runs (every AMD card); LACT for each card its current settings name | power-profiles-daemon's amdgpu_dpm action, when the person turned it on: turned off through the daemon's own `SetActionEnabled` (no restart) and turned on again when the hold ends, from the person's choice recorded in `/var/lib/sparky-stereo-corectrl/ppd-actions-off.json` (a `--block-action` would be saved by the daemon as the person's "off") |
 
 Nothing changes where the daemon would not have written the setting anyway: power-profiles-daemon has no processor driver on processors without amd_pstate or intel_pstate in active mode, and its amdgpu_dpm action is off unless turned on.
 The person is told once, through the edition's problems engine (a notice, until dismissed), which program holds the setting; a notice ends when its program is removed.
-When the program lets go, the daemon gets the setting back (power-profiles-daemon is restarted with its own command line, tuned's instance is removed).
+When the program lets go, the daemon gets the setting back (power-profiles-daemon is restarted with its own command line, its action is turned on again, tuned's instance is removed).
 `knob-owner status` prints what is held, by whom, and what each daemon is kept off.
 
 Known limits, said where they apply:
