@@ -778,9 +778,10 @@ def check(as_root=None):
                 kinds.add(kind)
     except OSError:
         pass
-    if not units and handheld:
+    # a unit the firmware described is not yet an IOMMU in use: devices are behind it only when it has groups
+    if (not units or not kinds) and handheld:
         rows.append(('iommu', 'met', text(s, 'LOCAL183')))
-    elif not units:
+    elif not units or not kinds:
         rows.append(('iommu', 'not-met', text(s, 'LOCAL159')))
     elif 'identity' in kinds:
         rows.append(('iommu', 'not-met', text(s, 'LOCAL158')))
