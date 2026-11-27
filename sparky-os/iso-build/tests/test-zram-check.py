@@ -314,6 +314,17 @@ class Packages(Fixtures):
                                           '/usr/share/man/man8/x.8': 'zramctl --find --size 4G\n',
                                           '/usr/share/bash-completion/completions/zramctl': 'zramctl --size 4G\n'}))
 
+    def test_the_lean_code_record_of_a_package_is_not_read(self):
+        # Round r1127a: sparky-stereo-kernel-settings 20261127.1 gained /etc/modprobe.d/sparky-stereo-nopcsp.conf, and its
+        # Lean Code record (one line listing every path of the package) then read as "modprobe ... zram".
+        record = ('{"files":[{"path":"/etc/modprobe.d/sparky-stereo-nopcsp.conf"},'
+                  '{"path":"/usr/lib/systemd/system/sparky-stereo-kernel-settings-zram-leftover.service"}],'
+                  '"format":"lc1"}\n')
+        self.assertPassed(self.deb(files={'/usr/share/dpkg-stereo/lc/fixture/all.json': record}))
+        # the same line where it is run is still refused
+        self.assertRefused(self.deb(files={'/usr/bin/x': '#!/bin/sh\nmodprobe -q zram\n'}, modes={'/usr/bin/x': 0o755}),
+                           'the zram module loaded')
+
     def test_clean_package_unreadable_package_and_companions(self):
         clean = self.deb(name='clean', files={'/usr/bin/x': '#!/bin/sh\necho ok\n'})
         broken = self.dir / 'broken_1.0_all.deb'
