@@ -401,18 +401,21 @@ def threads_face(p, threads, many):
 
 
 def gpu_card(p, gpu):
-    sections = []
+    """A card's two sections, side by side in its column: the usage chart titled "GPU n" and the text face (name,
+    video memory, temperature, power) titled with the note of what is not reported; without usage, the text face
+    titled "GPU n" and the note on its own. Two sections keep the note's whole sentence readable."""
     name = p.text("LOCAL7", str(gpu.index + 1))
     base = "gpu/gpu%d/" % gpu.index
-    if "usage" in gpu.ids:
-        sections.append(p.face("org.kde.ksysguard.linechart", name, [base + "usage"],
-                               general={"showLegend": "false", **range100()}))
     shown = [base + "name"] + [base + i for s in ("memory", "temperature", "power") for i in gpu.ids.get(s, [])]
-    sections.append(p.face("org.kde.ksysguard.textonly", name, shown, show_title="usage" not in gpu.ids))
     missing = gpu.missing()
-    if missing:
-        sections.append(p.face("org.kde.ksysguard.textonly",
-                               p.text("LOCAL8", p.listing(["LOCAL%d" % (9 + SENSORS.index(s)) for s in missing]))))
+    note = p.text("LOCAL8", p.listing(["LOCAL%d" % (9 + SENSORS.index(s)) for s in missing])) if missing else None
+    if "usage" in gpu.ids:
+        return [p.face("org.kde.ksysguard.linechart", name, [base + "usage"],
+                       general={"showLegend": "false", **range100()}),
+                p.face("org.kde.ksysguard.textonly", note or name, shown, show_title=note is not None)]
+    sections = [p.face("org.kde.ksysguard.textonly", name, shown)]
+    if note:
+        sections.append(p.face("org.kde.ksysguard.textonly", note))
     return sections
 
 
