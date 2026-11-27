@@ -308,8 +308,11 @@ def apply_ppd(args):
 def apply_tuned(bus, hold):
     """Moves the held processors out of the profile's cpu instance into an empty instance of our own, or gives them back."""
     from gi.repository import GLib
-    call = lambda method, sig, args, reply: bus.call("com.redhat.tuned", "/Tuned", "com.redhat.tuned.control", method,
-                                                     GLib.Variant(sig, args) if sig else None, reply)
+
+    def call(method, sig, args, reply):
+        # each method of tuned's control interface returns one structure (controller.py @exports.export(in, out))
+        return bus.call("com.redhat.tuned", "/Tuned", "com.redhat.tuned.control", method, GLib.Variant(sig, args),
+                        "(%s)" % reply)[0]
     ok, _, instances = call("get_instances", "(s)", ("cpu",), "(bsa(ss))")
     if not ok:
         return False
@@ -343,8 +346,18 @@ def told_path():
     return os.path.join(STATE, "told.json")
 
 
+CONFLICTS = ("both-", "lact-config", "tuned-radeon-")   # a notice of a conflict ends with the conflict
+
+
+def program_of(key, args):
+    if key == "lact-config":
+        return "LACT"
+    return next((p for p in PROGRAMS if p in args[1:]), None)
+
+
 def tell(notices):
-    """Keeps each new notice once (the notifier shows it until the person dismisses it); forgets one whose program is gone."""
+    """Keeps each new notice once (the notifier shows it until the person dismisses it). A notice of a conflict ends when
+    the conflict does; one that says which program holds a setting ends when that program is removed."""
     try:
         with open(told_path()) as f:
             told = json.load(f)
@@ -359,8 +372,8 @@ def tell(notices):
     for key, args in list(told.items()):
         if key in notices:
             continue
-        program = next((p for p, path in PROGRAMS.items() if p in args[1:]), None)
-        if program and not os.path.exists(ROOT + PROGRAMS[program]):
+        program = program_of(key, args)
+        if key.startswith(CONFLICTS) or (program and not os.path.exists(ROOT + PROGRAMS[program])):
             engine(["clear", "--machine", PKG, key])
             del told[key]
             changed = True
