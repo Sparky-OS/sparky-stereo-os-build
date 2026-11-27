@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The ten catalogues of the pages' words and of the problem: the same keys, the same number of %s per key, no empty
 # sentence, not English where English is not the language, except the words KDE itself leaves as in English
-# (CPU, GPU, the list separator, Swap, Applications) (the edition's required languages: en pl pt_BR fr de es ja ko zh_CN
+# (CPU, GPU, "1 GPU", the list separator, Swap, Applications, "Thread %s") (the edition's required languages: en pl pt_BR fr de es ja ko zh_CN
 # zh_TW).
 import os
 import re
@@ -11,7 +11,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIRED = ["en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW"]
-SAME_AS_ENGLISH = {("lang", "LOCAL5"), ("lang", "LOCAL7"), ("lang", "LOCAL13"), ("lang", "LOCAL17"), ("lang", "LOCAL20")}
+SAME_AS_ENGLISH = {("lang", "LOCAL1"), ("lang", "LOCAL2"), ("lang", "LOCAL5"), ("lang", "LOCAL7"), ("lang", "LOCAL13"), ("lang", "LOCAL17"),
+                   ("lang", "LOCAL20"), ("lang", "LOCAL23")}
 
 
 def load(folder, lang):

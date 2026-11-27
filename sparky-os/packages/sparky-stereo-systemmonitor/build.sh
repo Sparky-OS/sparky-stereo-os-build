@@ -11,7 +11,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-systemmonitor
-VERSION=0.1.0+lc1
+VERSION=0.1.1+lc1
 IMAGE=${SPARKY_BUILD_IMAGE:?set SPARKY_BUILD_IMAGE to the build image (see the header)}
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
@@ -53,8 +53,9 @@ Homepage: https://sparkylinux.org
 Description: System Monitor's Overview fitted to the computer it runs on
  At a person's first login, the graphics cards and processor threads of
  the computer are read, as System Monitor's own sensor service reads them,
- and four Overview presets are written for it (one graphics card or every
- one, few or many processor threads). The one that fits the computer
+ and Overview presets are written for it (one graphics card, or every one
+ where it has two or more; all threads in one chart, or a chart per
+ thread, each thread under its own name). The one that fits the computer
  becomes the page System Monitor opens with, also from Ctrl+Alt+Del; KDE's
  Overview and the other presets stay one choice away in Edit Pages, and
  the person's own choice afterwards is kept. Each card shows its usage,

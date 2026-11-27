@@ -21,22 +21,23 @@ At a person's login, `/usr/libexec/sparky-stereo-systemmonitor/overview-pages --
 - for each card, whether its driver reports usage, video memory, temperature and power: AMD from `gpu_busy_percent`, `mem_info_vram_used` and `mem_info_vram_total`, and the `amdgpu` hwmon chip's `temp1` and `power1` (`power1_input` or `power1_average`); NVIDIA from `nvidia-smi dmon -s pucm`, where a column printed as `-` is not reported (ksystemstats reads it as 0); Intel usage only, from the i915 PMU through `ksystemstats_intel_helper`, which needs its CAP_PERFMON or `perf_event_paranoid` at 0 or below;
 - the processor threads, from `/proc/cpuinfo`.
 
-It writes four presets into the person's System Monitor folder (`~/.local/share/plasma-systemmonitor`):
+It writes the presets into the person's System Monitor folder (`~/.local/share/plasma-systemmonitor`), titled by what they show so the title fits the sidebar at its default width in each of the ten languages:
 
-| Preset | For |
+| Preset (English title) | For |
 |---|---|
-| Overview: one GPU, few threads | one card (or the card that draws the desktop), up to 8 threads: one chart with a line per thread |
-| Overview: one GPU, many threads | one card, more than 8 threads: a grid of one chart per thread |
-| Overview: every GPU, few threads | every card, side by side, four to a row |
-| Overview: every GPU, many threads | every card, and the grid of threads |
+| 1 GPU, all threads | one card (the card that draws the desktop), up to 8 threads in one chart, a line for each |
+| 1 GPU, per thread | one card, a chart for each thread |
+| N GPUs, all threads | every display device, side by side, four to a row (only with two or more) |
+| N GPUs, per thread | every display device, and a chart for each thread (only with two or more) |
 
+Each thread is labelled "Thread N", N its processor number plus one, one label per logical processor; the per-thread charts are laid out in the page's own rows, not in KDE's facegrid, whose cells share one configuration group and showed two threads under one name.
 Every preset keeps KDE's Memory, Swap, Disks, Networks and Applications.
 Each card shows its usage chart, its name, video memory, temperature and power, each where its driver reports it.
 A sensor the driver does not report is named on the card ("Not reported to System Monitor: usage, power") and is not on the page, so no zero stands for it.
-A display device ksystemstats does not measure (another vendor's, a virtual machine's) is named on the "every GPU" presets.
+A display device ksystemstats does not measure (another vendor's, a virtual machine's) is named on the "every GPU" presets, and on the one-GPU presets of a computer that has no card it measures.
 
-The first time, the preset of the computer's class becomes the page System Monitor opens with (Ctrl+Alt+Del opens it), and KDE's Overview and the other three presets are listed in Edit Pages (right click on the sidebar, Edit or Remove Pages), hidden: KDE's Overview is one tick away.
-A person who had already chosen (a start page, an order or hidden pages in `systemmonitorrc`, theirs or the administrator's in `/etc/xdg`), or who edited KDE's Overview, keeps their arrangement; the presets are only added, the three that do not fit hidden.
+The first time, the preset of the computer's class becomes the page System Monitor opens with (Ctrl+Alt+Del opens it), and KDE's Overview and the other presets are listed in Edit Pages (right click on the sidebar, Edit or Remove Pages), hidden: KDE's Overview is one tick away.
+A person who had already chosen (a start page, an order or hidden pages in `systemmonitorrc`, theirs or the administrator's in `/etc/xdg`), or who edited KDE's Overview, keeps their arrangement; the presets are only added, those that do not fit the computer hidden.
 The choice is written once: what the person chooses afterwards is theirs and is never written again.
 The presets are the person's pages: they edit them in System Monitor, and remove them in Edit Pages.
 
@@ -50,7 +51,7 @@ When the computer cannot be read (no PCI devices in sysfs, no processor in `/pro
 
 Tests:
 -------------
-`tests/run.sh` in a Debian testing container with python3, libkf6config-bin, ksystemstats and sparky-stereo-problems: the ten catalogues (`tests/catalogs.py`), then `tests/compose.py` on fixture computers (`tests/machines.py`: the two test targets as read on 2026-11-27, and synthetic computers with real IDs: Intel with and without perf, Intel on xe, an Intel and NVIDIA laptop whose NVIDIA reports no power, nouveau, NVIDIA without nvidia-smi, a virtual machine, a server with a BMC, five AMD cards, a computer with no PCI devices) and the login flow.
+`tests/run.sh` in a Debian testing container with python3, libkf6config-bin, ksystemstats and sparky-stereo-problems: the ten catalogues (`tests/catalogs.py`), then `tests/compose.py` on fixture computers (`tests/machines.py`: the two test targets as read on 2026-11-27, and synthetic computers with real IDs: Intel with and without perf, Intel on xe, an Intel and NVIDIA laptop whose NVIDIA reports no power, nouveau, NVIDIA without nvidia-smi, a virtual machine, a server with a BMC, five AMD cards, two sockets with SMT, core ids with gaps and a processor offline, a computer with no PCI devices) and the login flow; each title is measured in its language's font against the sidebar's room.
 
 Credits:
 -------------

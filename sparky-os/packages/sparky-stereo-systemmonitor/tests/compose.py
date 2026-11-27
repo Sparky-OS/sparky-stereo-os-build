@@ -9,6 +9,7 @@ and a probe that fails. Runs in a container with kreadconfig6, kwriteconfig6 and
   compose.py PROGRAM DATA_DIR"""
 import json
 import os
+import math
 from pathlib import Path
 import re
 import shutil
@@ -100,12 +101,32 @@ EXPECT = {
     "nvidia-no-smi": ("one-gpu-few", [(0, "nvidia", [])], 0),
     "virtio": ("one-gpu-few", [], None),
     "server-bmc": ("one-gpu-many", [(0, "amd", ["usage", "usedVram", "totalVram", "temperature", "power1"])], 0),
+    "smt-gaps": ("one-gpu-many", [(0, "amd", ["usage", "usedVram", "totalVram", "temperature", "power1"])], 0),
     "five-amd": ("every-gpu-many", [(i, "amd", ["usage", "usedVram", "totalVram", "temperature", "power1"])
                                     for i in range(5)], 0),
 }
 ALL = {"usage": ["usage"], "memory": ["usedVram", "totalVram"], "temperature": ["temperature"],
        "power": ["power", "power1"]}
 WORD = {"usage": "LOCAL9", "memory": "LOCAL10", "temperature": "LOCAL11", "power": "LOCAL12"}
+try:
+    from PIL import ImageFont
+    LAT = ImageFont.truetype("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", 13.333)
+    CJK = ImageFont.truetype("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 13.333, index=0)
+except (ImportError, OSError) as error:
+    sys.exit("the title width check needs python3-pil, fonts-noto-core and fonts-noto-cjk: %s" % error)
+# System Monitor's sidebar at its default width leaves about 126 px of text at Noto Sans 10 pt (measured on screen:
+# KDE's entries render 2-3 px under their full width, cut ones stop at 124-126 px); the presets' titles stay at 124
+SIDEBAR_TEXT = 124
+
+
+def width(text):
+    return (CJK if any(ord(ch) > 0x2E80 for ch in text) else LAT).getlength(text)
+
+
+def processors(machine):
+    from machines import MACHINES
+    m = MACHINES[machine]
+    return [p[0] for p in m["processors"]] if m.get("processors") else list(range(m["threads"]))
 
 for machine, (preset, cards, desktop) in EXPECT.items():
     root = Path(tempfile.mkdtemp(prefix="sm182-%s-" % machine))
@@ -114,13 +135,30 @@ for machine, (preset, cards, desktop) in EXPECT.items():
     check(explain.returncode == 0, "%s: --explain exit %d %s" % (machine, explain.returncode, explain.stderr))
     check("preset sparky-overview-%s-threads.page" % preset in explain.stdout,
           "%s: chose %s, wanted %s" % (machine, explain.stdout.splitlines()[-1:], preset))
+    from machines import MACHINES as FIXTURES
+    count = len(FIXTURES[machine]["cards"] or [])  # display devices, measured or not
     for gpus_kind in ("one", "every"):
         for threads_kind in ("few", "many"):
             target = root / ("%s-%s.page" % (gpus_kind, threads_kind))
             r = run(env, "--compose", gpus_kind, threads_kind, str(target))
+            if gpus_kind == "every" and count < 2:
+                check(r.returncode != 0 and "fewer than two display devices" in r.stderr,
+                      "%s: an every-GPU preset was composed with %d card(s)" % (machine, count))
+                check(("sparky-overview-every-gpu" not in explain.stdout), "%s: --explain lists an every-GPU preset" % machine)
+                continue
             check(r.returncode == 0, "%s %s-%s: compose exit %d %s" % (machine, gpus_kind, threads_kind, r.returncode,
                                                                      r.stderr[-300:]))
             groups = parse(target.read_text(encoding="utf-8"))
+            # the title: the GPU part with this computer's card count, the thread part, short enough for the sidebar
+            n = count if gpus_kind == "every" else min(1, count)
+            for lang in LANGS:
+                t = strings(lang)
+                part = t["LOCAL1"] if n == 1 else t["LOCAL2"] % n
+                want = t["LOCAL3" if threads_kind == "few" else "LOCAL4"] % part
+                got = groups["page"].get("Title" if lang == "en" else "Title[%s]" % lang)
+                check(got == want, "%s %s-%s %s: title %r, wanted %r" % (machine, gpus_kind, threads_kind, lang, got, want))
+                check(width(want) <= SIDEBAR_TEXT, "%s %s: title %r is %.1f px, over %d" % (machine, lang, want,
+                                                                                         width(want), SIDEBAR_TEXT))
             ids = sensors(groups)
             shown = cards if gpus_kind == "every" else [c for c in cards if c[0] == desktop]
             for index, vendor, reported in cards:
@@ -144,14 +182,28 @@ for machine, (preset, cards, desktop) in EXPECT.items():
                 if name.endswith("/Appearance") or name == "page":
                     for lang in LANGS[1:]:
                         check("Title[%s]" % lang in keys, "%s: %s lacks Title[%s]" % (machine, name, lang))
-            check(any(i == "cpu/cpu\\d+/usage" for i in ids), "%s: no per-thread sensor" % machine)
-            check(any(k.get("chartFace") == ("org.kde.ksysguard.facegrid" if threads_kind == "many"
-                                             else "org.kde.ksysguard.linechart") and "cpu/cpu" in json.dumps(
-                groups.get(n[:-len("/Appearance")] + "/Sensors", {}))
-                for n, k in groups.items() if n.endswith("/Appearance")), "%s: thread face kind" % machine)
+            # one sensor and one label per logical processor, the label "Thread N" with N its processor number + 1
+            procs = processors(machine)
+            thread_ids = sorted((i for i in ids if re.fullmatch(r"cpu/cpu[0-9]+/usage", i)), key=lambda i: int(i[7:-6]))
+            check(thread_ids == ["cpu/cpu%d/usage" % p for p in procs], "%s %s-%s: thread sensors %s" % (
+                machine, gpus_kind, threads_kind, thread_ids))
+            check(not any(chart.get("chartFace") == "org.kde.ksysguard.facegrid" for chart in groups.values()),
+                  "%s: a facegrid (its cells share one configuration group)" % machine)
+            for lang in LANGS:
+                key = "%s" if lang == "en" else "%%s[%s]" % lang
+                shown = [grp[key % i] for name, grp in groups.items() if name.endswith("/SensorLabels")
+                         for i in thread_ids if key % i in grp]
+                want = [strings(lang)["LOCAL23"] % (p + 1) for p in procs]
+                check(sorted(shown) == sorted(want) and len(set(shown)) == len(shown),
+                      "%s %s-%s %s: thread labels %s" % (machine, gpus_kind, threads_kind, lang, shown[:6]))
+            thread_faces = [name for name, grp in groups.items() if name.endswith("/Sensors") and
+                            [i for i in json.loads(grp.get("highPrioritySensorIds", "[]").replace("\\\\", "\\"))
+                             if i.startswith("cpu/cpu") and i != "cpu/all/usage"]]
+            check(len(thread_faces) == (len(procs) if threads_kind == "many" else 1),
+                  "%s %s-%s: %d thread faces" % (machine, gpus_kind, threads_kind, len(thread_faces)))
             if not cards:
                 check(strings("en")["LOCAL14"] in face_titles(groups), "%s: no zero-card note" % machine)
-            if gpus_kind == "every" and machine in ("virtio", "server-bmc"):
+            if machine == "virtio" or (gpus_kind == "every" and machine == "server-bmc"):
                 check(any("Not measured by System Monitor" in t for t in face_titles(groups)),
                       "%s: the card ksystemstats does not measure is not named" % machine)
             if gpus_kind == "every" and machine == "five-amd":
@@ -217,7 +269,7 @@ check(r.returncode == 0, "change: exit %d %s" % (r.returncode, r.stderr))
 check(edited.read_bytes() == edited_bytes, "change: the person's edited preset was rewritten")
 check(not (pages / "sparky-overview-one-gpu-many-threads.page").exists(), "change: a removed preset came back")
 again = pages / "sparky-overview-every-gpu-many-threads.page"
-check(again.read_bytes() != before[again.name] and b"columnCount=6" in again.read_bytes(),
+check(again.read_bytes() != before[again.name] and b"cpu/cpu11/usage" in again.read_bytes(),
       "change: an unedited preset was not composed again")
 check((home / ".config/systemmonitorrc").read_bytes() == rc_switched, "change: the person's choice was written again")
 check(kread("startPage") == "overview.page", "change: start page %r" % kread("startPage"))
