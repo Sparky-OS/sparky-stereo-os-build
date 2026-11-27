@@ -25,6 +25,9 @@
 # Last update 2026/11/25
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+# the https-only apt helper must be a file: Docker makes a missing bind source an empty directory, and sh given a
+# directory exits 0, so a sparse checkout without tools/ would let the container's apt fetch over plain http
+[ -f "$HERE/../../tools/https-only-apt.sh" ] || { echo "$HERE/../../tools/https-only-apt.sh is not a file (check out tools/): no build without the https-only apt guard" >&2; exit 2; }
 . "$HERE/../repo/build-provenance.sh"
 [ $# -eq 5 ] || { sed -n '/^# Usage/,/^# Last/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
 DSC=$(realpath "$1") ARCH=$2 IMG=$3 REPO=$(realpath "$4") OUT=$(realpath -m "$5")
