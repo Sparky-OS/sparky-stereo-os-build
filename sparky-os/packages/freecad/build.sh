@@ -31,7 +31,7 @@ python3 - <<'PY'
 from pathlib import Path
 c = Path('debian/control').read_text()
 for old, new in (
-        (' libspnav-dev,\n', ' libspnav-dev,\n               libstereo-declare-dev (>= 1.12.2),\n'),
+        (' libspnav-dev,\n', ' libspnav-dev,\n               libstereo-declare-dev (>= 1.12.2),\n               libtbb-dev,\n'),
         (' pybind11-dev,\n', ' pkgconf,\n               pybind11-dev,\n'),
         (' qt6-base-dev,\n', ' qt6-base-dev,\n               qt6-base-private-dev,\n'),
         # libFreeCADGui reads its window's handles through Qt's private QPlatformNativeInterface, which has no
