@@ -1,0 +1,14 @@
+-------------------------------------------------------------------------------
+  Version 0.1.0 (2026-11-27)
+-------------------------------------------------------------------------------
+  * First version (queue rows 168 and 601; Daniel, 2026-10-17, on CoreCtrl: "maybe integrate and make it run in the
+    background (today it request a root password at every boot)").
+  * CoreCtrl's helper starts without a password for an administrator (group sudo) at a local, active session: the rule of
+    CoreCtrl's setup guide, as a vendor rule in /usr/share/polkit-1/rules.d. A rule made by hand with the same code at
+    /etc/polkit-1/rules.d/90-corectrl.rules is set aside (kept, put back at removal) and said; another rule there stays.
+  * CoreCtrl starts at login, only where it is installed (TryExec), in the system tray by its own setting
+    (/etc/xdg/corectrl/corectrl.ini, startOnSysTray=true; the person's own file wins).
+  * One writer per setting: while CoreCtrl holds the processor's governor or an AMD card's power level, or LACT holds a
+    card, power-profiles-daemon's processor drivers and amdgpu_dpm action and tuned's cpu plugin are kept off it, and the
+    person is told once which program holds it.
+  * Ten languages for every sentence (problems-lang/).

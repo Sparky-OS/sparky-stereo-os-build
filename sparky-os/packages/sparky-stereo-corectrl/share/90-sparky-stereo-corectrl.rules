@@ -1,0 +1,14 @@
+// CoreCtrl's helper starts without a password for a person at a local, active session who may administer this
+// computer: the group sudo, which Debian's own polkit rule names as the administrators (50-default.rules).
+// This is the rule CoreCtrl's setup guide gives under "Don't ask for user password" (Juan Palacios), with the group
+// set. It names CoreCtrl's two actions only, so it applies only when CoreCtrl is installed; every other
+// administrator action still asks. A rule in /etc/polkit-1/rules.d whose name sorts before this one decides first.
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.corectrl.helper.init" ||
+         action.id == "org.corectrl.helperkiller.init") &&
+        subject.local == true &&
+        subject.active == true &&
+        subject.isInGroup("sudo")) {
+            return polkit.Result.YES;
+    }
+});

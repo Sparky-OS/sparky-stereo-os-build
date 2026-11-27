@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+pkg=sparky-stereo-corectrl
+rule=/etc/polkit-1/rules.d/90-corectrl.rules
+backup=/var/backups/sparky-stereo-corectrl/90-corectrl.rules
+if [ "$1" = remove ]; then
+	if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+		# the service gives the power profile's daemon its settings back as it stops
+		deb-systemd-invoke stop sparky-stereo-knob-owner.service >/dev/null || :
+	fi
+	# the rule set aside at the install goes back, said while this package's catalogues are still here
+	if [ -f "$backup" ] && [ ! -e "$rule" ]; then
+		mv "$backup" "$rule"
+		rmdir "${backup%/*}" 2>/dev/null || :
+		sparky-stereo-problems say "$pkg" LOCAL12 "$backup" "$rule" || :
+	fi
+fi

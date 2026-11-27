@@ -1,0 +1,51 @@
+#!/bin/sh
+set -e
+pkg=sparky-stereo-corectrl
+unit=sparky-stereo-knob-owner.service
+owner=/usr/libexec/sparky-stereo-corectrl/knob-owner
+rule=/etc/polkit-1/rules.d/90-corectrl.rules
+backup=/var/backups/sparky-stereo-corectrl/90-corectrl.rules
+
+# A rule made by hand before this package, with the code of CoreCtrl's guide for the group sudo, is the package's own
+# now: it is set aside (kept, and put back if the package is removed) and said. Any other rule there is the person's.
+handmade_rule() {
+	[ -f "$rule" ] || return 0
+	if dpkg-query -S "$rule" >/dev/null 2>&1; then
+		return 0
+	fi
+	if "$owner" same-rule "$rule"; then
+		mkdir -p "${backup%/*}"
+		mv "$rule" "$backup"
+		sparky-stereo-problems say "$pkg" LOCAL10 "$rule" "$backup" || :
+	elif [ ! -e /var/lib/sparky-stereo-corectrl/own-rule-told ]; then
+		sparky-stereo-problems say "$pkg" LOCAL11 "$rule" || :
+		mkdir -p /var/lib/sparky-stereo-corectrl
+		: >/var/lib/sparky-stereo-corectrl/own-rule-told
+	fi
+}
+
+restart() {
+	if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+		sparky-stereo-problems run --machine "$pkg" daemon-reload LOCAL5 -- systemctl daemon-reload || :
+		# the unit's conditions decide: it runs while CoreCtrl or LACT is installed
+		sparky-stereo-problems run --machine "$pkg" knob-owner-start LOCAL5 -- deb-systemd-invoke restart "$unit" || :
+	fi
+}
+
+case "$1" in
+configure)
+	handmade_rule
+	deb-systemd-helper unmask "$unit" >/dev/null || :
+	if deb-systemd-helper --quiet was-enabled "$unit"; then
+		deb-systemd-helper enable "$unit" >/dev/null || :
+	else
+		deb-systemd-helper update-state "$unit" >/dev/null || :
+	fi
+	restart
+	;;
+triggered)
+	# CoreCtrl or LACT was installed, upgraded or removed
+	"$owner" forget || :
+	restart
+	;;
+esac
