@@ -122,10 +122,15 @@ def actions_off():
         return {}
 
 
-def ppd_preference(action):
-    """The person's choice for an action: as recorded when it was turned off here, else power-profiles-daemon's own file."""
+def ppd_preference(action, bus=None):
+    """The person's choice for an action: as recorded when it was turned off here, else what the running daemon says (its
+    ActionsInfo; SetActionEnabled changes it at once, while the state file is written only at the next profile change),
+    else the daemon's state file."""
     recorded = actions_off()
-    return recorded[action] if action in recorded else ppd_action_enabled(action)
+    if action in recorded:
+        return recorded[action]
+    live = bus.ppd_action(action) if bus is not None else None
+    return live if live is not None else ppd_action_enabled(action)
 
 
 def lact_slots():
@@ -189,6 +194,19 @@ class Bus:
             log("CoreCtrl's helper did not answer: %s" % error)
             return False
 
+    def ppd_action(self, action):
+        """The running power-profiles-daemon's state of ACTION (ActionsInfo, Enabled), or None."""
+        if FIXTURE is not None or not self.has_owner(PPD_BUS[0]):
+            return None
+        from gi.repository import GLib
+        try:
+            info = self.call(PPD_BUS[0], PPD_BUS[1], "org.freedesktop.DBus.Properties", "Get",
+                             GLib.Variant("(ss)", (PPD_BUS[2], "ActionsInfo")), "(v)")[0]
+        except Exception as error:
+            log("power-profiles-daemon's actions could not be read: %s" % error)
+            return None
+        return next((bool(a.get("Enabled")) for a in info if a.get("Name") == action), None)
+
     def unit_active(self, unit):
         if FIXTURE is not None:
             return fixture(unit.split(".")[0]) == "active"
@@ -210,7 +228,7 @@ def facts(bus):
         "cards": amd_cards(),
         "ppd_loaded": bus.unit_loaded(PPD_UNIT),
         "ppd_cpu_driver": ppd_cpu_driver(),
-        "ppd_amdgpu_dpm": ppd_preference("amdgpu_dpm"),
+        "ppd_amdgpu_dpm": ppd_preference("amdgpu_dpm", bus),
         "tuned": bus.has_owner("com.redhat.tuned"),
     }
 
@@ -338,7 +356,7 @@ def apply_ppd_actions(bus, off):
             if action not in recorded:
                 recorded[action] = True
                 changed = True
-            if ppd_action_enabled(action):
+            if bus.ppd_action(action):
                 bus.call(*PPD_BUS, "SetActionEnabled", GLib.Variant("(sb)", (action, False)))
                 log("power-profiles-daemon's %s is off while its card is held" % action)
         else:
@@ -451,6 +469,9 @@ class Watch:
                                   name, Gio.DBusSignalFlags.NONE, self.changed, None)
         conn.signal_subscribe("com.redhat.tuned", "com.redhat.tuned.control", "profile_changed", "/Tuned", None,
                               Gio.DBusSignalFlags.NONE, self.tuned_profile, None)
+        # the person's choice of an action reaches the daemon's properties at once (send_dbus_event after its drivers restart)
+        conn.signal_subscribe(PPD_BUS[0], "org.freedesktop.DBus.Properties", "PropertiesChanged", PPD_BUS[1], None,
+                              Gio.DBusSignalFlags.NONE, self.changed, None)
         try:
             self.bus.call("org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "Subscribe")
         except Exception as error:
