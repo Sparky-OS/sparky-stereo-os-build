@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+unit=sparky-stereo-knob-owner.service
+dropin=/run/systemd/system/power-profiles-daemon.service.d/zz-sparky-stereo-knob-owner.conf
+if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+	if [ "$1" = remove ] && [ -e "$dropin" ]; then
+		rm -f "$dropin"
+		systemctl --system daemon-reload >/dev/null || :
+		systemctl try-restart power-profiles-daemon.service >/dev/null || :
+	fi
+	systemctl --system daemon-reload >/dev/null || :
+fi
+if [ "$1" = remove ] && command -v deb-systemd-helper >/dev/null; then
+	deb-systemd-helper mask "$unit" >/dev/null || :
+fi
+if [ "$1" = purge ]; then
+	if command -v deb-systemd-helper >/dev/null; then
+		deb-systemd-helper purge "$unit" >/dev/null || :
+		deb-systemd-helper unmask "$unit" >/dev/null || :
+	fi
+	rm -rf /var/lib/sparky-stereo-corectrl
+fi
+if [ "$1" = remove ] && [ -z "${DPKG_ROOT:-}" ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
+	sparky-stereo-problems clear --all sparky-stereo-corectrl || :
+fi

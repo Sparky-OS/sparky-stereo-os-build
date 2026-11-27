@@ -1,0 +1,34 @@
+-------------------------------------------------------------------------------
+  Version 0.1.1 (2026-11-27)
+-------------------------------------------------------------------------------
+  * CoreCtrl holds only what it manages: the processor while the profile it applies has its processor control on, a card
+    while that card's power control is on (CoreCtrl writes a control only while it is on: Control::sync). The profile
+    it applies is read as CoreCtrl builds it: the global profile and the profiles of the programs its helper reports
+    running, each component from the highest profile in which it is on, from the person's saved profiles; a change is
+    followed while CoreCtrl runs (a saved profile, a program starting or ending). With the processor control off,
+    power-profiles-daemon keeps its processor driver and offers Performance; with a card's power control off, its
+    amdgpu_dpm action stays the person's.
+  * A manual profile, which CoreCtrl keeps in memory and tells nobody about, is said when it would set something nothing
+    keeps the daemons off (LOCAL13, LOCAL14).
+  * The person's choice of power-profiles-daemon's amdgpu_dpm action is kept and comes back as the person left it: LACT
+    turns the action off at each start of its daemon and never gives it back, and power-profiles-daemon saved that "off"
+    as the person's at its next profile change. Who changes the action is read from the bus (a monitor of its
+    SetActionEnabled calls); LACT's change and this service's own are not the person's. Without the monitor this is said
+    (LOCAL15) and a change is told from LACT's by its timing.
+  * The service is ready (Type=notify) before lactd starts, and reads the person's CoreCtrl profiles (ProtectHome=read-only).
+  * A hold's notice ends when its program, still running, no longer holds the setting.
+
+-------------------------------------------------------------------------------
+  Version 0.1.0 (2026-11-27)
+-------------------------------------------------------------------------------
+  * First version (queue rows 168 and 601; Daniel, 2026-10-17, on CoreCtrl: "maybe integrate and make it run in the
+    background (today it request a root password at every boot)").
+  * CoreCtrl's helper starts without a password for an administrator (group sudo) at a local, active session: the rule of
+    CoreCtrl's setup guide, as a vendor rule in /usr/share/polkit-1/rules.d. A rule made by hand with the same code at
+    /etc/polkit-1/rules.d/90-corectrl.rules is set aside (kept, put back at removal) and said; another rule there stays.
+  * CoreCtrl starts at login, only where it is installed (TryExec), in the system tray by its own setting
+    (/etc/xdg/corectrl/corectrl.ini, startOnSysTray=true; the person's own file wins).
+  * One writer per setting: while CoreCtrl holds the processor's governor or an AMD card's power level, or LACT holds a
+    card, power-profiles-daemon's processor drivers and amdgpu_dpm action and tuned's cpu plugin are kept off it, and the
+    person is told once which program holds it.
+  * Ten languages for every sentence (problems-lang/).

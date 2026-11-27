@@ -1,0 +1,21 @@
+[Unit]
+Description=Power profile kept off the settings CoreCtrl and LACT hold
+Documentation=file:///usr/share/doc/sparky-stereo-corectrl/README.md
+ConditionPathExists=|/usr/libexec/corectrl/corectrl_helper
+ConditionPathExists=|/usr/bin/lact
+After=dbus.service
+Before=lactd.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=20s
+ExecStart=/usr/libexec/sparky-stereo-corectrl/knob-owner watch
+Restart=on-failure
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

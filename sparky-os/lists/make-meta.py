@@ -283,7 +283,9 @@ META = {
         'This meta package installs the desktop of Sparky Stereo OS: the look, console and system information of the edition, the Memory, Camera, Colour Vision, Storage Cleanup and Throw pages in System Settings (Throw: the desktop and its sound sent to a Google Cast device, which becomes one more screen), the notifications of what failed on the computer until it is repaired, time synchronisation, high fidelity sound defaults (the sound system follows the rate of what plays), the Dolphin menus (convert audio, and the stereo integration packs), VLC Stereo as the video player, and the applications beyond the KDE edition.',
         # sparky-stereo-problems-plasma: the person is told what failed (ORDER 350; a designed feature's dependency is a
         # Depends, memory design-check-every-default)
-        ['sparky-stereo-audio', 'sparky-stereo-audio-convert', 'sparky-stereo-camera', 'sparky-stereo-cec', 'sparky-stereo-colour-vision', 'sparky-stereo-console', 'sparky-stereo-info', 'sparky-stereo-integrations', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-problems-plasma', 'sparky-stereo-storage-kcm', 'sparky-stereo-throw', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
+        # sparky-stereo-corectrl: CoreCtrl without a password, in the tray, and one writer per power setting with LACT;
+        # inert until CoreCtrl or LACT is installed (queue rows 168 and 601)
+        ['sparky-stereo-audio', 'sparky-stereo-audio-convert', 'sparky-stereo-camera', 'sparky-stereo-cec', 'sparky-stereo-colour-vision', 'sparky-stereo-console', 'sparky-stereo-corectrl', 'sparky-stereo-info', 'sparky-stereo-integrations', 'sparky-stereo-look', 'sparky-stereo-memory-kcm', 'sparky-stereo-power-profiles', 'sparky-stereo-problems-plasma', 'sparky-stereo-storage-kcm', 'sparky-stereo-throw', 'sparky-stereo-time'] + lst('look') + OURS_PLAYER,
         [p for p in lst('apps') if p not in ROLED] + lst('image') + OURS_PLAYER_OUTPUT),
     'sparky-stereo-integrations': (
         'Sparky Stereo integrations',
