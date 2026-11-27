@@ -138,6 +138,16 @@ ENTRIES = [
         "pt_BR": "A pilha gráfica deu à tela de pintura 3D uma só vista (%1).",
         "zh_CN": "图形栈只给了 3D 画布一个视图（%1）。",
         "zh_TW": "圖形堆疊只給了 3D 畫布一個視圖（%1）。"}),
+    (None, "The graphics stack does not show the surface the 3D canvas is drawn on (%1).", {
+        "de": "Das Grafiksystem zeigt die Oberfläche nicht, auf der die 3D-Leinwand gezeichnet wird (%1).",
+        "es": "El sistema gráfico no muestra la superficie en la que se dibuja el lienzo 3D (%1).",
+        "fr": "Le système graphique n’affiche pas la surface sur laquelle le canevas 3D est dessiné (%1).",
+        "ja": "グラフィックススタックは 3D キャンバスを描画するサーフェスを表示しません (%1)。",
+        "ko": "그래픽 스택이 3D 캔버스를 그리는 표면을 표시하지 않습니다(%1).",
+        "pl": "Stos graficzny nie wyświetla powierzchni, na której rysowane jest płótno 3D (%1).",
+        "pt_BR": "A pilha gráfica não mostra a superfície em que a tela de pintura 3D é desenhada (%1).",
+        "zh_CN": "图形栈不显示绘制 3D 画布的表面（%1）。",
+        "zh_TW": "圖形堆疊不顯示繪製 3D 畫布的表面（%1）。"}),
     (None, "The canvas reaches the screen with %1 bits per channel, fewer than this document's %2: "
            "the graphics stack offers no deeper canvas surface here.", {
         "de": "Die Leinwand erreicht den Bildschirm mit %1 Bit pro Kanal, weniger als die %2 dieses Dokuments: "

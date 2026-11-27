@@ -28,7 +28,10 @@ krita (1:6.0.4.1+dfsg-1+stereo3d1) unstable; urgency=medium
     through a layer with one buffer, which keeps the depth of the canvas
     surface, with the decorations and the brush outline painted on that
     picture, so the outline is the inverse of the picture under it; the
-    window paints its background before the separators of its docks.
+    window paints its background before the separators of its docks. On
+    NVIDIA's own OpenGL, which does not show the layer, no session on the
+    layer starts: every canvas is drawn in the window, and a stereo document
+    shows its left eye and says why.
   * The deep canvas: the canvas says when it reaches the screen with fewer
     bits per channel than the document has (10-bit surface, or half float for
     a 16-bit document), at every depth the standard defines.
