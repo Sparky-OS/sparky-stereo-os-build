@@ -65,3 +65,31 @@ index 32a21ddff..7e1445d4b 100644
      else:
          assert 'GL_STEREO_RENDER_RESOLUTION' not in value
  for bad in ('0x200', 'nan', '9000x100', '100x100;false'):
+diff --git a/packaging/qualify-package.sh b/packaging/qualify-package.sh
+index aa99c57be..41af6c9fa 100755
+--- a/packaging/qualify-package.sh
++++ b/packaging/qualify-package.sh
+@@ -49,5 +49,23 @@ else
+     # bootstrap build (no manifest yet): its layer is qualified, and it is never shipped
+     echo 'receipts:Pin=xscreensaver-gl, xscreensaver-gl-extra, xscreensaver-data-extra' >> "$substvars"
+ fi
++# The separately packaged Screensavers page launches straight from this catalogue.
++# Pass the dependency with the interposer for every consumer of the installed entries.
++python3 - "$stage/gl-stereo-savers/usr/share/gl-stereo/catalogue.json" <<'PY'
++import json
++from pathlib import Path
++import sys
++import sysconfig
++
++path = Path(sys.argv[1])
++entries = json.loads(path.read_text())
++declare = Path('/usr/lib') / sysconfig.get_config_var('MULTIARCH') / 'libstereo-declare.so.1'
++assert declare.is_file(), declare
++for entry in entries:
++    env = entry['environment']
++    if env.get('LD_PRELOAD') == entry['library']:
++        env['LD_PRELOAD'] = f"{declare} {entry['library']}"
++path.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + '\n')
++PY
+ python3 "$repo/savers/make-index.py" "$stage/gl-stereo-savers/usr/share/gl-stereo/savers.json" \
+     "$stage/gl-stereo-savers/usr/share/gl-stereo/catalogue.json"
