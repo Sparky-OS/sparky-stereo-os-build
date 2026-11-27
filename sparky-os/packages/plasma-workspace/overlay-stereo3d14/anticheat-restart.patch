@@ -1,13 +1,13 @@
-From 63cb58c63bc64d75fb794f79042f51b33b4cd7ad Mon Sep 17 00:00:00 2001
+From 6b7fa60eeeea19bc2c13172971c34fa9d301ac18 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Fri, 27 Nov 2026 09:08:24 -0300
 Subject: [PATCH] Offer a one-time restart for anti-cheat games in Plasma Leave
 
-Add "Restart for anti-cheat games" as the second entry of Restart Options, in Kickoff and in KRunner. It is offered on a UEFI start when sparky-stereo-boot has written its anti-cheat GRUB entry and GRUB can be told to start it once (the boot package keeps /var/lib/sparky-stereo-boot/anticheat.entry only then). Every path opens a confirmation that says what the start does and lists what Easy Anti-Cheat would not accept on this computer, from sparky-stereo-boot's checker in the session's language. Confirming asks the boot package's polkit-guarded helper, through pkexec, to start that entry once before the session closes; a refusal is said in the greeter, and a cancelled logout takes the one-time start back.
+Add "Restart for anti-cheat games" as the second entry of Restart Options, in Kickoff and in KRunner. It is offered on a UEFI start when sparky-stereo-boot has written its anti-cheat GRUB entry and GRUB can be told to start it once (the boot package keeps /var/lib/sparky-stereo-boot/anticheat.entry only then). Every path opens a confirmation that says what the start does and lists what Easy Anti-Cheat would not accept on this computer, from sparky-stereo-boot's checker in the session's language. Confirming asks the boot package's polkit-guarded helper, through pkexec, to start that entry once before the session closes; a refusal is said in the greeter, and a cancelled logout takes the one-time start back. Rows the anti-cheat start settles by its own kernel line (lockdown, kexec; sparky-stereo-boot marks them settledByAntiCheatStart) are left out, and when the rows would push the buttons past the screen the confirmation moves up and the avatar steps aside.
 
 Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
 ---
- applets/kicker/systementry.cpp                |  17 +++
+ applets/kicker/systementry.cpp                |  17 ++
  applets/kicker/systementry.h                  |   1 +
  applets/kicker/systemmodel.cpp                |   1 +
  ksmserver/org.kde.LogoutPrompt.xml            |   1 +
@@ -17,15 +17,15 @@ Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
  libkworkspace/sessionmanagementbackend.h      |   3 +
  logout-greeter/greeter.cpp                    |  13 +-
  logout-greeter/greeter.h                      |   2 +
- logout-greeter/shutdowndlg.cpp                |  72 +++++++++
+ logout-greeter/shutdowndlg.cpp                |  76 +++++++++
  logout-greeter/shutdowndlg.h                  |   5 +
- .../org.kde.breeze/contents/logout/Logout.qml | 137 +++++++++++++++---
+ .../org.kde.breeze/contents/logout/Logout.qml | 153 +++++++++++++++---
  runners/sessions/sessionrunner.cpp            |  10 ++
  runners/sessions/sessionrunner.h              |   1 +
  startkde/plasma-shutdown/org.kde.Shutdown.xml |   3 +
- startkde/plasma-shutdown/shutdown.cpp         |  65 +++++++++
+ startkde/plasma-shutdown/shutdown.cpp         |  65 ++++++++
  startkde/plasma-shutdown/shutdown.h           |   3 +
- 18 files changed, 354 insertions(+), 19 deletions(-)
+ 18 files changed, 368 insertions(+), 25 deletions(-)
 
 diff --git a/applets/kicker/systementry.cpp b/applets/kicker/systementry.cpp
 index 62c6684..3e603b5 100644
@@ -344,7 +344,7 @@ index d646bc5..7fbc425 100644
      const KPackage::Package m_package;
  };
 diff --git a/logout-greeter/shutdowndlg.cpp b/logout-greeter/shutdowndlg.cpp
-index d9d1478..6b2b5fb 100644
+index d9d1478..be9b80b 100644
 --- a/logout-greeter/shutdowndlg.cpp
 +++ b/logout-greeter/shutdowndlg.cpp
 @@ -13,6 +13,8 @@
@@ -377,7 +377,7 @@ index d9d1478..6b2b5fb 100644
      connect(rootObject(), SIGNAL(cancelRequested()), SLOT(reject()));
      connect(rootObject(), SIGNAL(lockScreenRequested()), SLOT(slotLockScreen()));
      connect(rootObject(), SIGNAL(taskManagerRequested()), SLOT(slotTaskManager()));
-@@ -346,6 +355,69 @@ void KSMShutdownDlg::slotRebootToFirmwareSetup()
+@@ -346,6 +355,73 @@ void KSMShutdownDlg::slotRebootToFirmwareSetup()
      });
  }
  
@@ -407,6 +407,10 @@ index d9d1478..6b2b5fb 100644
 +            for (const QJsonValue &item : items) {
 +                const QJsonObject row = item.toObject();
 +                const QString state = row.value(u"state"_s).toString();
++                // a row the anti-cheat start's own kernel line settles (lockdown, kexec) is not something Easy Anti-Cheat would refuse there
++                if (row.value(u"settledByAntiCheatStart"_s).toBool()) {
++                    continue;
++                }
 +                if (state == u"not-met"_s || state == u"unknown"_s) {
 +                    rows.append(QVariantMap{{u"state"_s, state}, {u"text"_s, row.value(u"text"_s).toString()}});
 +                }
@@ -477,7 +481,7 @@ index 3df915f..95034d7 100644
 +    bool m_antiCheatCheckStarted = false;
  };
 diff --git a/lookandfeel/org.kde.breeze/contents/logout/Logout.qml b/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
-index 272ec41..3d18056 100644
+index 272ec41..71a32d9 100644
 --- a/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
 +++ b/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
 @@ -33,6 +33,7 @@ Item {
@@ -488,11 +492,14 @@ index 272ec41..3d18056 100644
      signal cancelRequested()
      signal lockScreenRequested()
      signal taskManagerRequested()
-@@ -64,17 +65,47 @@ Item {
+@@ -62,19 +63,49 @@ Item {
+     }
+ 
      readonly property bool showAllOptions: sdtype === ShutdownType.ShutdownTypeDefault
-     readonly property bool canRestartToFirmware: leaveSession.canRebootToFirmwareSetup
+-    readonly property bool canRestartToFirmware: leaveSession.canRebootToFirmwareSetup
++    readonly property bool canRestartToFirmware: leaveSession ? leaveSession.canRebootToFirmwareSetup : false
      readonly property string firmwareActionText: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restart to UEFI setup")
-+    readonly property bool canRestartForAntiCheat: leaveSession.canRebootForAntiCheat
++    readonly property bool canRestartForAntiCheat: leaveSession ? leaveSession.canRebootForAntiCheat : false
 +    readonly property string antiCheatActionText: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restart for anti-cheat games")
      readonly property var restartActions: [
          { text: root.firmwareActionText, visible: root.canRestartToFirmware, trigger: () => root.restartToFirmware() },
@@ -546,7 +553,34 @@ index 272ec41..3d18056 100644
          repeat: true
          interval: 1000
          onTriggered: remainingTime--
-@@ -286,9 +317,68 @@ Item {
+@@ -150,6 +181,8 @@ Item {
+     UserDelegate {
+         width: Kirigami.Units.gridUnit * 8
+         height: Kirigami.Units.gridUnit * 9
++        // the anti-cheat confirmation's rows can need the room above the middle of the screen
++        visible: !column.tooTall
+         anchors {
+             horizontalCenter: parent.horizontalCenter
+             bottom: parent.verticalCenter
+@@ -163,11 +196,12 @@ Item {
+     ColumnLayout {
+         id: column
+ 
+-        anchors {
+-            top: parent.verticalCenter
+-            topMargin: Kirigami.Units.gridUnit * 2
+-            horizontalCenter: parent.horizontalCenter
+-        }
++        // below the middle of the screen, as upstream has it; moved up (and the avatar hidden) only when the
++        // anti-cheat confirmation's rows would otherwise push its buttons past the screen's bottom
++        readonly property real usualTop: root.height / 2 + Kirigami.Units.gridUnit * 2
++        readonly property bool tooTall: root.antiCheatAsked && usualTop + height > root.height - Kirigami.Units.gridUnit * 2
++        y: tooTall ? Math.max(Kirigami.Units.gridUnit * 2, root.height - height - Kirigami.Units.gridUnit * 2) : usualTop
++        anchors.horizontalCenter: parent.horizontalCenter
+         spacing: Kirigami.Units.largeSpacing
+ 
+         height: Math.max(implicitHeight, Kirigami.Units.gridUnit * 10)
+@@ -286,9 +320,69 @@ Item {
              }
          }
  
@@ -565,7 +599,8 @@ index 272ec41..3d18056 100644
 +
 +        ColumnLayout {
 +            Layout.alignment: Qt.AlignHCenter
-+            Layout.maximumWidth: Math.max(Kirigami.Units.gridUnit * 24, logoutButtonsRow.implicitWidth)
++            Layout.maximumWidth: Math.min(root.width - Kirigami.Units.gridUnit * 4, Math.max(Kirigami.Units.gridUnit * 36, logoutButtonsRow.implicitWidth))
++            Layout.preferredWidth: Layout.maximumWidth
 +            spacing: Kirigami.Units.smallSpacing
 +            visible: root.antiCheatAsked && root.canRestartForAntiCheat && antiCheatRows.length > 0
 +
@@ -616,7 +651,7 @@ index 272ec41..3d18056 100644
  
              readonly property int spacing: Kirigami.Units.largeSpacing
              rowSpacing: spacing
-@@ -309,7 +399,7 @@ Item {
+@@ -309,7 +403,7 @@ Item {
                  onClicked: root.sleepRequested()
                  KeyNavigation.left: cancelButton
                  KeyNavigation.right: hibernateButton.visible ? hibernateButton : (rebootButton.visible ? rebootButton : (shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton)))
@@ -625,7 +660,7 @@ index 272ec41..3d18056 100644
              }
              LogoutButton {
                  id: hibernateButton
-@@ -319,7 +409,7 @@ Item {
+@@ -319,7 +413,7 @@ Item {
                  onClicked: root.hibernateRequested()
                  KeyNavigation.left: suspendButton.visible ? suspendButton : cancelButton
                  KeyNavigation.right: rebootButton.visible ? rebootButton : (shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton))
@@ -634,7 +669,7 @@ index 272ec41..3d18056 100644
              }
              LogoutButton {
                  id: rebootButton
-@@ -333,7 +423,7 @@ Item {
+@@ -333,7 +427,7 @@ Item {
                      }
                  }
                  onClicked: {
@@ -643,7 +678,7 @@ index 272ec41..3d18056 100644
                          root.openRestartMenu(rebootButton);
                      } else if (softwareUpdatePending) {
                          root.rebootUpdateRequested();
-@@ -343,12 +433,12 @@ Item {
+@@ -343,12 +437,12 @@ Item {
                  }
                  KeyNavigation.left: hibernateButton.visible ? hibernateButton : (suspendButton.visible ? suspendButton : cancelButton)
                  KeyNavigation.right: restartOptionsButton.visible ? restartOptionsButton : restartOptionsButton.KeyNavigation.right
@@ -659,7 +694,7 @@ index 272ec41..3d18056 100644
                      onTapped: root.openRestartMenu(rebootButton)
                  }
              }
-@@ -356,7 +446,7 @@ Item {
+@@ -356,7 +450,7 @@ Item {
                  id: restartOptionsButton
                  icon.name: "arrow-down"
                  text: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restart Options")
@@ -668,7 +703,7 @@ index 272ec41..3d18056 100644
                  KeyNavigation.left: rebootButton
                  KeyNavigation.right: rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton))
                  onClicked: root.openRestartMenu(restartOptionsButton)
-@@ -371,13 +461,23 @@ Item {
+@@ -371,13 +465,23 @@ Item {
                  KeyNavigation.right: cancelButton
                  onClicked: root.restartToFirmware()
              }
@@ -693,7 +728,7 @@ index 272ec41..3d18056 100644
                          root.openRestartMenu(rebootWithoutUpdatesButton);
                      } else {
                          root.rebootRequested();
-@@ -385,11 +485,11 @@ Item {
+@@ -385,11 +489,11 @@ Item {
                  }
                  KeyNavigation.left: restartOptionsButton.visible ? restartOptionsButton : rebootButton
                  KeyNavigation.right: shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton)
@@ -707,7 +742,7 @@ index 272ec41..3d18056 100644
                      onTapped: root.openRestartMenu(rebootWithoutUpdatesButton)
                  }
              }
-@@ -414,7 +514,7 @@ Item {
+@@ -414,7 +518,7 @@ Item {
                  KeyNavigation.left: rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (rebootButton.visible ? rebootButton : (hibernateButton.visible ? hibernateButton : (suspendButton.visible ? suspendButton : cancelButton)))
                  KeyNavigation.right: shutdownWithoutUpdatesButton.visible ? shutdownWithoutUpdatesButton : (logoutButton.visible ? logoutButton : cancelButton)
                  focus: sdtype === ShutdownType.ShutdownTypeHalt || root.showAllOptions
@@ -716,7 +751,7 @@ index 272ec41..3d18056 100644
              }
              LogoutButton {
                  id: shutdownWithoutUpdatesButton
-@@ -427,7 +527,7 @@ Item {
+@@ -427,7 +531,7 @@ Item {
                  KeyNavigation.left: shutdownButton
                  KeyNavigation.right: logoutButton.visible ? logoutButton : cancelButton
                  focus: sdtype === ShutdownType.ShutdownTypeHalt || root.showAllOptions
@@ -725,7 +760,7 @@ index 272ec41..3d18056 100644
              }
              LogoutButton {
                  id: logoutButton
-@@ -438,7 +538,7 @@ Item {
+@@ -438,7 +542,7 @@ Item {
                  KeyNavigation.left: shutdownWithoutUpdatesButton.visible ? shutdownWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (rebootButton.visible ? rebootButton : (hibernateButton.visible ? hibernateButton : (suspendButton.visible ? suspendButton : cancelButton)))))
                  KeyNavigation.right: cancelButton
                  focus: sdtype === ShutdownType.ShutdownTypeNone
@@ -734,7 +769,7 @@ index 272ec41..3d18056 100644
              }
              LogoutButton {
                  id: cancelButton
-@@ -447,8 +547,9 @@ Item {
+@@ -447,8 +551,9 @@ Item {
                  onClicked: root.cancelRequested()
                  KeyNavigation.left: logoutButton.visible ? logoutButton : (shutdownWithoutUpdatesButton.visible ? shutdownWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (rebootButton.visible ? rebootButton : (hibernateButton.visible ? hibernateButton : suspendButton)))))
                  KeyNavigation.right: firmwareOnly ? (rebootToFirmwareButton.visible ? rebootToFirmwareButton : null)
@@ -745,7 +780,7 @@ index 272ec41..3d18056 100644
                  KeyNavigation.down: recoveryButtonsRow.visible ? taskManagerButton : null
              }
          }
-@@ -457,7 +558,7 @@ Item {
+@@ -457,7 +562,7 @@ Item {
              id: recoveryButtonsRow
              Layout.alignment: Qt.AlignHCenter
              spacing: Kirigami.Units.largeSpacing
