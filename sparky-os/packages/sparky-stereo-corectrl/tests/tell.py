@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # What the person is told, and when a notice ends: each notice is kept once; a conflict's notice ends with the conflict;
-# a holder's notice ends when its program is removed. The problems engine is a stand-in that logs its arguments.
+# a holder's notice ends when its program, running, no longer holds it, or when it is removed. The problems engine is
+# a stand-in that logs its arguments.
 import importlib.machinery
 import importlib.util
 import os
@@ -59,7 +60,16 @@ installed("LACT", True)
 check("a new notice is kept once", calls(lambda: ko.tell(CPU)),
       ["keep --machine --severity notice sparky-stereo-corectrl cpu LOCAL2 CoreCtrl"])
 check("the same notice again: nothing", calls(lambda: ko.tell(CPU)), [])
-check("the holder no longer holds, still installed: the notice stays", calls(lambda: ko.tell({})), [])
+check("the holder closed, still installed: the notice stays", calls(lambda: ko.tell({})), [])
+check("the holder runs and no longer holds (its settings changed): the notice ends", calls(lambda: ko.tell({}, ["CoreCtrl"])),
+      ["clear --machine sparky-stereo-corectrl cpu"])
+check("it holds again: told again", calls(lambda: ko.tell(CPU, ["CoreCtrl"])),
+      ["keep --machine --severity notice sparky-stereo-corectrl cpu LOCAL2 CoreCtrl"])
+MANUAL = {"manual-cpu-games": ["LOCAL13", "games"]}
+check("a manual profile is told", calls(lambda: ko.tell(dict(CPU, **MANUAL), ["CoreCtrl"])),
+      ["keep --machine --severity notice sparky-stereo-corectrl manual-cpu-games LOCAL13 games"])
+check("the manual profile gone: its notice ends, the hold's stays", calls(lambda: ko.tell(CPU, ["CoreCtrl"])),
+      ["clear --machine sparky-stereo-corectrl manual-cpu-games"])
 check("a conflict is told", calls(lambda: ko.tell(dict(CPU, **BOTH))),
       ["keep --machine --severity notice sparky-stereo-corectrl both-0000-03-00.0 LOCAL4 CoreCtrl LACT card0 (PCI 0000:03:00.0)"])
 check("the conflict ends: its notice ends", calls(lambda: ko.tell(CPU)), ["clear --machine sparky-stereo-corectrl both-0000-03-00.0"])

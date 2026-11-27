@@ -2,37 +2,51 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/27
 # Copyright 2026 under the GNU GPL3 License
 # knob-owner: one writer for each power setting (queue rows 168 and 601).
-# CoreCtrl's helper rewrites the processor's governor and energy preference and each AMD card's power level every half second
-# while CoreCtrl runs (corectrl 1.5.2, src/core/sysmodelsyncer.cpp and the controls' syncControl); LACT writes a card's power
-# level whenever its settings name that card (lact 0.10.1, lact-daemon/src/server/gpu_controller/amd.rs apply_config).
+# CoreCtrl (1.5.2) writes a setting only while the control behind it is on in the profile it applies (src/core/components/
+# controls/control.cpp, Control::sync: "if (active()) syncControl(ctlCmds);"): the processor's governor and energy preference
+# through CPU_CPUFREQ_MODE in mode CPU_CPUFREQ, an amdgpu card's power level through AMD_PM_PERFMODE and a radeon card's
+# power state through AMD_PM_POWERSTATE_MODE, each in any mode but NOOP ("Do not control"). It applies a stack of profiles
+# (src/core/session.cpp): the global profile, then the profile of each program its helper saw start, in that order (the
+# helper's appExec and appExit signals), and on top a manual profile the person turns on from its tray, which it keeps in
+# memory only and tells nobody. A component (CPU, GPU) comes from the highest profile in which it is on, else from the global
+# profile (src/core/profileview.cpp). Its window applies a change at once but writes the profile file only at Save.
+# LACT (0.10.1) writes a card's power level whenever its settings name that card (lact-daemon/src/server/gpu_controller/
+# amd.rs apply_config), and at every start it turns power-profiles-daemon's amdgpu_dpm action off for every card and never
+# gives it back (lact-daemon/src/system/power_profiles_daemon.rs, called from Server::new in server.rs).
 # power-profiles-daemon (0.30) writes the same governor and energy preference at every profile change through its amd_pstate
-# and intel_pstate drivers, and the cards' level through its amdgpu_dpm action when the person turned that action on; tuned
-# (2.27) writes the governor and energy preference through its cpu plugin and a radeon card's power method through its video
-# plugin. Two writers make the power profile shown in Plasma a lie for half a second at a time, and nobody is told.
+# and intel_pstate drivers, and the cards' level through its amdgpu_dpm action when that action is on; it keeps a change of an
+# action in memory and writes the running state into its state file at the next profile change (save_configuration in
+# src/power-profiles-daemon.c), so LACT's start-up "off" becomes the saved choice. tuned (2.27) writes the governor and energy
+# preference through its cpu plugin and a radeon card's power state through its video plugin.
 # While CoreCtrl or LACT holds a setting, this keeps the power profile's daemon off it and tells the person once which program
-# holds it; when the program lets go, the daemon gets the setting back.
+# holds it; when the program lets go, the daemon gets the setting back. The person's own choice of each action of the daemon
+# is kept here: who changed an action is read from the bus (BecomeMonitor), a change by LACT or by this service is not the
+# person's, and the person's choice is given back whenever nothing holds a card.
 #   power-profiles-daemon: a runtime drop-in (/run) adds --block-driver=amd_pstate --block-driver=intel_pstate to its own
 #                          command line, then restarts it (it has no runtime switch for a driver); its amdgpu_dpm action is
-#                          turned off through its own SetActionEnabled and back on when the hold ends, from the person's
-#                          choice recorded here (a --block-action would be saved as the person's "off": save_configuration
-#                          writes each action's runtime state into [Actions], src/power-profiles-daemon.c)
+#                          set through its own SetActionEnabled (a --block-action would be saved as the person's "off")
 #   tuned:                 a runtime cpu instance of its own takes the held processors from the profile's cpu instance
 #                          (controller.py instance_create, instance_acquire_devices); a radeon card cannot be taken
 #                          (its video plugin has no runtime instances), which is said
 # Usage: knob-owner watch | status | plan | forget | same-rule FILE
-#   watch      the service: follows CoreCtrl's helper, lactd, LACT's settings, the daemons, and acts
+#   watch      the service: follows CoreCtrl (its helper, its profiles, the programs it applies a profile for), lactd,
+#              LACT's settings, the daemons and who changes the daemon's actions, and acts
 #   status     what is held, by whom, and what each daemon is kept off, as JSON; changes nothing
-#   plan       the same from a recorded machine (tests): SPARKY_KNOB_ROOT=DIR, DIR/fixture/{corectrl,lactd,tuned}
-#              (SPARKY_KNOB_SYSFS=DIR reads DIR/sys instead of /sys with the live bus: the proof rig)
+#   plan       the same from a recorded machine (tests): SPARKY_KNOB_ROOT=DIR, DIR/fixture/{corectrl,corectrl-config,
+#              corectrl-apps,lactd,power-profiles-daemon,tuned} (SPARKY_KNOB_SYSFS=DIR reads DIR/sys instead of /sys with the
+#              live bus: the proof rig)
 #   forget     ends the notices of a program that is no longer installed (the package's dpkg trigger)
 #   same-rule  exit 0 when FILE is CoreCtrl's documented polkit rule for the group sudo (comments and spacing aside)
 import configparser
 import json
 import os
+import pwd
 import re
 import signal
+import stat
 import subprocess
 import sys
+import time
 
 PKG = "sparky-stereo-corectrl"
 ROOT = os.environ.get("SPARKY_KNOB_ROOT", "")
@@ -44,13 +58,22 @@ PPD_UNIT = "power-profiles-daemon.service"
 PPD_STATE = ROOT + "/var/lib/power-profiles-daemon/state.ini"
 LACT_CONFIG = ROOT + "/etc/lact/config.yaml"
 CORECTRL_HELPER = "/usr/libexec/corectrl/corectrl_helper"
+CORECTRL_PROGRAM = "/usr/bin/corectrl"
 LACT_PROGRAM = "/usr/bin/lact"
 CPU_DRIVERS = ("amd_pstate", "intel_pstate")
 OURS = ["--block-driver=amd_pstate", "--block-driver=intel_pstate"]
-ACTIONS_OFF = STATE + "/ppd-actions-off.json"   # the person's choice of each action this turned off, to give back
+PERSON = STATE + "/ppd-actions.json"           # the person's own choice of each action of power-profiles-daemon
+OLD_RECORD = STATE + "/ppd-actions-off.json"   # 0.1.0 kept the choice only while it held an action off
+ACTIONS = {"amdgpu_dpm": False}                # each action this sets, and its default (opt-in: ppd-action-amdgpu-dpm.c)
 PPD_BUS = ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.UPower.PowerProfiles")
+PPD_LEGACY = "net.hadess.PowerProfiles"
+PMON = ("org.corectrl.helper", "/Helper/PMon", "org.corectrl.helper.pmon")   # helperids.h
 TUNED_INSTANCE = "sparky_stereo_knob_owner"
 PROGRAMS = {"CoreCtrl": CORECTRL_HELPER, "LACT": LACT_PROGRAM}
+GLOBAL, MANUAL, NOOP = "_global_", "_manual_", "NOOP"   # iprofile.h, noop.h
+CARD_CONTROL = {"amdgpu": "AMD_PM_PERFMODE", "radeon": "AMD_PM_POWERSTATE_MODE"}   # pmperfmode.h, pmpowerstatemode.h
+WINE = {"wine-preloader", "wine64-preloader", "wine", "wine64", "wineloader", "wineloader64"}   # procpidsolver.h
+LARGEST_PROFILE = 4 << 20
 
 
 def log(text):
@@ -69,6 +92,22 @@ def fixture(name, default=""):
     return read(os.path.join(FIXTURE, name), default)
 
 
+def write_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".new", "w") as f:
+        json.dump(data, f, indent=1, sort_keys=True)
+    os.replace(path + ".new", path)
+
+
+def read_json(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 # --- what the machine has ---------------------------------------------------------------------------------------------
 
 def ppd_cpu_driver():
@@ -85,13 +124,19 @@ def ppd_cpu_driver():
 
 
 def amd_cards():
-    """AMD display controllers driven by amdgpu or radeon: {pci slot: {card, driver}}."""
+    """AMD display controllers driven by amdgpu or radeon: {pci slot: {card, driver, and CoreCtrl's keys for it: index (its
+    render node's number less 128, sysmodelfactory.cpp computeGPUIndex), deviceid and revision in capitals
+    (gpuinfouevent.cpp, gpuinforevision.cpp), uniqueid when the card has one (gpuinfouniqueid.cpp)}}."""
     cards = {}
     drm = SYS + "/sys/class/drm"
     try:
         names = sorted(os.listdir(drm))
     except OSError:
         return cards
+    render = {}
+    for name in names:
+        if re.fullmatch(r"renderD[0-9]+", name):
+            render[os.path.realpath(os.path.join(drm, name, "device"))] = int(name[7:]) - 128
     for name in names:
         if not re.fullmatch(r"card[0-9]+", name):
             continue
@@ -99,38 +144,70 @@ def amd_cards():
         if read(dev + "/vendor") != "0x1002":
             continue
         driver = os.path.basename(os.path.realpath(dev + "/driver"))
-        if driver in ("amdgpu", "radeon"):
-            cards[os.path.basename(os.path.realpath(dev))] = {"card": name, "driver": driver}
+        if driver not in CARD_CONTROL:
+            continue
+        pci = next((line.split("=", 1)[1] for line in read(dev + "/uevent").splitlines() if line.startswith("PCI_ID=")), "")
+        unique = read(dev + "/unique_id", None)
+        cards[os.path.basename(os.path.realpath(dev))] = {
+            "card": name, "driver": driver, "index": render.get(os.path.realpath(dev), -1),
+            "deviceid": pci.split(":", 1)[-1].upper() if pci else "",
+            "revision": re.sub(r"^0x", "", read(dev + "/revision")).upper(),
+            "uniqueid": unique.upper() if unique else None}
     return cards
 
 
-def ppd_action_enabled(action):
-    """amdgpu_dpm is opt-in in 0.30 (ppd-action-amdgpu-dpm.c, action-optin): on only when [Actions] in its state file says so."""
+def processor_packages():
+    """The machine's physical processor ids, one CPU component each in CoreCtrl."""
+    base = SYS + "/sys/devices/system/cpu"
+    ids = set()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        names = []
+    for name in names:
+        if re.fullmatch(r"cpu[0-9]+", name):
+            value = read("%s/%s/topology/physical_package_id" % (base, name))
+            if value.lstrip("-").isdigit():
+                ids.add(value)
+    return sorted(ids) or ["0"]
+
+
+def ppd_state_choice(action):
+    """The action's value in power-profiles-daemon's state file, or None."""
     config = configparser.ConfigParser(interpolation=None)
     try:
         config.read(PPD_STATE)
-        return config.getboolean("Actions", action, fallback=False)
+        if config.has_option("Actions", action):
+            return config.getboolean("Actions", action)
     except (configparser.Error, ValueError):
+        pass
+    return None
+
+
+def person_choice(action, live):
+    """The person's choice of ACTION: as kept here; else as 0.1.0 kept it; else on when the running daemon has it on (nothing
+    but a person turns an action on: LACT only turns it off); else the daemon's state file; else the action's default."""
+    for path in (PERSON, OLD_RECORD):
+        kept = read_json(path)
+        if isinstance(kept.get(action), bool):
+            return kept[action], "kept"
+    if live:
+        return True, "running daemon"
+    saved = ppd_state_choice(action)
+    if saved is not None:
+        return saved, "state file"
+    return ACTIONS[action], "default"
+
+
+def keep_person_choice(action, value):
+    kept = read_json(PERSON)
+    if kept.get(action) is value:
         return False
-
-
-def actions_off():
-    try:
-        with open(ACTIONS_OFF) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
-def ppd_preference(action, bus=None):
-    """The person's choice for an action: as recorded when it was turned off here, else what the running daemon says (its
-    ActionsInfo; SetActionEnabled changes it at once, while the state file is written only at the next profile change),
-    else the daemon's state file."""
-    recorded = actions_off()
-    if action in recorded:
-        return recorded[action]
-    live = bus.ppd_action(action) if bus is not None else None
-    return live if live is not None else ppd_action_enabled(action)
+    kept[action] = value
+    write_json(PERSON, kept)
+    if os.path.exists(OLD_RECORD):
+        os.unlink(OLD_RECORD)
+    return True
 
 
 def lact_slots():
@@ -159,6 +236,247 @@ def lact_slots():
     return {str(key).rsplit("-", 1)[-1] for key in gpus}
 
 
+# --- what CoreCtrl manages --------------------------------------------------------------------------------------------------
+
+def truthy(value, default):
+    """pugixml's as_bool (CoreCtrl reads its profiles with pugixml): the default when the attribute is missing, else true
+    when its value starts with 1, t, T, y or Y."""
+    if value is None:
+        return default
+    return value[:1] in ("1", "t", "T", "y", "Y")
+
+
+def proc_start(pid):
+    """A process's start, in clock ticks since boot (proc(5), /proc/PID/stat field 22)."""
+    text = read("/proc/%s/stat" % pid)
+    try:
+        return int(text[text.rindex(")") + 2:].split()[19])
+    except (ValueError, IndexError):
+        return None
+
+
+def environ(pid):
+    try:
+        with open("/proc/%s/environ" % pid, "rb") as f:
+            items = f.read().split(b"\0")
+    except OSError:
+        return {}
+    env = {}
+    for item in items:
+        key, sep, value = item.partition(b"=")
+        if sep:
+            env[key.decode(errors="replace")] = value.decode(errors="replace")
+    return env
+
+
+def config_home(pid):
+    """Where CoreCtrl run as PID keeps its settings: Qt's ConfigLocation, XDG_CONFIG_HOME when it is an absolute path, else
+    HOME/.config (corefactory.cpp standardDirectories)."""
+    env = environ(pid)
+    config = env.get("XDG_CONFIG_HOME", "")
+    if config.startswith("/"):
+        return config
+    home = env.get("HOME", "")
+    if not home:
+        try:
+            uid = os.stat("/proc/%s" % pid).st_uid
+            home = pwd.getpwuid(uid).pw_dir
+        except (OSError, KeyError):
+            return None
+    return os.path.join(home, ".config")
+
+
+def corectrl_folders():
+    """The profile folders of the CoreCtrl windows running on this machine (CoreCtrl's own program, any person)."""
+    if FIXTURE is not None:
+        config = fixture("corectrl-config")
+        return [ROOT + config + "/corectrl/profiles"] if config else []
+    folders = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            exe = os.readlink("/proc/%s/exe" % pid)
+        except OSError:
+            continue
+        if exe.removesuffix(" (deleted)") != CORECTRL_PROGRAM:
+            continue
+        config = config_home(pid)
+        if config:
+            folder = os.path.join(config, "corectrl", "profiles")
+            if folder not in folders:
+                folders.append(folder)
+    return folders
+
+
+def load_profiles(folder):
+    """CoreCtrl's saved profiles in FOLDER (profilestorage.cpp: every NAME.ccpro, a zip archive holding profile.xml), and the
+    names of the files that could not be read (CoreCtrl leaves those out too)."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+    profiles, unreadable = [], []
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return profiles, unreadable
+    for name in names:
+        if not name.endswith(".ccpro"):
+            continue
+        path = os.path.join(folder, name)
+        try:
+            if not stat.S_ISREG(os.stat(path).st_mode):
+                raise ValueError("not a file")
+            with zipfile.ZipFile(path) as archive:
+                info = archive.getinfo("profile.xml")
+                if info.file_size > LARGEST_PROFILE:
+                    raise ValueError("too large")
+                root = ET.fromstring(archive.read(info))
+            if root.tag != "PROFILE":
+                raise ValueError("no PROFILE element")
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile, ET.ParseError, RuntimeError):
+            unreadable.append(name)
+            continue
+        profiles.append({"file": name, "exe": root.get("exe", ""), "name": root.get("name", ""),
+                         "active": truthy(root.get("active"), True), "root": root})
+    return profiles, unreadable
+
+
+def process_app(pid):
+    """The name CoreCtrl's helper gives a process (procpidsolver.cpp ProcPIDSolver::app): its program's file name, or for
+    Wine the first .exe of its command line."""
+    try:
+        exe = os.path.basename(os.readlink("/proc/%s/exe" % pid))
+    except OSError:
+        return ""
+    if exe not in WINE:
+        return exe
+    try:
+        with open("/proc/%s/cmdline" % pid, "rb") as f:
+            entries = [e.decode(errors="replace") for e in f.read().split(b"\0")]
+    except OSError:
+        return exe
+    for entry in entries:
+        if entry.startswith("/") and os.path.basename(entry) in WINE:
+            continue
+        if os.path.splitext(entry)[1].lower() != ".exe":
+            break
+        return re.split(r"[\\/]", entry)[-1]
+    return exe
+
+
+def running_apps(exes, since):
+    """The programs with a profile that started after CoreCtrl's helper did, oldest first: the helper reports a program when
+    it starts (processmonitor.cpp ProcessMonitor::processExec), never one already running."""
+    if FIXTURE is not None:
+        return [a for a in fixture("corectrl-apps").splitlines() if a in exes]
+    found = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        start = proc_start(pid)
+        if start is None or (since is not None and start < since):
+            continue
+        app = process_app(pid)
+        if app in exes:
+            found.append((start, app))
+    apps = []
+    for _, app in sorted(found):
+        if app not in apps:
+            apps.append(app)
+    return apps
+
+
+def find_part(profile, tag, match):
+    if profile is None:
+        return None
+    return next((node for node in profile["root"].findall(tag) if match(node)), None)
+
+
+def effective_part(stack, tag, match):
+    """The component CoreCtrl applies: from the highest profile in which it is on, else the global profile's (profileview.cpp:
+    a part that is off is taken from the view below). A profile without the component has it on, with CoreCtrl's defaults
+    (gpuxmlparser.cpp, cpuxmlparser.cpp: a missing node gives the default profile's values). Returns (node, profile)."""
+    for profile in reversed(stack[1:]):
+        node = find_part(profile, tag, match)
+        if truthy(node.get("active") if node is not None else None, True):
+            return node, profile["name"]
+    return find_part(stack[0], tag, match), GLOBAL
+
+
+def writes(component, control):
+    """True when CONTROL (a control mode) of COMPONENT writes its setting: the component on, the mode on and its mode not NOOP
+    (controlmode.cpp importControl: only the chosen mode's control is on; cpu.cpp, gpu.cpp sync: only an active component).
+    Missing parts take CoreCtrl's defaults: on, in a mode that writes (the first of CPU_CPUFREQ, AMD_PM_AUTO...)."""
+    if component is not None and not truthy(component.get("active"), True):
+        return False
+    node = component.find(control) if component is not None else None
+    if node is None:
+        return True
+    return truthy(node.get("active"), True) and node.get("mode", "") != NOOP
+
+
+def cpu_match(physical):
+    return lambda node: (node.get("physicalId") if node.get("physicalId") is not None else node.get("socketId")) == physical
+
+
+def gpu_match(card):
+    """gpuxmlparser.cpp loadPartFrom: by uniqueid when the node has one and the card has one, else by index, deviceid and
+    revision."""
+    def match(node):
+        unique = node.get("uniqueid") or ""
+        if unique and card["uniqueid"] is not None:
+            return unique == card["uniqueid"]
+        try:
+            index = int(node.get("index", "-1"))
+        except ValueError:
+            index = -1
+        return index == card["index"] and node.get("deviceid", "") == card["deviceid"] and node.get("revision", "") == card["revision"]
+    return match
+
+
+def managed(stack, cards, packages):
+    """What CoreCtrl writes with this stack of profiles: {"cpu": bool, "cards": [slots]}."""
+    cpu = any(writes(effective_part(stack, "CPU", cpu_match(p))[0], "CPU_CPUFREQ_MODE") for p in packages)
+    held = [slot for slot, card in sorted(cards.items())
+            if writes(effective_part(stack, "GPU", gpu_match(card))[0], CARD_CONTROL[card["driver"]])]
+    return {"cpu": cpu, "cards": held}
+
+
+def corectrl_facts(bus, cards, apps=None):
+    """What CoreCtrl manages now: the stack it applies, read from the saved profiles of each running CoreCtrl and the
+    programs it applies a profile for (APPS, as its helper reported them; None reads them from /proc), and what each manual
+    profile would add if the person turned it on."""
+    out = {"running": False, "stack": [], "apps": [], "cpu": False, "cards": [], "manual": {}, "unreadable": [], "folders": []}
+    if not bus.corectrl_started():
+        return out
+    out["running"] = True
+    packages = processor_packages()
+    folders = corectrl_folders()
+    out["folders"] = folders
+    stacks = []
+    for folder in folders or [None]:
+        profiles, unreadable = load_profiles(folder) if folder else ([], [])
+        out["unreadable"] += unreadable
+        glob = next((p for p in profiles if p["exe"] == GLOBAL), None)
+        by_exe = {}
+        for p in profiles:
+            if p["active"] and p["exe"] not in (GLOBAL, MANUAL):
+                by_exe.setdefault(p["exe"], p)
+        running = apps if apps is not None else running_apps(set(by_exe), bus.corectrl_helper_start())
+        stack = [glob] + [by_exe[a] for a in running if a in by_exe]
+        stacks.append(stack)
+        out["stack"] += [GLOBAL if glob is None else glob["name"]] + [p["name"] for p in stack[1:]]
+        out["apps"] += [a for a in running if a in by_exe]
+        for p in profiles:
+            if p["exe"] == MANUAL:
+                out["manual"].setdefault(p["name"], managed(stack + [p], cards, packages))
+    for stack in stacks:
+        m = managed(stack, cards, packages)
+        out["cpu"] = out["cpu"] or m["cpu"]
+        out["cards"] = sorted(set(out["cards"]) | set(m["cards"]))
+    return out
+
+
 class Bus:
     """The system bus, or the recorded answers of a fixture."""
 
@@ -182,8 +500,16 @@ class Bus:
         return self.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner",
                          GLib.Variant("(s)", (name,)), "(b)")[0]
 
+    def pid_of(self, name):
+        from gi.repository import GLib
+        try:
+            return self.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetConnectionUnixProcessID",
+                             GLib.Variant("(s)", (name,)), "(u)")[0]
+        except Exception:
+            return None
+
     def corectrl_started(self):
-        """CoreCtrl holds its settings from the moment its helper is started until it stops (helper.cpp Helper::started)."""
+        """CoreCtrl writes from the moment its helper is started until it stops (helper.cpp Helper::started)."""
         if FIXTURE is not None:
             return fixture("corectrl") == "started"
         try:
@@ -194,9 +520,18 @@ class Bus:
             log("CoreCtrl's helper did not answer: %s" % error)
             return False
 
+    def corectrl_helper_start(self):
+        if FIXTURE is not None:
+            return None
+        pid = self.pid_of("org.corectrl.helper")
+        return proc_start(pid) if pid else None
+
     def ppd_action(self, action):
         """The running power-profiles-daemon's state of ACTION (ActionsInfo, Enabled), or None."""
-        if FIXTURE is not None or not self.has_owner(PPD_BUS[0]):
+        if FIXTURE is not None:
+            value = fixture("ppd-" + action)
+            return None if value == "" else value == "on"
+        if not self.has_owner(PPD_BUS[0]):
             return None
         from gi.repository import GLib
         try:
@@ -220,15 +555,18 @@ class Bus:
         return out.stdout.strip() == "loaded"
 
 
-def facts(bus):
+def facts(bus, apps=None):
+    cards = amd_cards()
+    live = {a: bus.ppd_action(a) for a in ACTIONS}
     return {
-        "corectrl": bus.corectrl_started(),
+        "corectrl": corectrl_facts(bus, cards, apps),
         "lactd": bus.unit_active("lactd.service"),
         "lact_slots": lact_slots(),
-        "cards": amd_cards(),
+        "cards": cards,
         "ppd_loaded": bus.unit_loaded(PPD_UNIT),
         "ppd_cpu_driver": ppd_cpu_driver(),
-        "ppd_amdgpu_dpm": ppd_preference("amdgpu_dpm", bus),
+        "ppd_actions_live": live,
+        "ppd_person": {a: person_choice(a, live[a])[0] for a in ACTIONS},
         "tuned": bus.has_owner("com.redhat.tuned"),
     }
 
@@ -241,12 +579,14 @@ def key_of(slot):
 
 def decide(f):
     cards = f["cards"]
+    cc = f["corectrl"]
     holders = {"cpu": []}
     for slot in cards:
         holders[slot] = []
-    if f["corectrl"]:
-        holders["cpu"].append("CoreCtrl")
-        for slot in cards:
+    if cc["running"]:
+        if cc["cpu"]:
+            holders["cpu"].append("CoreCtrl")
+        for slot in cc["cards"]:
             holders[slot].append("CoreCtrl")
     if f["lactd"] and f["lact_slots"]:
         for slot in sorted(f["lact_slots"] & set(cards)):
@@ -257,8 +597,10 @@ def decide(f):
     if f["ppd_loaded"]:
         if holders["cpu"] and f["ppd_cpu_driver"]:
             ppd += ["--block-driver=%s" % d for d in CPU_DRIVERS]
-        if held_cards and f["ppd_amdgpu_dpm"]:
+        if held_cards and f["ppd_person"]["amdgpu_dpm"]:
             ppd_off.append("amdgpu_dpm")
+    # the state each action is set to: off while a card is held, else the person's own choice
+    actions = {a: (f["ppd_person"][a] and not held_cards) for a in ACTIONS}
     tuned_cpu = bool(holders["cpu"]) and f["tuned"]
     notices = {}
     if (ppd and ppd[0].startswith("--block-driver")) or tuned_cpu:
@@ -271,10 +613,18 @@ def decide(f):
             notices["card-" + key_of(slot)] = ["LOCAL3", holders[slot][0], name]
         if f["tuned"] and cards[slot]["driver"] == "radeon":
             notices["tuned-radeon-" + key_of(slot)] = ["LOCAL6", name, holders[slot][0]]
+    # a manual profile CoreCtrl does not tell anyone about: say what it would write that nothing keeps the daemons off
+    for profile, would in sorted(cc["manual"].items()):
+        if would["cpu"] and not holders["cpu"] and (f["ppd_cpu_driver"] or f["tuned"]):
+            notices["manual-cpu-" + key_of(profile)] = ["LOCAL13", profile]
+        for slot in would["cards"]:
+            if not holders.get(slot) and f["ppd_person"]["amdgpu_dpm"]:
+                notices["manual-card-%s-%s" % (key_of(profile), key_of(slot))] = ["LOCAL14", profile, "%s (PCI %s)" % (cards[slot]["card"], slot)]
     if f["lactd"] and f["lact_slots"] is None:
         notices["lact-config"] = ["LOCAL8", LACT_CONFIG[len(ROOT):]]
+    running = (["CoreCtrl"] if cc["running"] else []) + (["LACT"] if f["lactd"] and f["lact_slots"] is not None else [])
     return {"holders": {k: v for k, v in holders.items() if v}, "ppd_args": ppd, "ppd_actions_off": ppd_off,
-            "tuned_cpu": tuned_cpu, "notices": notices}
+            "ppd_actions": actions, "tuned_cpu": tuned_cpu, "notices": notices, "running": running}
 
 
 # --- doing it -------------------------------------------------------------------------------------------------------------
@@ -343,31 +693,26 @@ def apply_ppd(args):
     return True
 
 
-def apply_ppd_actions(bus, off):
-    """Turns each held action off through power-profiles-daemon's SetActionEnabled, recording the person's choice first, and
-    gives that choice back when the hold ends. Needs the daemon running (it is never started for this)."""
+def apply_ppd_actions(bus, want, held_off):
+    """Sets each action through power-profiles-daemon's SetActionEnabled to WANT (off while a card is held, else the person's
+    choice), keeping the person's choice here first. Needs the daemon running (it is never started for this)."""
     from gi.repository import GLib
     if not bus.has_owner(PPD_BUS[0]):
         return False
-    recorded = actions_off()
-    changed = False
-    for action in sorted(set(off) | set(recorded)):
-        if action in off:
-            if action not in recorded:
-                recorded[action] = True
-                changed = True
-            if bus.ppd_action(action):
-                bus.call(*PPD_BUS, "SetActionEnabled", GLib.Variant("(sb)", (action, False)))
-                log("power-profiles-daemon's %s is off while its card is held" % action)
+    for action, value in sorted(want.items()):
+        live = bus.ppd_action(action)
+        if live is None:
+            continue
+        choice, source = person_choice(action, live)
+        if keep_person_choice(action, choice):
+            log("the person's choice of power-profiles-daemon's %s is %s (from the %s)" % (action, "on" if choice else "off", source))
+        if live == value:
+            continue
+        bus.call(*PPD_BUS, "SetActionEnabled", GLib.Variant("(sb)", (action, value)))
+        if action in held_off:
+            log("power-profiles-daemon's %s is off while its card is held" % action)
         else:
-            bus.call(*PPD_BUS, "SetActionEnabled", GLib.Variant("(sb)", (action, recorded.pop(action))))
-            changed = True
-            log("power-profiles-daemon's %s is the person's again" % action)
-    if changed:
-        os.makedirs(STATE, exist_ok=True)
-        with open(ACTIONS_OFF + ".new", "w") as f:
-            json.dump(recorded, f)
-        os.replace(ACTIONS_OFF + ".new", ACTIONS_OFF)
+            log("power-profiles-daemon's %s is the person's again (%s)" % (action, "on" if value else "off"))
     return True
 
 
@@ -416,7 +761,8 @@ def told_path():
     return os.path.join(STATE, "told.json")
 
 
-CONFLICTS = ("both-", "lact-config", "tuned-radeon-")   # a notice of a conflict ends with the conflict
+CONFLICTS = ("both-", "lact-config", "tuned-radeon-", "manual-")   # a notice of a conflict ends with the conflict
+HOLDS = ("cpu", "card-")                                          # a notice of a hold ends when its program, running, lets go
 
 
 def program_of(key, args):
@@ -425,9 +771,10 @@ def program_of(key, args):
     return next((p for p in PROGRAMS if p in args[1:]), None)
 
 
-def tell(notices):
+def tell(notices, running=()):
     """Keeps each new notice once (the notifier shows it until the person dismisses it). A notice of a conflict ends when
-    the conflict does; one that says which program holds a setting ends when that program is removed."""
+    the conflict does; one that says which program holds a setting ends when that program, still running, no longer holds
+    it (the person changed its settings) or when the program is removed; a program that is merely closed keeps it."""
     try:
         with open(told_path()) as f:
             told = json.load(f)
@@ -443,18 +790,30 @@ def tell(notices):
         if key in notices:
             continue
         program = program_of(key, args)
-        if key.startswith(CONFLICTS) or (program and not os.path.exists(ROOT + PROGRAMS[program])):
+        ends = key.startswith(CONFLICTS) or (program and not os.path.exists(ROOT + PROGRAMS[program]))
+        ends = ends or (key.startswith(HOLDS) and program in running)
+        if ends:
             engine(["clear", "--machine", PKG, key])
             del told[key]
             changed = True
     if changed:
-        os.makedirs(STATE, exist_ok=True)
-        with open(told_path() + ".new", "w") as f:
-            json.dump(told, f, indent=1, sort_keys=True)
-        os.replace(told_path() + ".new", told_path())
+        write_json(told_path(), told)
 
 
 # --- the service ------------------------------------------------------------------------------------------------------------
+
+def notify_ready():
+    """sd_notify(3) READY=1, so that units ordered after this one (lactd) start only once its bus monitor listens."""
+    path = os.environ.get("NOTIFY_SOCKET", "")
+    if not path:
+        return
+    import socket
+    if path.startswith("@"):
+        path = "\0" + path[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+        s.connect(path)
+        s.sendall(b"READY=1")
+
 
 class Watch:
     def __init__(self):
@@ -463,13 +822,20 @@ class Watch:
         self.bus = Bus()
         self.pending = None
         self.retries = 0
+        self.apps = []
+        self.helper = None
+        self.folders = {}
+        self.monitor = None
+        self.expected = {}
         conn = self.bus.bus
         for name in ("org.corectrl.helper", "com.redhat.tuned", "org.freedesktop.UPower.PowerProfiles"):
             conn.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged", "/org/freedesktop/DBus",
                                   name, Gio.DBusSignalFlags.NONE, self.changed, None)
         conn.signal_subscribe("com.redhat.tuned", "com.redhat.tuned.control", "profile_changed", "/Tuned", None,
                               Gio.DBusSignalFlags.NONE, self.tuned_profile, None)
-        # the person's choice of an action reaches the daemon's properties at once (send_dbus_event after its drivers restart)
+        # the programs CoreCtrl applies a profile for, as its helper reports them to CoreCtrl's window (msgdispatcher.cpp)
+        conn.signal_subscribe(PMON[0], PMON[2], None, PMON[1], None, Gio.DBusSignalFlags.NONE, self.pmon, None)
+        # an action's change reaches the daemon's properties at once (send_dbus_event after its drivers restart)
         conn.signal_subscribe(PPD_BUS[0], "org.freedesktop.DBus.Properties", "PropertiesChanged", PPD_BUS[1], None,
                               Gio.DBusSignalFlags.NONE, self.changed, None)
         try:
@@ -478,7 +844,7 @@ class Watch:
             log("systemd's unit changes cannot be followed: %s" % error)
         conn.signal_subscribe("org.freedesktop.systemd1", "org.freedesktop.DBus.Properties", "PropertiesChanged",
                               "/org/freedesktop/systemd1/unit/lactd_2eservice", None, Gio.DBusSignalFlags.NONE, self.changed, None)
-        self.monitors = []
+        self.files = []
         for path in (LACT_CONFIG, PPD_STATE):
             try:
                 monitor = Gio.File.new_for_path(path).monitor_file(Gio.FileMonitorFlags.NONE, None)
@@ -486,7 +852,113 @@ class Watch:
                 log("%s cannot be followed: %s" % (path, error.message))
                 continue
             monitor.connect("changed", self.changed)
-            self.monitors.append(monitor)
+            self.files.append(monitor)
+        self.start_monitor()
+
+    # who changes power-profiles-daemon's actions: a copy of each SetActionEnabled call (dbus-daemon's BecomeMonitor, for
+    # root), its caller found by process; the bus must never receive anything from a monitor, so its method calls are kept
+    # from GDBus (which would answer them) by the filter
+    def start_monitor(self):
+        Gio, GLib = self.Gio, self.GLib
+        try:
+            address = Gio.dbus_address_get_for_bus_sync(Gio.BusType.SYSTEM, None)
+            conn = Gio.DBusConnection.new_for_address_sync(
+                address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+            conn.set_exit_on_close(False)
+            conn.add_filter(self.monitored)
+            rules = ["type='method_call',interface='%s',member='SetActionEnabled'" % i for i in (PPD_BUS[2], PPD_LEGACY)]
+            conn.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.Monitoring", "BecomeMonitor",
+                           GLib.Variant("(asu)", (rules, 0)), None, Gio.DBusCallFlags.NONE, 5000, None)
+            conn.connect("closed", self.monitor_closed)
+            self.monitor = conn
+            engine(["clear", "--machine", PKG, "monitor"])
+        except Exception as error:
+            self.monitor = None
+            log("who changes power-profiles-daemon's actions cannot be seen: %s" % error)
+            engine(["keep", "--machine", PKG, "monitor", "LOCAL15", str(error)])
+
+    def monitor_closed(self, *args):
+        self.monitor = None
+        log("the bus closed the monitor; it is opened again")
+        self.GLib.timeout_add(1000, lambda: self.start_monitor() and False)
+
+    def monitored(self, conn, message, incoming, *data):
+        # runs on GDBus's own thread: hand the call over to the main loop, and drop every method call that arrives (never
+        # answered); what this connection sends (BecomeMonitor itself) and replies and signals pass
+        if not incoming or message.get_message_type() != self.Gio.DBusMessageType.METHOD_CALL:
+            return message
+        if message.get_member() == "SetActionEnabled":
+            body = message.get_body()
+            if body is not None and body.get_type_string() == "(sb)":
+                action, enabled = body.unpack()
+                self.GLib.idle_add(self.action_call, message.get_sender(), action, enabled, time.monotonic(),
+                                   priority=self.GLib.PRIORITY_DEFAULT)
+        return None
+
+    def caller(self, sender):
+        """"lact" for LACT's daemon, "us" for this service, "person" for anyone else (powerprofilesctl, the Graphics page,
+        Hardware Setup), None when the caller left before it could be asked."""
+        if sender == self.bus.bus.get_unique_name():
+            return "us"
+        pid = self.bus.pid_of(sender)
+        if pid is None:
+            return None
+        try:
+            exe = os.readlink("/proc/%d/exe" % pid).removesuffix(" (deleted)")
+        except OSError:
+            exe = ""
+        if exe == LACT_PROGRAM or "/lactd.service" in read("/proc/%d/cgroup" % pid):
+            return "lact"
+        return "us" if pid == os.getpid() else "person"
+
+    def lactd_just_started(self):
+        out = subprocess.run(["systemctl", "show", "-P", "ActiveEnterTimestampMonotonic", "lactd.service"], capture_output=True, text=True)
+        try:
+            since = int(out.stdout.strip())
+        except ValueError:
+            return False
+        return since > 0 and time.monotonic() * 1e6 - since < 30e6
+
+    def action_call(self, sender, action, enabled, seen):
+        if action not in ACTIONS:
+            return False
+        who = self.caller(sender)
+        if who is None:
+            # LACT turns the action off once, at its start; a caller gone that fast at that moment is taken for LACT
+            who = "lact" if (not enabled and self.lactd_just_started()) else "person"
+            log("the caller of SetActionEnabled(%s, %s) had left the bus; taken as %s" % (action, enabled, who))
+        if who == "lact":
+            log("LACT set power-profiles-daemon's %s %s at its start; the person's choice stays %s"
+                % (action, "on" if enabled else "off", "on" if person_choice(action, None)[0] else "off"))
+        elif who == "person":
+            if keep_person_choice(action, bool(enabled)):
+                log("the person's choice of power-profiles-daemon's %s is now %s" % (action, "on" if enabled else "off"))
+        self.changed()
+        return False
+
+    def pmon(self, conn, sender, path, interface, name, params, *data):
+        app = bytes(params.unpack()[0]).decode(errors="replace")
+        if name == "appExec" and app not in self.apps:
+            self.apps.append(app)
+        elif name == "appExit" and app in self.apps:
+            self.apps.remove(app)
+        log("CoreCtrl's helper: %s %s" % (name, app))
+        self.soon(100)
+
+    def follow_folders(self, folders):
+        for folder in list(self.folders):
+            if folder not in folders:
+                self.folders.pop(folder).cancel()
+        for folder in folders:
+            if folder in self.folders:
+                continue
+            try:
+                monitor = self.Gio.File.new_for_path(folder).monitor_directory(self.Gio.FileMonitorFlags.NONE, None)
+            except self.GLib.Error as error:
+                log("%s cannot be followed: %s" % (folder, error.message))
+                continue
+            monitor.connect("changed", self.changed)
+            self.folders[folder] = monitor
 
     def changed(self, *args):
         self.retries = 0
@@ -501,13 +973,36 @@ class Watch:
             self.GLib.source_remove(self.pending)
         self.pending = self.GLib.timeout_add(ms, self.evaluate)
 
+    def unmonitored_changes(self):
+        """Without the monitor (said once, LOCAL15): a change of an action this service did not make is the person's,
+        except an "off" while lactd has just started (LACT's, at its start)."""
+        for action in ACTIONS:
+            live = self.bus.ppd_action(action)
+            if live is None or self.expected.get(action) is None or live == self.expected[action]:
+                continue
+            if not live and self.lactd_just_started():
+                log("power-profiles-daemon's %s turned off while lactd started: taken as LACT's" % action)
+            elif keep_person_choice(action, live):
+                log("the person's choice of power-profiles-daemon's %s is now %s" % (action, "on" if live else "off"))
+
     def evaluate(self):
         self.pending = None
-        f = facts(self.bus)
+        if self.monitor is None:
+            self.unmonitored_changes()
+        helper = self.bus.pid_of("org.corectrl.helper") if self.bus.has_owner("org.corectrl.helper") else None
+        if helper != self.helper:
+            # a new helper: the programs it will report are those started from now on; read the ones started since it began
+            self.helper = helper
+            self.apps = None
+        f = facts(self.bus, self.apps)
+        if self.apps is None:
+            self.apps = list(f["corectrl"]["apps"])
+        self.follow_folders(f["corectrl"]["folders"])
         plan = decide(f)
         try:
             apply_ppd(plan["ppd_args"])
-            apply_ppd_actions(self.bus, plan["ppd_actions_off"])
+            apply_ppd_actions(self.bus, plan["ppd_actions"], plan["ppd_actions_off"])
+            self.expected = {a: self.bus.ppd_action(a) for a in ACTIONS}
         except Exception as error:
             log("power-profiles-daemon: %s" % error)
             engine(["keep", "--machine", PKG, "ppd", "LOCAL9", str(error)])
@@ -516,9 +1011,9 @@ class Watch:
                 apply_tuned(self.bus, plan["tuned_cpu"])
             except Exception as error:
                 engine(["keep", "--machine", PKG, "tuned", "LOCAL7", "CoreCtrl", str(error)])
-        tell(plan["notices"])
+        tell(plan["notices"], plan["running"])
         # CoreCtrl's helper is on the bus before it is started (the person's authorization comes first): look again
-        if not f["corectrl"] and self.bus.has_owner("org.corectrl.helper") and self.retries < 60:
+        if not f["corectrl"]["running"] and helper is not None and self.retries < 60:
             self.retries += 1
             self.soon(1000)
         return False
@@ -526,7 +1021,7 @@ class Watch:
     def stop(self, *args):
         try:
             apply_ppd([])
-            apply_ppd_actions(self.bus, [])
+            apply_ppd_actions(self.bus, {a: person_choice(a, None)[0] for a in ACTIONS}, [])
             if self.bus.has_owner("com.redhat.tuned"):
                 apply_tuned(self.bus, False)
         finally:
@@ -542,6 +1037,7 @@ class Watch:
             signal_add = self.GLib.unix_signal_add
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal_add(self.GLib.PRIORITY_HIGH, sig, self.stop)
+        notify_ready()
         self.soon(0)
         self.loop.run()
 

@@ -1,4 +1,24 @@
 -------------------------------------------------------------------------------
+  Version 0.1.1 (2026-11-27)
+-------------------------------------------------------------------------------
+  * CoreCtrl holds only what it manages: the processor while the profile it applies has its processor control on, a card
+    while that card's power control is on (CoreCtrl writes a control only while it is on: Control::sync). The profile
+    it applies is read as CoreCtrl builds it: the global profile and the profiles of the programs its helper reports
+    running, each component from the highest profile in which it is on, from the person's saved profiles; a change is
+    followed while CoreCtrl runs (a saved profile, a program starting or ending). With the processor control off,
+    power-profiles-daemon keeps its processor driver and offers Performance; with a card's power control off, its
+    amdgpu_dpm action stays the person's.
+  * A manual profile, which CoreCtrl keeps in memory and tells nobody about, is said when it would set something nothing
+    keeps the daemons off (LOCAL13, LOCAL14).
+  * The person's choice of power-profiles-daemon's amdgpu_dpm action is kept and comes back as the person left it: LACT
+    turns the action off at each start of its daemon and never gives it back, and power-profiles-daemon saved that "off"
+    as the person's at its next profile change. Who changes the action is read from the bus (a monitor of its
+    SetActionEnabled calls); LACT's change and this service's own are not the person's. Without the monitor this is said
+    (LOCAL15) and a change is told from LACT's by its timing.
+  * The service is ready (Type=notify) before lactd starts, and reads the person's CoreCtrl profiles (ProtectHome=read-only).
+  * A hold's notice ends when its program, still running, no longer holds the setting.
+
+-------------------------------------------------------------------------------
   Version 0.1.0 (2026-11-27)
 -------------------------------------------------------------------------------
   * First version (queue rows 168 and 601; Daniel, 2026-10-17, on CoreCtrl: "maybe integrate and make it run in the

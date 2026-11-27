@@ -10,7 +10,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-corectrl
-VERSION=0.1.0+lc1
+VERSION=0.1.1+lc1
 IMAGE=${SPARKY_BUILD_IMAGE:?set SPARKY_BUILD_IMAGE to the build image (see the header)}
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
