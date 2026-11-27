@@ -44,6 +44,13 @@ for folder in ("lang", "problems-lang"):
                                                                     en[key].count("%s")))
             if lang != "en" and text == en.get(key) and (folder, key) not in SAME_AS_ENGLISH:
                 failed.append("%s/%s %s: the English text" % (folder, lang, key))
+# the presets stay distinguishable in Edit Pages: a computer's titles differ from one another in every language
+for lang in REQUIRED:
+    t = load("lang", lang)
+    for count in (0, 2, 3, 9):
+        titles = [t[k] % part for part in (t["LOCAL1"], t["LOCAL2"] % count) for k in ("LOCAL3", "LOCAL4")]
+        if len(set(titles)) != len(titles):
+            failed.append("lang/%s: two presets with one title for %d cards: %s" % (lang, count, titles))
 for line in failed:
     print("FAIL", line)
 print("catalogues: %d failures" % len(failed))
