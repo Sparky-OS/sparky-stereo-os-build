@@ -1,4 +1,51 @@
 -------------------------------------------------------------------------------
+  Version 0.1.17 (2026-11-27)
+-------------------------------------------------------------------------------
+  * Row 190: the anti-cheat start. On a UEFI start GRUB's menu has, right before 90_sparky_stereo_start, Debian's own
+    10_linux entry for the newest kernel once more, under the id gnulinux-sparky-stereo-anticheat, with
+    lockdown=integrity, sysctl.kernel.kexec_load_disabled=1, nohibernate, intel_iommu=on, iommu.passthrough=0 and
+    sparky_stereo.anticheat=1 (an lsm= of the person's without bpf gets bpf added), as Easy Anti-Cheat Linux v2 asks.
+    The usual entries are unchanged: hibernation stays the default start (Daniel, 2026-10-21). No entry on a BIOS
+    start, said (LOCAL107); SPARKY_STEREO_ANTICHEAT=no leaves it out (LOCAL108); a 10_linux it cannot read is kept as a
+    problem (LOCAL109).
+  * Plasma's "Restart for anti-cheat games" (plasma-workspace +stereo3d14) starts it once through
+    /usr/lib/sparky-stereo-boot/anticheat-restart, run by pkexec under the polkit action
+    org.sparkystereo.boot.restart-for-anti-cheat (allowed for the active local session, as a restart is): GRUB's own
+    grub-reboot where GRUB can write /boot/grub, else the edition's environment block on the EFI system partition,
+    which the entry's script reads, clears and acts on as Debian's 00_header does with next_entry. The restart is
+    offered only where that works (/var/lib/sparky-stereo-boot/anticheat.entry); where GRUB can keep no request the
+    entry stays in the menu and update-grub says how to choose it (LOCAL106). A cancelled logout takes the request back.
+  * sparky-stereo-boot anticheat-check [--json]: Secure Boot and whose key signed the running kernel, the enrolled
+    Machine Owner Keys, modules from outside the kernel and who signed them, TPM 2.0, the measured boot log (its
+    boot manager measurement read as an administrator), the IOMMU and passthrough, lockdown, kexec, the BPF LSM: each
+    met, not met or unknown, with why, in ten languages. A key is on Epic's list of 2026-10-14 when a certificate's
+    subject or issuer names one of its keys; the edition's own key and this computer's DKMS key are named as not on it.
+    Measured boot needs the boot manager's own measurements (PCRs 8, 9, 11, 12), and the kernel's unsigned-module taint
+    counts a module loaded and gone; a Valve device is told not to turn Secure Boot on, and a handheld needs no IOMMU
+    (Epic's FAQ). These rules follow Bazzite's check-anticheat (Universal Blue; Ted O'Hayer and stellaberrant).
+  * The check also names the modules lockdown refuses, so in the anti-cheat start they do not load (LOCAL175,
+    LOCAL176): in the usual start, the modules of this kernel's updates folder (DKMS, prebuilt) without a signature
+    and the loaded ones whose signature the kernel could not verify (taint E: signed with this computer's DKMS key,
+    which it does not trust); in the anti-cheat start, the names in this start's journal, and, when the kernel logged a
+    refusal without a name, this kernel's unverifiable modules that did not load. Measured on the test laptop (evdi,
+    vhba, spl, zfs, signed with an untrusted DKMS key; lockdown refused 7 loads). A person who cannot read the kernel's
+    log is told that only an administrator can see the refusals (LOCAL185) instead of getting no row.
+  * anticheat-check --json marks each row the anti-cheat start's own kernel line settles (lockdown off, kexec closed
+    only after the start) as settledByAntiCheatStart, so Plasma's confirmation lists only what that start cannot change.
+  * The anti-cheat start never runs over a hibernated system: under lockdown the kernel does not read the image
+    (resume_store, kernel/power/hibernate.c), so an initramfs-tools script after resume finds an image (a swap
+    partition of type suspend, or a swap file's header at resume_offset ending in S1SUSPEND), says so in the system's
+    language (LOCAL174) and switches the computer off; turned on again, the usual start resumes it. Off and not a
+    restart: measured under OVMF, the usual start after a restart refused the image ("Hibernate inconsistent memory map
+    detected"), after a power-off it resumed.
+  * After a resume, GRUB's environment blocks are read from the disk again (sparky-stereo-boot-anticheat-resume.service,
+    before grub2-common.service): measured, grub2-common.service rewrote /boot/grub/grubenv from the copy held before
+    hibernation and brought back the one-time request GRUB had already taken.
+  * At the anti-cheat start the session is told that it has no hibernation until the next restart, as a notice of this
+    boot in the problems engine (sparky-stereo-boot-anticheat.service, LOCAL173).
+  * Depends: pkexec, openssl, kmod. Tests: tests/anticheat-tests.py.
+
+-------------------------------------------------------------------------------
   Version 0.1.16 (2026-11-27)
 -------------------------------------------------------------------------------
   * Set loglevel=3 alongside quiet on normal GRUB entries (ORDER 169).

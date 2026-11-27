@@ -1,0 +1,18 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/27
+# Copyright 2026 under the GNU GPL3 License
+# The one-time anti-cheat start, for Plasma's "Restart for anti-cheat games" (sparky-stereo-boot 0.1.17, row 190):
+#   pkexec /usr/lib/sparky-stereo-boot/anticheat-restart set     the next start is the anti-cheat start, once
+#   pkexec /usr/lib/sparky-stereo-boot/anticheat-restart unset   a request of ours not used yet is taken back
+#   /usr/lib/sparky-stereo-boot/anticheat-restart status         yes or no (exit 0 or 3), for anyone
+# polkit's org.sparkystereo.boot.restart-for-anti-cheat allows set and unset for the active local session, as logind
+# allows a restart. Exit status: 0 done, 2 not root, 3 not available on this computer, 4 failed (said).
+import sys
+
+sys.path.insert(0, '/usr/lib/sparky-stereo-boot')
+import anticheat  # noqa: E402
+
+if len(sys.argv) != 2 or sys.argv[1] not in ('set', 'unset', 'status'):
+    print('usage: anticheat-restart set|unset|status', file=sys.stderr)
+    sys.exit(2)
+sys.exit(anticheat.restart(sys.argv[1]))

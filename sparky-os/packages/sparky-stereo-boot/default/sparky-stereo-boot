@@ -49,3 +49,10 @@ SPARKY_STEREO_SECUREBOOT_TEXT=readable
 # The time the menu waits is GRUB's own GRUB_RECORDFAIL_TIMEOUT in /etc/default/grub (30 seconds
 # when the menu is otherwise hidden). Then: sudo update-grub
 SPARKY_STEREO_UNFINISHED_START=yes
+
+# The anti-cheat start: GRUB's menu has an entry for the newest kernel with kernel lockdown (integrity), kexec
+# disabled from the kernel's start, hibernation off and the IOMMU on, as Easy Anti-Cheat for Linux asks, and Plasma's
+# "Restart for anti-cheat games" (Restart Options, Kickoff, KRunner) starts it once; the start after it is the usual
+# one, with hibernation. Only on a UEFI start. yes or no. Then: sudo update-grub
+# What Easy Anti-Cheat would see on this computer: sparky-stereo-boot anticheat-check
+SPARKY_STEREO_ANTICHEAT=yes

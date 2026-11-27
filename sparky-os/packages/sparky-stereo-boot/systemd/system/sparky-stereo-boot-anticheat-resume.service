@@ -1,0 +1,16 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/27
+# Copyright 2026 under the GNU GPL3 License
+# After a resume, GRUB's environment blocks are read from the disk again before grub2-common.service rewrites one
+# (sparky-stereo-boot 0.1.17, row 190): GRUB may have changed them while this system was hibernated, and a block
+# rewritten from the copy held before hibernation brings back a one-time request GRUB had already taken.
+[Unit]
+Description=Sparky Stereo OS: GRUB's environment read again after a resume
+After=hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+Before=grub2-common.service sparky-stereo-boot-finished.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/sparky-stereo-boot/anticheat.py resumed
+
+[Install]
+WantedBy=hibernate.target hybrid-sleep.target suspend-then-hibernate.target

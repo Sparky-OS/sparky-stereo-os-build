@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- Sparky Stereo OS (sparky-stereo-boot 0.1.17, row 190): Plasma's "Restart for anti-cheat games" asks GRUB to
+     start the anti-cheat entry once. Allowed for the active local session without a password, as logind allows
+     a restart (org.freedesktop.login1.reboot); anyone else authenticates as an administrator. -->
+<policyconfig>
+  <vendor>Sparky Stereo OS</vendor>
+  <vendor_url>https://sparkylinux.org</vendor_url>
+  <action id="org.sparkystereo.boot.restart-for-anti-cheat">
+    <description>Restart the computer once into the anti-cheat start</description>
+    <description xml:lang="pl">Uruchom komputer ponownie raz w uruchomieniu anti-cheat</description>
+    <description xml:lang="pt_BR">Reiniciar o computador uma vez na inicialização anti-cheat</description>
+    <description xml:lang="fr">Redémarrer l'ordinateur une fois dans le démarrage anti-triche</description>
+    <description xml:lang="de">Den Computer einmal im Anti-Cheat-Start neu starten</description>
+    <description xml:lang="es">Reiniciar el equipo una vez en el arranque antitrampas</description>
+    <description xml:lang="ja">コンピューターを一度だけアンチチート用の起動で再起動</description>
+    <description xml:lang="ko">컴퓨터를 한 번 안티 치트 시작으로 다시 시작</description>
+    <description xml:lang="zh_CN">以反作弊启动重启计算机一次</description>
+    <description xml:lang="zh_TW">以反作弊啟動重新啟動電腦一次</description>
+    <message>Authentication is required to start the computer once in its anti-cheat start</message>
+    <message xml:lang="pl">Do jednorazowego uruchomienia komputera w uruchomieniu anti-cheat wymagane jest uwierzytelnienie</message>
+    <message xml:lang="pt_BR">É preciso autenticação para iniciar o computador uma vez na inicialização anti-cheat</message>
+    <message xml:lang="fr">Une authentification est nécessaire pour démarrer l'ordinateur une fois dans le démarrage anti-triche</message>
+    <message xml:lang="de">Zum einmaligen Start des Computers im Anti-Cheat-Start ist eine Authentifizierung nötig</message>
+    <message xml:lang="es">Se necesita autenticación para arrancar el equipo una vez en el arranque antitrampas</message>
+    <message xml:lang="ja">コンピューターを一度だけアンチチート用の起動で起動するには認証が必要です</message>
+    <message xml:lang="ko">컴퓨터를 한 번 안티 치트 시작으로 시작하려면 인증이 필요합니다</message>
+    <message xml:lang="zh_CN">以反作弊启动启动计算机一次需要认证</message>
+    <message xml:lang="zh_TW">以反作弊啟動啟動電腦一次需要驗證</message>
+    <icon_name>system-reboot</icon_name>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/sparky-stereo-boot/anticheat-restart</annotate>
+  </action>
+</policyconfig>
