@@ -1,6 +1,6 @@
 # freecad (row 50, step 5)
 
-FreeCAD 1.1.3+dfsg-3+stereo3d2+lc1: Debian testing's own source, with the 3D view drawn as a stereo pair (+stereo3d1 was staged and never published; its changelog entry is kept).
+FreeCAD 1.1.3+dfsg-3+stereo3d3+lc1: Debian testing's own source, with the 3D view drawn as a stereo pair (+stereo3d1 was staged and never published; its changelog entry is kept).
 
 Design followed:
 - /K3D/CLAUDE.md: every source hands Stereo KWin full side by side, declared once (here the two buffers of the view's own OpenGL viewport, which the edition's Qt shows as a stereo window of its own and Mesa declares); a program's 3D options are only Enable 3D, render resolution per eye and a shortcut to Display Settings; a program that renders its own 3D scene offers no swap; a program's own output modes are not offered in the edition's build.
@@ -9,6 +9,8 @@ Design followed:
 - A translucent pixel's depth is its contribution-weighted mean (the fit rule, Daniel 2026-11-18; KiCad's patch 0006 in this tree is the worked case): single faint layers inside a pixel may pass a limit, no pixel does.
 - A render type in which both eyes would show one picture is made a pair (no-silent-fallbacks): FreeCAD's Framebuffer render type keeps a picture per eye.
 - Enable 3D is on by default and is the off switch (Daniel, 2026-11-18); on a screen with no stereo buffers the view stays one picture without a word, and it is said only when the person turns Enable 3D on there; every other failure is told once (no-silent-fallbacks).
+
+The +stereo3d3 rebuild uses Debian testing's `libmedc14` from med-fichier 6.0.1+repack-2.
 
 ## Patches
 

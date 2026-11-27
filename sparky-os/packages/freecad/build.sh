@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS, row 50 step 5: freecad 1.1.3+dfsg-3+stereo3d2+lc1, Debian testing's own source plus the patches of
+# Sparky Stereo OS, row 50 step 5: freecad 1.1.3+dfsg-3+stereo3d3+lc1, Debian testing's own source plus the patches of
 # patches/ (the 3D view in stereo: two cameras fitted to the person's depth limits, a translucent pixel at the weighted
 # mean of what it shows, the viewport a declared 3D area in every render type, Enable 3D and the desktop's display
 # settings as its 3D options) and the ten-language sentences of ../../translations/freecad-3d-view-stereo.ts.patch.
@@ -51,9 +51,8 @@ r += ('\n# libfreecad-python3 depends on the Qt private ABI it was built with (l
 Path('debian/rules').write_text(r)
 PY
 DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" -R)
-# one changelog entry per edition version: +stereo3d1 (freecad.items, staged and never published), +stereo3d2
-# (freecad-stereo3d2.items)
-for entry in 1:freecad.items 2:freecad-stereo3d2.items; do
+# Retain the earlier stereo entries, then record the MED library transition.
+for entry in 1:freecad.items 2:freecad-stereo3d2.items 3:freecad-stereo3d3.items; do
 	VERSION=1.1.3+dfsg-3+stereo3d${entry%%:*}
 	n=0
 	while IFS= read -r item; do
