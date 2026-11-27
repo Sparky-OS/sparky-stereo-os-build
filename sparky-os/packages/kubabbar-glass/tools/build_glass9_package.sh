@@ -14,6 +14,7 @@ version=${GLASS9_VERSION:?package-versions.sh must define GLASS9_VERSION}
 kvantum=${KVANTUM_MIN_VERSION:?package-versions.sh must define KVANTUM_MIN_VERSION}
 gtk9=${GTK9_MIN_VERSION:?package-versions.sh must define GTK9_MIN_VERSION}
 menubar=${MENUBAR_MIN_VERSION:?package-versions.sh must define MENUBAR_MIN_VERSION}
+gtk4=${GTK4_STEPPERS_MIN_VERSION:?package-versions.sh must define GTK4_STEPPERS_MIN_VERSION}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-glass9-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 RECIPE=$repo
@@ -118,8 +119,9 @@ echo /etc/xdg/autostart/kubabbar-glass-9-sync.desktop > "$k/DEBIAN/conffiles"
 	# dbus-send and fc-list; the fallback fonts are the measured ones; Kvantum must know scroll_arrows_together
 	# its GTK themes are sparky-stereo-gtk's; the menu bar layout takes the family's launcher logo and adds Plasma's window
 	# list (plasma-widgets-addons); the loading screen imports QtQuick.Effects, org.kde.coreaddons (KOSRelease) and
-	# org.sparky.stereo (StereoDepth), the login screen QtQuick.Controls and org.sparky.stereo
-	echo "Depends: sparky-stereo-look-kubabbar-glass (>= 20261014.6~sparky9~0), sparky-stereo-look-kubabbar-glass-menubar (>= $menubar), sparky-stereo-look, sparky-stereo-gtk (>= $gtk9), qt-style-kvantum (>= $kvantum), kwin-style-aurorae, qml6-module-org-kde-ksvg, qml6-module-qtquick, qml6-module-qtquick-effects, qml6-module-qtquick-controls, qml6-module-org-kde-coreaddons, libstereo-layer1 (>= 1.20.0), plasma-widgets-addons, libkf6config-bin, dbus-bin, fontconfig, fonts-noto-core, fonts-dejavu-core, fonts-inconsolata, sparky-stereo-problems"
+	# org.sparky.stereo (StereoDepth), the login screen QtQuick.Controls and org.sparky.stereo; GTK 4's scroll arrows need
+	# the edition's GTK 4, whose scrollbars have steppers a theme can turn on
+	echo "Depends: sparky-stereo-look-kubabbar-glass (>= 20261014.6~sparky9~0), sparky-stereo-look-kubabbar-glass-menubar (>= $menubar), sparky-stereo-look, sparky-stereo-gtk (>= $gtk9), qt-style-kvantum (>= $kvantum), libgtk-4-1 (>= $gtk4), kwin-style-aurorae, qml6-module-org-kde-ksvg, qml6-module-qtquick, qml6-module-qtquick-effects, qml6-module-qtquick-controls, qml6-module-org-kde-coreaddons, libstereo-layer1 (>= 1.20.0), plasma-widgets-addons, libkf6config-bin, dbus-bin, fontconfig, fonts-noto-core, fonts-dejavu-core, fonts-inconsolata, sparky-stereo-problems"
 	# the Sparky logo of the loading screen; SDDM, for the person who chooses it as the login manager
 	echo "Recommends: sparkyos-artwork, sddm"
 	echo "Section: Themes"

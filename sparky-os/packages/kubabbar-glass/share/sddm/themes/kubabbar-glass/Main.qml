@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Kubabbar Glass login screen: one window with a striped title bar, in plain Qt Quick (no SDDM components needed).
+// Kubabbar Glass login screen: one window with a striped title bar, in plain Qt Quick. Its texts are SDDM's own,
+// translated by SDDM: SDDM 0.21 gives a theme no global textConstants, so the theme makes it from SddmComponents,
+// under a namespace so that SddmComponents' Button and ComboBox do not shadow Qt Quick Controls'.
 import QtQuick
 import QtQuick.Controls.Basic
+import SddmComponents 2.0 as Sddm
 
 Rectangle {
     id: root
@@ -10,6 +13,10 @@ Rectangle {
     color: "#7e8f86"
 
     property string failure: ""
+
+    Sddm.TextConstants {
+        id: textConstants
+    }
 
     Connections {
         target: sddm

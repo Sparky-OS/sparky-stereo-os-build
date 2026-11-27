@@ -35,7 +35,8 @@ for arrows in together apart; do
 	[ "$theme" = "$want" ] && row PASS "sync-$arrows: sparky-stereo-gtk-sync chose $theme" || row FAIL "sync-$arrows: sparky-stereo-gtk-sync chose '$theme', expected $want"
 	for kit in gtk2 gtk3 gtk4; do
 		bash "$M9/gtk-gallery.sh" "$kit" session "$OUT/$arrows-$kit" > "$OUT/$arrows-$kit-driver.txt" 2>&1
-		expect=$arrows; [ "$kit" = gtk4 ] && expect=none
+		# GTK 4 too since the edition's gtk4 +stereo3d4 (row 147, milestone 3): its scrollbars have steppers a theme turns on
+		expect=$arrows
 		reported=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("theme"))' "$OUT/$arrows-$kit.json" 2>/dev/null)
 		if python3 "$M9/gtk-arrows.py" "$OUT/$arrows-$kit-window.png" "$OUT/$arrows-$kit.json" "$assets" "$expect" > "$OUT/$arrows-$kit-arrows.txt" 2>&1 \
 			&& [ "$reported" = "$want" ]; then

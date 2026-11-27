@@ -4,8 +4,8 @@
 
 Each arrow box of the theme (ASSETS/sarrowbox-{up,down,left,right}-normal.png) is found in the capture inside the bar's
 rectangle by an exact match of its pixels; the vertical bar's arrows are placed by their row, the horizontal bar's by
-their column. EXPECT is together (both at the far end, the backward one first), apart (one at each end) or none (GTK 4,
-which has no scroll arrows). Prints one line per bar and PASS or FAIL; exits 1 on FAIL."""
+their column. EXPECT is together (both at the far end, the backward one first), apart (one at each end) or none (a
+GTK 4 without the edition's steppers, gtk4 before +stereo3d4). Prints one line per bar and PASS or FAIL; exits 1 on FAIL."""
 import json
 import sys
 
@@ -59,8 +59,8 @@ def found(picture, rect, face_picture):
 
 
 ok = True
-# the theme is drawn: the scroll box's grip, the theme's own picture, is in each bar (GTK 4's bars have no arrows, so
-# without this a bar that the theme never reached would pass as "none")
+# the theme is drawn: the scroll box's grip, the theme's own picture, is in each bar (without this, a bar that the theme
+# never reached would pass as "none")
 for bar, grip in (("v", "grip-normal"), ("h", "grip-h-normal")):
     has = found(grip, rep["bars"][bar], "scrollbarslider-normal")
     ok &= has

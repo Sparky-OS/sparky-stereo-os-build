@@ -30,7 +30,7 @@ dock.hiding = "none"
 
 var tasks = dock.addWidget("org.kde.plasma.icontasks")
 tasks.currentConfigGroup = ["General"]
-tasks.writeConfig("launchers", ["applications:sparky-aptus-stereo-appcenter.desktop", "applications:org.kde.dolphin.desktop", "applications:firefox.desktop", "applications:steam.desktop", "applications:vlc-stereo.desktop", "applications:libreoffice-writer.desktop", "applications:libreoffice-calc.desktop", "applications:org.kde.kcalc.desktop", "applications:org.kde.konsole.desktop"])
+tasks.writeConfig("launchers", ["applications:sparky-aptus-stereo-appcenter.desktop", "applications:org.kde.dolphin.desktop", "applications:sparky-stereo-browser.desktop", "applications:steam.desktop", "applications:vlc-stereo.desktop", "applications:libreoffice-writer.desktop", "applications:libreoffice-calc.desktop", "applications:org.kde.kcalc.desktop", "applications:org.kde.konsole.desktop"])
 dock.addWidget("org.kde.plasma.marginsseparator")
 dock.addWidget("org.kde.plasma.trash")
 

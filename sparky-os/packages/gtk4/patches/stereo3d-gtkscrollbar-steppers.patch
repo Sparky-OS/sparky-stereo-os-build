@@ -1,0 +1,549 @@
+Description: GtkScrollbar: scroll arrows a theme can turn on
+ GTK 4 removed the steppers of GTK 3's scrollbars ("range: Remove steppers",
+ 7e525ca6), so a theme recalling a classic desktop cannot show scroll arrows
+ in GTK 4 as it does in GTK 2 and GTK 3. The four steppers come back as
+ children of the scrollbar, in GTK 3's order and with its names: a backward
+ (stepper.up) and a secondary forward (stepper.down) stepper before the range,
+ a secondary backward (stepper.up) and a forward (stepper.down) stepper after
+ it. A stepper takes room only when the theme gives it a size, so a theme
+ without stepper rules draws every scrollbar as before; the scrollbar lays its
+ children out itself instead of a box layout, so a stepper without a size
+ adds no spacing either. The behaviour is GTK 3's: the primary button moves
+ by a step, the secondary one by a page, both going on while held (after GTK
+ 3's 500 ms, through the range's own autoscroll), the middle button moves to
+ the start or the end, a stepper is insensitive while the slider is at the
+ end it moves towards, and a horizontal range flipped in right-to-left text is
+ followed. The scrollbar now follows the range's adjustment also when the
+ range made one itself (no adjustment given), for the accessible value too.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 147, milestone 3)
+Forwarded: no
+Last-Update: 2026-11-27
+---
+--- a/gtk/gtkscrollbar.c
++++ b/gtk/gtkscrollbar.c
+@@ -30,10 +30,15 @@
+ 
+ #include "gtkaccessiblerange.h"
+ #include "gtkadjustment.h"
++#include "gtkcssnodeprivate.h"
++#include "gtkcssnumbervalueprivate.h"
++#include "gtkgesturedrag.h"
+ #include "gtkorientable.h"
+ #include "gtkprivate.h"
++#include "gtkrangeprivate.h"
++#include "gtkrendericonprivate.h"
++#include "gtksnapshot.h"
+ #include "gtkwidgetprivate.h"
+-#include "gtkboxlayout.h"
+ 
+ 
+ /**
+@@ -64,9 +69,13 @@
+  *
+  * ```
+  * scrollbar
+- * ╰── range[.fine-tune]
+- *     ╰── trough
+- *         ╰── slider
++ * ├── [stepper.up]
++ * ├── [stepper.down]
++ * ├── range[.fine-tune]
++ * │   ╰── trough
++ * │       ╰── slider
++ * ├── [stepper.up]
++ * ╰── [stepper.down]
+  * ```
+  *
+  * `GtkScrollbar` has a main CSS node with name scrollbar and a subnode for its
+@@ -76,6 +85,20 @@
+  * The range node gets the style class .fine-tune added when the scrollbar is
+  * in 'fine-tuning' mode.
+  *
++ * The four stepper nodes are scroll arrows, as GTK 3's scrollbars had them: a
++ * backward and a secondary forward stepper before the range, a secondary
++ * backward and a forward stepper after it. A stepper takes room only when the
++ * theme gives it a size (min-width and min-height, or padding and border), so
++ * a theme without stepper rules draws the scrollbar as before and a theme turns
++ * on the arrows it wants, for example the two at the end:
++ * `scrollbar > range ~ stepper { min-width: 16px; min-height: 16px; }`.
++ * The .up steppers move the slider up or left, the .down ones down or right.
++ * A stepper's arrow is its -gtk-icon-source, drawn at -gtk-icon-size in its
++ * middle. As in GTK 3, the primary button moves by a step, the secondary one
++ * by a page, both going on while the button is held, and the middle button
++ * moves to the start or the end; a stepper is insensitive while the slider is
++ * at the end it moves towards.
++ *
+  * Other style classes that may be added to scrollbars inside
+  * [class@Gtk.ScrolledWindow] include the positional classes (.left, .right,
+  * .top, .bottom) and style classes related to overlay scrolling (.overlay-indicator,
+@@ -98,9 +121,93 @@
+   GtkWidgetClass parent_class;
+ };
+ 
++/* A held stepper goes on scrolling after GTK 3's initial delay */
++#define STEPPER_REPEAT_DELAY 500
++
++/* The steppers in their order along the scrollbar; the range is between B and C */
++enum {
++  STEPPER_A,  /* backward */
++  STEPPER_B,  /* secondary forward */
++  STEPPER_C,  /* secondary backward */
++  STEPPER_D,  /* forward */
++  N_STEPPERS
++};
++
++typedef struct _GtkScrollbarStepper      GtkScrollbarStepper;
++typedef struct _GtkScrollbarStepperClass GtkScrollbarStepperClass;
++
++struct _GtkScrollbarStepper
++{
++  GtkWidget parent_instance;
++
++  gboolean backward; /* moves the slider up or left */
++};
++
++struct _GtkScrollbarStepperClass
++{
++  GtkWidgetClass parent_class;
++};
++
++static GType gtk_scrollbar_stepper_get_type (void) G_GNUC_CONST;
++
++G_DEFINE_TYPE (GtkScrollbarStepper, gtk_scrollbar_stepper, GTK_TYPE_WIDGET)
++
++static void
++gtk_scrollbar_stepper_snapshot (GtkWidget   *widget,
++                                GtkSnapshot *snapshot)
++{
++  GtkCssStyle *style = gtk_css_node_get_style (gtk_widget_get_css_node (widget));
++  int width = gtk_widget_get_width (widget);
++  int height = gtk_widget_get_height (widget);
++  int size;
++
++  size = MIN (gtk_css_number_value_get (style->icon->icon_size, 100), MIN (width, height));
++  if (size <= 0)
++    return;
++
++  gtk_snapshot_save (snapshot);
++  gtk_snapshot_translate (snapshot, &GRAPHENE_POINT_INIT ((width - size) / 2, (height - size) / 2));
++  gtk_css_style_snapshot_icon (style, snapshot, size, size);
++  gtk_snapshot_restore (snapshot);
++}
++
++static void
++gtk_scrollbar_stepper_css_changed (GtkWidget         *widget,
++                                   GtkCssStyleChange *change)
++{
++  GTK_WIDGET_CLASS (gtk_scrollbar_stepper_parent_class)->css_changed (widget, change);
++
++  if (change == NULL ||
++      gtk_css_style_change_affects (change, GTK_CSS_AFFECTS_ICON_SIZE |
++                                            GTK_CSS_AFFECTS_ICON_TEXTURE |
++                                            GTK_CSS_AFFECTS_ICON_REDRAW))
++    gtk_widget_queue_draw (widget);
++}
++
++static void
++gtk_scrollbar_stepper_class_init (GtkScrollbarStepperClass *class)
++{
++  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (class);
++
++  widget_class->snapshot = gtk_scrollbar_stepper_snapshot;
++  widget_class->css_changed = gtk_scrollbar_stepper_css_changed;
++
++  gtk_widget_class_set_css_name (widget_class, I_("stepper"));
++  gtk_widget_class_set_accessible_role (widget_class, GTK_ACCESSIBLE_ROLE_PRESENTATION);
++}
++
++static void
++gtk_scrollbar_stepper_init (GtkScrollbarStepper *self)
++{
++}
++
+ typedef struct {
+   GtkOrientation orientation;
+   GtkWidget *range;
++  GtkWidget *steppers[N_STEPPERS];
++  GtkWidget *pressed_stepper;
++  GtkScrollType repeat_scroll;
++  guint repeat_id;
+ } GtkScrollbarPrivate;
+ 
+ enum {
+@@ -186,8 +293,6 @@
+ 
+         if (orientation != priv->orientation)
+           {
+-            GtkLayoutManager *layout = gtk_widget_get_layout_manager (GTK_WIDGET (self));
+-            gtk_orientable_set_orientation (GTK_ORIENTABLE (layout), orientation);
+             gtk_orientable_set_orientation (GTK_ORIENTABLE (priv->range), orientation);
+             priv->orientation = orientation;
+             gtk_widget_update_orientation (GTK_WIDGET (self), priv->orientation);
+@@ -210,20 +315,270 @@
+ static void gtk_scrollbar_adjustment_value_changed (GtkAdjustment *adjustment,
+                                                     gpointer       data);
+ 
++/* Whether a stepper moves the adjustment's value back: a backward stepper moves
++ * the slider up or left, and a horizontal scrollbar's range is flipped in
++ * right-to-left text (it is flippable and never inverted), as in GTK 3 */
++static gboolean
++stepper_moves_value_back (GtkScrollbar *self,
++                          GtkWidget    *stepper)
++{
++  GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++  gboolean backward = ((GtkScrollbarStepper *) stepper)->backward;
++
++  if (priv->orientation == GTK_ORIENTATION_HORIZONTAL &&
++      gtk_widget_get_direction (GTK_WIDGET (self)) == GTK_TEXT_DIR_RTL)
++    return !backward;
++
++  return backward;
++}
++
++static void
++stop_stepper (GtkScrollbar *self)
++{
++  GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++
++  g_clear_handle_id (&priv->repeat_id, g_source_remove);
++
++  if (priv->pressed_stepper)
++    {
++      gtk_widget_unset_state_flags (priv->pressed_stepper, GTK_STATE_FLAG_ACTIVE);
++      priv->pressed_stepper = NULL;
++      if (priv->range)
++        gtk_range_stop_autoscroll (GTK_RANGE (priv->range));
++    }
++}
++
++static void
++stepper_repeat (gpointer data)
++{
++  GtkScrollbar *self = data;
++  GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++
++  priv->repeat_id = 0;
++  gtk_range_start_autoscroll (GTK_RANGE (priv->range), priv->repeat_scroll);
++}
++
++static void
++stepper_begin (GtkGesture       *gesture,
++               GdkEventSequence *sequence,
++               GtkScrollbar     *self)
++{
++  GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++  GtkWidget *stepper = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture));
++  gboolean back = stepper_moves_value_back (self, stepper);
++  GtkScrollType scroll;
++
++  switch (gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture)))
++    {
++    case 0: /* touch */
++    case GDK_BUTTON_PRIMARY:
++      scroll = back ? GTK_SCROLL_STEP_BACKWARD : GTK_SCROLL_STEP_FORWARD;
++      break;
++    case GDK_BUTTON_SECONDARY:
++      scroll = back ? GTK_SCROLL_PAGE_BACKWARD : GTK_SCROLL_PAGE_FORWARD;
++      break;
++    case GDK_BUTTON_MIDDLE:
++      scroll = back ? GTK_SCROLL_START : GTK_SCROLL_END;
++      break;
++    default:
++      gtk_gesture_set_state (gesture, GTK_EVENT_SEQUENCE_DENIED);
++      return;
++    }
++
++  gtk_gesture_set_state (gesture, GTK_EVENT_SEQUENCE_CLAIMED);
++
++  stop_stepper (self);
++  priv->pressed_stepper = stepper;
++  gtk_widget_set_state_flags (stepper, GTK_STATE_FLAG_ACTIVE, FALSE);
++
++  g_signal_emit_by_name (priv->range, "move-slider", scroll);
++
++  if (scroll != GTK_SCROLL_START && scroll != GTK_SCROLL_END)
++    {
++      priv->repeat_scroll = scroll;
++      priv->repeat_id = g_timeout_add_once (STEPPER_REPEAT_DELAY, stepper_repeat, self);
++      gdk_source_set_static_name_by_id (priv->repeat_id, "[gtk] stepper_repeat");
++    }
++}
++
++static void
++stepper_end (GtkGesture       *gesture,
++             GdkEventSequence *sequence,
++             GtkScrollbar     *self)
++{
++  GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++
++  if (priv->pressed_stepper == gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture)))
++    stop_stepper (self);
++}
++
++static void
++gtk_scrollbar_update_steppers (GtkScrollbar *self)
++{
++  GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++  GtkAdjustment *adjustment;
++  gboolean can_back, can_forward;
++  int i;
++
++  if (!priv->range)
++    return;
++
++  adjustment = gtk_range_get_adjustment (GTK_RANGE (priv->range));
++  can_back = gtk_adjustment_get_value (adjustment) > gtk_adjustment_get_lower (adjustment);
++  can_forward = gtk_adjustment_get_value (adjustment) <
++                gtk_adjustment_get_upper (adjustment) - gtk_adjustment_get_page_size (adjustment);
++
++  for (i = 0; i < N_STEPPERS; i++)
++    {
++      gboolean sensitive = stepper_moves_value_back (self, priv->steppers[i]) ? can_back : can_forward;
++
++      if (!sensitive && priv->pressed_stepper == priv->steppers[i])
++        stop_stepper (self);
++
++      gtk_widget_set_sensitive (priv->steppers[i], sensitive);
++    }
++}
++
++static void
++gtk_scrollbar_measure (GtkWidget      *widget,
++                       GtkOrientation  orientation,
++                       int             for_size,
++                       int            *minimum,
++                       int            *natural,
++                       int            *minimum_baseline,
++                       int            *natural_baseline)
++{
++  GtkScrollbar *self = GTK_SCROLLBAR (widget);
++  GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++  GtkWidget *child;
++
++  *minimum = *natural = 0;
++
++  for (child = gtk_widget_get_first_child (widget);
++       child != NULL;
++       child = gtk_widget_get_next_sibling (child))
++    {
++      int child_min, child_nat;
++
++      if (!gtk_widget_should_layout (child))
++        continue;
++
++      if (orientation == priv->orientation)
++        {
++          gtk_widget_measure (child, orientation, for_size, &child_min, &child_nat, NULL, NULL);
++          *minimum += child_min;
++          *natural += child_nat;
++        }
++      else
++        {
++          gtk_widget_measure (child, orientation, -1, &child_min, &child_nat, NULL, NULL);
++          *minimum = MAX (*minimum, child_min);
++          *natural = MAX (*natural, child_nat);
++        }
++    }
++}
++
++static void
++gtk_scrollbar_size_allocate (GtkWidget *widget,
++                             int        width,
++                             int        height,
++                             int        baseline)
++{
++  GtkScrollbar *self = GTK_SCROLLBAR (widget);
++  GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++  gboolean horizontal = priv->orientation == GTK_ORIENTATION_HORIZONTAL;
++  int length = horizontal ? width : height;
++  int thickness = horizontal ? height : width;
++  int sizes[N_STEPPERS];
++  int steppers = 0;
++  int range_min, room, pos, i;
++
++  gtk_widget_measure (priv->range, priv->orientation, thickness, &range_min, NULL, NULL, NULL);
++
++  for (i = 0; i < N_STEPPERS; i++)
++    {
++      sizes[i] = 0;
++      if (gtk_widget_should_layout (priv->steppers[i]))
++        gtk_widget_measure (priv->steppers[i], priv->orientation, thickness, &sizes[i], NULL, NULL, NULL);
++      steppers += sizes[i];
++    }
++
++  /* The steppers give way to the range on a scrollbar shorter than both */
++  room = MAX (0, length - range_min);
++  if (steppers > room)
++    {
++      int given = 0;
++
++      for (i = 0; i < N_STEPPERS; i++)
++        {
++          sizes[i] = sizes[i] * room / steppers;
++          given += sizes[i];
++        }
++      steppers = given;
++    }
++
++  pos = 0;
++  for (i = 0; i < N_STEPPERS; i++)
++    {
++      GtkWidget *child = priv->steppers[i];
++      int size = sizes[i];
++
++      if (i == STEPPER_C)
++        {
++          int range_length = length - steppers;
++
++          gtk_widget_size_allocate (priv->range,
++                                    &(GtkAllocation) {
++                                      horizontal ? pos : 0,
++                                      horizontal ? 0 : pos,
++                                      horizontal ? range_length : width,
++                                      horizontal ? height : range_length
++                                    }, -1);
++          pos += range_length;
++        }
++
++      if (!gtk_widget_should_layout (child))
++        continue;
++
++      gtk_widget_size_allocate (child,
++                                &(GtkAllocation) {
++                                  horizontal ? pos : 0,
++                                  horizontal ? 0 : pos,
++                                  horizontal ? size : width,
++                                  horizontal ? height : size
++                                }, -1);
++      pos += size;
++    }
++}
++
++static void
++gtk_scrollbar_direction_changed (GtkWidget        *widget,
++                                 GtkTextDirection  previous_direction)
++{
++  GTK_WIDGET_CLASS (gtk_scrollbar_parent_class)->direction_changed (widget, previous_direction);
++
++  gtk_scrollbar_update_steppers (GTK_SCROLLBAR (widget));
++}
++
+ static void
+ gtk_scrollbar_dispose (GObject *object)
+ {
+   GtkScrollbar *self = GTK_SCROLLBAR (object);
+   GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
+   GtkAdjustment *adj;
++  int i;
+ 
+-  adj = gtk_range_get_adjustment (GTK_RANGE (priv->range));
++  stop_stepper (self);
++
++  adj = priv->range ? gtk_range_get_adjustment (GTK_RANGE (priv->range)) : NULL;
+   if (adj)
+     {
+       g_signal_handlers_disconnect_by_func (adj, gtk_scrollbar_adjustment_changed, self);
+       g_signal_handlers_disconnect_by_func (adj, gtk_scrollbar_adjustment_value_changed, self);
+     }
+ 
++  for (i = 0; i < N_STEPPERS; i++)
++    g_clear_pointer (&priv->steppers[i], gtk_widget_unparent);
+   g_clear_pointer (&priv->range, gtk_widget_unparent);
+ 
+   G_OBJECT_CLASS (gtk_scrollbar_parent_class)->dispose (object);
+@@ -239,6 +594,10 @@
+   object_class->set_property = gtk_scrollbar_set_property;
+   object_class->dispose = gtk_scrollbar_dispose;
+ 
++  widget_class->measure = gtk_scrollbar_measure;
++  widget_class->size_allocate = gtk_scrollbar_size_allocate;
++  widget_class->direction_changed = gtk_scrollbar_direction_changed;
++
+   /**
+    * GtkScrollbar:adjustment:
+    *
+@@ -255,7 +614,6 @@
+   g_object_class_install_properties (object_class, LAST_PROP, props);
+ 
+   gtk_widget_class_set_css_name (widget_class, I_("scrollbar"));
+-  gtk_widget_class_set_layout_manager_type (widget_class, GTK_TYPE_BOX_LAYOUT);
+   gtk_widget_class_set_accessible_role (widget_class, GTK_ACCESSIBLE_ROLE_SCROLLBAR);
+ }
+ 
+@@ -263,6 +621,7 @@
+ gtk_scrollbar_init (GtkScrollbar *self)
+ {
+   GtkScrollbarPrivate *priv = gtk_scrollbar_get_instance_private (self);
++  int i;
+ 
+   priv->orientation = GTK_ORIENTATION_HORIZONTAL;
+ 
+@@ -270,7 +629,30 @@
+   gtk_range_set_flippable (GTK_RANGE (priv->range), TRUE);
+   gtk_widget_set_hexpand (priv->range, TRUE);
+   gtk_widget_set_vexpand (priv->range, TRUE);
++
++  for (i = 0; i < N_STEPPERS; i++)
++    {
++      GtkWidget *stepper = g_object_new (gtk_scrollbar_stepper_get_type (), NULL);
++      gboolean backward = i == STEPPER_A || i == STEPPER_C;
++      GtkGesture *gesture;
++
++      ((GtkScrollbarStepper *) stepper)->backward = backward;
++      gtk_widget_add_css_class (stepper, backward ? "up" : "down");
++
++      gesture = gtk_gesture_drag_new ();
++      gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (gesture), 0);
++      g_signal_connect (gesture, "begin", G_CALLBACK (stepper_begin), self);
++      g_signal_connect (gesture, "end", G_CALLBACK (stepper_end), self);
++      gtk_widget_add_controller (stepper, GTK_EVENT_CONTROLLER (gesture));
++
++      priv->steppers[i] = stepper;
++    }
++
++  gtk_widget_set_parent (priv->steppers[STEPPER_A], GTK_WIDGET (self));
++  gtk_widget_set_parent (priv->steppers[STEPPER_B], GTK_WIDGET (self));
+   gtk_widget_set_parent (priv->range, GTK_WIDGET (self));
++  gtk_widget_set_parent (priv->steppers[STEPPER_C], GTK_WIDGET (self));
++  gtk_widget_set_parent (priv->steppers[STEPPER_D], GTK_WIDGET (self));
+   gtk_widget_update_orientation (GTK_WIDGET (self), priv->orientation);
+   gtk_accessible_update_property (GTK_ACCESSIBLE (self),
+                                   GTK_ACCESSIBLE_PROPERTY_ORIENTATION, priv->orientation,
+@@ -311,6 +693,8 @@
+                                                                      gtk_adjustment_get_page_size (adjustment),
+                                   GTK_ACCESSIBLE_PROPERTY_VALUE_MIN, gtk_adjustment_get_lower (adjustment),
+                                   -1);
++
++  gtk_scrollbar_update_steppers (self);
+ }
+ 
+ static void
+@@ -322,6 +706,8 @@
+   gtk_accessible_update_property (GTK_ACCESSIBLE (self),
+                                   GTK_ACCESSIBLE_PROPERTY_VALUE_NOW, gtk_adjustment_get_value (adjustment),
+                                   -1);
++
++  gtk_scrollbar_update_steppers (self);
+ }
+ 
+ /**
+@@ -353,6 +739,9 @@
+ 
+   gtk_range_set_adjustment (GTK_RANGE (priv->range), adjustment);
+ 
++  /* Without an adjustment the range makes one, which the steppers follow too */
++  adjustment = gtk_range_get_adjustment (GTK_RANGE (priv->range));
++
+   if (adjustment)
+     {
+       g_signal_connect (adjustment, "changed",
+@@ -368,6 +757,8 @@
+                                       -1);
+     }
+ 
++  gtk_scrollbar_update_steppers (self);
++
+   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_ADJUSTMENT]);
+ }
+ 

@@ -40,10 +40,22 @@ if name == 'kwriteconfig6':
         print('injected kwriteconfig6 error', file=sys.stderr)
         sys.exit(21)
     os.execv('/usr/bin/kwriteconfig6', sys.argv)
+if name == 'dconf':
+    # dconf prints a key's stored value, and nothing for a key nobody has set
+    value = pathlib.Path(os.environ['TEST_CALLS']).parent / pathlib.Path(sys.argv[2]).name
+    if mode == 'dconf-fail':
+        print('injected dconf error', file=sys.stderr)
+        sys.exit(29)
+    if value.exists():
+        print(value.read_text())
+    sys.exit(0)
 if name == 'gsettings':
     value = pathlib.Path(os.environ['TEST_CALLS']).parent / sys.argv[3]
     if sys.argv[1] == 'get':
         print(repr(value.read_text() if value.exists() else 'Before'))
+        sys.exit(0)
+    if sys.argv[1] == 'reset':
+        value.unlink(missing_ok=True)
         sys.exit(0)
     if mode == 'lost-' + sys.argv[3]:
         print('injected dconf commit error', file=sys.stderr)
@@ -119,7 +131,7 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
     root = Path(temporary)
     stubs = root / 'bin'
     stubs.mkdir()
-    for name in ['kreadconfig6', 'kwriteconfig6', 'gsettings', 'pgrep', 'pkill']:
+    for name in ['kreadconfig6', 'kwriteconfig6', 'gsettings', 'dconf', 'pgrep', 'pkill']:
         p = stubs / name
         p.write_text(STUB)
         p.chmod(0o755)
@@ -204,6 +216,111 @@ with tempfile.TemporaryDirectory(prefix='gtk-sync-tests-') as temporary:
                 checks['retry_clears'] = retry_ok
         result = dict(case=name, exit=run.returncode, list_exit=listed.returncode,
                       checks=checks, passed=all(checks.values()))
+        results.append(result)
+        print(json.dumps(result))
+
+    # Kubabbar Glass 9's bars always show: overlay scrolling off for its themes only, a person's own value kept (row 147)
+    def text(path):
+        """A file's text, or None when it is missing (the red run: a script that never wrote it)."""
+        return path.read_text() if path.exists() else None
+
+    def ini(config, version):
+        p = config / ('gtk-' + version) / 'settings.ini'
+        lines = p.read_text().splitlines() if p.exists() else []
+        values = [line.split('=', 1)[1] for line in lines if line.startswith('gtk-overlay-scrolling=')]
+        return values[-1] if values else None
+
+    def sync(work, config, scheme, mode='works'):
+        (config / 'kdeglobals').write_text('[General]\nColorScheme=' + scheme + '\n')
+        env = dict(os.environ, HOME=str(work), XDG_CONFIG_HOME=str(config), XDG_CONFIG_DIRS=str(work/'defaults'),
+                   XDG_STATE_HOME=str(work/'state'), PATH=str(stubs)+':'+os.environ['PATH'], TEST_MODE=mode,
+                   TEST_CALLS=str(work/'calls'), TEST_PID=str(daemon.pid), LC_ALL='C.UTF-8', LANGUAGE='en')
+        for variable in ['DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS', 'XAUTHORITY']:
+            env.pop(variable, None)
+        done = subprocess.run(['sh', str(script)], env=env, text=True, capture_output=True)
+        listed = subprocess.run(['sparky-stereo-problems', 'list', '--json', 'sparky-stereo-gtk'],
+                                env=env, text=True, capture_output=True, check=True)
+        return done, json.loads(listed.stdout)
+
+    def own_ini(config, version, value):
+        d = config / ('gtk-' + version)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / 'settings.ini').write_text('[Settings]\ngtk-overlay-scrolling=' + value + '\n')
+
+    overlay_cases = ['overlay-9-fresh', 'overlay-9-own-ini', 'overlay-9-own-dconf', 'overlay-9-twice', 'overlay-leave',
+                     'overlay-leave-changed', 'overlay-other-look', 'overlay-record-unreadable', 'overlay-dconf-fail']
+    for name in overlay_cases:
+        work = root / name
+        config = work / 'config'
+        config.mkdir(parents=True)
+        dconf_value = work / 'overlay-scrolling'
+        record = work / 'state/sparky-stereo-gtk/overlay-scrolling.written'
+        checks = {}
+        if name == 'overlay-9-own-ini':
+            own_ini(config, '4.0', 'true')
+        if name in ('overlay-9-own-dconf', 'overlay-other-look'):
+            dconf_value.write_text('true')
+        if name == 'overlay-other-look':
+            own_ini(config, '3.0', 'true')
+        first, records = sync(work, config, 'OxygenDark' if name == 'overlay-other-look' else 'kubabbar-glass-9-ivy',
+                              'dconf-fail' if name == 'overlay-dconf-fail' else 'works')
+        log = first.stdout + first.stderr
+        if name == 'overlay-record-unreadable':
+            if not record.exists():  # a script that never records (the red run): the case still needs a record
+                record.parent.mkdir(parents=True, exist_ok=True)
+                record.write_text('gtk-3.0 false\n')
+            record.chmod(0)
+            first, records = sync(work, config, 'kubabbar-glass-9')
+            log = first.stdout + first.stderr
+            checks.update(nonzero_exit=first.returncode != 0, kept=any(r['key'] == 'overlay-scrolling' for r in records),
+                          own_error_visible='Cannot read' in log)
+            record.chmod(0o600)
+            retry, after = sync(work, config, 'kubabbar-glass-9')
+            checks['retry_clears'] = retry.returncode == 0 and not after
+        elif name == 'overlay-dconf-fail':
+            checks.update(nonzero_exit=first.returncode != 0, own_error_visible='injected dconf error' in log,
+                          kept=any(r['key'] == 'overlay-scrolling-read' for r in records),
+                          theme_still_applied='gtk-theme-name=Kubabbar-Glass-9-Ivy\n' in (config/'gtk-4.0/settings.ini').read_text())
+            retry, after = sync(work, config, 'kubabbar-glass-9-ivy')
+            checks.update(retry_clears=retry.returncode == 0 and not after,
+                          retry_writes=ini(config, '3.0') == 'false' and text(dconf_value) == 'false')
+        else:
+            checks.update(exit_zero=first.returncode == 0, no_problem=not records)
+            if name == 'overlay-9-fresh':
+                checks.update(ini_3=ini(config, '3.0') == 'false', ini_4=ini(config, '4.0') == 'false',
+                              gsettings=text(dconf_value) == 'false',
+                              recorded=text(record) == 'gtk-3.0 false\ngtk-4.0 false\ngsettings false\n')
+            elif name == 'overlay-9-own-ini':
+                checks.update(own_kept=ini(config, '4.0') == 'true', ini_3=ini(config, '3.0') == 'false',
+                              gsettings=text(dconf_value) == 'false',
+                              recorded=text(record) == 'gtk-3.0 false\ngsettings false\n')
+            elif name == 'overlay-9-own-dconf':
+                checks.update(own_kept=text(dconf_value) == 'true', ini_3=ini(config, '3.0') == 'false',
+                              recorded=text(record) == 'gtk-3.0 false\ngtk-4.0 false\n')
+            elif name == 'overlay-9-twice':
+                second, again = sync(work, config, 'kubabbar-glass-9')
+                checks.update(second_exit_zero=second.returncode == 0 and not again, ini_3=ini(config, '3.0') == 'false',
+                              ini_4=ini(config, '4.0') == 'false', gsettings=text(dconf_value) == 'false',
+                              recorded=text(record) == 'gtk-3.0 false\ngtk-4.0 false\ngsettings false\n')
+            elif name == 'overlay-leave':
+                second, again = sync(work, config, 'OxygenDark')
+                checks.update(second_exit_zero=second.returncode == 0 and not again, ini_3_removed=ini(config, '3.0') is None,
+                              ini_4_removed=ini(config, '4.0') is None, gsettings_reset=not dconf_value.exists(),
+                              record_removed=not record.exists(),
+                              theme_kept='gtk-theme-name=Sparky-Stereo-Oxygen-Dark\n' in (config/'gtk-3.0/settings.ini').read_text())
+            elif name == 'overlay-leave-changed':
+                p = config / 'gtk-3.0/settings.ini'
+                p.write_text(p.read_text().replace('gtk-overlay-scrolling=false', 'gtk-overlay-scrolling=true'))
+                dconf_value.write_text('true')
+                second, again = sync(work, config, 'OxygenDark')
+                checks.update(second_exit_zero=second.returncode == 0 and not again, own_ini_kept=ini(config, '3.0') == 'true',
+                              own_dconf_kept=text(dconf_value) == 'true', ours_removed=ini(config, '4.0') is None,
+                              record_removed=not record.exists())
+            elif name == 'overlay-other-look':
+                checks.update(own_ini_kept=ini(config, '3.0') == 'true', own_dconf_kept=text(dconf_value) == 'true',
+                              nothing_written=ini(config, '4.0') is None and not record.exists())
+        (args.output / (name + '.log')).write_text(log)
+        result = dict(case=name, exit=first.returncode, checks=checks, passed=all(checks.values()))
         results.append(result)
         print(json.dumps(result))
 daemon.terminate()

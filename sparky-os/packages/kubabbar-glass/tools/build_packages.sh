@@ -115,12 +115,14 @@ Free Software Foundation; version 3 of the License.
 On Debian systems, the complete text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
 doc "$g" sparky-stereo-gtk "$work/gtk-copyright"
-control "$g" sparky-stereo-gtk "breeze-gtk-theme, gtk2-engines-oxygen, gtk2-engines-pixbuf, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin, procps, sparky-stereo-problems" "" "" \
+# dconf-cli: the sync tells a person's own overlay-scrolling value from GSettings' default (dconf read)
+control "$g" sparky-stereo-gtk "breeze-gtk-theme, dconf-cli, gtk2-engines-oxygen, gtk2-engines-pixbuf, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin, procps, sparky-stereo-problems" "" "" \
 	"GTK 2, GTK 3 and GTK 4 themes that follow the Sparky Stereo OS looks" \
 	"Kubabbar-Glass and Sparky-Stereo-Oxygen: the Breeze GTK shapes in each look's colours;" \
 	"Kubabbar-Glass-9: Kubabbar Glass 9's classic controls in GTK 2, 3 and 4, an Apart twin for the scroll arrows at both ends;" \
 	"Sparky-Stereo-Oxygen's GTK 2 part is KDE's Oxygen engine (gtk2-engines-oxygen)." \
-	"sparky-stereo-gtk-sync picks the theme from the KDE colour scheme at login and whenever kdeglobals changes;" \
+	"sparky-stereo-gtk-sync picks the theme from the KDE colour scheme at login and whenever kdeglobals changes," \
+	"and keeps Kubabbar Glass 9's GTK scroll bars always visible, a person's own setting kept;" \
 	"kde-config-gtk-style keeps the colours in step."
 build "$g" sparky-stereo-gtk "$version"
 fi
