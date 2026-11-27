@@ -51,7 +51,7 @@ When the computer cannot be read (no PCI devices in sysfs, no processor in `/pro
 
 Tests:
 -------------
-`tests/run.sh` in a Debian testing container with python3, libkf6config-bin, ksystemstats and sparky-stereo-problems: the ten catalogues (`tests/catalogs.py`), then `tests/compose.py` on fixture computers (`tests/machines.py`: the two test targets as read on 2026-11-27, and synthetic computers with real IDs: Intel with and without perf, Intel on xe, an Intel and NVIDIA laptop whose NVIDIA reports no power, nouveau, NVIDIA without nvidia-smi, a virtual machine, a server with a BMC, five AMD cards, two sockets with SMT, core ids with gaps and a processor offline, a computer with no PCI devices) and the login flow; each title is measured in its language's font against the sidebar's room.
+`tests/run.sh` in a Debian testing container with python3, libkf6config-bin, ksystemstats and sparky-stereo-problems: the ten catalogues (`tests/catalogs.py`), then `tests/compose.py` on fixture computers (`tests/machines.py`: the two test targets as read on 2026-11-27, and synthetic computers with real IDs: Intel with and without perf, Intel on xe, an Intel and NVIDIA laptop whose NVIDIA reports no power, nouveau, NVIDIA without nvidia-smi, a virtual machine, a server with a BMC, five AMD cards, SMT with core ids with gaps and a processor offline, a computer with no PCI devices) and the login flow; each title is measured in its language's font against the sidebar's room.
 
 Credits:
 -------------

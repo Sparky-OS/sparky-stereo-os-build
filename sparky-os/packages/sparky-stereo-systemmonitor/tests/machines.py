@@ -89,11 +89,11 @@ MACHINES = {
                    {"amdgpu": ["temp1_input", "power1_average"]}) for b in (0x21, 0x22, 0x23, 0x24, 0x25)],
     },
     "no-pci": {"threads": 4, "cards": None},
-    # two sockets, SMT, core ids with gaps (0 1 2 4 5 6) and processor 5 offline: 11 logical processors, numbered
-    # 0-4 and 6-11 as the kernel lists them
+    # SMT (processors p and p+6 share a core), core ids with gaps (0 1 2 4 5 6) and processor 5 offline: 11 logical
+    # processors, numbered 0-4 and 6-11 as the kernel lists them
     "smt-gaps": {
         "threads": 11,
-        "processors": [(p, p // 6 % 2, [0, 1, 2, 4, 5, 6][p % 6]) for p in range(12) if p != 5],
+        "processors": [(p, 0, [0, 1, 2, 4, 5, 6][p % 6]) for p in range(12) if p != 5],
         "cards": [("0000:0b:00.0", "0000:00:08.1", "0x1002", "0x1638", "0x030000", "amdgpu", "1",
                    {"gpu_busy_percent": "4", "mem_info_vram_total": "536870912", "mem_info_vram_used": "300000000"},
                    {"amdgpu": ["temp1_input", "power1_input"]})],
