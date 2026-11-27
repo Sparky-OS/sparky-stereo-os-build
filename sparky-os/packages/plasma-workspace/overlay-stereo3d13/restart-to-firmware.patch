@@ -1,0 +1,946 @@
+From 8e1cba83909b1fc4198d27c745ddc7d2ab779471 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 05:23:57 -0300
+Subject: [PATCH] Expose a one-time firmware restart in Plasma Leave
+
+Offer the firmware action only when logind allows it on a UEFI boot. Start an explicit Leave confirmation from the session runner and Kickoff. Schedule the firmware target before closing the session, report refusals in the greeter, and restore the previous target if logout is cancelled.
+
+Assisted-by: Codex (gpt-6.2-sol)
+---
+ applets/kicker/systementry.cpp                |  18 +++
+ applets/kicker/systementry.h                  |   1 +
+ applets/kicker/systemmodel.cpp                |   1 +
+ ksmserver/org.kde.LogoutPrompt.xml            |   1 +
+ libkworkspace/login1_manager_interface.h      |   5 +
+ libkworkspace/sessionmanagement.cpp           |  20 +++
+ libkworkspace/sessionmanagement.h             |   4 +
+ libkworkspace/sessionmanagementbackend.cpp    |  34 ++++-
+ libkworkspace/sessionmanagementbackend.h      |  13 +-
+ logout-greeter/greeter.cpp                    |  21 +++-
+ logout-greeter/greeter.h                      |   2 +
+ logout-greeter/shutdowndlg.cpp                |  43 +++++++
+ logout-greeter/shutdowndlg.h                  |   4 +
+ .../org.kde.breeze/contents/logout/Logout.qml | 117 ++++++++++++++++--
+ runners/sessions/sessionrunner.cpp            |   9 ++
+ runners/sessions/sessionrunner.h              |   1 +
+ startkde/plasma-shutdown/org.kde.Shutdown.xml |   3 +
+ startkde/plasma-shutdown/shutdown.cpp         |  72 ++++++++++-
+ startkde/plasma-shutdown/shutdown.h           |   6 +-
+ 19 files changed, 356 insertions(+), 19 deletions(-)
+
+diff --git a/applets/kicker/systementry.cpp b/applets/kicker/systementry.cpp
+index 892f4fa..62c6684 100644
+--- a/applets/kicker/systementry.cpp
++++ b/applets/kicker/systementry.cpp
+@@ -50,6 +50,8 @@ SystemEntry::SystemEntry(AbstractModel *owner, const QString &id)
+         m_action = Hibernate;
+     } else if (id == QLatin1String("reboot")) {
+         m_action = Reboot;
++    } else if (id == QLatin1String("reboot-to-firmware-setup")) {
++        m_action = RebootToFirmwareSetup;
+     } else if (id == QLatin1String("shutdown")) {
+         m_action = Shutdown;
+     }
+@@ -118,6 +120,11 @@ void SystemEntry::refresh()
+         QObject::connect(s_sessionManagement, &SessionManagement::canRebootChanged, this, &SystemEntry::refresh);
+         break;
+     }
++    case RebootToFirmwareSetup: {
++        valid = s_sessionManagement->canRebootToFirmwareSetup();
++        QObject::connect(s_sessionManagement, &SessionManagement::canRebootToFirmwareSetupChanged, this, &SystemEntry::refresh, Qt::UniqueConnection);
++        break;
++    }
+     case Shutdown: {
+         valid = s_sessionManagement->canShutdown();
+         QObject::connect(s_sessionManagement, &SessionManagement::canShutdownChanged, this, &SystemEntry::refresh);
+@@ -174,6 +181,7 @@ QString SystemEntry::iconName() const
+         return QStringLiteral("system-suspend-hibernate");
+         break;
+     case Reboot:
++    case RebootToFirmwareSetup:
+         return QStringLiteral("system-reboot");
+         break;
+     case Shutdown:
+@@ -210,6 +218,8 @@ QString SystemEntry::name() const
+     case Reboot:
+         return i18n("Restart");
+         break;
++    case RebootToFirmwareSetup:
++        return i18n("Restart to UEFI setup");
+     case Shutdown:
+         return i18n("Shut Down");
+         break;
+@@ -231,6 +241,7 @@ QString SystemEntry::group() const
+     case Suspend:
+     case Hibernate:
+     case Reboot:
++    case RebootToFirmwareSetup:
+     case Shutdown:
+         return i18n("System");
+     default:
+@@ -264,6 +275,8 @@ QString SystemEntry::description() const
+     case Reboot:
+         return i18n("Restart computer");
+         break;
++    case RebootToFirmwareSetup:
++        return name();
+     case Shutdown:
+         return i18n("Turn off computer");
+         break;
+@@ -298,6 +311,8 @@ QString SystemEntry::id() const
+     case Reboot:
+         return QStringLiteral("reboot");
+         break;
++    case RebootToFirmwareSetup:
++        return QStringLiteral("reboot-to-firmware-setup");
+     case Shutdown:
+         return QStringLiteral("shutdown");
+         break;
+@@ -340,6 +355,9 @@ bool SystemEntry::run(const QString &actionId, const QVariant &argument)
+     case Reboot:
+         s_sessionManagement->requestReboot();
+         break;
++    case RebootToFirmwareSetup:
++        s_sessionManagement->requestRebootToFirmwareSetup();
++        break;
+     case Shutdown:
+         s_sessionManagement->requestShutdown();
+         break;
+diff --git a/applets/kicker/systementry.h b/applets/kicker/systementry.h
+index c8988c8..a06aedd 100644
+--- a/applets/kicker/systementry.h
++++ b/applets/kicker/systementry.h
+@@ -27,6 +27,7 @@ public:
+         Hibernate,
+         Reboot,
+         Shutdown,
++        RebootToFirmwareSetup,
+     };
+ 
+     explicit SystemEntry(AbstractModel *owner, Action action);
+diff --git a/applets/kicker/systemmodel.cpp b/applets/kicker/systemmodel.cpp
+index 5bdc51c..873be24 100644
+--- a/applets/kicker/systemmodel.cpp
++++ b/applets/kicker/systemmodel.cpp
+@@ -124,6 +124,7 @@ void SystemModel::populate()
+     addIfValid(SystemEntry::Suspend);
+     addIfValid(SystemEntry::Hibernate);
+     addIfValid(SystemEntry::Reboot);
++    addIfValid(SystemEntry::RebootToFirmwareSetup);
+     addIfValid(SystemEntry::Shutdown);
+ }
+ 
+diff --git a/ksmserver/org.kde.LogoutPrompt.xml b/ksmserver/org.kde.LogoutPrompt.xml
+index 57f153b..aa79d19 100644
+--- a/ksmserver/org.kde.LogoutPrompt.xml
++++ b/ksmserver/org.kde.LogoutPrompt.xml
+@@ -5,5 +5,6 @@
+     <method name="promptShutDown"/>
+     <method name="promptReboot"/>
+     <method name="promptAll"/>
++    <method name="promptRebootToFirmwareSetup"/>
+ </interface>
+ </node>
+diff --git a/libkworkspace/login1_manager_interface.h b/libkworkspace/login1_manager_interface.h
+index 1ee0b90..d7c3fda 100644
+--- a/libkworkspace/login1_manager_interface.h
++++ b/libkworkspace/login1_manager_interface.h
+@@ -196,6 +196,11 @@ public Q_SLOTS: // METHODS
+         return asyncCallWithArgumentList(QStringLiteral("CanReboot"), argumentList);
+     }
+ 
++    inline QDBusPendingReply<QString> CanRebootToFirmwareSetup()
++    {
++        return asyncCall(QStringLiteral("CanRebootToFirmwareSetup"));
++    }
++
+     inline QDBusPendingReply<QString> CanSuspend()
+     {
+         QList<QVariant> argumentList;
+diff --git a/libkworkspace/sessionmanagement.cpp b/libkworkspace/sessionmanagement.cpp
+index 248147f..3307ff8 100644
+--- a/libkworkspace/sessionmanagement.cpp
++++ b/libkworkspace/sessionmanagement.cpp
+@@ -68,6 +68,8 @@ SessionManagement::SessionManagement(QObject *parent)
+     connect(backend, &SessionBackend::stateChanged, this, &SessionManagement::stateChanged);
+     connect(backend, &SessionBackend::canShutdownChanged, this, &SessionManagement::canShutdownChanged);
+     connect(backend, &SessionBackend::canRebootChanged, this, &SessionManagement::canRebootChanged);
++    connect(backend, &SessionBackend::canRebootChanged, this, &SessionManagement::canRebootToFirmwareSetupChanged);
++    connect(backend, &SessionBackend::canRebootToFirmwareSetupChanged, this, &SessionManagement::canRebootToFirmwareSetupChanged);
+     connect(backend, &SessionBackend::canSuspendChanged, this, &SessionManagement::canSuspendChanged);
+     connect(backend, &SessionBackend::canHybridSuspendChanged, this, &SessionManagement::canHybridSuspendChanged);
+     connect(backend, &SessionBackend::canHibernateChanged, this, &SessionManagement::canHibernateChanged);
+@@ -93,6 +95,11 @@ bool SessionManagement::canReboot() const
+     return canLogout() && SessionBackend::self()->canReboot();
+ }
+ 
++bool SessionManagement::canRebootToFirmwareSetup() const
++{
++    return canReboot() && SessionBackend::self()->canRebootToFirmwareSetup();
++}
++
+ bool SessionManagement::canLogout() const
+ {
+     // checking both is for compatibility with old kiosk configs
+@@ -162,6 +169,19 @@ void SessionManagement::requestLogoutPrompt()
+     }
+ }
+ 
++void SessionManagement::requestRebootToFirmwareSetup()
++{
++    if (!canRebootToFirmwareSetup()) {
++        return;
++    }
++
++    OrgFreedesktopScreenSaverInterface screenSaver(u"org.freedesktop.ScreenSaver"_s, u"/ScreenSaver"_s, QDBusConnection::sessionBus());
++    if (!screenSaver.GetActive()) {
++        LogoutPromptIface iface;
++        lockQuitUntilFinished(iface.promptRebootToFirmwareSetup());
++    }
++}
++
+ void SessionManagement::requestShutdown(ConfirmationMode confirmationMode)
+ {
+     if (!canShutdown()) {
+diff --git a/libkworkspace/sessionmanagement.h b/libkworkspace/sessionmanagement.h
+index f159b29..a20b01d 100644
+--- a/libkworkspace/sessionmanagement.h
++++ b/libkworkspace/sessionmanagement.h
+@@ -26,6 +26,7 @@ class KWORKSPACE_EXPORT SessionManagement : public QObject
+     Q_PROPERTY(bool canSwitchUser READ canSwitchUser NOTIFY canSwitchUserChanged)
+     Q_PROPERTY(bool canLock READ canLock NOTIFY canLockChanged)
+     Q_PROPERTY(bool canSaveSession READ canSaveSession NOTIFY canSaveSessionChanged)
++    Q_PROPERTY(bool canRebootToFirmwareSetup READ canRebootToFirmwareSetup NOTIFY canRebootToFirmwareSetupChanged)
+ 
+ public:
+     enum class State {
+@@ -67,6 +68,7 @@ public:
+ 
+     bool canShutdown() const;
+     bool canReboot() const;
++    bool canRebootToFirmwareSetup() const;
+     bool canLogout() const;
+     bool canSuspend() const;
+     bool canHybridSuspend() const;
+@@ -100,6 +102,7 @@ public Q_SLOTS:
+     void lock();
+ 
+     void saveSession();
++    void requestRebootToFirmwareSetup();
+ 
+ Q_SIGNALS:
+     void stateChanged();
+@@ -116,6 +119,7 @@ Q_SIGNALS:
+ 
+     void aboutToSuspend();
+     void resumingFromSuspend();
++    void canRebootToFirmwareSetupChanged();
+ 
+ private:
+     void *d; // unused, just reserving the space in case we go ABI stable
+diff --git a/libkworkspace/sessionmanagementbackend.cpp b/libkworkspace/sessionmanagementbackend.cpp
+index d0742bf..1f705a0 100644
+--- a/libkworkspace/sessionmanagementbackend.cpp
++++ b/libkworkspace/sessionmanagementbackend.cpp
+@@ -7,6 +7,7 @@
+ #include "sessionmanagementbackend.h"
+ 
+ #include <QDebug>
++#include <QFileInfo>
+ #include <QMutex>
+ #include <QMutexLocker>
+ 
+@@ -56,6 +57,11 @@ bool SessionBackend::canSwitchUser() const
+     return false;
+ }
+ 
++bool SessionBackend::canRebootToFirmwareSetup() const
++{
++    return false;
++}
++
+ DummySessionBackend::DummySessionBackend()
+ {
+     qCritical() << "Could not load a session backend. Session management operations such as shutdown will not be operational. This is a setup issue.";
+@@ -71,9 +77,10 @@ void TestSessionBackend::shutdown()
+     std::cout << "shutdown" << std::endl;
+ }
+ 
+-void TestSessionBackend::reboot()
++bool TestSessionBackend::reboot()
+ {
+     std::cout << "reboot" << std::endl;
++    return true;
+ }
+ 
+ void TestSessionBackend::suspend()
+@@ -133,7 +140,7 @@ LogindSessionBackend::LogindSessionBackend()
+         }
+     };
+ 
+-    m_pendingJobs = 5;
++    m_pendingJobs = 6;
+     {
+         auto watcher = new QDBusPendingCallWatcher(m_login1->CanPowerOff(), this);
+         connect(watcher, &QDBusPendingCallWatcher::finished, this, std::bind(propLoaded, std::placeholders::_1, &m_canShutdown));
+@@ -159,6 +166,18 @@ LogindSessionBackend::LogindSessionBackend()
+         connect(watcher, &QDBusPendingCallWatcher::finished, this, std::bind(propLoaded, std::placeholders::_1, &m_canSuspendThenHibernate));
+     }
+ 
++    if (QFileInfo(QStringLiteral("/sys/firmware/efi")).isDir() && m_login1->service() == QLatin1String("org.freedesktop.login1")) {
++        auto *watcher = new QDBusPendingCallWatcher(m_login1->CanRebootToFirmwareSetup(), this);
++        connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *watcher) {
++            QDBusPendingReply<QString> reply = *watcher;
++            watcher->deleteLater();
++            if (!reply.isError() && reply.value() == QLatin1String("yes")) {
++                m_canRebootToFirmwareSetup = true;
++                Q_EMIT canRebootToFirmwareSetupChanged();
++            }
++        });
++    }
++
+     connect(m_login1, &OrgFreedesktopLogin1ManagerInterface::PrepareForSleep, this, [this](bool sleeping) {
+         if (sleeping) {
+             Q_EMIT aboutToSuspend();
+@@ -180,9 +199,11 @@ void LogindSessionBackend::shutdown()
+     m_login1->PowerOff(true).waitForFinished();
+ }
+ 
+-void LogindSessionBackend::reboot()
++bool LogindSessionBackend::reboot()
+ {
+-    m_login1->Reboot(true).waitForFinished();
++    auto reply = m_login1->Reboot(true);
++    reply.waitForFinished();
++    return !reply.isError();
+ }
+ 
+ void LogindSessionBackend::suspend()
+@@ -237,6 +258,11 @@ bool LogindSessionBackend::canSuspendThenHibernate() const
+     return m_canSuspendThenHibernate;
+ }
+ 
++bool LogindSessionBackend::canRebootToFirmwareSetup() const
++{
++    return m_canRebootToFirmwareSetup;
++}
++
+ bool LogindSessionBackend::canSwitchUser() const
+ {
+     return true;
+diff --git a/libkworkspace/sessionmanagementbackend.h b/libkworkspace/sessionmanagementbackend.h
+index 953f0d3..c162a31 100644
+--- a/libkworkspace/sessionmanagementbackend.h
++++ b/libkworkspace/sessionmanagementbackend.h
+@@ -30,7 +30,7 @@ public:
+     virtual SessionManagement::State state() const = 0;
+ 
+     virtual void shutdown() = 0;
+-    virtual void reboot() = 0;
++    virtual bool reboot() = 0;
+     virtual void suspend() = 0;
+     virtual void hybridSuspend() = 0;
+     virtual void hibernate() = 0;
+@@ -44,6 +44,7 @@ public:
+     virtual bool canSuspendThenHibernate() const = 0;
+ 
+     virtual bool canSwitchUser() const;
++    virtual bool canRebootToFirmwareSetup() const;
+ 
+     bool confirmLogout() const;
+ 
+@@ -58,6 +59,7 @@ Q_SIGNALS:
+ 
+     void aboutToSuspend();
+     void resumingFromSuspend();
++    void canRebootToFirmwareSetupChanged();
+ 
+ protected:
+     SessionBackend();
+@@ -80,7 +82,7 @@ public:
+ 
+     SessionManagement::State state() const override;
+     void shutdown() override;
+-    void reboot() override;
++    bool reboot() override;
+     void suspend() override;
+     void hybridSuspend() override;
+     void hibernate() override;
+@@ -92,12 +94,14 @@ public:
+     bool canHibernate() const override;
+     bool canSuspendThenHibernate() const override;
+     bool canSwitchUser() const override;
++    bool canRebootToFirmwareSetup() const override;
+ 
+ private:
+     OrgFreedesktopLogin1ManagerInterface *m_login1;
+     SessionManagement::State m_state = SessionManagement::State::Loading;
+     bool m_canShutdown = false;
+     bool m_canReboot = false;
++    bool m_canRebootToFirmwareSetup = false;
+     bool m_canSuspend = false;
+     bool m_canHybridSuspend = false;
+     bool m_canHibernate = false;
+@@ -118,8 +122,9 @@ public:
+     void shutdown() override
+     {
+     }
+-    void reboot() override
++    bool reboot() override
+     {
++        return false;
+     }
+     void suspend() override
+     {
+@@ -170,7 +175,7 @@ public:
+         return SessionManagement::State::Ready;
+     }
+     void shutdown() override;
+-    void reboot() override;
++    bool reboot() override;
+     void suspend() override;
+     void hybridSuspend() override;
+     void hibernate() override;
+diff --git a/logout-greeter/greeter.cpp b/logout-greeter/greeter.cpp
+index 766661a..97d4cb4 100644
+--- a/logout-greeter/greeter.cpp
++++ b/logout-greeter/greeter.cpp
+@@ -13,6 +13,8 @@
+ #include <QDebug>
+ #include <QScreen>
+ 
++#include <KPackage/PackageLoader>
++
+ #include "debug.h"
+ #include "logoutpromptadaptor.h"
+ #include "shutdowndlg.h"
+@@ -95,6 +97,7 @@ void Greeter::adoptScreen(QScreen *screen)
+     }
+     // TODO: last argument is the theme, maybe add command line option for it?
+     auto *w = new KSMShutdownDlg(nullptr, m_shutdownType, m_windowed, screen);
++    w->setFirmwareOnly(m_firmwareOnly);
+     w->installEventFilter(this);
+     m_dialogs << w;
+ 
+@@ -106,7 +109,13 @@ void Greeter::adoptScreen(QScreen *screen)
+     connect(w, &KSMShutdownDlg::rejected, this, &Greeter::quit);
+ 
+     w->setGeometry(screen->geometry());
+-    w->init(m_package);
++    if (m_firmwareOnly) {
++        // Themes written before this action could start the ordinary restart countdown.
++        const auto breeze = KPackage::PackageLoader::self()->loadPackage(u"Plasma/LookAndFeel"_s, u"org.kde.breeze.desktop"_s);
++        w->init(breeze);
++    } else {
++        w->init(m_package);
++    }
+ }
+ 
+ void Greeter::quit()
+@@ -174,4 +183,14 @@ void Greeter::promptAll()
+     init();
+ }
+ 
++void Greeter::promptRebootToFirmwareSetup()
++{
++    if (m_running) {
++        return;
++    }
++    m_firmwareOnly = true;
++    m_shutdownType = KWorkSpace::ShutdownTypeReboot;
++    init();
++}
++
+ #include "moc_greeter.cpp"
+diff --git a/logout-greeter/greeter.h b/logout-greeter/greeter.h
+index f092bad..d646bc5 100644
+--- a/logout-greeter/greeter.h
++++ b/logout-greeter/greeter.h
+@@ -37,6 +37,7 @@ public Q_SLOTS:
+     void promptShutDown();
+     void promptReboot();
+     void promptAll();
++    void promptRebootToFirmwareSetup();
+ 
+ private:
+     void quit();
+@@ -47,5 +48,6 @@ private:
+     KWorkSpace::ShutdownType m_shutdownType = KWorkSpace::ShutdownTypeHalt;
+     QList<KSMShutdownDlg *> m_dialogs;
+     bool m_windowed = false;
++    bool m_firmwareOnly = false;
+     const KPackage::Package m_package;
+ };
+diff --git a/logout-greeter/shutdowndlg.cpp b/logout-greeter/shutdowndlg.cpp
+index 9613312..d9d1478 100644
+--- a/logout-greeter/shutdowndlg.cpp
++++ b/logout-greeter/shutdowndlg.cpp
+@@ -140,6 +140,10 @@ KSMShutdownDlg::KSMShutdownDlg(QWindow *parent, KWorkSpace::ShutdownType sdtype,
+     mapSpdMethods->insert(QStringLiteral("HibernateState"), m_session.canHibernate());
+     context->setContextProperty(QStringLiteral("spdMethods"), mapSpdMethods);
+     context->setContextProperty(QStringLiteral("canLogout"), m_session.canLogout());
++    context->setContextProperty(u"leaveSession"_s, &m_session);
++    context->setContextProperty(u"leaveDialog"_s, this);
++    context->setContextProperty(u"firmwareRestartPending"_s, false);
++    context->setContextProperty(u"firmwareRestartError"_s, QString());
+ 
+     // Trying to access a non-existent context property throws an error, always create the property and then update it later
+     context->setContextProperty(u"rebootToFirmwareSetup"_s, false);
+@@ -281,6 +285,9 @@ void KSMShutdownDlg::init(const KPackage::Package &package)
+     connect(rootObject(), SIGNAL(rebootRequested()), SLOT(slotReboot()));
+     connect(rootObject(), SIGNAL(rebootRequested2(int)), SLOT(slotReboot(int)));
+     connect(rootObject(), SIGNAL(rebootUpdateRequested()), SLOT(slotRebootUpdate()));
++    if (rootObject()->metaObject()->indexOfSignal("rebootToFirmwareSetupRequested()") >= 0) {
++        connect(rootObject(), SIGNAL(rebootToFirmwareSetupRequested()), SLOT(slotRebootToFirmwareSetup()));
++    }
+     connect(rootObject(), SIGNAL(cancelRequested()), SLOT(reject()));
+     connect(rootObject(), SIGNAL(lockScreenRequested()), SLOT(slotLockScreen()));
+     connect(rootObject(), SIGNAL(taskManagerRequested()), SLOT(slotTaskManager()));
+@@ -303,6 +310,42 @@ void KSMShutdownDlg::init(const KPackage::Package &package)
+     setKeyboardGrabEnabled(true);
+ }
+ 
++void KSMShutdownDlg::setFirmwareOnly(bool firmwareOnly)
++{
++    rootContext()->setContextProperty(u"firmwareOnly"_s, firmwareOnly);
++}
++
++bool KSMShutdownDlg::shiftPressed() const
++{
++    return QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
++}
++
++void KSMShutdownDlg::slotRebootToFirmwareSetup()
++{
++    if (m_firmwareRequestPending || !m_session.canRebootToFirmwareSetup()) {
++        return;
++    }
++
++    m_firmwareRequestPending = true;
++    rootContext()->setContextProperty(u"firmwareRestartPending"_s, true);
++    rootContext()->setContextProperty(u"firmwareRestartError"_s, QString());
++    const auto message = QDBusMessage::createMethodCall(u"org.kde.Shutdown"_s, u"/Shutdown"_s, u"org.kde.Shutdown"_s, u"logoutAndRebootToFirmwareSetup"_s);
++    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *watcher) {
++        const QDBusPendingReply<QString> reply = *watcher;
++        watcher->deleteLater();
++        const QString error = reply.isError() ? reply.error().name() : reply.value();
++        if (error.isEmpty()) {
++            accept();
++            return;
++        }
++
++        m_firmwareRequestPending = false;
++        rootContext()->setContextProperty(u"firmwareRestartPending"_s, false);
++        rootContext()->setContextProperty(u"firmwareRestartError"_s, error);
++    });
++}
++
+ void KSMShutdownDlg::slotLogout()
+ {
+     m_session.requestLogout(SessionManagement::ConfirmationMode::Skip);
+diff --git a/logout-greeter/shutdowndlg.h b/logout-greeter/shutdowndlg.h
+index 979bc9d..3df915f 100644
+--- a/logout-greeter/shutdowndlg.h
++++ b/logout-greeter/shutdowndlg.h
+@@ -28,6 +28,8 @@ public:
+ 
+     void init(const KPackage::Package &package);
+     bool result() const;
++    void setFirmwareOnly(bool firmwareOnly);
++    Q_INVOKABLE bool shiftPressed() const;
+ 
+ public Q_SLOTS:
+     void accept();
+@@ -38,6 +40,7 @@ public Q_SLOTS:
+     void slotReboot();
+     void slotReboot(int);
+     void slotRebootUpdate();
++    void slotRebootToFirmwareSetup();
+     void slotSuspend(int);
+     void slotLockScreen();
+     void slotTaskManager();
+@@ -61,4 +64,5 @@ private:
+     QStringList rebootOptions;
+     bool m_result : 1;
+     SessionManagement m_session;
++    bool m_firmwareRequestPending = false;
+ };
+diff --git a/lookandfeel/org.kde.breeze/contents/logout/Logout.qml b/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
+index 995f131..272ec41 100644
+--- a/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
++++ b/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
+@@ -6,6 +6,7 @@
+ 
+ import QtQuick
+ import QtQuick.Layouts
++import QtQml.Models
+ import QtQuick.Controls as QQC2
+ 
+ import org.kde.plasma.components as PlasmaComponents
+@@ -31,6 +32,7 @@ Item {
+     signal rebootRequested()
+     signal rebootRequested2(int opt)
+     signal rebootUpdateRequested()
++    signal rebootToFirmwareSetupRequested()
+     signal cancelRequested()
+     signal lockScreenRequested()
+     signal taskManagerRequested()
+@@ -60,6 +62,40 @@ Item {
+     }
+ 
+     readonly property bool showAllOptions: sdtype === ShutdownType.ShutdownTypeDefault
++    readonly property bool canRestartToFirmware: leaveSession.canRebootToFirmwareSetup
++    readonly property string firmwareActionText: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restart to UEFI setup")
++    readonly property var restartActions: [
++        { text: root.firmwareActionText, visible: root.canRestartToFirmware, trigger: () => root.restartToFirmware() },
++    ]
++
++    function restartToFirmware() {
++        AutoTriggerTimer.cancelAutoTrigger();
++        root.rebootToFirmwareSetupRequested();
++    }
++
++    function openRestartMenu(button) {
++        if (!root.canRestartToFirmware || firmwareRestartPending) {
++            return;
++        }
++        AutoTriggerTimer.cancelAutoTrigger();
++        restartMenu.popup(button, 0, button.height);
++    }
++
++    QQC2.Menu {
++        id: restartMenu
++        popupType: QQC2.Popup.Item
++
++        Instantiator {
++            model: root.restartActions.filter(action => action.visible)
++            delegate: QQC2.MenuItem {
++                required property var modelData
++                text: modelData.text
++                onTriggered: modelData.trigger()
++            }
++            onObjectAdded: (index, item) => restartMenu.insertItem(index, item)
++            onObjectRemoved: (index, item) => restartMenu.removeItem(item)
++        }
++    }
+ 
+     KCoreAddons.KUser {
+         id: kuser
+@@ -87,7 +123,7 @@ Item {
+ 
+     Timer {
+         id: countDownTimer
+-        running: !showAllOptions
++        running: !showAllOptions && !firmwareOnly
+         repeat: true
+         interval: 1000
+         onTriggered: remainingTime--
+@@ -225,8 +261,34 @@ Item {
+             visible: rebootToBootLoaderEntry != ""
+         }
+ 
++        PlasmaComponents.Label {
++            Layout.alignment: Qt.AlignHCenter
++            Layout.maximumWidth: Math.max(Kirigami.Units.gridUnit * 16, logoutButtonsRow.implicitWidth)
++            horizontalAlignment: Text.AlignHCenter
++            wrapMode: Text.WordWrap
++            textFormat: Text.PlainText
++            visible: firmwareRestartError !== "" || (firmwareOnly && !root.canRestartToFirmware)
++            text: {
++                switch (firmwareRestartError) {
++                case "org.freedesktop.DBus.Error.AccessDenied":
++                case "org.freedesktop.DBus.Error.AuthFailed":
++                case "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired":
++                case "org.freedesktop.PolicyKit1.Error.NotAuthorized":
++                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Permission to restart to UEFI setup was denied.");
++                case "org.kde.Shutdown.InProgress":
++                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel", "A session shutdown is already in progress.");
++                case "org.freedesktop.DBus.Error.NotSupported":
++                case "":
++                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restarting to UEFI setup is unavailable.");
++                default:
++                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel", "The system service could not schedule a restart to UEFI setup.");
++                }
++            }
++        }
++
+         GridLayout {
+             id: logoutButtonsRow
++            enabled: !firmwareRestartPending
+ 
+             readonly property int spacing: Kirigami.Units.largeSpacing
+             rowSpacing: spacing
+@@ -271,16 +333,43 @@ Item {
+                     }
+                 }
+                 onClicked: {
+-                    if (softwareUpdatePending) {
++                    if (root.canRestartToFirmware && leaveDialog.shiftPressed()) {
++                        root.openRestartMenu(rebootButton);
++                    } else if (softwareUpdatePending) {
+                         root.rebootUpdateRequested();
+                     } else {
+                         root.rebootRequested();
+                     }
+                 }
+                 KeyNavigation.left: hibernateButton.visible ? hibernateButton : (suspendButton.visible ? suspendButton : cancelButton)
++                KeyNavigation.right: restartOptionsButton.visible ? restartOptionsButton : restartOptionsButton.KeyNavigation.right
++                focus: sdtype === ShutdownType.ShutdownTypeReboot && !firmwareOnly
++                visible: !firmwareOnly && maysd && (sdtype === ShutdownType.ShutdownTypeReboot || root.showAllOptions)
++
++                TapHandler {
++                    acceptedButtons: Qt.RightButton
++                    enabled: root.canRestartToFirmware
++                    onTapped: root.openRestartMenu(rebootButton)
++                }
++            }
++            LogoutButton {
++                id: restartOptionsButton
++                icon.name: "arrow-down"
++                text: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restart Options")
++                visible: rebootButton.visible && root.canRestartToFirmware
++                KeyNavigation.left: rebootButton
+                 KeyNavigation.right: rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton))
+-                focus: sdtype === ShutdownType.ShutdownTypeReboot
+-                visible: maysd && (sdtype === ShutdownType.ShutdownTypeReboot || root.showAllOptions)
++                onClicked: root.openRestartMenu(restartOptionsButton)
++            }
++            LogoutButton {
++                id: rebootToFirmwareButton
++                icon.name: "system-reboot"
++                text: root.firmwareActionText
++                visible: firmwareOnly && root.canRestartToFirmware
++                focus: visible
++                KeyNavigation.left: cancelButton
++                KeyNavigation.right: cancelButton
++                onClicked: root.restartToFirmware()
+             }
+             LogoutButton {
+                 id: rebootWithoutUpdatesButton
+@@ -288,11 +377,21 @@ Item {
+                 text: root.showAllOptions ? i18nd("plasma_lookandfeel_org.kde.lookandfeel", "&Restart")
+                                           : i18nd("plasma_lookandfeel_org.kde.lookandfeel", "&Restart Now")
+                 onClicked: {
+-                    root.rebootRequested();
++                    if (root.canRestartToFirmware && leaveDialog.shiftPressed()) {
++                        root.openRestartMenu(rebootWithoutUpdatesButton);
++                    } else {
++                        root.rebootRequested();
++                    }
+                 }
+-                KeyNavigation.left: rebootButton
++                KeyNavigation.left: restartOptionsButton.visible ? restartOptionsButton : rebootButton
+                 KeyNavigation.right: shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton)
+-                visible: maysd && softwareUpdatePending && (sdtype === ShutdownType.ShutdownTypeReboot || root.showAllOptions)
++                visible: !firmwareOnly && maysd && softwareUpdatePending && (sdtype === ShutdownType.ShutdownTypeReboot || root.showAllOptions)
++
++                TapHandler {
++                    acceptedButtons: Qt.RightButton
++                    enabled: root.canRestartToFirmware
++                    onTapped: root.openRestartMenu(rebootWithoutUpdatesButton)
++                }
+             }
+             LogoutButton {
+                 id: shutdownButton
+@@ -347,7 +446,9 @@ Item {
+                 text: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "&Cancel")
+                 onClicked: root.cancelRequested()
+                 KeyNavigation.left: logoutButton.visible ? logoutButton : (shutdownWithoutUpdatesButton.visible ? shutdownWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (rebootButton.visible ? rebootButton : (hibernateButton.visible ? hibernateButton : suspendButton)))))
+-                KeyNavigation.right: suspendButton.visible ? suspendButton : (hibernateButton.visible ? hibernateButton : rebootButton)
++                KeyNavigation.right: firmwareOnly ? (rebootToFirmwareButton.visible ? rebootToFirmwareButton : null)
++                                                  : (suspendButton.visible ? suspendButton : (hibernateButton.visible ? hibernateButton : rebootButton))
++                focus: firmwareOnly && !root.canRestartToFirmware
+                 KeyNavigation.down: recoveryButtonsRow.visible ? taskManagerButton : null
+             }
+         }
+diff --git a/runners/sessions/sessionrunner.cpp b/runners/sessions/sessionrunner.cpp
+index 2a06d4b..42e723b 100644
+--- a/runners/sessions/sessionrunner.cpp
++++ b/runners/sessions/sessionrunner.cpp
+@@ -85,6 +85,12 @@ void SessionRunner::match(KRunner::RunnerContext &context)
+             match.setData(ShutdownAction);
+             matches << match;
+         }
++    } else if (m_session.canRebootToFirmwareSetup()
++               && (term.compare(i18n("Restart to UEFI setup"), Qt::CaseInsensitive) == 0 || term.compare(u"UEFI"_s, Qt::CaseInsensitive) == 0)) {
++        match.setText(i18n("Restart to UEFI setup"));
++        match.setIconName(QStringLiteral("system-reboot"));
++        match.setData(RestartToFirmwareSetupAction);
++        matches << match;
+     } else if (anyKeywordMatches(m_restartKeywords, term)) {
+         if (m_session.canReboot()) {
+             match.setText(i18nc("restart computer command", "Restart"));
+@@ -127,6 +133,9 @@ void SessionRunner::run(const KRunner::RunnerContext & /*context*/, const KRunne
+         case RestartAction:
+             m_session.requestReboot();
+             break;
++        case RestartToFirmwareSetupAction:
++            m_session.requestRebootToFirmwareSetup();
++            break;
+         case ShutdownAction:
+             m_session.requestShutdown();
+             break;
+diff --git a/runners/sessions/sessionrunner.h b/runners/sessions/sessionrunner.h
+index 682ae42..b3f556b 100644
+--- a/runners/sessions/sessionrunner.h
++++ b/runners/sessions/sessionrunner.h
+@@ -32,6 +32,7 @@ public:
+         LockAction,
+         SaveAction,
+         SwitchAction,
++        RestartToFirmwareSetupAction,
+     };
+ 
+ private:
+diff --git a/startkde/plasma-shutdown/org.kde.Shutdown.xml b/startkde/plasma-shutdown/org.kde.Shutdown.xml
+index 44e0567..d01694a 100644
+--- a/startkde/plasma-shutdown/org.kde.Shutdown.xml
++++ b/startkde/plasma-shutdown/org.kde.Shutdown.xml
+@@ -5,5 +5,8 @@
+     <method name="logoutAndShutdown"/>
+     <method name="logoutAndReboot"/>
+     <method name="saveSession"/>
++    <method name="logoutAndRebootToFirmwareSetup">
++      <arg name="error" type="s" direction="out"/>
++    </method>
+ </interface>
+ </node>
+diff --git a/startkde/plasma-shutdown/shutdown.cpp b/startkde/plasma-shutdown/shutdown.cpp
+index 1e1a8a3..eb14789 100644
+--- a/startkde/plasma-shutdown/shutdown.cpp
++++ b/startkde/plasma-shutdown/shutdown.cpp
+@@ -3,6 +3,9 @@
+ 
+ #include <QCoreApplication>
+ #include <QDBusConnection>
++#include <QDBusReply>
++#include <QDBusVariant>
++#include <QFileInfo>
+ #include <QDir>
+ #include <QProcess>
+ #include <QStandardPaths>
+@@ -14,6 +17,23 @@
+ 
+ #include "config.h"
+ 
++using namespace Qt::StringLiterals;
++
++namespace
++{
++QDBusMessage login1Call(const QString &interface, const QString &method)
++{
++    return QDBusMessage::createMethodCall(u"org.freedesktop.login1"_s, u"/org/freedesktop/login1"_s, interface, method);
++}
++
++QDBusReply<void> setRebootToFirmwareSetup(bool enabled)
++{
++    auto message = login1Call(u"org.freedesktop.login1.Manager"_s, u"SetRebootToFirmwareSetup"_s);
++    message << enabled;
++    return QDBusConnection::systemBus().call(message);
++}
++}
++
+ Shutdown::Shutdown(QObject *parent)
+     : QObject(parent)
+ {
+@@ -37,8 +57,54 @@ void Shutdown::logoutAndReboot()
+     startLogout(KWorkSpace::ShutdownTypeReboot);
+ }
+ 
++QString Shutdown::logoutAndRebootToFirmwareSetup()
++{
++    if (m_logoutStarted) {
++        return u"org.kde.Shutdown.InProgress"_s;
++    }
++
++    if (!QFileInfo(u"/sys/firmware/efi"_s).isDir()) {
++        QCoreApplication::quit();
++        return u"org.freedesktop.DBus.Error.NotSupported"_s;
++    }
++
++    auto message = login1Call(u"org.freedesktop.DBus.Properties"_s, u"Get"_s);
++    message << u"org.freedesktop.login1.Manager"_s << u"RebootToFirmwareSetup"_s;
++    const QDBusReply<QDBusVariant> previous = QDBusConnection::systemBus().call(message);
++    if (!previous.isValid()) {
++        qCWarning(PLASMA_SESSION) << "Could not read the firmware restart setting:" << previous.error();
++        QCoreApplication::quit();
++        return previous.error().name();
++    }
++
++    const auto result = setRebootToFirmwareSetup(true);
++    if (!result.isValid()) {
++        qCWarning(PLASMA_SESSION) << "Firmware restart was refused:" << result.error();
++        QCoreApplication::quit();
++        return result.error().name();
++    }
++
++    m_restoreFirmwareSetup = !previous.value().variant().toBool();
++    startLogout(KWorkSpace::ShutdownTypeReboot);
++    return {};
++}
++
++void Shutdown::restoreFirmwareSetup()
++{
++    if (m_restoreFirmwareSetup) {
++        const auto result = setRebootToFirmwareSetup(false);
++        if (!result.isValid()) {
++            qCWarning(PLASMA_SESSION) << "Could not restore the firmware restart setting:" << result.error();
++        }
++    }
++}
++
+ void Shutdown::startLogout(KWorkSpace::ShutdownType shutdownType)
+ {
++    if (m_logoutStarted) {
++        return;
++    }
++    m_logoutStarted = true;
+     m_shutdownType = shutdownType;
+ 
+     OrgKdeKSMServerInterfaceInterface ksmserverIface(QStringLiteral("org.kde.ksmserver"), QStringLiteral("/KSMServer"), QDBusConnection::sessionBus());
+@@ -118,6 +184,7 @@ void Shutdown::ksmServerComplete()
+ 
+ void Shutdown::logoutCancelled()
+ {
++    restoreFirmwareSetup();
+     m_shutdownType = KWorkSpace::ShutdownTypeNone;
+     qApp->quit();
+ }
+@@ -171,7 +238,10 @@ void Shutdown::logoutComplete()
+     if (m_shutdownType == KWorkSpace::ShutdownTypeHalt) {
+         SessionBackend::self()->shutdown();
+     } else if (m_shutdownType == KWorkSpace::ShutdownTypeReboot) {
+-        SessionBackend::self()->reboot();
++        if (!SessionBackend::self()->reboot() && m_restoreFirmwareSetup) {
++            restoreFirmwareSetup();
++            qApp->quit();
++        }
+     } else { // logout
+         qApp->quit();
+     }
+diff --git a/startkde/plasma-shutdown/shutdown.h b/startkde/plasma-shutdown/shutdown.h
+index f59d163..c464d57 100644
+--- a/startkde/plasma-shutdown/shutdown.h
++++ b/startkde/plasma-shutdown/shutdown.h
+@@ -19,6 +19,7 @@ public:
+     void logout();
+     void logoutAndShutdown();
+     void logoutAndReboot();
++    QString logoutAndRebootToFirmwareSetup();
+     void saveSession();
+ private Q_SLOTS:
+     void logoutCancelled();
+@@ -29,5 +30,8 @@ private:
+     void startLogout(KWorkSpace::ShutdownType shutdownType);
+     void runShutdownScripts();
+     bool usingSystemdManagedSession();
+-    KWorkSpace::ShutdownType m_shutdownType;
++    void restoreFirmwareSetup();
++    KWorkSpace::ShutdownType m_shutdownType = KWorkSpace::ShutdownTypeNone;
++    bool m_logoutStarted = false;
++    bool m_restoreFirmwareSetup = false;
+ };
+-- 
+2.53.0
+
