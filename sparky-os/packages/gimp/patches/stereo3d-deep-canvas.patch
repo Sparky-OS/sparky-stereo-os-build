@@ -27,12 +27,114 @@ Description: the deep and HDR canvas: every depth and colour state handed to the
  canvas) and a 2D image to the canvas GIMP draws itself; the status bar says so
  once the step is shown, and the reason is in the log.  On X11 a 2D deep image
  gets no area.  8 bit sRGB images, stereo or not, are drawn as in milestones 1
- and 2.
+ and 2.  Preferences > Color Management, "Show deep images in their own depth
+ and colors" (gimprc deep-canvas, on by default): off, a deep image is drawn
+ as before, in GIMP's 8 bit canvas converted to the monitor profile.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Origin: other, Sparky Stereo OS (queue row 137, the stereo GIMP's milestone 3)
 Forwarded: no
 Last-Update: 2026-11-26
 ---
+diff --git a/app/config/gimpdisplayconfig.c b/app/config/gimpdisplayconfig.c
+index e329996..362f3c4 100644
+--- a/app/config/gimpdisplayconfig.c
++++ b/app/config/gimpdisplayconfig.c
+@@ -76,6 +76,7 @@ enum
+   PROP_SPACE_BAR_ACTION,
+   PROP_ZOOM_QUALITY,
+   PROP_USE_EVENT_HISTORY,
++  PROP_DEEP_CANVAS,
+ 
+   /* ignored, only for backward compatibility: */
+   PROP_DEFAULT_SNAP_TO_GUIDES,
+@@ -342,6 +343,13 @@ gimp_display_config_class_init (GimpDisplayConfigClass *klass)
+                             DEFAULT_USE_EVENT_HISTORY,
+                             GIMP_PARAM_STATIC_STRINGS);
+ 
++  GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_DEEP_CANVAS,
++                            "deep-canvas",
++                            "Show deep images in their own depth and colors",
++                            DEEP_CANVAS_BLURB,
++                            TRUE,
++                            GIMP_PARAM_STATIC_STRINGS);
++
+   /*  only for backward compatibility:  */
+   GIMP_CONFIG_PROP_BOOLEAN (object_class, PROP_DEFAULT_SNAP_TO_GUIDES,
+                             "default-snap-to-guides",
+@@ -561,6 +569,9 @@ gimp_display_config_set_property (GObject      *object,
+     case PROP_USE_EVENT_HISTORY:
+       display_config->use_event_history = g_value_get_boolean (value);
+       break;
++    case PROP_DEEP_CANVAS:
++      display_config->deep_canvas = g_value_get_boolean (value);
++      break;
+ 
+     case PROP_DEFAULT_SNAP_TO_GUIDES:
+     case PROP_DEFAULT_SNAP_TO_GRID:
+@@ -681,6 +692,9 @@ gimp_display_config_get_property (GObject    *object,
+     case PROP_USE_EVENT_HISTORY:
+       g_value_set_boolean (value, display_config->use_event_history);
+       break;
++    case PROP_DEEP_CANVAS:
++      g_value_set_boolean (value, display_config->deep_canvas);
++      break;
+ 
+     case PROP_DEFAULT_SNAP_TO_GUIDES:
+     case PROP_DEFAULT_SNAP_TO_GRID:
+diff --git a/app/config/gimpdisplayconfig.h b/app/config/gimpdisplayconfig.h
+index f0c2309..9d4774a 100644
+--- a/app/config/gimpdisplayconfig.h
++++ b/app/config/gimpdisplayconfig.h
+@@ -70,6 +70,7 @@ struct _GimpDisplayConfig
+   GimpSpaceBarAction  space_bar_action;
+   GimpZoomQuality     zoom_quality;
+   gboolean            use_event_history;
++  gboolean            deep_canvas;
+ 
+   GObject            *modifiers_manager;
+ };
+diff --git a/app/config/gimprc-blurbs.h b/app/config/gimprc-blurbs.h
+index cb308bd..cbf91e4 100644
+--- a/app/config/gimprc-blurbs.h
++++ b/app/config/gimprc-blurbs.h
+@@ -801,5 +801,13 @@ _("There's a tradeoff between speed and quality of the zoomed-out display.")
+ "Bugs in event history buffer are frequent so in case of cursor " \
+ "offset problems turning it off helps."
+ 
++#define DEEP_CANVAS_BLURB \
++_("When enabled, an image deeper than 8 bits, or whose color profile "  \
++  "carries video code points or colors beyond sRGB, is shown in its "   \
++  "own depth and colors: its canvas is handed to the desktop's "         \
++  "compositor with its color description, and the compositor converts " \
++  "it for each screen.  When disabled, such an image is shown in 8 "    \
++  "bits, converted to the monitor color profile, like any other image.")
++
+ #define ACTION_HISTORY_SIZE_BLURB \
+ _("The maximum number of actions saved in history.")
+diff --git a/app/dialogs/preferences-dialog.c b/app/dialogs/preferences-dialog.c
+index 78ea5e9..0152b27 100644
+--- a/app/dialogs/preferences-dialog.c
++++ b/app/dialogs/preferences-dialog.c
+@@ -410,6 +410,7 @@ prefs_color_management_reset (GtkWidget *widget,
+ 
+   gimp_config_reset (GIMP_CONFIG (core_config->color_management));
+   gimp_config_reset_property (config, "color-profile-policy");
++  gimp_config_reset_property (config, "deep-canvas");
+ }
+ 
+ static void
+@@ -1490,6 +1491,11 @@ prefs_dialog_new (Gimp       *gimp,
+                                  _("_Optimize image display for:"),
+                                  GTK_GRID (grid), row++, size_group);
+ 
++    button = gimp_prop_check_button_new (object, "deep-canvas",
++                                         _("Show _deep images in their own depth and colors"));
++    gtk_grid_attach (GTK_GRID (grid), button, 1, row, 1, 1);
++    row++;
++
+     /*  Print Simulation (Soft-proofing)  */
+     vbox2 = prefs_frame_new (_("Soft-Proofing"),
+                              GTK_CONTAINER (vbox),
 diff --git a/app/display/display-types.h b/app/display/display-types.h
 index 574027b..0a32928 100644
 --- a/app/display/display-types.h
@@ -53,10 +155,10 @@ index 574027b..0a32928 100644
  typedef struct _GimpToolWidget           GimpToolWidget;
 diff --git a/app/display/gimpdisplayshell-deep.c b/app/display/gimpdisplayshell-deep.c
 new file mode 100644
-index 0000000..5277ece
+index 0000000..82e2725
 --- /dev/null
 +++ b/app/display/gimpdisplayshell-deep.c
-@@ -0,0 +1,498 @@
+@@ -0,0 +1,516 @@
 +/* GIMP - The GNU Image Manipulation Program
 + * Copyright (C) 1995 Spencer Kimball and Peter Mattis
 + *
@@ -114,6 +216,8 @@ index 0000000..5277ece
 +#include "libgimpwidgets/gimpwidgets.h"
 +
 +#include "display-types.h"
++
++#include "config/gimpdisplayconfig.h"
 +
 +#include "gegl/gimp-babl.h"
 +
@@ -282,6 +386,12 @@ index 0000000..5277ece
 +  GimpColorProfile *profile;
 +  guint             primaries, transfer;
 +
++  /*  Preferences: "Show deep images in their own depth and colors" off:
++   *  GIMP's own 8 bit canvas, converted to the monitor profile
++   */
++  if (! shell->display->config->deep_canvas)
++    return FALSE;
++
 +  if (gimp_image_get_component_type (image) != GIMP_COMPONENT_TYPE_U8)
 +    return TRUE;
 +
@@ -318,6 +428,7 @@ index 0000000..5277ece
 +  gboolean              converted = FALSE;
 +  gboolean              linear;
 +  GimpDisplayShellDeepFormat format;
++  gboolean              own;
 +  gint                  n = 0;
 +
 +  memset (deep, 0, sizeof (GimpDisplayShellDeep));
@@ -368,24 +479,33 @@ index 0000000..5277ece
 +      break;
 +    }
 +
-+  steps[n].format    = format;
-+  steps[n].primaries = primaries;
-+  steps[n].transfer  = transfer;
-+  steps[n].profile   = state;
-+  steps[n].converted = converted;
-+  n++;
++  /*  Preferences: "Show deep images in their own depth and colors" off:
++   *  only a stereo image's 8 bit sRGB step, milestone 1's canvas
++   */
++  own = shell->display->config->deep_canvas;
 +
-+  if (format == GIMP_DISPLAY_SHELL_DEEP_HALF ||
-+      format == GIMP_DISPLAY_SHELL_DEEP_FLOAT)
++  if (own)
 +    {
-+      steps[n]        = steps[0];
-+      steps[n].format = GIMP_DISPLAY_SHELL_DEEP_U16;
++      steps[n].format    = format;
++      steps[n].primaries = primaries;
++      steps[n].transfer  = transfer;
++      steps[n].profile   = state;
++      steps[n].converted = converted;
 +      n++;
++
++      if (format == GIMP_DISPLAY_SHELL_DEEP_HALF ||
++          format == GIMP_DISPLAY_SHELL_DEEP_FLOAT)
++        {
++          steps[n]        = steps[0];
++          steps[n].format = GIMP_DISPLAY_SHELL_DEEP_U16;
++          n++;
++        }
 +    }
 +
 +  if (stereo &&
-+      ! (format == GIMP_DISPLAY_SHELL_DEEP_U8 &&
-+         primaries == CP_BT709 && transfer == TC_SRGB))
++      (! own ||
++       ! (format == GIMP_DISPLAY_SHELL_DEEP_U8 &&
++          primaries == CP_BT709 && transfer == TC_SRGB)))
 +    {
 +      steps[n].format    = GIMP_DISPLAY_SHELL_DEEP_U8;
 +      steps[n].primaries = CP_BT709;
@@ -1113,7 +1233,7 @@ index bb1e5aa..9d43057 100644
 +    }
 +}
 diff --git a/app/display/gimpdisplayshell-stereo.c b/app/display/gimpdisplayshell-stereo.c
-index df2e4d4..744a39e 100644
+index df2e4d4..c1a11ee 100644
 --- a/app/display/gimpdisplayshell-stereo.c
 +++ b/app/display/gimpdisplayshell-stereo.c
 @@ -52,6 +52,18 @@
@@ -1135,7 +1255,7 @@ index df2e4d4..744a39e 100644
   */
  
  #include "config.h"
-@@ -70,11 +82,14 @@
+@@ -70,11 +82,16 @@
  #endif
  
  #include "libgimpbase/gimpbase.h"
@@ -1145,12 +1265,14 @@ index df2e4d4..744a39e 100644
  
  #include "display-types.h"
  
++#include "config/gimpdisplayconfig.h"
++
 +#include "gegl/gimp-babl.h"
 +
  #include "core/gimp.h"
  #include "core/gimpdepthlayer.h"
  #include "core/gimpdrawable.h"
-@@ -89,6 +104,7 @@
+@@ -89,6 +106,7 @@
  #include "gimpcanvas.h"
  #include "gimpdisplay.h"
  #include "gimpdisplayshell.h"
@@ -1158,7 +1280,7 @@ index df2e4d4..744a39e 100644
  #include "gimpdisplayshell-draw.h"
  #include "gimpdisplayshell-stereo.h"
  
-@@ -117,6 +133,13 @@ typedef struct
+@@ -117,11 +135,22 @@ typedef struct
    gboolean    left_first;
    gboolean    depth;          /*  the image has depth layers            */
    GimpImage  *image;
@@ -1169,10 +1291,20 @@ index df2e4d4..744a39e 100644
 +  GimpComponentType component;
 +  gpointer    profile;        /*  compared only: the shell's profile     */
 +  guint       generation;     /*  gimp_display_shell_stereo_profile_changed() */
++  gboolean    deep_canvas;    /*  Preferences: "Show deep images in their
++                               *  own depth and colors"
++                               */
  } StereoModel;
  
  struct _GimpDisplayShellStereo
-@@ -139,6 +162,7 @@ struct _GimpDisplayShellStereo
+ {
+-  GimpDisplayShell *shell;
++  GimpDisplayShell  *shell;
++  GimpDisplayConfig *config;
+ 
+   gboolean          enabled;
+   StereoModel       model;
+@@ -139,6 +168,7 @@ struct _GimpDisplayShellStereo
    guint             texture[2];
    gint              texture_width[2];
    gint              texture_height[2];
@@ -1180,7 +1312,7 @@ index df2e4d4..744a39e 100644
    guint             framebuffer;
  
    gboolean          renderer_known;
-@@ -146,9 +170,12 @@ struct _GimpDisplayShellStereo
+@@ -146,9 +176,12 @@ struct _GimpDisplayShellStereo
  
    /*  the area said it cannot show the pair: the canvas draws the left eye  */
    gboolean          failed;
@@ -1194,7 +1326,7 @@ index df2e4d4..744a39e 100644
  
    guint             apply_idle_id;
    guint             tell_idle_id;
-@@ -160,6 +187,23 @@ struct _GimpDisplayShellStereo
+@@ -160,11 +193,30 @@ struct _GimpDisplayShellStereo
  
    guint             note_idle_id;
    gchar            *noted;
@@ -1218,7 +1350,14 @@ index df2e4d4..744a39e 100644
  };
  
  
-@@ -183,6 +227,7 @@ static void     gimp_display_shell_stereo_eye_update (GimpProjection         *pr
+ /*  local function prototypes  */
+ 
++static void     gimp_display_shell_stereo_deep_canvas_notify
++                                                     (GimpDisplayShellStereo *stereo);
+ static gboolean gimp_display_shell_stereo_same_model (const StereoModel      *a,
+                                                       const StereoModel      *b);
+ 
+@@ -183,6 +235,7 @@ static void     gimp_display_shell_stereo_eye_update (GimpProjection         *pr
                                                        GimpDisplayShellStereo *stereo);
  static void     gimp_display_shell_stereo_want_note  (GimpDisplayShellStereo *stereo);
  static gboolean gimp_display_shell_stereo_note       (gpointer                data);
@@ -1226,7 +1365,7 @@ index df2e4d4..744a39e 100644
  
  #ifdef HAVE_GTK_GL_AREA_STEREO
  static void     gimp_display_shell_stereo_make_area  (GimpDisplayShellStereo *stereo);
-@@ -196,6 +241,7 @@ static void     gimp_display_shell_stereo_error      (GtkGLArea              *ar
+@@ -196,6 +249,7 @@ static void     gimp_display_shell_stereo_error      (GtkGLArea              *ar
                                                        GimpDisplayShellStereo *stereo);
  static gboolean gimp_display_shell_stereo_tell       (gpointer                data);
  static gchar  * gimp_display_shell_stereo_probe      (GtkWidget              *widget);
@@ -1234,7 +1373,30 @@ index df2e4d4..744a39e 100644
  #endif
  
  
-@@ -244,9 +290,13 @@ gimp_display_shell_stereo_free (GimpDisplayShellStereo *stereo)
+@@ -212,6 +266,12 @@ gimp_display_shell_stereo_new (GimpDisplayShell *shell)
+ 
+   stereo->shell   = shell;
+   stereo->enabled = TRUE;
++  stereo->config  = g_object_ref (shell->display->config);
++
++  /*  the canvas reads its model again when it draws  */
++  g_signal_connect_swapped (stereo->config, "notify::deep-canvas",
++                            G_CALLBACK (gimp_display_shell_stereo_deep_canvas_notify),
++                            stereo);
+ 
+   return stereo;
+ }
+@@ -228,6 +288,9 @@ gimp_display_shell_stereo_free (GimpDisplayShellStereo *stereo)
+   g_clear_handle_id (&stereo->tell_idle_id, g_source_remove);
+   g_clear_handle_id (&stereo->note_idle_id, g_source_remove);
+ 
++  g_signal_handlers_disconnect_by_data (stereo->config, stereo);
++  g_clear_object (&stereo->config);
++
+   gimp_display_shell_stereo_clear_eyes (stereo);
+ 
+   if (stereo->area)
+@@ -244,9 +307,13 @@ gimp_display_shell_stereo_free (GimpDisplayShellStereo *stereo)
        g_clear_pointer (&stereo->dirty[i], cairo_region_destroy);
      }
  
@@ -1248,7 +1410,7 @@ index df2e4d4..744a39e 100644
    g_free (stereo);
  }
  
-@@ -307,14 +357,19 @@ gimp_display_shell_stereo_draw (GimpDisplayShell *shell,
+@@ -307,14 +374,19 @@ gimp_display_shell_stereo_draw (GimpDisplayShell *shell,
        return FALSE;
      }
  
@@ -1270,7 +1432,7 @@ index df2e4d4..744a39e 100644
        gimp_display_shell_draw_picture (shell, cr, GIMP_DISPLAY_SHELL_EYE_LEFT);
        return TRUE;
      }
-@@ -406,7 +461,16 @@ gimp_display_shell_stereo_invalidate_full (GimpDisplayShell *shell)
+@@ -406,7 +478,16 @@ gimp_display_shell_stereo_invalidate_full (GimpDisplayShell *shell)
      return;
  
    for (i = 0; i < 2; i++)
@@ -1288,7 +1450,7 @@ index df2e4d4..744a39e 100644
  }
  
  /*  Scrolling moves each eye's render cache and its valid region as
-@@ -429,7 +493,40 @@ gimp_display_shell_stereo_scroll (GimpDisplayShell *shell,
+@@ -429,7 +510,40 @@ gimp_display_shell_stereo_scroll (GimpDisplayShell *shell,
  
    for (i = 0; i < 2; i++)
      {
@@ -1330,7 +1492,7 @@ index df2e4d4..744a39e 100644
          {
            cairo_surface_t *surface;
            cairo_t         *cr;
-@@ -491,7 +588,9 @@ gimp_display_shell_stereo_get_render_cache (GimpDisplayShell    *shell,
+@@ -491,7 +605,9 @@ gimp_display_shell_stereo_get_render_cache (GimpDisplayShell    *shell,
        (cairo_image_surface_get_width  (stereo->render_cache[i]) !=
         shell->disp_width  * shell->render_scale ||
         cairo_image_surface_get_height (stereo->render_cache[i]) !=
@@ -1341,7 +1503,7 @@ index df2e4d4..744a39e 100644
      {
        g_clear_pointer (&stereo->render_cache[i], cairo_surface_destroy);
        g_clear_pointer (&stereo->render_cache_valid[i], cairo_region_destroy);
-@@ -614,6 +713,15 @@ gimp_display_shell_stereo_get_sources (GimpDisplayShell          *shell,
+@@ -614,6 +730,15 @@ gimp_display_shell_stereo_get_sources (GimpDisplayShell          *shell,
  
        return 2;
      }
@@ -1357,7 +1519,7 @@ index df2e4d4..744a39e 100644
    else if (stereo->model.kind == STEREO_DEPTH_LAYERS &&
             stereo->eye_projection[e])
      {
-@@ -658,8 +766,179 @@ gimp_display_shell_stereo_open_display_settings (GimpDisplayShell *shell)
+@@ -658,8 +783,186 @@ gimp_display_shell_stereo_open_display_settings (GimpDisplayShell *shell)
  }
  
  
@@ -1534,10 +1696,17 @@ index df2e4d4..744a39e 100644
 +    }
 +}
 +
++static void
++gimp_display_shell_stereo_deep_canvas_notify (GimpDisplayShellStereo *stereo)
++{
++  if (stereo->shell->canvas)
++    gtk_widget_queue_draw (stereo->shell->canvas);
++}
++
  static gboolean
  gimp_display_shell_stereo_same_model (const StereoModel *a,
                                        const StereoModel *b)
-@@ -667,6 +946,10 @@ gimp_display_shell_stereo_same_model (const StereoModel *a,
+@@ -667,6 +970,11 @@ gimp_display_shell_stereo_same_model (const StereoModel *a,
    return (a->kind       == b->kind       &&
            a->image      == b->image      &&
            a->depth      == b->depth      &&
@@ -1545,10 +1714,11 @@ index df2e4d4..744a39e 100644
 +          a->component  == b->component  &&
 +          a->profile    == b->profile    &&
 +          a->generation == b->generation &&
++          a->deep_canvas == b->deep_canvas &&
            a->layers[0]  == b->layers[0]  &&
            a->layers[1]  == b->layers[1]  &&
            a->top_bottom == b->top_bottom &&
-@@ -704,10 +987,21 @@ gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
+@@ -704,10 +1012,22 @@ gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
  
    image = gimp_display_get_image (stereo->shell->display);
  
@@ -1557,8 +1727,9 @@ index df2e4d4..744a39e 100644
      return;
  
 -  model->image = image;
-+  model->image      = image;
-+  model->component  = gimp_image_get_component_type (image);
++  model->image       = image;
++  model->deep_canvas = stereo->config->deep_canvas;
++  model->component   = gimp_image_get_component_type (image);
 +  model->profile    = gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (stereo->shell));
 +  model->generation = stereo->generation;
 +
@@ -1572,7 +1743,7 @@ index df2e4d4..744a39e 100644
    model->depth = gimp_image_has_depth_layers (image);
  
    /*  the layer names are the plug-in's identifiers, the same in every
-@@ -779,6 +1073,9 @@ gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
+@@ -779,6 +1099,9 @@ gimp_display_shell_stereo_read_model (GimpDisplayShellStereo *stereo,
  
    if (model->kind == STEREO_NONE && model->depth)
      model->kind = STEREO_DEPTH_LAYERS;
@@ -1582,7 +1753,7 @@ index df2e4d4..744a39e 100644
  }
  
  static gboolean
-@@ -812,33 +1109,65 @@ gimp_display_shell_stereo_apply (gpointer data)
+@@ -812,33 +1135,65 @@ gimp_display_shell_stereo_apply (gpointer data)
      }
  
  #ifdef HAVE_GTK_GL_AREA_STEREO
@@ -1660,7 +1831,7 @@ index df2e4d4..744a39e 100644
      }
  #endif
  
-@@ -972,10 +1301,115 @@ gimp_display_shell_stereo_make_area (GimpDisplayShellStereo *stereo)
+@@ -972,10 +1327,115 @@ gimp_display_shell_stereo_make_area (GimpDisplayShellStereo *stereo)
    g_signal_connect (stereo->area, "notify::stereo-error",
                      G_CALLBACK (gimp_display_shell_stereo_error),
                      stereo);
@@ -1776,7 +1947,7 @@ index df2e4d4..744a39e 100644
  /*  What lies under the canvas in its window: the canvas's window has no
   *  background of its own, so in 2D its padding shows the backgrounds that
   *  the widgets around it painted (the window's, the dock's).  They are
-@@ -1013,6 +1447,334 @@ gimp_display_shell_stereo_paint_backdrop (GimpDisplayShell *shell,
+@@ -1013,6 +1473,334 @@ gimp_display_shell_stereo_paint_backdrop (GimpDisplayShell *shell,
    g_list_free (ancestors);
  }
  
@@ -2111,7 +2282,7 @@ index df2e4d4..744a39e 100644
  /*  One eye's picture of the canvas, as the canvas would draw it itself
   *  (its background, the padding, the checkerboard and the image), in
   *  device pixels; only what changed since the last frame is drawn again.
-@@ -1033,12 +1795,14 @@ gimp_display_shell_stereo_paint (GimpDisplayShellStereo *stereo,
+@@ -1033,12 +1821,14 @@ gimp_display_shell_stereo_paint (GimpDisplayShellStereo *stereo,
  
    if (! stereo->picture[e] ||
        cairo_image_surface_get_width  (stereo->picture[e]) != width ||
@@ -2128,7 +2299,7 @@ index df2e4d4..744a39e 100644
                                                         width, height);
  
        if (! stereo->dirty[e])
-@@ -1049,6 +1813,24 @@ gimp_display_shell_stereo_paint (GimpDisplayShellStereo *stereo,
+@@ -1049,6 +1839,24 @@ gimp_display_shell_stereo_paint (GimpDisplayShellStereo *stereo,
    if (! stereo->dirty[e] || cairo_region_is_empty (stereo->dirty[e]))
      return extents;
  
@@ -2153,7 +2324,7 @@ index df2e4d4..744a39e 100644
    cr = cairo_create (stereo->picture[e]);
    cairo_scale (cr, scale, scale);
  
-@@ -1117,7 +1899,7 @@ gimp_display_shell_stereo_render (GtkGLArea              *area,
+@@ -1117,7 +1925,7 @@ gimp_display_shell_stereo_render (GtkGLArea              *area,
        stereo->renderer_known = TRUE;
      }
  
@@ -2162,7 +2333,7 @@ index df2e4d4..744a39e 100644
      {
        glClearColor (0.0, 0.0, 0.0, 1.0);
        glClear (GL_COLOR_BUFFER_BIT);
-@@ -1150,13 +1932,22 @@ gimp_display_shell_stereo_render (GtkGLArea              *area,
+@@ -1150,13 +1958,22 @@ gimp_display_shell_stereo_render (GtkGLArea              *area,
      }
  
    if (stereo->texture_width[e]  != width ||
@@ -2188,7 +2359,7 @@ index df2e4d4..744a39e 100644
  
        changed.x      = 0;
        changed.y      = 0;
-@@ -1164,7 +1955,17 @@ gimp_display_shell_stereo_render (GtkGLArea              *area,
+@@ -1164,7 +1981,17 @@ gimp_display_shell_stereo_render (GtkGLArea              *area,
        changed.height = height;
      }
  
@@ -2207,7 +2378,7 @@ index df2e4d4..744a39e 100644
      {
        const guchar *first = data + changed.y * stride + changed.x * 4;
  
-@@ -1251,6 +2052,7 @@ gimp_display_shell_stereo_unrealize (GtkWidget              *area,
+@@ -1251,6 +2078,7 @@ gimp_display_shell_stereo_unrealize (GtkWidget              *area,
      }
  
    stereo->texture[0] = stereo->texture[1] = 0;
@@ -2215,7 +2386,7 @@ index df2e4d4..744a39e 100644
    stereo->texture_width[0] = stereo->texture_width[1] = 0;
    stereo->texture_height[0] = stereo->texture_height[1] = 0;
    stereo->framebuffer = 0;
-@@ -1270,43 +2072,101 @@ gimp_display_shell_stereo_error (GtkGLArea              *area,
+@@ -1270,43 +2098,101 @@ gimp_display_shell_stereo_error (GtkGLArea              *area,
      stereo->tell_idle_id = g_idle_add (gimp_display_shell_stereo_tell, stereo);
  }
  
@@ -2230,7 +2401,7 @@ index df2e4d4..744a39e 100644
 +   *  "canvas-depth"
 +   */
 +  text = g_strdup_printf (_("The canvas cannot hand this image's own depth "
-+                            "and colours to the screen here: it is shown in "
++                            "and colors to the screen here: it is shown in "
 +                            "%s. The reason is in the log."), depth);
 +  gimp_message_literal (stereo->shell->display->gimp,
 +                        G_OBJECT (stereo->shell), GIMP_MESSAGE_WARNING, text);
@@ -2323,7 +2494,7 @@ index df2e4d4..744a39e 100644
    if (! g_strcmp0 (stereo->told, reason))
      return G_SOURCE_REMOVE;
  
-@@ -1327,6 +2187,14 @@ gimp_display_shell_stereo_tell (gpointer data)
+@@ -1327,6 +2213,14 @@ gimp_display_shell_stereo_tell (gpointer data)
      }
  
    /*  the reason, in English, is in the log  */
@@ -2393,6 +2564,26 @@ index 82c942d..deecf5a 100644
 +    gegl, gtk3, cairo, gexiv2, epoxy, lcms
    ],
  )
+diff --git a/etc/gimprc.in b/etc/gimprc.in
+index 7e59a0d..950c62d 100644
+--- a/etc/gimprc.in
++++ b/etc/gimprc.in
+@@ -663,6 +663,15 @@
+ # 
+ # (use-event-history no)
+ 
++# When enabled, an image deeper than 8 bits, or whose color profile carries
++# video code points or colors beyond sRGB, is shown in its own depth and
++# colors: its canvas is handed to the desktop's compositor with its color
++# description, and the compositor converts it for each screen.  When
++# disabled, such an image is shown in 8 bits, converted to the monitor color
++# profile, like any other image.  Possible values are yes and no.
++# 
++# (deep-canvas yes)
++
+ # When enabled, non-visible layers can be edited as normal.  Possible values
+ # are yes and no.
+ # 
 diff --git a/meson.build b/meson.build
 index 9ab3015..66ae374 100644
 --- a/meson.build
