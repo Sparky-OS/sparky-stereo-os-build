@@ -4,8 +4,9 @@
 (plasmashell's), results in $CASE. Shares session2.py's helpers.
   bars            a GTK 3 and a GTK 4 program with a scrolled list (bars.py), on Wayland, left alone with the pointer at
                   the screen's corner: what GTK resolved (overlay scrolling, the bar's classes and opacity) into
-                  bars-gtk3.json and bars-gtk4.json, a capture with both on screen (bars.png), and the settings the sync
-                  wrote (bars-settings.json: both settings.ini files, dconf's value, the sync's record, the portal)
+                  bars-gtk3.json and bars-gtk4.json, a capture of each (bars-shot-gtk3.png, bars-shot-gtk4.png), what the settings
+                  portal serves (bars-portal.json), and the settings the sync wrote (bars-settings.json: both
+                  settings.ini files, dconf's value, the sync's record, the portal's names on the bus)
   greeter-family  SDDM's greeter in test mode with Kubabbar Glass's own theme (row 945), a Wayland window of the session:
                   its log (greeter-family.log) and a capture (greeter-family.png)
   dock            every launcher of the desktop's task managers, and whether its desktop entry is on the system (dock.json)"""
@@ -24,18 +25,28 @@ def bars():
     env = dict(session_env(), GDK_BACKEND="wayland")
     # the pointer at the screen's corner, away from every bar, before the programs start
     subprocess.run([FAKEINPUT, "m:1910,10", "s:300"], env=env, capture_output=True, text=True)
-    procs = []
+    # one program at a time, so neither window hides the other in its capture (KWin centres both)
     for kit in ("3", "4"):
         out = os.path.join(CASE, f"bars-gtk{kit}.json")
-        procs.append(subprocess.Popen(["python3", f"{M9}/bars.py", kit, out, "5"], env=env, stdout=subprocess.DEVNULL,
-                                      stderr=open(out + ".log", "w")))
-    for _ in range(150):
-        if all(os.path.exists(os.path.join(CASE, f"bars-gtk{k}.json")) for k in ("3", "4")):
-            break
-        time.sleep(0.1)
-    time.sleep(0.5)
-    json.dump(kwin_windows(), open(os.path.join(CASE, "bars-windows.json"), "w"), indent=1)
-    shot("bars")
+        p = subprocess.Popen(["python3", f"{M9}/bars.py", kit, out, "5"], env=env, stdout=subprocess.DEVNULL,
+                             stderr=open(out + ".log", "w"))
+        for _ in range(150):
+            if os.path.exists(out):
+                break
+            time.sleep(0.1)
+        time.sleep(0.5)
+        json.dump(kwin_windows(), open(os.path.join(CASE, f"bars-gtk{kit}-windows.json"), "w"), indent=1)
+        shot(f"bars-shot-gtk{kit}")
+        p.terminate()
+        p.wait(timeout=10)
+    # what the settings portal serves (GTK on Wayland takes these settings from it, above settings.ini)
+    try:
+        served = session2.call("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                               "org.freedesktop.portal.Settings", "ReadAll",
+                               (["org.freedesktop.appearance", "org.gnome.desktop.interface"],), "(as)", "(a{sa{sv}})")[0]
+        json.dump(served, open(os.path.join(CASE, "bars-portal.json"), "w"), indent=1, default=str)
+    except Exception as error:  # the portal's absence is a fact of the case, recorded
+        json.dump({"error": str(error)}, open(os.path.join(CASE, "bars-portal.json"), "w"))
     config = env.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
     state = env.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
     report = {}
@@ -53,9 +64,6 @@ def bars():
     report["portal_backends_on_bus"] = sorted(n for n in names if n.startswith("org.freedesktop.impl.portal"))
     json.dump(report, open(os.path.join(CASE, "bars-settings.json"), "w"), indent=1)
     print("bars", json.dumps(report)[:600])
-    for p in procs:
-        p.terminate()
-        p.wait(timeout=10)
 
 
 def greeter_family():

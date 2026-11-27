@@ -49,8 +49,13 @@ def report():
             child = child.get_next_sibling()
     else:
         classes, width, steppers = list(vs.get_style_context().list_classes()), vs.get_allocated_width(), None
+    scheme = {}
+    for name in ("gtk-application-prefer-dark-theme", "gtk-interface-color-scheme"):
+        if settings.find_property(name):
+            value = settings.get_property(name)
+            scheme[name] = value if isinstance(value, (bool, int, str)) else str(value)
     data = {"toolkit": kit, "gtk": "%d.%d.%d" % (Gtk.get_major_version(), Gtk.get_minor_version(), Gtk.get_micro_version()),
-            "theme": settings.props.gtk_theme_name, "overlay_setting": settings.props.gtk_overlay_scrolling,
+            "theme": settings.props.gtk_theme_name, "colour_scheme": scheme, "overlay_setting": settings.props.gtk_overlay_scrolling,
             "overlay_property": sw.get_overlay_scrolling(), "classes": classes, "opacity": vs.get_opacity(),
             "width": width, "mapped": vs.get_mapped(), "steppers": steppers}
     with open(out, "w") as stream:

@@ -14,7 +14,7 @@
 #   bars             a login on Kubabbar Glass 9: GTK 3 and GTK 4 programs left alone, their bars (session3.py bars)
 #   greeter-family-2d/3d  Kubabbar Glass's own SDDM theme in test mode, a Wayland window of the session, plain and per eye
 #   dock-family, dock-9   a new account on the family's menu bar layout and on the 9's: the dock's launchers
-# Env: DOCKER_HOST (your socket), NAME_PREFIX, RENDER_GROUP (default 125), BIN (fakeinput and gallery-gtk2 built for the
+# Env: SIDES (default "before after"; one side for a partial run), DOCKER_HOST (your socket), NAME_PREFIX, RENDER_GROUP (default 125), BIN (fakeinput and gallery-gtk2 built for the
 # image, default /var/lib/sparky-lanes/kubabbar-glass-9/work/bin), RIG (the stereo-proof-rig scripts).
 set -uo pipefail
 BEFORE=$1 AFTER=$2 OUT=$(mkdir -p "$3" && cd "$3" && pwd); shift 3
@@ -37,7 +37,7 @@ contain() { # NAME IMAGE OUTDIR COMMAND...: a program of the rig's packages in a
 		--mount "type=bind,src=$RECIPE,dst=/recipe,readonly" --mount "type=bind,src=$BIN,dst=/bin2,readonly" \
 		--mount "type=bind,src=$o,dst=/out" "$img" "$@"
 }
-for side in before after; do
+for side in ${SIDES:-before after}; do
 	img=$BEFORE; [ "$side" = after ] && img=$AFTER
 	for c in "${CASES[@]}"; do
 		load "$side case $c start"
