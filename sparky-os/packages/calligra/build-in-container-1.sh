@@ -10,6 +10,7 @@ export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 job=/work
 version=1:26.08.0+dfsg-1+stereo3d1
+source_stem=calligra_${version#*:}+lc1
 trap 'chown -R 1000:1000 "$job"' EXIT
 : "${SPARKY_LC_ARCHIVE_CONFIG:?the signed archive configuration}" "${SPARKY_LC_SCRATCH:?the archive gate scratch directory}"
 : "${SOURCE_DATE_EPOCH:?the recipe date from build-provenance.sh}"
@@ -19,6 +20,7 @@ printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firm
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 cp /repo/sparky-stereo-repo.asc /etc/apt/trusted.gpg.d/sparky-stereo-repo.asc
 mkdir -p "$job/lc" && cd "$job/lc"
+prepare_source() {
 cp /src/calligra_26.08.0+dfsg-1.dsc /src/calligra_26.08.0+dfsg-1.debian.tar.xz /src/calligra_26.08.0+dfsg.orig.tar.xz .
 sha256sum --check --quiet /tools/source.sha256
 dpkg-source -x calligra_26.08.0+dfsg-1.dsc source > /dev/null
@@ -49,6 +51,13 @@ p.write_text('calligra (1:26.08.0+dfsg-1+stereo3d1) unstable; urgency=medium\n\n
              '    shadow and follow the compositor as the window moves.\n\n'
              ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + date + '\n\n' + p.read_text())
 CHANGELOG
+}
+if [ "${SPARKY_CALLIGRA_RESUME:-0}" = 1 ]; then
+    sha256sum -c source-closure.sha256
+    [ "$(dpkg-parsechangelog -l source/debian/changelog -S Version)" = "$version+lc1" ]
+else
+    prepare_source
+fi
 apt-get -y update > "$job/apt-update.log" 2>&1
 apt-get -y --no-install-recommends install devscripts quilt bubblewrap > "$job/setup.log" 2>&1
 qt_packages=()
@@ -64,9 +73,20 @@ for file in "${qt_packages[@]}"; do dpkg-deb -f "$file" Package; done | xargs ap
 apt-get -y --no-install-recommends build-dep "$job/lc/source" > "$job/build-dep.log" 2>&1
 dpkg-query -W qt6-base-dev libqt6waylandclient6 okular-dev libpoppler-qt6-dev > "$job/build-versions.txt"
 cd "$job/lc/source"
-python3 /toolkit/repo/provenance-files.py . '0001-words-paper-depth.patch'
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare . "$version+lc1"
-python3 /toolkit/repo/reproducible.py normalize "$SOURCE_DATE_EPOCH" debian
+build_args=()
+if [ "${SPARKY_CALLIGRA_RESUME:-0}" = 1 ]; then
+    # Discard debhelper staging directories so Lean Code can project each package once.
+    for package in $(dh_listpackages); do
+        rm -rf "debian/$package" "debian/$package.debhelper.log" "debian/$package.substvars"
+    done
+    rm -rf debian/.debhelper debian/tmp debian/files
+    build_args=(-nc)
+else
+    python3 /toolkit/repo/provenance-files.py . '0001-words-paper-depth.patch'
+    PYTHONPATH=/toolkit python3 -m lean.debian_prepare . "$version+lc1"
+    python3 /toolkit/repo/reproducible.py normalize "$SOURCE_DATE_EPOCH" debian
+    build_args=("--hook-build=cd .. && sha256sum '$source_stem.dsc' '$source_stem.debian.tar.xz' calligra_26.08.0+dfsg.orig.tar.xz > source-closure.sha256")
+fi
 mkdir -p "$SPARKY_LC_SCRATCH"
 # an image without a user of uid 1000 makes getent fail, which set -e and pipefail would take as the end of the build
 build_user=$(getent passwd 1000 | cut -d: -f1 || true)
@@ -77,6 +97,7 @@ fi
 chown -R 1000:1000 "$job" "$SPARKY_LC_SCRATCH"
 runuser -u "$build_user" -- env SPARKY_LC_PREVIOUS_SIBLINGS_FILE="$SPARKY_LC_PREVIOUS_SIBLINGS_FILE" \
     SPARKY_LC_SIBLINGS_FILE="$SPARKY_LC_SIBLINGS_FILE" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
-    dpkg-buildpackage -us -uc -sa -j4
+    dpkg-buildpackage "${build_args[@]}" --build=full -us -uc -sa -j4
 cd "$job/lc"
+sha256sum -c source-closure.sha256
 PYTHONPATH=/toolkit python3 -m lean.release check-debs ./*26.08.0+dfsg-1+stereo3d1+lc1*.deb

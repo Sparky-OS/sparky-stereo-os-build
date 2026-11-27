@@ -6,6 +6,7 @@
 #   build dependencies; PREVIOUS_SIBLINGS_FILE: the published edition's packages as /repo paths; SIBLINGS_FILE: the same with
 #   the packages this build depends on at newer versions (qt6-base +stereo3d26) and its matching KWin, as /repo or /staged paths.
 # Run with the lane's DOCKER_HOST, SPARKY_BUILD_IMAGE and BUILD_NAME_PREFIX; the recipe's date is its last commit.
+# Set SPARKY_PKG_RESUME=1 to finish a checked source closure using its existing CMake build tree and source date.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../repo/build-provenance.sh"
@@ -18,12 +19,24 @@ STAGED=$(dirname "$EXTRA")
 PREVSIBS=$(realpath "$6")
 SIBS=$(realpath "$7")
 : "${SPARKY_BUILD_IMAGE:?an owned build image}" "${BUILD_NAME_PREFIX:?an owned container prefix}"
-[ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
+if [ "${SPARKY_PKG_RESUME:-0}" = 1 ]; then
+    [ -f "$WORK/lc/source-closure.sha256" ] && [ -f "$WORK/lc/source/obj-x86_64-linux-gnu/CMakeCache.txt" ] ||
+        { echo "$WORK holds no prepared Calligra build to resume" >&2; exit 1; }
+    if compgen -G "$WORK/lc/*.deb" > /dev/null; then
+        echo "$WORK/lc already contains binary packages; move them aside before resuming" >&2
+        exit 1
+    fi
+    SOURCE_DATE_EPOCH=$(dpkg-parsechangelog -l "$WORK/lc/source/debian/changelog" -S Timestamp)
+    export SOURCE_DATE_EPOCH SPARKY_SOURCE_DATE_BASIS='the prepared Calligra changelog'
+else
+    [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
+fi
 (cd "$SRC" && sha256sum --check --quiet "$HERE/source.sha256")
 sparky_provenance_init "$SPARKY_BUILD_IMAGE"
 docker run --pull=never --ulimit core=1 --name "${BUILD_NAME_PREFIX}-calligra" --cpus 4 --platform linux/amd64 \
     --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
     "${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_MIN_FREE_GIB=1 -e DPKG_DEB_THREADS_MAX=4 \
+    -e "SPARKY_CALLIGRA_RESUME=${SPARKY_PKG_RESUME:-0}" \
     -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
     -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt -e SPARKY_LC_SIBLINGS_FILE=/siblings.txt \
     --mount "type=bind,src=$ARCHIVE,dst=/archive,readonly" \
