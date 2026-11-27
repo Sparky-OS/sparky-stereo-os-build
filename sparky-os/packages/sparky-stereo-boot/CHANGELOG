@@ -30,6 +30,8 @@
     refusal without a name, this kernel's unverifiable modules that did not load. Measured on the test laptop (evdi,
     vhba, spl, zfs, signed with an untrusted DKMS key; lockdown refused 7 loads). A person who cannot read the kernel's
     log is told that only an administrator can see the refusals (LOCAL185) instead of getting no row.
+  * anticheat-check --json marks each row the anti-cheat start's own kernel line settles (lockdown off, kexec closed
+    only after the start) as settledByAntiCheatStart, so Plasma's confirmation lists only what that start cannot change.
   * The anti-cheat start never runs over a hibernated system: under lockdown the kernel does not read the image
     (resume_store, kernel/power/hibernate.c), so an initramfs-tools script after resume finds an image (a swap
     partition of type suspend, or a swap file's header at resume_offset ending in S1SUSPEND), says so in the system's

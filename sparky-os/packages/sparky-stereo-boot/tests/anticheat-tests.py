@@ -334,6 +334,12 @@ check('check: lockdown off, not met', got['lockdown'][0] == 'not-met')
 check('check: kexec disabled only after the start, unknown', got['kexec'][0] == 'unknown')
 check('check: BPF LSM missing, not met', got['bpf-lsm'][0] == 'not-met')
 check('check: the usual start says so', got['start'][1] == 'This is the usual start, with hibernation.')
+settled = {r['id']: r['settledByAntiCheatStart'] for r in rows(check_root(lockdown='[none] integrity confidentiality',
+                                                                   cmdline='root=UUID=1 ro quiet'), keys + '/signed.efi')[2]['rows']}
+check('check: lockdown off and kexec closed after the start are settled by the anti-cheat start, the key is not',
+      settled.get('lockdown') is True and settled.get('kexec') is True and settled.get('kernel-key') is False, str(settled))
+settled = {r['id']: r['settledByAntiCheatStart'] for r in data['rows']}
+check('check: in the anti-cheat start nothing is marked as settled by it', not any(settled.values()), str(settled))
 check('check: no hibernation row when hibernation is available', 'hibernation' not in got)
 
 code, got, _ = rows(check_root(modules=[('dkmsmod', 'OE')], cmdline='root=UUID=1 ro quiet'), keys + '/signed.efi')

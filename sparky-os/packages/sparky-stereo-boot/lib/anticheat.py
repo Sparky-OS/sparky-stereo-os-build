@@ -917,13 +917,26 @@ def check(as_root=None):
     return rows
 
 
+def _settled_by_start(row_id, state):
+    """A row of the usual start that the anti-cheat start's own kernel line settles (lockdown=integrity,
+    sysctl.kernel.kexec_load_disabled=1, ARGS): Plasma's confirmation leaves it out of what Easy Anti-Cheat would refuse."""
+    if MARK in _cmdline() or state == 'met':
+        return False
+    if row_id == 'lockdown':
+        return state == 'not-met'
+    if row_id == 'kexec':
+        return (_read(PROC + '/sys/kernel/kexec_load_disabled') or '').strip() in ('0', '1')
+    return False
+
+
 def report(as_json=False):
     rows = check()
     s = strings()
     if as_json:
         print(json.dumps({'source': 'Easy Anti-Cheat Linux v2, Epic Online Services, 2026-10-14',
                           'anticheatStart': MARK in _cmdline(),
-                          'rows': [{'id': i, 'state': state, 'text': t} for i, state, t in rows]},
+                          'rows': [{'id': i, 'state': state, 'text': t,
+                                    'settledByAntiCheatStart': _settled_by_start(i, state)} for i, state, t in rows]},
                          ensure_ascii=False, indent=1))
     else:
         print(text(s, 'LOCAL125'))
