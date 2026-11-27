@@ -1,0 +1,39 @@
+krita (1:6.0.4.1+dfsg-1+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: Debian's 1:5.3.4.1+dfsg-1, whose tarball is upstream's
+    krita-6.0.4.1 tree, built as Krita's Qt 6 flavour (Krita 6.0.4.1), as the
+    edition's 1:6.0.4+dfsg-1+stereo3d7 was: on Qt 5 the canvas cannot pass
+    8 bits per channel and has no surface of its own for a stereo pair.
+    Debian's packaging moved to Qt 6 and KDE Frameworks 6 (KSeExpr has no
+    Qt 6 build in Debian, so its fill layer is not built, as before).
+  * The canvas of a stereo document per eye (queue row 148): a document whose
+    file the stereo layer reads as a pair packed side by side or top and
+    bottom (its mark, the person's choice for that file, then its shape), or a
+    document with the top-level layers "Left eye" and "Right eye", shows each
+    eye its own picture while View > Enable 3D is on (the default, for the
+    window and the session). A packed picture shows each eye's view in both
+    halves, so the image keeps its size and coordinates and every tool works
+    where it is used; Stereo KWin gets the two pictures side by side, left eye
+    first, declared once, from a layer below the window, and the decorations
+    and the brush outline stay on the screen plane, the same in both eyes.
+    Where the pair cannot be shown the canvas shows the left eye and says why;
+    in wrap-around mode and on the QPainter canvas it shows the document as it
+    is, and says why.
+    View > 3D Input Format is the stereo layer's menu for the file's packing
+    and eye order (kept in the shared per-file store, never in the file);
+    View > Display Settings opens the display settings. This replaces the
+    "Stereo 3D" setting of +stereo3d2 to +stereo3d7 (off by default, read at
+    start-up, one half shown, "Paint on the Right View").
+  * The deep canvas: the canvas says when it reaches the screen with fewer
+    bits per channel than the document has (10-bit surface, or half float for
+    a 16-bit document), at every depth the standard defines.
+  * Carried from upstream: "Update SIP ABI to 13.8" and "Make the selection
+    of SIP ABI automatic" (Dmitry Kazakov, master, 30182dbf and bf7fa438),
+    which replace our own SIP patch, and "Fix an assert when modifying
+    toolbars on native Wayland" (Dmitry Kazakov, krita/6.0, cd944914).
+  * Kept from +stereo3d7: the native Wayland platform under a Wayland
+    compositor, the 16-bit canvas surface (the deepest by default), the canvas
+    layer with its colour description, the deep window of a stereo session,
+    and the resource cache's single transaction.
+  * The edition's sentences in the ten languages
+    (krita-order148b-canvas-per-eye.po.patch).
