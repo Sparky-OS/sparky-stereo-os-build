@@ -1,3 +1,28 @@
+sparky-stereo-look-kubabbar-glass-9 20261127~sparky9~0 (2026-11-27)
+  * Milestone 3 (queue row 147): GTK 4's scroll arrows, together at the end or apart at both ends as in GTK 2 and
+    GTK 3, through the edition's GTK 4 (Depends: libgtk-4-1 >= 4.24.1+ds-1+stereo3d4~, whose scrollbars have
+    steppers a theme can turn on) and sparky-stereo-gtk 20261127.
+  * GTK's scroll bars always visible, as the look's Qt scroll bars are (sparky-stereo-gtk 20261127).
+  * The menu bar layout's dock names the Stereo Browser (sparky-stereo-browser.desktop), the edition's default
+    browser, not firefox.desktop (row 945).
+
+sparky-stereo-gtk 20261127~sparky9~0 (2026-11-27)
+  * Kubabbar Glass 9's GTK 4 themes show the scroll arrows of the chosen placement on the edition's GTK 4 (gtk4
+    +stereo3d4): the secondary backward and forward steppers together at the end, the backward and forward ones in
+    the Apart themes; GTK's own and other themes are unchanged.
+  * sparky-stereo-gtk-sync turns GTK's overlay scrolling off for the 9's themes (gtk-overlay-scrolling=false in GTK
+    3's and GTK 4's settings.ini, and the GSettings key the settings portal serves on Wayland), keeps a person's own
+    value, and removes only what it wrote when another look is applied (Depends: dconf-cli, to tell a stored value
+    from GSettings' default).
+
+sparky-stereo-look-kubabbar-glass 20261127~sparky9~0 (2026-11-27)
+  * The SDDM theme makes its textConstants from SddmComponents: SDDM 0.21 gives a theme no global textConstants, so
+    its fields and buttons showed no label and SDDM logged five ReferenceErrors (row 945).
+
+sparky-stereo-look-kubabbar-glass-menubar 20261127~sparky9~0 (2026-11-27)
+  * The dock names the Stereo Browser (sparky-stereo-browser.desktop), the edition's default browser, not
+    firefox.desktop (row 945).
+
 sparky-stereo-look-kubabbar-glass-9 20261126.1~sparky9~0 (2026-11-26)
   * Milestone 2 (queue row 147): the menu bar layout kubabbar-glass-9-menubar, the family's menu bar and dock with
     Plasma's window list at the bar's right end (Depends: plasma-widgets-addons and the family's menu bar package for
