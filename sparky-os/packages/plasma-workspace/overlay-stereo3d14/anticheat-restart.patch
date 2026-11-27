@@ -1,0 +1,924 @@
+From 63cb58c63bc64d75fb794f79042f51b33b4cd7ad Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 09:08:24 -0300
+Subject: [PATCH] Offer a one-time restart for anti-cheat games in Plasma Leave
+
+Add "Restart for anti-cheat games" as the second entry of Restart Options, in Kickoff and in KRunner. It is offered on a UEFI start when sparky-stereo-boot has written its anti-cheat GRUB entry and GRUB can be told to start it once (the boot package keeps /var/lib/sparky-stereo-boot/anticheat.entry only then). Every path opens a confirmation that says what the start does and lists what Easy Anti-Cheat would not accept on this computer, from sparky-stereo-boot's checker in the session's language. Confirming asks the boot package's polkit-guarded helper, through pkexec, to start that entry once before the session closes; a refusal is said in the greeter, and a cancelled logout takes the one-time start back.
+
+Assisted-by: Claude Opus 5.5 (claude-opus-5-5)
+---
+ applets/kicker/systementry.cpp                |  17 +++
+ applets/kicker/systementry.h                  |   1 +
+ applets/kicker/systemmodel.cpp                |   1 +
+ ksmserver/org.kde.LogoutPrompt.xml            |   1 +
+ libkworkspace/sessionmanagement.cpp           |  19 +++
+ libkworkspace/sessionmanagement.h             |   4 +
+ libkworkspace/sessionmanagementbackend.cpp    |  16 ++
+ libkworkspace/sessionmanagementbackend.h      |   3 +
+ logout-greeter/greeter.cpp                    |  13 +-
+ logout-greeter/greeter.h                      |   2 +
+ logout-greeter/shutdowndlg.cpp                |  72 +++++++++
+ logout-greeter/shutdowndlg.h                  |   5 +
+ .../org.kde.breeze/contents/logout/Logout.qml | 137 +++++++++++++++---
+ runners/sessions/sessionrunner.cpp            |  10 ++
+ runners/sessions/sessionrunner.h              |   1 +
+ startkde/plasma-shutdown/org.kde.Shutdown.xml |   3 +
+ startkde/plasma-shutdown/shutdown.cpp         |  65 +++++++++
+ startkde/plasma-shutdown/shutdown.h           |   3 +
+ 18 files changed, 354 insertions(+), 19 deletions(-)
+
+diff --git a/applets/kicker/systementry.cpp b/applets/kicker/systementry.cpp
+index 62c6684..3e603b5 100644
+--- a/applets/kicker/systementry.cpp
++++ b/applets/kicker/systementry.cpp
+@@ -52,6 +52,8 @@ SystemEntry::SystemEntry(AbstractModel *owner, const QString &id)
+         m_action = Reboot;
+     } else if (id == QLatin1String("reboot-to-firmware-setup")) {
+         m_action = RebootToFirmwareSetup;
++    } else if (id == QLatin1String("reboot-for-anti-cheat")) {
++        m_action = RebootForAntiCheat;
+     } else if (id == QLatin1String("shutdown")) {
+         m_action = Shutdown;
+     }
+@@ -125,6 +127,11 @@ void SystemEntry::refresh()
+         QObject::connect(s_sessionManagement, &SessionManagement::canRebootToFirmwareSetupChanged, this, &SystemEntry::refresh, Qt::UniqueConnection);
+         break;
+     }
++    case RebootForAntiCheat: {
++        valid = s_sessionManagement->canRebootForAntiCheat();
++        QObject::connect(s_sessionManagement, &SessionManagement::canRebootForAntiCheatChanged, this, &SystemEntry::refresh, Qt::UniqueConnection);
++        break;
++    }
+     case Shutdown: {
+         valid = s_sessionManagement->canShutdown();
+         QObject::connect(s_sessionManagement, &SessionManagement::canShutdownChanged, this, &SystemEntry::refresh);
+@@ -182,6 +189,7 @@ QString SystemEntry::iconName() const
+         break;
+     case Reboot:
+     case RebootToFirmwareSetup:
++    case RebootForAntiCheat:
+         return QStringLiteral("system-reboot");
+         break;
+     case Shutdown:
+@@ -220,6 +228,8 @@ QString SystemEntry::name() const
+         break;
+     case RebootToFirmwareSetup:
+         return i18n("Restart to UEFI setup");
++    case RebootForAntiCheat:
++        return i18n("Restart for anti-cheat games");
+     case Shutdown:
+         return i18n("Shut Down");
+         break;
+@@ -242,6 +252,7 @@ QString SystemEntry::group() const
+     case Hibernate:
+     case Reboot:
+     case RebootToFirmwareSetup:
++    case RebootForAntiCheat:
+     case Shutdown:
+         return i18n("System");
+     default:
+@@ -276,6 +287,7 @@ QString SystemEntry::description() const
+         return i18n("Restart computer");
+         break;
+     case RebootToFirmwareSetup:
++    case RebootForAntiCheat:
+         return name();
+     case Shutdown:
+         return i18n("Turn off computer");
+@@ -313,6 +325,8 @@ QString SystemEntry::id() const
+         break;
+     case RebootToFirmwareSetup:
+         return QStringLiteral("reboot-to-firmware-setup");
++    case RebootForAntiCheat:
++        return QStringLiteral("reboot-for-anti-cheat");
+     case Shutdown:
+         return QStringLiteral("shutdown");
+         break;
+@@ -358,6 +372,9 @@ bool SystemEntry::run(const QString &actionId, const QVariant &argument)
+     case RebootToFirmwareSetup:
+         s_sessionManagement->requestRebootToFirmwareSetup();
+         break;
++    case RebootForAntiCheat:
++        s_sessionManagement->requestRebootForAntiCheat();
++        break;
+     case Shutdown:
+         s_sessionManagement->requestShutdown();
+         break;
+diff --git a/applets/kicker/systementry.h b/applets/kicker/systementry.h
+index a06aedd..23b26a4 100644
+--- a/applets/kicker/systementry.h
++++ b/applets/kicker/systementry.h
+@@ -28,6 +28,7 @@ public:
+         Reboot,
+         Shutdown,
+         RebootToFirmwareSetup,
++        RebootForAntiCheat,
+     };
+ 
+     explicit SystemEntry(AbstractModel *owner, Action action);
+diff --git a/applets/kicker/systemmodel.cpp b/applets/kicker/systemmodel.cpp
+index 873be24..f8356cf 100644
+--- a/applets/kicker/systemmodel.cpp
++++ b/applets/kicker/systemmodel.cpp
+@@ -125,6 +125,7 @@ void SystemModel::populate()
+     addIfValid(SystemEntry::Hibernate);
+     addIfValid(SystemEntry::Reboot);
+     addIfValid(SystemEntry::RebootToFirmwareSetup);
++    addIfValid(SystemEntry::RebootForAntiCheat);
+     addIfValid(SystemEntry::Shutdown);
+ }
+ 
+diff --git a/ksmserver/org.kde.LogoutPrompt.xml b/ksmserver/org.kde.LogoutPrompt.xml
+index aa79d19..68ad0ca 100644
+--- a/ksmserver/org.kde.LogoutPrompt.xml
++++ b/ksmserver/org.kde.LogoutPrompt.xml
+@@ -6,5 +6,6 @@
+     <method name="promptReboot"/>
+     <method name="promptAll"/>
+     <method name="promptRebootToFirmwareSetup"/>
++    <method name="promptRebootForAntiCheat"/>
+ </interface>
+ </node>
+diff --git a/libkworkspace/sessionmanagement.cpp b/libkworkspace/sessionmanagement.cpp
+index 3307ff8..9ee5b94 100644
+--- a/libkworkspace/sessionmanagement.cpp
++++ b/libkworkspace/sessionmanagement.cpp
+@@ -70,6 +70,7 @@ SessionManagement::SessionManagement(QObject *parent)
+     connect(backend, &SessionBackend::canRebootChanged, this, &SessionManagement::canRebootChanged);
+     connect(backend, &SessionBackend::canRebootChanged, this, &SessionManagement::canRebootToFirmwareSetupChanged);
+     connect(backend, &SessionBackend::canRebootToFirmwareSetupChanged, this, &SessionManagement::canRebootToFirmwareSetupChanged);
++    connect(backend, &SessionBackend::canRebootChanged, this, &SessionManagement::canRebootForAntiCheatChanged);
+     connect(backend, &SessionBackend::canSuspendChanged, this, &SessionManagement::canSuspendChanged);
+     connect(backend, &SessionBackend::canHybridSuspendChanged, this, &SessionManagement::canHybridSuspendChanged);
+     connect(backend, &SessionBackend::canHibernateChanged, this, &SessionManagement::canHibernateChanged);
+@@ -100,6 +101,11 @@ bool SessionManagement::canRebootToFirmwareSetup() const
+     return canReboot() && SessionBackend::self()->canRebootToFirmwareSetup();
+ }
+ 
++bool SessionManagement::canRebootForAntiCheat() const
++{
++    return canReboot() && SessionBackend::self()->canRebootForAntiCheat();
++}
++
+ bool SessionManagement::canLogout() const
+ {
+     // checking both is for compatibility with old kiosk configs
+@@ -182,6 +188,19 @@ void SessionManagement::requestRebootToFirmwareSetup()
+     }
+ }
+ 
++void SessionManagement::requestRebootForAntiCheat()
++{
++    if (!canRebootForAntiCheat()) {
++        return;
++    }
++
++    OrgFreedesktopScreenSaverInterface screenSaver(u"org.freedesktop.ScreenSaver"_s, u"/ScreenSaver"_s, QDBusConnection::sessionBus());
++    if (!screenSaver.GetActive()) {
++        LogoutPromptIface iface;
++        lockQuitUntilFinished(iface.promptRebootForAntiCheat());
++    }
++}
++
+ void SessionManagement::requestShutdown(ConfirmationMode confirmationMode)
+ {
+     if (!canShutdown()) {
+diff --git a/libkworkspace/sessionmanagement.h b/libkworkspace/sessionmanagement.h
+index a20b01d..30ef7e6 100644
+--- a/libkworkspace/sessionmanagement.h
++++ b/libkworkspace/sessionmanagement.h
+@@ -27,6 +27,7 @@ class KWORKSPACE_EXPORT SessionManagement : public QObject
+     Q_PROPERTY(bool canLock READ canLock NOTIFY canLockChanged)
+     Q_PROPERTY(bool canSaveSession READ canSaveSession NOTIFY canSaveSessionChanged)
+     Q_PROPERTY(bool canRebootToFirmwareSetup READ canRebootToFirmwareSetup NOTIFY canRebootToFirmwareSetupChanged)
++    Q_PROPERTY(bool canRebootForAntiCheat READ canRebootForAntiCheat NOTIFY canRebootForAntiCheatChanged)
+ 
+ public:
+     enum class State {
+@@ -69,6 +70,7 @@ public:
+     bool canShutdown() const;
+     bool canReboot() const;
+     bool canRebootToFirmwareSetup() const;
++    bool canRebootForAntiCheat() const;
+     bool canLogout() const;
+     bool canSuspend() const;
+     bool canHybridSuspend() const;
+@@ -103,6 +105,7 @@ public Q_SLOTS:
+ 
+     void saveSession();
+     void requestRebootToFirmwareSetup();
++    void requestRebootForAntiCheat();
+ 
+ Q_SIGNALS:
+     void stateChanged();
+@@ -120,6 +123,7 @@ Q_SIGNALS:
+     void aboutToSuspend();
+     void resumingFromSuspend();
+     void canRebootToFirmwareSetupChanged();
++    void canRebootForAntiCheatChanged();
+ 
+ private:
+     void *d; // unused, just reserving the space in case we go ABI stable
+diff --git a/libkworkspace/sessionmanagementbackend.cpp b/libkworkspace/sessionmanagementbackend.cpp
+index 1f705a0..92c212f 100644
+--- a/libkworkspace/sessionmanagementbackend.cpp
++++ b/libkworkspace/sessionmanagementbackend.cpp
+@@ -62,6 +62,11 @@ bool SessionBackend::canRebootToFirmwareSetup() const
+     return false;
+ }
+ 
++bool SessionBackend::canRebootForAntiCheat() const
++{
++    return false;
++}
++
+ DummySessionBackend::DummySessionBackend()
+ {
+     qCritical() << "Could not load a session backend. Session management operations such as shutdown will not be operational. This is a setup issue.";
+@@ -178,6 +183,12 @@ LogindSessionBackend::LogindSessionBackend()
+         });
+     }
+ 
++    // Sparky Stereo OS: the one-time anti-cheat start exists when the boot package wrote its GRUB entry and GRUB can be
++    // told to start it once (sparky-stereo-boot keeps this file only then), on a UEFI start, with its helper installed.
++    m_canRebootForAntiCheat = QFileInfo(QStringLiteral("/sys/firmware/efi")).isDir()
++        && QFileInfo(QStringLiteral("/var/lib/sparky-stereo-boot/anticheat.entry")).isFile()
++        && QFileInfo(QStringLiteral("/usr/lib/sparky-stereo-boot/anticheat-restart")).isExecutable();
++
+     connect(m_login1, &OrgFreedesktopLogin1ManagerInterface::PrepareForSleep, this, [this](bool sleeping) {
+         if (sleeping) {
+             Q_EMIT aboutToSuspend();
+@@ -263,6 +274,11 @@ bool LogindSessionBackend::canRebootToFirmwareSetup() const
+     return m_canRebootToFirmwareSetup;
+ }
+ 
++bool LogindSessionBackend::canRebootForAntiCheat() const
++{
++    return m_canRebootForAntiCheat;
++}
++
+ bool LogindSessionBackend::canSwitchUser() const
+ {
+     return true;
+diff --git a/libkworkspace/sessionmanagementbackend.h b/libkworkspace/sessionmanagementbackend.h
+index c162a31..6a675f1 100644
+--- a/libkworkspace/sessionmanagementbackend.h
++++ b/libkworkspace/sessionmanagementbackend.h
+@@ -45,6 +45,7 @@ public:
+ 
+     virtual bool canSwitchUser() const;
+     virtual bool canRebootToFirmwareSetup() const;
++    virtual bool canRebootForAntiCheat() const;
+ 
+     bool confirmLogout() const;
+ 
+@@ -95,6 +96,7 @@ public:
+     bool canSuspendThenHibernate() const override;
+     bool canSwitchUser() const override;
+     bool canRebootToFirmwareSetup() const override;
++    bool canRebootForAntiCheat() const override;
+ 
+ private:
+     OrgFreedesktopLogin1ManagerInterface *m_login1;
+@@ -102,6 +104,7 @@ private:
+     bool m_canShutdown = false;
+     bool m_canReboot = false;
+     bool m_canRebootToFirmwareSetup = false;
++    bool m_canRebootForAntiCheat = false;
+     bool m_canSuspend = false;
+     bool m_canHybridSuspend = false;
+     bool m_canHibernate = false;
+diff --git a/logout-greeter/greeter.cpp b/logout-greeter/greeter.cpp
+index 97d4cb4..895be85 100644
+--- a/logout-greeter/greeter.cpp
++++ b/logout-greeter/greeter.cpp
+@@ -98,6 +98,7 @@ void Greeter::adoptScreen(QScreen *screen)
+     // TODO: last argument is the theme, maybe add command line option for it?
+     auto *w = new KSMShutdownDlg(nullptr, m_shutdownType, m_windowed, screen);
+     w->setFirmwareOnly(m_firmwareOnly);
++    w->setAntiCheatOnly(m_antiCheatOnly);
+     w->installEventFilter(this);
+     m_dialogs << w;
+ 
+@@ -109,7 +110,7 @@ void Greeter::adoptScreen(QScreen *screen)
+     connect(w, &KSMShutdownDlg::rejected, this, &Greeter::quit);
+ 
+     w->setGeometry(screen->geometry());
+-    if (m_firmwareOnly) {
++    if (m_firmwareOnly || m_antiCheatOnly) {
+         // Themes written before this action could start the ordinary restart countdown.
+         const auto breeze = KPackage::PackageLoader::self()->loadPackage(u"Plasma/LookAndFeel"_s, u"org.kde.breeze.desktop"_s);
+         w->init(breeze);
+@@ -193,4 +194,14 @@ void Greeter::promptRebootToFirmwareSetup()
+     init();
+ }
+ 
++void Greeter::promptRebootForAntiCheat()
++{
++    if (m_running) {
++        return;
++    }
++    m_antiCheatOnly = true;
++    m_shutdownType = KWorkSpace::ShutdownTypeReboot;
++    init();
++}
++
+ #include "moc_greeter.cpp"
+diff --git a/logout-greeter/greeter.h b/logout-greeter/greeter.h
+index d646bc5..7fbc425 100644
+--- a/logout-greeter/greeter.h
++++ b/logout-greeter/greeter.h
+@@ -38,6 +38,7 @@ public Q_SLOTS:
+     void promptReboot();
+     void promptAll();
+     void promptRebootToFirmwareSetup();
++    void promptRebootForAntiCheat();
+ 
+ private:
+     void quit();
+@@ -49,5 +50,6 @@ private:
+     QList<KSMShutdownDlg *> m_dialogs;
+     bool m_windowed = false;
+     bool m_firmwareOnly = false;
++    bool m_antiCheatOnly = false;
+     const KPackage::Package m_package;
+ };
+diff --git a/logout-greeter/shutdowndlg.cpp b/logout-greeter/shutdowndlg.cpp
+index d9d1478..6b2b5fb 100644
+--- a/logout-greeter/shutdowndlg.cpp
++++ b/logout-greeter/shutdowndlg.cpp
+@@ -13,6 +13,8 @@
+ #include <QFile>
+ #include <QFileInfo>
+ #include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
+ #include <QJsonValue>
+ #include <QPainter>
+ #include <QProcess>
+@@ -144,6 +146,10 @@ KSMShutdownDlg::KSMShutdownDlg(QWindow *parent, KWorkSpace::ShutdownType sdtype,
+     context->setContextProperty(u"leaveDialog"_s, this);
+     context->setContextProperty(u"firmwareRestartPending"_s, false);
+     context->setContextProperty(u"firmwareRestartError"_s, QString());
++    context->setContextProperty(u"antiCheatOnly"_s, false);
++    context->setContextProperty(u"antiCheatRestartPending"_s, false);
++    context->setContextProperty(u"antiCheatRestartError"_s, QString());
++    context->setContextProperty(u"antiCheatRows"_s, QVariantList());
+ 
+     // Trying to access a non-existent context property throws an error, always create the property and then update it later
+     context->setContextProperty(u"rebootToFirmwareSetup"_s, false);
+@@ -288,6 +294,9 @@ void KSMShutdownDlg::init(const KPackage::Package &package)
+     if (rootObject()->metaObject()->indexOfSignal("rebootToFirmwareSetupRequested()") >= 0) {
+         connect(rootObject(), SIGNAL(rebootToFirmwareSetupRequested()), SLOT(slotRebootToFirmwareSetup()));
+     }
++    if (rootObject()->metaObject()->indexOfSignal("rebootForAntiCheatRequested()") >= 0) {
++        connect(rootObject(), SIGNAL(rebootForAntiCheatRequested()), SLOT(slotRebootForAntiCheat()));
++    }
+     connect(rootObject(), SIGNAL(cancelRequested()), SLOT(reject()));
+     connect(rootObject(), SIGNAL(lockScreenRequested()), SLOT(slotLockScreen()));
+     connect(rootObject(), SIGNAL(taskManagerRequested()), SLOT(slotTaskManager()));
+@@ -346,6 +355,69 @@ void KSMShutdownDlg::slotRebootToFirmwareSetup()
+     });
+ }
+ 
++void KSMShutdownDlg::setAntiCheatOnly(bool antiCheatOnly)
++{
++    rootContext()->setContextProperty(u"antiCheatOnly"_s, antiCheatOnly);
++}
++
++// What Easy Anti-Cheat would not accept on this computer, as sparky-stereo-boot's checker says it in the session's
++// language: every requirement that is not met or not known, so the person sees it before choosing the restart.
++void KSMShutdownDlg::readAntiCheatCheck()
++{
++    if (m_antiCheatCheckStarted) {
++        return;
++    }
++    m_antiCheatCheckStarted = true;
++    auto *process = new QProcess(this);
++    connect(process, &QProcess::finished, this, [this, process](int exitCode, QProcess::ExitStatus exitStatus) {
++        process->deleteLater();
++        QVariantList rows;
++        const QJsonDocument document = QJsonDocument::fromJson(process->readAllStandardOutput());
++        if (exitStatus != QProcess::NormalExit || exitCode > 1 || !document.isObject()) {
++            qCWarning(LOGOUT_GREETER) << "The anti-cheat check could not be read:" << exitStatus << exitCode << process->readAllStandardError();
++            rows.append(QVariantMap{{u"state"_s, u"unknown"_s}, {u"text"_s, QString()}});
++        } else {
++            const auto items = document.object().value(u"rows"_s).toArray();
++            for (const QJsonValue &item : items) {
++                const QJsonObject row = item.toObject();
++                const QString state = row.value(u"state"_s).toString();
++                if (state == u"not-met"_s || state == u"unknown"_s) {
++                    rows.append(QVariantMap{{u"state"_s, state}, {u"text"_s, row.value(u"text"_s).toString()}});
++                }
++            }
++        }
++        rootContext()->setContextProperty(u"antiCheatRows"_s, rows);
++    });
++    process->start(u"/usr/bin/sparky-stereo-boot"_s, {u"anticheat-check"_s, u"--json"_s});
++}
++
++void KSMShutdownDlg::slotRebootForAntiCheat()
++{
++    if (m_antiCheatRequestPending || !m_session.canRebootForAntiCheat()) {
++        return;
++    }
++
++    m_antiCheatRequestPending = true;
++    rootContext()->setContextProperty(u"antiCheatRestartPending"_s, true);
++    rootContext()->setContextProperty(u"antiCheatRestartError"_s, QString());
++    const auto message = QDBusMessage::createMethodCall(u"org.kde.Shutdown"_s, u"/Shutdown"_s, u"org.kde.Shutdown"_s, u"logoutAndRebootForAntiCheat"_s);
++    // an authentication dialog may stand between the request and its answer
++    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message, 300000), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *watcher) {
++        const QDBusPendingReply<QString> reply = *watcher;
++        watcher->deleteLater();
++        const QString error = reply.isError() ? reply.error().name() : reply.value();
++        if (error.isEmpty()) {
++            accept();
++            return;
++        }
++
++        m_antiCheatRequestPending = false;
++        rootContext()->setContextProperty(u"antiCheatRestartPending"_s, false);
++        rootContext()->setContextProperty(u"antiCheatRestartError"_s, error);
++    });
++}
++
+ void KSMShutdownDlg::slotLogout()
+ {
+     m_session.requestLogout(SessionManagement::ConfirmationMode::Skip);
+diff --git a/logout-greeter/shutdowndlg.h b/logout-greeter/shutdowndlg.h
+index 3df915f..95034d7 100644
+--- a/logout-greeter/shutdowndlg.h
++++ b/logout-greeter/shutdowndlg.h
+@@ -29,7 +29,9 @@ public:
+     void init(const KPackage::Package &package);
+     bool result() const;
+     void setFirmwareOnly(bool firmwareOnly);
++    void setAntiCheatOnly(bool antiCheatOnly);
+     Q_INVOKABLE bool shiftPressed() const;
++    Q_INVOKABLE void readAntiCheatCheck();
+ 
+ public Q_SLOTS:
+     void accept();
+@@ -41,6 +43,7 @@ public Q_SLOTS:
+     void slotReboot(int);
+     void slotRebootUpdate();
+     void slotRebootToFirmwareSetup();
++    void slotRebootForAntiCheat();
+     void slotSuspend(int);
+     void slotLockScreen();
+     void slotTaskManager();
+@@ -65,4 +68,6 @@ private:
+     bool m_result : 1;
+     SessionManagement m_session;
+     bool m_firmwareRequestPending = false;
++    bool m_antiCheatRequestPending = false;
++    bool m_antiCheatCheckStarted = false;
+ };
+diff --git a/lookandfeel/org.kde.breeze/contents/logout/Logout.qml b/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
+index 272ec41..3d18056 100644
+--- a/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
++++ b/lookandfeel/org.kde.breeze/contents/logout/Logout.qml
+@@ -33,6 +33,7 @@ Item {
+     signal rebootRequested2(int opt)
+     signal rebootUpdateRequested()
+     signal rebootToFirmwareSetupRequested()
++    signal rebootForAntiCheatRequested()
+     signal cancelRequested()
+     signal lockScreenRequested()
+     signal taskManagerRequested()
+@@ -64,17 +65,47 @@ Item {
+     readonly property bool showAllOptions: sdtype === ShutdownType.ShutdownTypeDefault
+     readonly property bool canRestartToFirmware: leaveSession.canRebootToFirmwareSetup
+     readonly property string firmwareActionText: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restart to UEFI setup")
++    readonly property bool canRestartForAntiCheat: leaveSession.canRebootForAntiCheat
++    readonly property string antiCheatActionText: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restart for anti-cheat games")
+     readonly property var restartActions: [
+         { text: root.firmwareActionText, visible: root.canRestartToFirmware, trigger: () => root.restartToFirmware() },
++        { text: root.antiCheatActionText, visible: root.canRestartForAntiCheat, trigger: () => root.askAntiCheat() },
+     ]
++    readonly property bool hasRestartActions: root.canRestartToFirmware || root.canRestartForAntiCheat
++    // the anti-cheat restart always passes through its confirmation, which says what Easy Anti-Cheat would not accept
++    property bool antiCheatChosen: false
++    readonly property bool antiCheatAsked: antiCheatOnly || root.antiCheatChosen
++    readonly property bool oneTimeOnly: firmwareOnly || root.antiCheatAsked
++    readonly property bool oneTimePending: firmwareRestartPending || antiCheatRestartPending
+ 
+     function restartToFirmware() {
+         AutoTriggerTimer.cancelAutoTrigger();
+         root.rebootToFirmwareSetupRequested();
+     }
+ 
++    function restartForAntiCheat() {
++        AutoTriggerTimer.cancelAutoTrigger();
++        root.rebootForAntiCheatRequested();
++    }
++
++    function askAntiCheat() {
++        AutoTriggerTimer.cancelAutoTrigger();
++        root.antiCheatChosen = true;
++    }
++
++    onAntiCheatAskedChanged: {
++        if (root.antiCheatAsked && root.canRestartForAntiCheat) {
++            leaveDialog.readAntiCheatCheck();
++        }
++    }
++    Component.onCompleted: {
++        if (root.antiCheatAsked && root.canRestartForAntiCheat) {
++            leaveDialog.readAntiCheatCheck();
++        }
++    }
++
+     function openRestartMenu(button) {
+-        if (!root.canRestartToFirmware || firmwareRestartPending) {
++        if (!root.hasRestartActions || root.oneTimePending) {
+             return;
+         }
+         AutoTriggerTimer.cancelAutoTrigger();
+@@ -123,7 +154,7 @@ Item {
+ 
+     Timer {
+         id: countDownTimer
+-        running: !showAllOptions && !firmwareOnly
++        running: !showAllOptions && !root.oneTimeOnly
+         repeat: true
+         interval: 1000
+         onTriggered: remainingTime--
+@@ -286,9 +317,68 @@ Item {
+             }
+         }
+ 
++        PlasmaComponents.Label {
++            font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
++            Layout.maximumWidth: Math.max(Kirigami.Units.gridUnit * 16, logoutButtonsRow.implicitWidth)
++            Layout.alignment: Qt.AlignHCenter
++            Layout.fillWidth: true
++            horizontalAlignment: Text.AlignHCenter
++            wrapMode: Text.WordWrap
++            font.italic: true
++            text: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "The computer starts once with kernel lockdown, kexec off and hibernation off, as Easy Anti-Cheat asks. The start after it is the usual one.")
++            textFormat: Text.PlainText
++            visible: root.antiCheatAsked && root.canRestartForAntiCheat
++        }
++
++        ColumnLayout {
++            Layout.alignment: Qt.AlignHCenter
++            Layout.maximumWidth: Math.max(Kirigami.Units.gridUnit * 24, logoutButtonsRow.implicitWidth)
++            spacing: Kirigami.Units.smallSpacing
++            visible: root.antiCheatAsked && root.canRestartForAntiCheat && antiCheatRows.length > 0
++
++            PlasmaComponents.Label {
++                Layout.fillWidth: true
++                wrapMode: Text.WordWrap
++                textFormat: Text.PlainText
++                text: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "What Easy Anti-Cheat would not accept on this computer:")
++            }
++            Repeater {
++                model: antiCheatRows
++                delegate: PlasmaComponents.Label {
++                    required property var modelData
++                    Layout.fillWidth: true
++                    wrapMode: Text.WordWrap
++                    textFormat: Text.PlainText
++                    text: "• " + (modelData.text !== "" ? modelData.text : i18nd("plasma_lookandfeel_org.kde.lookandfeel", "The anti-cheat check could not be run."))
++                }
++            }
++        }
++
++        PlasmaComponents.Label {
++            Layout.alignment: Qt.AlignHCenter
++            Layout.maximumWidth: Math.max(Kirigami.Units.gridUnit * 16, logoutButtonsRow.implicitWidth)
++            horizontalAlignment: Text.AlignHCenter
++            wrapMode: Text.WordWrap
++            textFormat: Text.PlainText
++            visible: antiCheatRestartError !== "" || (root.antiCheatAsked && !root.canRestartForAntiCheat)
++            text: {
++                switch (antiCheatRestartError) {
++                case "org.freedesktop.PolicyKit1.Error.NotAuthorized":
++                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Permission to restart for anti-cheat games was denied.");
++                case "org.kde.Shutdown.InProgress":
++                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel", "A session shutdown is already in progress.");
++                case "org.freedesktop.DBus.Error.NotSupported":
++                case "":
++                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restarting for anti-cheat games is unavailable.");
++                default:
++                    return i18nd("plasma_lookandfeel_org.kde.lookandfeel", "The anti-cheat start could not be scheduled. The system journal says why.");
++                }
++            }
++        }
++
+         GridLayout {
+             id: logoutButtonsRow
+-            enabled: !firmwareRestartPending
++            enabled: !root.oneTimePending
+ 
+             readonly property int spacing: Kirigami.Units.largeSpacing
+             rowSpacing: spacing
+@@ -309,7 +399,7 @@ Item {
+                 onClicked: root.sleepRequested()
+                 KeyNavigation.left: cancelButton
+                 KeyNavigation.right: hibernateButton.visible ? hibernateButton : (rebootButton.visible ? rebootButton : (shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton)))
+-                visible: spdMethods.SuspendState && root.showAllOptions
++                visible: spdMethods.SuspendState && root.showAllOptions && !root.oneTimeOnly
+             }
+             LogoutButton {
+                 id: hibernateButton
+@@ -319,7 +409,7 @@ Item {
+                 onClicked: root.hibernateRequested()
+                 KeyNavigation.left: suspendButton.visible ? suspendButton : cancelButton
+                 KeyNavigation.right: rebootButton.visible ? rebootButton : (shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton))
+-                visible: spdMethods.HibernateState && root.showAllOptions
++                visible: spdMethods.HibernateState && root.showAllOptions && !root.oneTimeOnly
+             }
+             LogoutButton {
+                 id: rebootButton
+@@ -333,7 +423,7 @@ Item {
+                     }
+                 }
+                 onClicked: {
+-                    if (root.canRestartToFirmware && leaveDialog.shiftPressed()) {
++                    if (root.hasRestartActions && leaveDialog.shiftPressed()) {
+                         root.openRestartMenu(rebootButton);
+                     } else if (softwareUpdatePending) {
+                         root.rebootUpdateRequested();
+@@ -343,12 +433,12 @@ Item {
+                 }
+                 KeyNavigation.left: hibernateButton.visible ? hibernateButton : (suspendButton.visible ? suspendButton : cancelButton)
+                 KeyNavigation.right: restartOptionsButton.visible ? restartOptionsButton : restartOptionsButton.KeyNavigation.right
+-                focus: sdtype === ShutdownType.ShutdownTypeReboot && !firmwareOnly
+-                visible: !firmwareOnly && maysd && (sdtype === ShutdownType.ShutdownTypeReboot || root.showAllOptions)
++                focus: sdtype === ShutdownType.ShutdownTypeReboot && !root.oneTimeOnly
++                visible: !root.oneTimeOnly && maysd && (sdtype === ShutdownType.ShutdownTypeReboot || root.showAllOptions)
+ 
+                 TapHandler {
+                     acceptedButtons: Qt.RightButton
+-                    enabled: root.canRestartToFirmware
++                    enabled: root.hasRestartActions
+                     onTapped: root.openRestartMenu(rebootButton)
+                 }
+             }
+@@ -356,7 +446,7 @@ Item {
+                 id: restartOptionsButton
+                 icon.name: "arrow-down"
+                 text: i18nd("plasma_lookandfeel_org.kde.lookandfeel", "Restart Options")
+-                visible: rebootButton.visible && root.canRestartToFirmware
++                visible: rebootButton.visible && root.hasRestartActions
+                 KeyNavigation.left: rebootButton
+                 KeyNavigation.right: rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton))
+                 onClicked: root.openRestartMenu(restartOptionsButton)
+@@ -371,13 +461,23 @@ Item {
+                 KeyNavigation.right: cancelButton
+                 onClicked: root.restartToFirmware()
+             }
++            LogoutButton {
++                id: rebootForAntiCheatButton
++                icon.name: "system-reboot"
++                text: root.antiCheatActionText
++                visible: root.antiCheatAsked && root.canRestartForAntiCheat
++                focus: visible
++                KeyNavigation.left: cancelButton
++                KeyNavigation.right: cancelButton
++                onClicked: root.restartForAntiCheat()
++            }
+             LogoutButton {
+                 id: rebootWithoutUpdatesButton
+                 icon.name: "system-reboot"
+                 text: root.showAllOptions ? i18nd("plasma_lookandfeel_org.kde.lookandfeel", "&Restart")
+                                           : i18nd("plasma_lookandfeel_org.kde.lookandfeel", "&Restart Now")
+                 onClicked: {
+-                    if (root.canRestartToFirmware && leaveDialog.shiftPressed()) {
++                    if (root.hasRestartActions && leaveDialog.shiftPressed()) {
+                         root.openRestartMenu(rebootWithoutUpdatesButton);
+                     } else {
+                         root.rebootRequested();
+@@ -385,11 +485,11 @@ Item {
+                 }
+                 KeyNavigation.left: restartOptionsButton.visible ? restartOptionsButton : rebootButton
+                 KeyNavigation.right: shutdownButton.visible ? shutdownButton : (logoutButton.visible ? logoutButton : cancelButton)
+-                visible: !firmwareOnly && maysd && softwareUpdatePending && (sdtype === ShutdownType.ShutdownTypeReboot || root.showAllOptions)
++                visible: !root.oneTimeOnly && maysd && softwareUpdatePending && (sdtype === ShutdownType.ShutdownTypeReboot || root.showAllOptions)
+ 
+                 TapHandler {
+                     acceptedButtons: Qt.RightButton
+-                    enabled: root.canRestartToFirmware
++                    enabled: root.hasRestartActions
+                     onTapped: root.openRestartMenu(rebootWithoutUpdatesButton)
+                 }
+             }
+@@ -414,7 +514,7 @@ Item {
+                 KeyNavigation.left: rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (rebootButton.visible ? rebootButton : (hibernateButton.visible ? hibernateButton : (suspendButton.visible ? suspendButton : cancelButton)))
+                 KeyNavigation.right: shutdownWithoutUpdatesButton.visible ? shutdownWithoutUpdatesButton : (logoutButton.visible ? logoutButton : cancelButton)
+                 focus: sdtype === ShutdownType.ShutdownTypeHalt || root.showAllOptions
+-                visible: maysd && (sdtype === ShutdownType.ShutdownTypeHalt || root.showAllOptions)
++                visible: maysd && (sdtype === ShutdownType.ShutdownTypeHalt || root.showAllOptions) && !root.oneTimeOnly
+             }
+             LogoutButton {
+                 id: shutdownWithoutUpdatesButton
+@@ -427,7 +527,7 @@ Item {
+                 KeyNavigation.left: shutdownButton
+                 KeyNavigation.right: logoutButton.visible ? logoutButton : cancelButton
+                 focus: sdtype === ShutdownType.ShutdownTypeHalt || root.showAllOptions
+-                visible: maysd && softwareUpdatePending && (sdtype === ShutdownType.ShutdownTypeHalt || root.showAllOptions)
++                visible: maysd && softwareUpdatePending && (sdtype === ShutdownType.ShutdownTypeHalt || root.showAllOptions) && !root.oneTimeOnly
+             }
+             LogoutButton {
+                 id: logoutButton
+@@ -438,7 +538,7 @@ Item {
+                 KeyNavigation.left: shutdownWithoutUpdatesButton.visible ? shutdownWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (rebootButton.visible ? rebootButton : (hibernateButton.visible ? hibernateButton : (suspendButton.visible ? suspendButton : cancelButton)))))
+                 KeyNavigation.right: cancelButton
+                 focus: sdtype === ShutdownType.ShutdownTypeNone
+-                visible: canLogout && (sdtype === ShutdownType.ShutdownTypeNone || root.showAllOptions)
++                visible: canLogout && (sdtype === ShutdownType.ShutdownTypeNone || root.showAllOptions) && !root.oneTimeOnly
+             }
+             LogoutButton {
+                 id: cancelButton
+@@ -447,8 +547,9 @@ Item {
+                 onClicked: root.cancelRequested()
+                 KeyNavigation.left: logoutButton.visible ? logoutButton : (shutdownWithoutUpdatesButton.visible ? shutdownWithoutUpdatesButton : (shutdownButton.visible ? shutdownButton : (rebootWithoutUpdatesButton.visible ? rebootWithoutUpdatesButton : (rebootButton.visible ? rebootButton : (hibernateButton.visible ? hibernateButton : suspendButton)))))
+                 KeyNavigation.right: firmwareOnly ? (rebootToFirmwareButton.visible ? rebootToFirmwareButton : null)
++                                   : root.antiCheatAsked ? (rebootForAntiCheatButton.visible ? rebootForAntiCheatButton : null)
+                                                   : (suspendButton.visible ? suspendButton : (hibernateButton.visible ? hibernateButton : rebootButton))
+-                focus: firmwareOnly && !root.canRestartToFirmware
++                focus: (firmwareOnly && !root.canRestartToFirmware) || (root.antiCheatAsked && !root.canRestartForAntiCheat)
+                 KeyNavigation.down: recoveryButtonsRow.visible ? taskManagerButton : null
+             }
+         }
+@@ -457,7 +558,7 @@ Item {
+             id: recoveryButtonsRow
+             Layout.alignment: Qt.AlignHCenter
+             spacing: Kirigami.Units.largeSpacing
+-            visible: root.showAllOptions
++            visible: root.showAllOptions && !root.oneTimeOnly
+ 
+             LogoutButton {
+                 id: taskManagerButton
+diff --git a/runners/sessions/sessionrunner.cpp b/runners/sessions/sessionrunner.cpp
+index 42e723b..6d4fa27 100644
+--- a/runners/sessions/sessionrunner.cpp
++++ b/runners/sessions/sessionrunner.cpp
+@@ -91,6 +91,13 @@ void SessionRunner::match(KRunner::RunnerContext &context)
+         match.setIconName(QStringLiteral("system-reboot"));
+         match.setData(RestartToFirmwareSetupAction);
+         matches << match;
++    } else if (m_session.canRebootForAntiCheat()
++               && (term.compare(i18n("Restart for anti-cheat games"), Qt::CaseInsensitive) == 0 || term.compare(u"anti-cheat"_s, Qt::CaseInsensitive) == 0
++                   || term.compare(u"anticheat"_s, Qt::CaseInsensitive) == 0)) {
++        match.setText(i18n("Restart for anti-cheat games"));
++        match.setIconName(QStringLiteral("system-reboot"));
++        match.setData(RestartForAntiCheatAction);
++        matches << match;
+     } else if (anyKeywordMatches(m_restartKeywords, term)) {
+         if (m_session.canReboot()) {
+             match.setText(i18nc("restart computer command", "Restart"));
+@@ -136,6 +143,9 @@ void SessionRunner::run(const KRunner::RunnerContext & /*context*/, const KRunne
+         case RestartToFirmwareSetupAction:
+             m_session.requestRebootToFirmwareSetup();
+             break;
++        case RestartForAntiCheatAction:
++            m_session.requestRebootForAntiCheat();
++            break;
+         case ShutdownAction:
+             m_session.requestShutdown();
+             break;
+diff --git a/runners/sessions/sessionrunner.h b/runners/sessions/sessionrunner.h
+index b3f556b..d5fd568 100644
+--- a/runners/sessions/sessionrunner.h
++++ b/runners/sessions/sessionrunner.h
+@@ -33,6 +33,7 @@ public:
+         SaveAction,
+         SwitchAction,
+         RestartToFirmwareSetupAction,
++        RestartForAntiCheatAction,
+     };
+ 
+ private:
+diff --git a/startkde/plasma-shutdown/org.kde.Shutdown.xml b/startkde/plasma-shutdown/org.kde.Shutdown.xml
+index d01694a..60c67da 100644
+--- a/startkde/plasma-shutdown/org.kde.Shutdown.xml
++++ b/startkde/plasma-shutdown/org.kde.Shutdown.xml
+@@ -8,5 +8,8 @@
+     <method name="logoutAndRebootToFirmwareSetup">
+       <arg name="error" type="s" direction="out"/>
+     </method>
++    <method name="logoutAndRebootForAntiCheat">
++      <arg name="error" type="s" direction="out"/>
++    </method>
+ </interface>
+ </node>
+diff --git a/startkde/plasma-shutdown/shutdown.cpp b/startkde/plasma-shutdown/shutdown.cpp
+index eb14789..53d0b36 100644
+--- a/startkde/plasma-shutdown/shutdown.cpp
++++ b/startkde/plasma-shutdown/shutdown.cpp
+@@ -26,6 +26,39 @@ QDBusMessage login1Call(const QString &interface, const QString &method)
+     return QDBusMessage::createMethodCall(u"org.freedesktop.login1"_s, u"/org/freedesktop/login1"_s, interface, method);
+ }
+ 
++// Sparky Stereo OS: sparky-stereo-boot's helper tells GRUB to start its anti-cheat entry once (grub-reboot, or the
++// boot package's own block where GRUB cannot write /boot/grub); polkit's org.sparkystereo.boot.restart-for-anti-cheat
++// allows it for the active local session, as logind allows a restart.
++const QString s_antiCheatHelper = u"/usr/lib/sparky-stereo-boot/anticheat-restart"_s;
++
++// "" on success, else the error name the greeter explains: pkexec exits 126 when the person did not authorize it and
++// 127 when it could not ask; the helper exits 3 when the anti-cheat start cannot be made on this computer.
++QString runAntiCheatHelper(const QString &command)
++{
++    QProcess process;
++    process.start(u"pkexec"_s, {s_antiCheatHelper, command});
++    if (!process.waitForFinished(280000) || process.exitStatus() != QProcess::NormalExit) {
++        process.kill();
++        qCWarning(PLASMA_SESSION) << "The anti-cheat restart helper did not finish:" << process.errorString();
++        return u"org.sparkystereo.Boot.Failed"_s;
++    }
++    const QString said = QString::fromUtf8(process.readAllStandardError()).trimmed();
++    switch (process.exitCode()) {
++    case 0:
++        return {};
++    case 126:
++    case 127:
++        qCWarning(PLASMA_SESSION) << "The anti-cheat restart was not authorized:" << said;
++        return u"org.freedesktop.PolicyKit1.Error.NotAuthorized"_s;
++    case 3:
++        qCWarning(PLASMA_SESSION) << "The anti-cheat restart is unavailable:" << said;
++        return u"org.freedesktop.DBus.Error.NotSupported"_s;
++    default:
++        qCWarning(PLASMA_SESSION) << "The anti-cheat restart could not be scheduled:" << process.exitCode() << said;
++        return u"org.sparkystereo.Boot.Failed"_s;
++    }
++}
++
+ QDBusReply<void> setRebootToFirmwareSetup(bool enabled)
+ {
+     auto message = login1Call(u"org.freedesktop.login1.Manager"_s, u"SetRebootToFirmwareSetup"_s);
+@@ -89,6 +122,37 @@ QString Shutdown::logoutAndRebootToFirmwareSetup()
+     return {};
+ }
+ 
++QString Shutdown::logoutAndRebootForAntiCheat()
++{
++    if (m_logoutStarted) {
++        return u"org.kde.Shutdown.InProgress"_s;
++    }
++
++    if (!QFileInfo(u"/sys/firmware/efi"_s).isDir() || !QFileInfo(u"/var/lib/sparky-stereo-boot/anticheat.entry"_s).isFile()
++        || !QFileInfo(s_antiCheatHelper).isExecutable()) {
++        QCoreApplication::quit();
++        return u"org.freedesktop.DBus.Error.NotSupported"_s;
++    }
++
++    const QString error = runAntiCheatHelper(u"set"_s);
++    if (!error.isEmpty()) {
++        QCoreApplication::quit();
++        return error;
++    }
++
++    m_restoreAntiCheat = true;
++    startLogout(KWorkSpace::ShutdownTypeReboot);
++    return {};
++}
++
++void Shutdown::restoreAntiCheat()
++{
++    if (m_restoreAntiCheat) {
++        m_restoreAntiCheat = false;
++        runAntiCheatHelper(u"unset"_s);
++    }
++}
++
+ void Shutdown::restoreFirmwareSetup()
+ {
+     if (m_restoreFirmwareSetup) {
+@@ -185,6 +249,7 @@ void Shutdown::ksmServerComplete()
+ void Shutdown::logoutCancelled()
+ {
+     restoreFirmwareSetup();
++    restoreAntiCheat();
+     m_shutdownType = KWorkSpace::ShutdownTypeNone;
+     qApp->quit();
+ }
+diff --git a/startkde/plasma-shutdown/shutdown.h b/startkde/plasma-shutdown/shutdown.h
+index c464d57..d6769a2 100644
+--- a/startkde/plasma-shutdown/shutdown.h
++++ b/startkde/plasma-shutdown/shutdown.h
+@@ -20,6 +20,7 @@ public:
+     void logoutAndShutdown();
+     void logoutAndReboot();
+     QString logoutAndRebootToFirmwareSetup();
++    QString logoutAndRebootForAntiCheat();
+     void saveSession();
+ private Q_SLOTS:
+     void logoutCancelled();
+@@ -31,7 +32,9 @@ private:
+     void runShutdownScripts();
+     bool usingSystemdManagedSession();
+     void restoreFirmwareSetup();
++    void restoreAntiCheat();
+     KWorkSpace::ShutdownType m_shutdownType = KWorkSpace::ShutdownTypeNone;
+     bool m_logoutStarted = false;
+     bool m_restoreFirmwareSetup = false;
++    bool m_restoreAntiCheat = false;
+ };
+-- 
+2.53.0
+
