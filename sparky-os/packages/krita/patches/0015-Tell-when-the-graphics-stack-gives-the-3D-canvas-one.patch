@@ -1,0 +1,67 @@
+From e9ddf68a2267ee5d177d9e85e7b9a637364b0b63 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 27 Nov 2026 08:19:42 -0300
+Subject: [PATCH 15/15] Tell when the graphics stack gives the 3D canvas one
+ view
+Forwarded: no, Krita's README sets a moratorium on AI-assisted contributions; carried in the edition's fork,
+ https://invent.kde.org/danielcamposramos/krita
+
+The canvas layer judged its two views by the format Qt reports right
+after creating the window, which is still the format it asked for. On
+NVIDIA's own EGL, which has no stereo window surfaces, that said stereo,
+the layer drew one view (GL_BACK_RIGHT refused with
+GL_INVALID_OPERATION) and the canvas showed a flat picture with nothing
+said.
+
+At its first frame on the surface the layer now asks the driver
+(GL_STEREO). Without left and right buffers it fails as "one view": the
+canvas shows the left eye and says that the graphics stack gave the 3D
+canvas one view, naming the renderer. Measured with a stereo Qt window
+under KWin: GL_STEREO is 1 on Mesa (llvmpipe, zink) and 0 on NVIDIA's
+EGL.
+
+Assisted-by: Claude Opus 5.5
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libs/ui/opengl/KisStereoCanvasLayer.cpp | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/libs/ui/opengl/KisStereoCanvasLayer.cpp b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+index 4502d818..743a9a38 100644
+--- a/libs/ui/opengl/KisStereoCanvasLayer.cpp
++++ b/libs/ui/opengl/KisStereoCanvasLayer.cpp
+@@ -34,6 +34,7 @@ struct KisStereoCanvasLayer::Private
+     GLuint framebuffers[2] {0, 0};
+     bool stereo {true};
+     bool failed {false};
++    bool viewsChecked {false};
+     KisStereoCanvasLayer::Failure failure {KisStereoCanvasLayer::Failure::None};
+     bool placedBelow {false};
+     QRect placed;
+@@ -243,6 +244,26 @@ bool KisStereoCanvasLayer::present(GLuint leftTexture, GLuint rightTexture, cons
+         return false;
+     }
+ 
++    if (d->stereo && !d->viewsChecked) {
++        // the driver's word on the surface, asked once it exists: the format Qt reports right after create() is still
++        // the one asked for (NVIDIA's own EGL then draws one view and refuses GL_BACK_RIGHT, with nothing said)
++        d->viewsChecked = true;
++        GLboolean twoViews = GL_FALSE;
++        d->context->functions()->glGetBooleanv(GL_STEREO, &twoViews);
++        if (!twoViews) {
++            d->failed = true;
++            d->failure = KisStereoCanvasLayer::Failure::OneView;
++            qWarning() << "the stereo canvas layer got no left and right buffers: the graphics stack gave the surface one view";
++            if (current && currentSurface) {
++                current->makeCurrent(currentSurface);
++            } else {
++                d->context->doneCurrent();
++            }
++            hide();
++            return false;
++        }
++    }
++
+     if (!d->framebuffers[0]) {
+         d->funcs.initializeOpenGLFunctions();
+         d->funcs.glGenFramebuffers(2, d->framebuffers);

@@ -120,10 +120,12 @@ edit("control", [
     # the window keeps the canvas\x27s depth with its alpha only with the edition\x27s Qt (6.11.2+dfsg-5+stereo3d3 and
     # later, as +stereo3d7 needed); View > Display Settings runs kcmshell6 (libkf6kcmutils-bin) with the display page
     # (kscreen); the native Wayland platform needs Qt\x27s Wayland shell integration (qt6-wayland: without it Qt makes no
-    # Wayland window and Krita runs on X11, flat and at 8 bits): a dependency a designed feature needs is a Depends
+    # Wayland window and Krita runs on X11, flat and at 8 bits); its QML panels draw their icons from SVG, which Qt 6
+    # decodes with qt6-svg-plugins (in Qt 5 the plugins came with libqt5svg5): a dependency a designed feature needs is
+    # a Depends
     ("Depends: krita-data (>= ${source:Version}), libqt5sql5-sqlite,\n",
      "Depends: krita-data (>= ${source:Version}), libqt6widgets6 (>= 6.11.2+dfsg-5+stereo3d3), libqt6sql6-sqlite,\n"
-     "         qml6-module-qtquick-controls, libkf6kcmutils-bin, kscreen, qt6-wayland,\n"),
+     "         qml6-module-qtquick-controls, libkf6kcmutils-bin, kscreen, qt6-wayland, qt6-svg-plugins,\n"),
     ("Recommends: python3-pyqt5,\n", "Recommends: python3-pyqt6,\n"),
 ])
 edit("rules", [
