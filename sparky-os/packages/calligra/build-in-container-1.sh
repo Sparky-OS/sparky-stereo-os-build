@@ -80,7 +80,8 @@ if [ "${SPARKY_CALLIGRA_RESUME:-0}" = 1 ]; then
         rm -rf "debian/$package" "debian/$package.debhelper.log" "debian/$package.substvars"
     done
     rm -rf debian/.debhelper debian/tmp debian/files
-    build_args=(-nc)
+    # The compiled tree has Lean Code's projected sources. Keep the authored .dsc from before projection.
+    build_args=(-b -nc)
 else
     python3 /toolkit/repo/provenance-files.py . '0001-words-paper-depth.patch'
     PYTHONPATH=/toolkit python3 -m lean.debian_prepare . "$version+lc1"
@@ -97,7 +98,12 @@ fi
 chown -R 1000:1000 "$job" "$SPARKY_LC_SCRATCH"
 runuser -u "$build_user" -- env SPARKY_LC_PREVIOUS_SIBLINGS_FILE="$SPARKY_LC_PREVIOUS_SIBLINGS_FILE" \
     SPARKY_LC_SIBLINGS_FILE="$SPARKY_LC_SIBLINGS_FILE" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
-    dpkg-buildpackage "${build_args[@]}" --build=full -us -uc -sa -j4
+    dpkg-buildpackage "${build_args[@]}" -us -uc -sa -j4
+if [ "${SPARKY_CALLIGRA_RESUME:-0}" = 1 ]; then
+    output="../${source_stem}_$(dpkg-architecture -qDEB_HOST_ARCH)"
+    runuser -u "$build_user" -- dpkg-genbuildinfo --build=full "-O$output.buildinfo"
+    runuser -u "$build_user" -- dpkg-genchanges --build=full -sa "-O$output.changes"
+fi
 cd "$job/lc"
 sha256sum -c source-closure.sha256
 PYTHONPATH=/toolkit python3 -m lean.release check-debs ./*26.08.0+dfsg-1+stereo3d1+lc1*.deb
