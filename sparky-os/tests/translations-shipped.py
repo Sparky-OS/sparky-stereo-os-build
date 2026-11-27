@@ -101,6 +101,7 @@ SOURCES = {
     'plasma-pa-audio-routes.po.patch': ('plasma-pa', None),
     'plasma-pa-sound-formats.po.patch': ('plasma-pa', None),
     'plasma-pa-speaker-setup.po.patch': ('plasma-pa', None),
+    'plasma-workspace-restart-to-firmware.po.patch': ('plasma-workspace', None),
     'plasma-workspace-recovery.po.patch': ('plasma-workspace', None),
     'plasma-workspace-wallpaper-cost.po.patch': ('plasma-workspace', None),
     'powerdevil-graphics-link.po.patch': ('powerdevil', None),
