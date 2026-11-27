@@ -447,8 +447,13 @@ class Watch:
 
     def run(self):
         self.loop = self.GLib.MainLoop()
+        try:
+            from gi.repository import GLibUnix
+            signal_add = GLibUnix.signal_add
+        except ImportError:
+            signal_add = self.GLib.unix_signal_add
         for sig in (signal.SIGTERM, signal.SIGINT):
-            self.GLib.unix_signal_add(self.GLib.PRIORITY_HIGH, sig, self.stop)
+            signal_add(self.GLib.PRIORITY_HIGH, sig, self.stop)
         self.soon(0)
         self.loop.run()
 
