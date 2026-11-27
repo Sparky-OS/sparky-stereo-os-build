@@ -131,6 +131,15 @@ edit("rules", [
     ("-DBUILD_WITH_QT6=OFF", "-DBUILD_WITH_QT6=ON -DALLOW_UNSTABLE=QT6"),
 ])
 edit("krita.install", [("usr/lib/*/qt5/qml/org/krita/", "usr/lib/*/qt6/qml/org/krita/")])
+# the link gate is told which stereo calls /usr/bin/krita stopped making on purpose (lean/archive.md): the stereo surface
+# format is now asked by the layer of the canvas in libkritaui (KisStereoCanvasLayer), never set on the default format in
+# main(), and the start-up "Stereo 3D" setting is replaced by Enable 3D of the stereo layer
+(debian / "sparky-lean-retired-stereo-imports").write_text(
+    "_ZN14QSurfaceFormat9setStereoEb the stereo surface format moved from the default format set in main() to the "
+    "layer of the canvas below the window (KisStereoCanvasLayer in libkritaui), so the interface of the window is never "
+    "doubled (row 148)\n"
+    "_ZN9KisConfig14stereo3DCanvasEP9QSettingsb the start-up Stereo 3D setting of +stereo3d2 to +stereo3d7 is replaced by "
+    "Enable 3D of the stereo layer, which needs no restart (row 148)\n")
 c = debian / "copyright"
 s = c.read_text()
 first = s.index("\nFiles: *\n")
