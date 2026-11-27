@@ -193,7 +193,9 @@ for side in ("before", "after"):
                 bimg = np.asarray(Image.open(bshot).convert("RGB"))
                 beyes = [bimg] if mode == "2d" else [bimg[:, :bimg.shape[1] // 2], bimg[:, bimg.shape[1] // 2:]]
                 bcounts = [label_pixels(e) for e in beyes]
-            more = bcounts is not None and all(min(c.values()) >= 40 and max(bc.values()) <= 5 for c, bc in zip(counts, bcounts))
+            # empty before, drawn after: a band of the theme's 13-pixel text holds about 40 pixels within 40 levels of its
+            # colour (measured 39 to 62), so 20 is drawn and 5 is empty
+            more = bcounts is not None and all(min(c.values()) >= 20 and max(bc.values()) <= 5 for c, bc in zip(counts, bcounts))
             same_eyes = mode == "2d" or counts[0] == counts[1]
             row(errors == 0 and more and same_eyes,
                 f"greeter-family-{mode}: the new theme logs {errors} errors and its labels are drawn (text-coloured pixels "
