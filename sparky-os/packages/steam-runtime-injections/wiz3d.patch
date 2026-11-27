@@ -213,3 +213,15 @@
  REV = $(shell dpkg-parsechangelog -SVersion)
  DATE = $(shell date -u -d "$$(dpkg-parsechangelog -SDate)" +%Y-%m-%d)
  
+--- a/debian/control
++++ b/debian/control
+@@ -2,7 +2,8 @@
+ Section: utils
+ Priority: optional
+ Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+-Build-Depends: ca-certificates,
++Build-Depends: bubblewrap,
++               ca-certificates,
+                clang,
+                curl,
+                debhelper-compat (= 13),

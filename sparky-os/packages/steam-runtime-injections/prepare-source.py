@@ -56,7 +56,8 @@ def main():
         if listing.read_text().strip() != 'debian/vendor.xz' or (tree / 'debian/vendor.xz').exists():
             raise ValueError('Review the changed DXVK vendor input before preparing the source')
         listing.unlink()
-        # Use the edition's current link and start gate with its configured disk floors.
+    if args.name in ('dxvk', 'wiz3d'):
+        # Use the edition's current link and start gate.
         destination = tree / 'debian/sparky-lean-toolkit'
         for pattern in ('*.py', '*.java', '*.zig', 'smoke.tsv'):
             for path in (toolkit / 'lean').glob(pattern):
