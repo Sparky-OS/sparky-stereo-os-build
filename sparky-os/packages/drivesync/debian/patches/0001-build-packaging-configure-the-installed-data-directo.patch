@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Fri, 27 Nov 2026 13:27:18 -0300
+Date: Fri, 27 Nov 2026 14:31:03 -0300
 Subject: [PATCH] build(packaging): configure the installed data directory at
  build time
 
@@ -15,8 +15,10 @@ Changes: DATADIR comes from DRIVESYNC_DATADIR at build time and keeps
 OAuth file and the locale directory are read below it.
 
 Validation: cargo fmt --check, cargo clippy --workspace --all-targets
--D warnings; a Debian package built with DRIVESYNC_DATADIR=/usr/share loads
-/usr/share/locale/pt_BR/LC_MESSAGES/drivesync.mo in a pt_BR session.
+-D warnings; a Debian package built with DRIVESYNC_DATADIR=/usr/share
+shows its pt_BR strings in a pt_BR Plasma session, which the unchanged
+build, looking in /app/share/locale, shows in English; the package signs in
+with the client file at /usr/share/drivesync/oauth.json.
 
 Limitations: run with Debian's Rust 1.98.1 in a container, not in the
 GNOME 50 Flatpak SDK.

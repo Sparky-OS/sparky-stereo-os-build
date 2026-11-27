@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Fri, 27 Nov 2026 13:27:18 -0300
+Date: Fri, 27 Nov 2026 14:31:03 -0300
 Subject: [PATCH] feat(network): hold synchronization on metered connections
 
 Motivation: synchronization downloads and uploads whole files at any time.
@@ -18,9 +18,10 @@ Nothing is deleted and no configuration changes.
 
 Validation: cargo fmt --check, cargo clippy -D warnings, the preferences
 round-trip test; in a Plasma session with NetworkManager's Metered property
-switched on and off, the workers stop and start again, the banner, the tray
-and the notification say so, and the stand-in sees no Drive request while
-the connection is metered.
+switched on, the stand-in saw no Drive request for 50 seconds while a new
+local file waited, the notification and the window's banner said so, and the
+upload followed within two seconds of the property switching off. The build
+without this change kept synchronizing.
 
 Limitations: GLib reads the metered state from NetworkManager (or the
 network portal in a sandbox); without either it reports not metered.
@@ -42,7 +43,7 @@ Last-Update: 2026-11-27
  create mode 100644 src/services/network.rs
 
 diff --git a/src/application/desktop/mod.rs b/src/application/desktop/mod.rs
-index 244976d..13fffb4 100644
+index f509c84..3e42a05 100644
 --- a/src/application/desktop/mod.rs
 +++ b/src/application/desktop/mod.rs
 @@ -1,14 +1,18 @@
@@ -69,7 +70,7 @@ index 244976d..13fffb4 100644
  use drivesync_engine::{Account, Engine, ListAccountsRequest};
  use gettextrs::gettext;
  use notifications::Notifier;
-@@ -34,19 +38,25 @@ struct Watched {
+@@ -38,19 +42,25 @@ struct Watched {
  struct Shared {
      tray: Tray,
      notifier: Notifier,
@@ -96,7 +97,7 @@ index 244976d..13fffb4 100644
      }
  }
  
-@@ -69,14 +79,39 @@ fn account_name(account: &Account) -> String {
+@@ -73,14 +83,39 @@ fn account_name(account: &Account) -> String {
          .unwrap_or_else(|| gettext("Google Drive"))
  }
  
@@ -138,7 +139,7 @@ index 244976d..13fffb4 100644
      });
      let context = context.clone();
      glib::spawn_future_local(async move {
-@@ -88,10 +123,33 @@ pub(crate) fn install(app: &adw::Application, context: &Context) {
+@@ -92,10 +127,33 @@ pub(crate) fn install(app: &adw::Application, context: &Context) {
          };
          start(shared, engine);
      });
@@ -172,7 +173,7 @@ index 244976d..13fffb4 100644
      glib::spawn_future_local(async move {
          loop {
              follow_accounts(&shared, &engine).await;
-@@ -100,6 +158,30 @@ fn start(shared: Rc<Shared>, engine: Engine) {
+@@ -104,6 +162,30 @@ fn start(shared: Rc<Shared>, engine: Engine) {
      });
  }
  

@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Fri, 27 Nov 2026 13:27:18 -0300
+Date: Fri, 27 Nov 2026 14:31:03 -0300
 Subject: [PATCH] feat(desktop): add the local folder to the file manager's
  Places
 
@@ -17,8 +17,8 @@ replaces it atomically, and never adds the same folder twice. It runs only
 when the person chooses it.
 
 Validation: cargo fmt --check, cargo clippy -D warnings, a unit test for
-escaping, idempotence and preservation; in a Plasma session Dolphin shows
-the entry under Places after the action.
+escaping, idempotence and preservation; in a Plasma session the action wrote
+the entry and Dolphin listed it under Places with Google Drive's icon.
 
 Limitations: overlay icons per file in Dolphin would need a file-state
 interface from the engine and a KOverlayIconPlugin; not part of this

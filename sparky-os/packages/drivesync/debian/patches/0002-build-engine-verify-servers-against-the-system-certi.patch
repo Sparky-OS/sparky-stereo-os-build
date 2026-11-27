@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Fri, 27 Nov 2026 13:27:18 -0300
+Date: Fri, 27 Nov 2026 14:31:03 -0300
 Subject: [PATCH] build(engine): verify servers against the system certificate
  store
 
@@ -16,8 +16,9 @@ store at /etc/ssl/certs. No other behaviour changes: rustls, the ring
 provider, no proxy and no redirects stay as they were.
 
 Validation: the installed package trusts a test authority added with
-update-ca-certificates and reaches a local stand-in of Google's endpoints;
-the unchanged build refuses the same certificate (UnknownIssuer).
+update-ca-certificates and signs in and synchronizes against a local
+stand-in of Google's endpoints; the unchanged build, in the same session,
+sends no token request to it and reports that Google could not be reached.
 
 Limitations: Cargo.lock gains rustls-native-certs, openssl-probe and their
 macOS and Windows dependencies (schannel, security-framework), which cargo

@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Fri, 27 Nov 2026 13:27:18 -0300
+Date: Fri, 27 Nov 2026 14:31:03 -0300
 Subject: [PATCH] feat(desktop): show synchronization in the system tray
 
 Motivation: on KDE Plasma and other desktops with a StatusNotifierItem host
@@ -19,9 +19,11 @@ there and posts the existing "continues running" notice; without a host the
 Background portal path is unchanged. No new dependency.
 
 Validation: cargo fmt --check, cargo clippy --workspace --all-targets
--D warnings, unit tests for the status classification; in a Plasma 6.7
-session the item is listed by the watcher, shown in the system tray, its
-menu opens and quits the program, and a closed window comes back from it.
+-D warnings, unit tests for the status classification and for the menu's
+D-Bus types; in a Plasma 6.7 session the watcher lists the item and the
+system tray shows it, its menu's Open DriveSync shows the window, a closed
+window keeps DriveSync running in the tray and comes back from it. The
+unchanged build registers no item.
 
 Limitations: no real Google account was used; the tray was checked on
 Plasma only.
@@ -35,9 +37,9 @@ Last-Update: 2026-11-27
  src/application/background/mod.rs |  30 +-
  src/application/desktop/mod.rs    | 165 +++++++++++
  src/application/desktop/status.rs | 151 ++++++++++
- src/application/desktop/tray.rs   | 440 ++++++++++++++++++++++++++++++
+ src/application/desktop/tray.rs   | 461 ++++++++++++++++++++++++++++++
  src/application/lifecycle.rs      |   1 +
- 6 files changed, 780 insertions(+), 8 deletions(-)
+ 6 files changed, 801 insertions(+), 8 deletions(-)
  create mode 100644 src/application/desktop/mod.rs
  create mode 100644 src/application/desktop/status.rs
  create mode 100644 src/application/desktop/tray.rs
@@ -439,10 +441,10 @@ index 0000000..188d7b5
 +}
 diff --git a/src/application/desktop/tray.rs b/src/application/desktop/tray.rs
 new file mode 100644
-index 0000000..33b1987
+index 0000000..02e6608
 --- /dev/null
 +++ b/src/application/desktop/tray.rs
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,461 @@
 +//! System tray entry through the StatusNotifierItem D-Bus interface (KDE Plasma and other
 +//! hosts of `org.kde.StatusNotifierWatcher`), with its menu exported as `com.canonical.dbusmenu`.
 +//!
@@ -791,14 +793,20 @@ index 0000000..33b1987
 +            }
 +        }
 +        let children: Vec<glib::Variant> = if id == 0 {
++            // Each element of an `av` is boxed once by the array itself.
 +            [OPEN, SEPARATOR, QUIT]
 +                .into_iter()
-+                .map(|child| Self::entry(child).to_variant())
++                .map(Self::entry)
 +                .collect()
 +        } else {
 +            Vec::new()
 +        };
 +        (id, properties, children).to_variant()
++    }
++
++    /// GetLayout's reply, `(u(ia{sv}av))`: the layout is a structure, not a boxed variant.
++    fn layout(parent: i32) -> glib::Variant {
++        glib::Variant::tuple_from_iter([1u32.to_variant(), Self::entry(parent)])
 +    }
 +
 +    fn menu_call(
@@ -810,7 +818,7 @@ index 0000000..33b1987
 +        match method {
 +            "GetLayout" => {
 +                let parent = parameters.child_value(0).get::<i32>().unwrap_or(0);
-+                invocation.return_value(Some(&(1u32, Self::entry(parent)).to_variant()));
++                invocation.return_value(Some(&Self::layout(parent)));
 +            }
 +            "GetGroupProperties" => {
 +                let ids = parameters
@@ -881,6 +889,21 @@ index 0000000..33b1987
 +        if let Some(app) = self.app.upgrade() {
 +            app.activate_action(action, None);
 +        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn menu_replies_have_the_dbusmenu_types() {
++        assert_eq!(Tray::layout(0).type_().as_str(), "(u(ia{sv}av))");
++        let root = Tray::entry(0);
++        assert_eq!(root.child_value(2).n_children(), 3);
++        let open = root.child_value(2).child_value(0).as_variant().unwrap();
++        assert_eq!(open.type_().as_str(), "(ia{sv}av)");
++        assert_eq!(open.child_value(0).get::<i32>(), Some(OPEN));
 +    }
 +}
 diff --git a/src/application/lifecycle.rs b/src/application/lifecycle.rs
