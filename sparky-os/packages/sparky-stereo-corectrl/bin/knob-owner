@@ -21,6 +21,7 @@
 #   watch      the service: follows CoreCtrl's helper, lactd, LACT's settings, the daemons, and acts
 #   status     what is held, by whom, and what each daemon is kept off, as JSON; changes nothing
 #   plan       the same from a recorded machine (tests): SPARKY_KNOB_ROOT=DIR, DIR/fixture/{corectrl,lactd,tuned}
+#              (SPARKY_KNOB_SYSFS=DIR reads DIR/sys instead of /sys with the live bus: the proof rig)
 #   forget     ends the notices of a program that is no longer installed (the package's dpkg trigger)
 #   same-rule  exit 0 when FILE is CoreCtrl's documented polkit rule for the group sudo (comments and spacing aside)
 import configparser
@@ -34,6 +35,7 @@ import sys
 PKG = "sparky-stereo-corectrl"
 ROOT = os.environ.get("SPARKY_KNOB_ROOT", "")
 FIXTURE = ROOT + "/fixture" if ROOT else None
+SYS = os.environ.get("SPARKY_KNOB_SYSFS", ROOT)   # a recorded /sys under a live bus (the proof rig)
 STATE = ROOT + "/var/lib/sparky-stereo-corectrl"
 DROPIN = ROOT + "/run/systemd/system/power-profiles-daemon.service.d/zz-sparky-stereo-knob-owner.conf"
 PPD_UNIT = "power-profiles-daemon.service"
@@ -68,7 +70,7 @@ def fixture(name, default=""):
 def ppd_cpu_driver():
     """True when power-profiles-daemon would load amd_pstate or intel_pstate here: its probe needs the driver's status file
     and a cpufreq policy with an energy preference (ppd-driver-amd-pstate.c probe_epp, ppd-driver-intel-pstate.c)."""
-    base = ROOT + "/sys/devices/system/cpu"
+    base = SYS + "/sys/devices/system/cpu"
     if not any(os.path.exists("%s/%s/status" % (base, d)) for d in CPU_DRIVERS):
         return False
     try:
@@ -81,7 +83,7 @@ def ppd_cpu_driver():
 def amd_cards():
     """AMD display controllers driven by amdgpu or radeon: {pci slot: {card, driver}}."""
     cards = {}
-    drm = ROOT + "/sys/class/drm"
+    drm = SYS + "/sys/class/drm"
     try:
         names = sorted(os.listdir(drm))
     except OSError:
