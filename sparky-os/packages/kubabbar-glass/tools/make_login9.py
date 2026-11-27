@@ -716,8 +716,11 @@ def write_menubar():
     meta = {"KPlugin": {"Id": "kubabbar-glass-9-menubar", "Name": strings9.MENUBAR_NAME["en"]}}
     meta["KPlugin"].update({f"Name[{lang}]": strings9.MENUBAR_NAME[lang] for lang in LANGUAGES if lang != "en"})
     meta["KPlugin"]["Description"] = strings9.LOOK_DESCRIPTION["en"] + " " + strings9.MENUBAR_SENTENCE["en"]
-    meta["KPlugin"].update({f"Description[{lang}]": strings9.LOOK_DESCRIPTION[lang] + " " + strings9.MENUBAR_SENTENCE[lang]
-                            for lang in LANGUAGES if lang != "en"})
+    for lang in LANGUAGES:
+        if lang != "en":
+            separator = "" if lang in ("ja", "zh_CN", "zh_TW") else " "
+            meta["KPlugin"][f"Description[{lang}]"] = separator.join(
+                (strings9.LOOK_DESCRIPTION[lang], strings9.MENUBAR_SENTENCE[lang]))
     meta["KPlugin"].update({"Version": "0.1", "License": "GPL-3.0-only",
                             "Authors": [{"Name": "Daniel Ramos and EchoSystems AI studios"}]})
     meta["KPackageStructure"] = "Plasma/LookAndFeel"

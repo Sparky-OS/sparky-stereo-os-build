@@ -23,7 +23,7 @@ Rectangle {
 
     property string failure: ""
     property bool asking: false
-    readonly property var texts: {"cancel": {"de": "Abbrechen", "en": "Cancel", "es": "Cancelar", "fr": "Annuler", "ja": "キャンセル", "ko": "취소", "pl": "Anuluj", "pt_BR": "Cancelar", "zh_CN": "取消", "zh_TW": "取消"}, "prompt": {"de": "Wählen Sie Ihren Namen in der Liste oder geben Sie ihn ein.", "en": "Choose your name in the list, or type it.", "es": "Elija su nombre en la lista o escríbalo.", "fr": "Choisissez votre nom dans la liste, ou saisissez-le.", "ja": "一覧から名前を選ぶか、名前を入力してください。", "ko": "목록에서 이름을 고르거나 직접 입력하세요.", "pl": "Wybierz swoją nazwę z listy lub ją wpisz.", "pt_BR": "Escolha o seu nome na lista ou digite-o.", "zh_CN": "请在列表中选择您的名字，或直接输入。", "zh_TW": "請在清單中選擇您的名稱，或直接輸入。"}}
+    readonly property var texts: {"cancel": {"de": "Abbrechen", "en": "Cancel", "es": "Cancelar", "fr": "Annuler", "ja": "キャンセル", "ko": "취소", "pl": "Anuluj", "pt_BR": "Cancelar", "zh_CN": "取消", "zh_TW": "取消"}, "prompt": {"de": "Wählen Sie Ihren Benutzernamen aus der Liste oder geben Sie ihn ein.", "en": "Choose your name in the list, or type it.", "es": "Seleccione su usuario en la lista o escríbalo.", "fr": "Sélectionnez votre identifiant dans la liste ou saisissez-le.", "ja": "一覧からユーザ名を選ぶか、入力してください。", "ko": "목록에서 사용자 이름을 선택하거나 직접 입력하십시오.", "pl": "Wybierz nazwę użytkownika z listy lub wpisz ją.", "pt_BR": "Escolha seu usuário na lista ou digite-o.", "zh_CN": "请在列表中选择您的用户名，或直接输入。", "zh_TW": "請在清單中選取您的使用者名稱，或直接輸入。"}}
 
     // the edition's lookup: the whole locale, then the bare language, then English; Chinese keeps its script
     function tr(key) {
