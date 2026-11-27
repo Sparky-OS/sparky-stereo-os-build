@@ -240,9 +240,14 @@ spec = b'Spec ID Event03\x00' + struct.pack('<IBBBBI', 0, 0, 2, 0, 2, 1) + struc
 header = struct.pack('<II', 0, 3) + b'\x00' * 20 + struct.pack('<I', len(spec)) + spec
 good_log = header + event(0, 0x80000008, b'x' * 9) + event(4, 0x80000003, b'shim' * 8) + event(9, 0xd, b'grub.cfg')
 plain_log = header + event(0, 0x80000008, b'x' * 9) + event(7, 0x800000e0, b'sb')
-check('event log: entries counted, the boot manager found in PCR 4', anticheat.event_log(good_log) == (4, True),
+check('event log: entries counted, the boot manager\'s own measurement (PCR 9) found', anticheat.event_log(good_log) == (4, True),
       str(anticheat.event_log(good_log)))
-check('event log: no boot manager measurement', anticheat.event_log(plain_log) == (3, False))
+check('event log: only the firmware measured, not the boot manager', anticheat.event_log(plain_log) == (3, False))
+sm3_spec = b'Spec ID Event03\x00' + struct.pack('<IBBBBI', 0, 0, 2, 0, 2, 2) + struct.pack('<HHHH', 0x000b, 32, 0x0012, 32) + b'\x00'
+sm3_header = struct.pack('<II', 0, 3) + b'\x00' * 20 + struct.pack('<I', len(sm3_spec)) + sm3_spec
+sm3_event = struct.pack('<III', 8, 0xd, 2) + struct.pack('<H', 0x000b) + b'\x22' * 32 + struct.pack('<H', 0x0012) + b'\x33' * 32 + struct.pack('<I', 4) + b'grub'
+check('event log: an SM3_256 bank beside SHA-256 is read too', anticheat.event_log(sm3_header + sm3_event) == (2, True),
+      str(anticheat.event_log(sm3_header + sm3_event)))
 check('event log: too short', anticheat.event_log(b'abc') == (0, False))
 test_der = open(keys + '/test.der', 'rb').read()
 check('MOK list: X.509 entries read', anticheat.esl_certificates(esl(test_der, test_der)) == [test_der, test_der])
@@ -275,6 +280,11 @@ def check_root(**over):
     put('sys/power/disk', over.get('disk', '[disabled]') + '\n')
     for name, taint in over.get('modules', []):
         put('sys/module/%s/taint' % name, taint + '\n')
+    put('proc/sys/kernel/tainted', over.get('tainted', '0') + '\n')
+    if over.get('vendor'):
+        put('sys/class/dmi/id/sys_vendor', over['vendor'] + '\n')
+    if over.get('chassis'):
+        put('sys/class/dmi/id/chassis_type', over['chassis'] + '\n')
     return root
 
 
@@ -308,7 +318,7 @@ code, got, _ = rows(check_root(sb=False, mok=esl(test_der), tpm='', log=None, io
                                modules=[('ac190fake', 'OE')]), debian_signed)
 check('check: Secure Boot off, not met, how to turn it on', got['secure-boot'][0] == 'not-met'
       and 'Restart to UEFI setup' in got['secure-boot'][1])
-check('check: a kernel signed by Debian, unknown, the signer named', got['kernel-key'][0] == 'unknown'
+check('check: an image signed by Debian, its key on Epic\'s list, met', got['kernel-key'][0] == 'met'
       and 'Debian' in got['kernel-key'][1], str(got['kernel-key']))
 check('check: the edition key enrolled as MOK, not met', got['mok'][0] == 'not-met' and 'Row 190 throwaway' in got['mok'][1],
       str(got['mok']))
@@ -323,6 +333,16 @@ check('check: BPF LSM missing, not met', got['bpf-lsm'][0] == 'not-met')
 check('check: the usual start says so', got['start'][1] == 'This is the usual start, with hibernation.')
 check('check: no hibernation row when hibernation is available', 'hibernation' not in got)
 
+code, got, _ = rows(check_root(tainted=str(8192 | 4096)), keys + '/signed.efi')
+check('check: an unsigned module loaded earlier in this start, the taint bit', got.get('modules-loaded', ('',))[0] == 'not-met',
+      str(got.get('modules-loaded')))
+code, got, _ = rows(check_root(vendor='Valve'), keys + '/signed.efi')
+check('check: a Valve device is told not to turn Secure Boot on', got['secure-boot'][0] == 'not-met'
+      and 'Valve' in got['secure-boot'][1], str(got['secure-boot']))
+code, got, _ = rows(check_root(iommu='', chassis='31'), keys + '/signed.efi')
+check('check: no IOMMU on a handheld, not required', got['iommu'][0] == 'met' and 'handheld' in got['iommu'][1], str(got['iommu']))
+code, got, _ = rows(check_root(iommu=''), keys + '/signed.efi')
+check('check: no IOMMU on a desktop, not met', got['iommu'][0] == 'not-met')
 code, got, _ = rows(check_root(log=plain_log), unsigned)
 check('check: an unsigned kernel image, not met', got['kernel-key'][0] == 'not-met' and 'no signature' in got['kernel-key'][1])
 check('check: a measured boot log without the boot manager, not met', got['measured-boot'][0] == 'not-met')
@@ -375,7 +395,7 @@ langs = {}
 for code in ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW'):
     langs[code] = {k: v for k, v in (line.split('=', 1) for line in open(os.path.join(PKG, 'lang', code), encoding='utf-8')
                                      if line.startswith('LOCAL'))}
-wanted = ['LOCAL%d' % k for k in list(range(105, 111)) + list(range(120, 177))]
+wanted = ['LOCAL%d' % k for k in list(range(105, 111)) + list(range(120, 185)) if k not in (139, 144, 181)]
 for code, values in langs.items():
     missing = [k for k in wanted if k not in values]
     wrong = [k for k in wanted if k in values and values[k].count('%s') != langs['en'][k].count('%s')]

@@ -85,6 +85,15 @@ X509_GUID = uuid.UUID('a5c059a1-94e4-4aa7-87b5-ab155c2bf072').bytes_le
 # GRUB) that the firmware loaded, extended into PCR 4
 EV_EFI_BOOT_SERVICES_APPLICATION = 0x80000003
 TPM_ALG_DIGEST_SIZES = {0x0004: 20, 0x000b: 32, 0x000c: 48, 0x000d: 64, 0x0012: 32}
+# The boot manager's own measurements: GRUB's commands and files in PCRs 8 and 9, systemd-boot's and systemd-stub's in 11
+# and 12 (the rule of Bazzite's check-anticheat, Universal Blue, Apache-2.0)
+BOOT_MANAGER_PCRS = (8, 9, 11, 12)
+# The signing keys Epic's announcement of 2026-10-14 names as well-known, as certificate names (Bazzite's check-anticheat
+# reads the same list from the same page); a certificate is on the list when its subject or its issuer names one
+WELL_KNOWN = re.compile(r'Canonical Ltd\. Master Certificate Authority|Fedora Secure Boot CA|Universal Blue|'
+                        r'Debian Secure Boot CA|openSUSE Secure Boot CA|SUSE Linux Enterprise Secure Boot CA|'
+                        r'Rocky Linux Secure Boot Root CA|Microsoft (Corporation )?UEFI CA|AlmaLinux Secure Boot CA')
+TAINT_UNSIGNED_MODULE = 1 << 13
 
 
 # ------------------------------------------------------------------ the package's language files (Paweł's LOCAL files)
@@ -499,13 +508,24 @@ def signer_certificates(pkcs7):
 
 
 def _leaf(certs):
-    """The signing certificate: the one that issued no other certificate in the set."""
+    """The signing certificate: the one that issued no other certificate in the set; (der, subject, issuer)."""
     named = [(der,) + _subject(der) for der in certs]
     issuers = {issuer for _der, subject, issuer in named if issuer != subject}
-    for der, subject, _issuer in named:
+    for der, subject, issuer in named:
         if subject not in issuers:
-            return der, subject
-    return (named[0][0], named[0][1]) if named else (None, '')
+            return der, subject, issuer
+    return named[0] if named else (None, '', '')
+
+
+def well_known(subject, issuer=''):
+    return bool(WELL_KNOWN.search(subject or '') or WELL_KNOWN.search(issuer or ''))
+
+
+def _valve_or_handheld():
+    vendor = (_read(SYSFS + '/class/dmi/id/sys_vendor') or '').strip()
+    chassis = (_read(SYSFS + '/class/dmi/id/chassis_type') or '').strip()
+    # SMBIOS chassis types 30 to 32 (tablet, convertible, detachable) are how handhelds report themselves
+    return vendor == 'Valve', vendor == 'Valve' or chassis in ('30', '31', '32')
 
 
 def esl_certificates(data):
@@ -528,8 +548,8 @@ def esl_certificates(data):
 
 
 def event_log(data):
-    """(number of events, boot manager measured in PCR 4) of a TCG event log: the first event in the SHA-1 form, then
-    the crypto-agile form its Spec ID Event03 describes (TCG PC Client Platform Firmware Profile, 10.4)."""
+    """(number of events, the boot manager's own measurements present) of a TCG event log: the first event in the SHA-1
+    form, then the crypto-agile form its Spec ID Event03 describes (TCG PC Client Platform Firmware Profile, 10.4)."""
     if len(data) < 32:
         return 0, False
     size = struct.unpack_from('<I', data, 28)[0]
@@ -561,7 +581,7 @@ def event_log(data):
         if position > len(data):
             break
         events += 1
-        if pcr == 4 and kind == EV_EFI_BOOT_SERVICES_APPLICATION:
+        if pcr in BOOT_MANAGER_PCRS:
             boot_manager = True
     return events, boot_manager
 
@@ -634,7 +654,10 @@ def check(as_root=None):
     # 3. Secure Boot, with the firmware's keys
     secure = _efivar('SecureBoot', EFI_GLOBAL)
     setup = _efivar('SetupMode', EFI_GLOBAL)
-    if not uefi:
+    valve, handheld = _valve_or_handheld()
+    if valve:
+        rows.append(('secure-boot', 'not-met', text(s, 'LOCAL184')))
+    elif not uefi:
         rows.append(('secure-boot', 'not-met', text(s, 'LOCAL135')))
     elif secure is None:
         rows.append(('secure-boot', 'not-met' if os.path.isdir(EFIVARS) else 'unknown',
@@ -659,8 +682,13 @@ def check(as_root=None):
         elif edition and any(hashlib.sha256(der).hexdigest() == edition for der in certs):
             rows.append(('kernel-key', 'not-met', text(s, 'LOCAL138')))
         else:
-            _der, subject = _leaf(certs)
-            rows.append(('kernel-key', 'unknown', text(s, 'LOCAL139', _common_name(subject))))
+            found = [_subject(der) for der in certs]
+            known = [subject for subject, issuer in found if well_known(subject, issuer)]
+            if known:
+                rows.append(('kernel-key', 'met', text(s, 'LOCAL177', _common_name(known[0]))))
+            else:
+                _der, subject, _issuer = _leaf(certs)
+                rows.append(('kernel-key', 'not-met', text(s, 'LOCAL178', _common_name(subject))))
 
     # every enrolled Machine Owner Key must be well-known too (Epic's FAQ)
     if uefi:
@@ -668,15 +696,21 @@ def check(as_root=None):
         if mok is None:
             rows.append(('mok', 'met', text(s, 'LOCAL142')))
         else:
-            ours, others = [], []
+            ours, others, known = [], [], []
             for der in esl_certificates(mok):
                 digest = hashlib.sha256(der).hexdigest()
-                name = _common_name(_subject(der)[0])
-                (ours if digest in (edition, dkms) else others).append(name)
-            if ours:
-                rows.append(('mok', 'not-met', text(s, 'LOCAL143', ', '.join(ours))))
-            elif others:
-                rows.append(('mok', 'unknown', text(s, 'LOCAL144', ', '.join(others))))
+                subject, issuer = _subject(der)
+                name = _common_name(subject)
+                if digest in (edition, dkms):
+                    ours.append(name)
+                elif well_known(subject, issuer):
+                    known.append(name)
+                else:
+                    others.append(name)
+            if ours or others:
+                rows.append(('mok', 'not-met', text(s, 'LOCAL143', ', '.join(ours + others))))
+            elif known:
+                rows.append(('mok', 'met', text(s, 'LOCAL179', ', '.join(known))))
             else:
                 rows.append(('mok', 'met', text(s, 'LOCAL142')))
 
@@ -690,13 +724,18 @@ def check(as_root=None):
         serial = _dkms_serial()
         unsigned = [n for n, signer, _k in modules if not signer]
         here = [n for n, signer, key in modules if signer and serial and key.lstrip('0') == serial]
-        other = [(n, signer) for n, signer, key in modules if signer and n not in here]
+        other = [(n, signer) for n, signer, key in modules if signer and n not in here and not well_known(signer)]
         if unsigned:
             rows.append(('modules', 'not-met', text(s, 'LOCAL146', ', '.join(unsigned))))
         if here:
             rows.append(('modules', 'not-met', text(s, 'LOCAL147', ', '.join(here))))
         if other:
-            rows.append(('modules', 'unknown', text(s, 'LOCAL148', ', '.join('%s (%s)' % pair for pair in other))))
+            rows.append(('modules', 'not-met', text(s, 'LOCAL148', ', '.join('%s (%s)' % pair for pair in other))))
+        if not (unsigned or here or other):
+            rows.append(('modules', 'met', text(s, 'LOCAL180', ', '.join(sorted({signer for _n, signer, _k in modules})))))
+    tainted = (_read(PROC + '/sys/kernel/tainted') or '0').strip()
+    if tainted.isdigit() and int(tainted) & TAINT_UNSIGNED_MODULE and not any(r[0] == 'modules' and r[1] == 'not-met' for r in rows):
+        rows.append(('modules-loaded', 'not-met', text(s, 'LOCAL182')))
 
     # modules installed for this kernel outside its tree with no signature: lockdown refuses them (LOCKDOWN_MODULE_SIGNATURE
     # is below LOCKDOWN_INTEGRITY_MAX, include/linux/security.h), so in the anti-cheat start they do not load
@@ -739,7 +778,9 @@ def check(as_root=None):
                 kinds.add(kind)
     except OSError:
         pass
-    if not units:
+    if not units and handheld:
+        rows.append(('iommu', 'met', text(s, 'LOCAL183')))
+    elif not units:
         rows.append(('iommu', 'not-met', text(s, 'LOCAL159')))
     elif 'identity' in kinds:
         rows.append(('iommu', 'not-met', text(s, 'LOCAL158')))

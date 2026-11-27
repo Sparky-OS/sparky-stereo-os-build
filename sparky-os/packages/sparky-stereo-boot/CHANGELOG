@@ -18,8 +18,11 @@
   * sparky-stereo-boot anticheat-check [--json]: Secure Boot and whose key signed the running kernel, the enrolled
     Machine Owner Keys, modules from outside the kernel and who signed them, TPM 2.0, the measured boot log (its
     boot manager measurement read as an administrator), the IOMMU and passthrough, lockdown, kexec, the BPF LSM: each
-    met, not met or unknown, with why, in ten languages. The edition's own key and this computer's DKMS key are named
-    as not on Epic's list; any other signer is unknown, because the list is Epic's to say.
+    met, not met or unknown, with why, in ten languages. A key is on Epic's list of 2026-10-14 when a certificate's
+    subject or issuer names one of its keys; the edition's own key and this computer's DKMS key are named as not on it.
+    Measured boot needs the boot manager's own measurements (PCRs 8, 9, 11, 12), and the kernel's unsigned-module taint
+    counts a module loaded and gone; a Valve device is told not to turn Secure Boot on, and a handheld needs no IOMMU
+    (Epic's FAQ). These rules follow Bazzite's check-anticheat (Universal Blue; Ted O'Hayer and stellaberrant).
   * The check also names the modules of this kernel's updates folder (DKMS, prebuilt) that carry no signature: lockdown
     refuses them, so in the anti-cheat start they do not load (LOCAL175, LOCAL176). Found on the test laptop, whose
     DKMS modules (evdi, vhba, spl, zfs) are loaded without a signature.
