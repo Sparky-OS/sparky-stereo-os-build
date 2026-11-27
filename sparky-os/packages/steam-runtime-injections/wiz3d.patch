@@ -1,0 +1,202 @@
+--- a/tools/proton/wiz3d-launch
++++ b/tools/proton/wiz3d-launch
+@@ -128,7 +128,8 @@
+     # A 16-bit program is known from its header not to run in the 64-bit prefix: no need to see it fail first.
+     reason = wiz3d_prefix.failed_in_wow64(kind, 0, 0, '') if fallback and kind == 'win16' else None
+     if not reason:
+-        status, seconds, output = run_game(prefix, command, args, log_dir)
++        with wiz3d_prefix.prefix_lock(prefix):
++            status, seconds, output = run_game(prefix, command, args, log_dir)
+         if fallback:
+             reason = wiz3d_prefix.failed_in_wow64(kind, status, seconds, output)
+     if reason:
+@@ -137,7 +138,8 @@
+         say('the game does not run in the 64-bit prefix %s: %s. It runs in a 32-bit prefix instead, %s%s.'
+             % (prefix, reason, other, '' if made else ', which is made now'))
+         make_prefix(other, 'win32')
+-        status, seconds, output = run_game(other, command, args, log_dir)
++        with wiz3d_prefix.prefix_lock(other):
++            status, seconds, output = run_game(other, command, args, log_dir)
+         if status == 0 or seconds >= wiz3d_prefix.FAILURE_SECONDS:
+             wiz3d_prefix.remember_prefix(exe, other, reason)
+             say('the 32-bit prefix is remembered for %s in %s' % (exe, wiz3d_prefix.choices_path()))
+@@ -147,4 +149,7 @@
+ 
+ 
+ if __name__ == '__main__':
+-    sys.exit(main())
++    try:
++        sys.exit(main())
++    except (OSError, RuntimeError) as exc:
++        sys.exit(f"wiz3d-launch: {exc}")
+--- a/tools/proton/wiz3d-run
++++ b/tools/proton/wiz3d-run
+@@ -46,9 +46,16 @@
+     if not args.native_stereo:
+         overrides = env.get('WINEDLLOVERRIDES', '')
+         env['WINEDLLOVERRIDES'] = overrides + (';' if overrides else '') + 'd3d9=n,b'
+-    with tempfile.TemporaryDirectory(prefix='wiz3d-', dir=env.get('XDG_RUNTIME_DIR')) as temp:
++    prefix = wiz3d_prefix.default_prefix()
++    drive_c = Path(prefix) / 'drive_c'
++    # The game and the outer declaration helper share the Wine prefix.
++    state_dir = drive_c if drive_c.is_dir() else env.get('XDG_RUNTIME_DIR')
++    with tempfile.TemporaryDirectory(prefix='.wiz3d-', dir=state_dir) as temp:
+         state = Path(temp) / 'window-state'
+-        env['WIZ3D_STEREO_STATE'] = wiz3d_prefix.windows_path(state)
++        env['WIZ3D_STEREO_STATE'] = wiz3d_prefix.windows_path(state, prefix)
++        if state_dir == drive_c:
++            shared = env.get('PRESSURE_VESSEL_FILESYSTEMS_RW', '')
++            env['PRESSURE_VESSEL_FILESYSTEMS_RW'] = ':'.join(filter(None, (shared, str(drive_c))))
+         child = subprocess.Popen(command, env=env)
+         def forward(sig, frame):
+             if child.poll() is None:
+--- a/tools/proton/wiz3d_prefix.py
++++ b/tools/proton/wiz3d_prefix.py
+@@ -1,14 +1,19 @@
+ # SPDX-License-Identifier: LGPL-2.1-or-later
+ """Place wiz3D's Direct3D 9 proxy in a Wine prefix in front of DXVK, and take it out again.
+ 
+-Everything it makes is a symbolic link into /usr/lib/wiz3d, so `off` removes exactly what `on` made and
+-puts DXVK's d3d9.dll back where it was.  Both are idempotent.  The real Direct3D 9 is reached as
+-d3d9_real.dll in the same folder: the proxy and the wrapper look for that name first."""
++It places the payload under the prefix so Steam Runtime and the host see the
++same DLLs. It restores the original d3d9.dll when the injector is removed.
++"""
++from contextlib import contextmanager
++import fcntl
+ import json
+ import os
++from pathlib import Path
++import shutil
+ import stat
+ import string
+ import sys
++import tempfile
+ import time
+ 
+ WIZ3D = os.environ.get('WIZ3D_DIR', '/usr/lib/wiz3d')
+@@ -248,8 +253,27 @@
+                 os.mkdir(folder)
+ 
+ 
+-def ours(path):
+-    return os.path.islink(path) and os.readlink(path).startswith(WIZ3D + '/')
++PAYLOAD = '.sparky-wiz3d'
++REAL_DLL = 'd3d9_real.dll'
++
++
++@contextmanager
++def prefix_lock(prefix):
++    with open(Path(prefix) / '.sparky-d3d.lock', 'a') as lock:
++        fcntl.flock(lock, fcntl.LOCK_EX)
++        yield
++
++
++def legacy_link(path, architecture):
++    return path.is_symlink() and os.readlink(path) in {
++        str(Path(root) / architecture / path.name)
++        for root in (WIZ3D, '/usr/lib/wiz3d')
++    }
++
++
++def local_link(path):
++    name = 'dxvk.dll' if path.name == REAL_DLL else path.name
++    return path.is_symlink() and os.readlink(path) == f'{PAYLOAD}/{name}'
+ 
+ 
+ def is_dxvk(path):
+@@ -261,43 +285,64 @@
+ 
+ 
+ def on(prefix):
+-    """Put wiz3D in the prefix's system folders that hold DXVK's Direct3D 9; returns the folders without it.
+-
+-    RuntimeError says why it cannot, before anything is changed, when no folder holds DXVK's."""
+-    candidates = [(folder, arch) for folder, arch in system_dirs(prefix) if os.path.isdir(os.path.join(WIZ3D, arch))]
++    """Install the injector where there is a DXVK D3D9 and report other system folders."""
++    off(prefix)
++    candidates = [(Path(folder), arch) for folder, arch in system_dirs(prefix)
++                  if (Path(WIZ3D) / arch).is_dir()]
+     if not candidates:
+-        raise RuntimeError('wiz3D has no files for this prefix (%s)' % WIZ3D)
+-    folders = [(folder, arch) for folder, arch in candidates if ours(os.path.join(folder, 'd3d9.dll')) or is_dxvk(os.path.join(folder, 'd3d9.dll'))]
++        raise RuntimeError(f'wiz3D has no files for this prefix ({WIZ3D})')
++    folders = [(folder, arch) for folder, arch in candidates if is_dxvk(folder / 'd3d9.dll')]
+     if not folders:
+-        raise RuntimeError('wiz3D needs DXVK for Direct3D 9, and %s is not DXVK\'s: turn DXVK on for this game' % os.path.join(candidates[0][0], 'd3d9.dll'))
++        raise RuntimeError(f"wiz3D needs DXVK for Direct3D 9, and {candidates[0][0] / 'd3d9.dll'} is not DXVK's")
+     for folder, arch in folders:
+-        d3d9, real = os.path.join(folder, 'd3d9.dll'), os.path.join(folder, 'd3d9_real.dll')
+-        if not ours(d3d9):
+-            if os.path.lexists(real):
+-                os.remove(real)
+-            os.rename(d3d9, real)
+-        for name in FILES:
+-            target = os.path.join(folder, name)
++        for name in (*FILES[1:], REAL_DLL, PAYLOAD):
++            target = folder / name
+             if os.path.lexists(target):
+-                os.remove(target)
+-            os.symlink(os.path.join(WIZ3D, arch, name), target)
+-    return [folder for folder, arch in candidates if (folder, arch) not in folders]
++                raise RuntimeError(f'wiz3D cannot replace an existing file: {target}')
++    try:
++        for folder, arch in folders:
++            d3d9 = folder / 'd3d9.dll'
++            payload = folder / PAYLOAD
++            with tempfile.TemporaryDirectory(prefix='.wiz3d-build-', dir=folder) as work:
++                package = Path(work) / 'payload'
++                shutil.copytree(Path(WIZ3D) / arch, package)
++                shutil.copyfile(d3d9, package / 'dxvk.dll')
++                (package / '.managed').touch()
++                package.rename(payload)
++            d3d9.rename(payload / 'original-d3d9.dll')
++            for name in (*FILES[1:], REAL_DLL, 'd3d9.dll'):
++                target = 'dxvk.dll' if name == REAL_DLL else name
++                (folder / name).symlink_to(f'{PAYLOAD}/{target}')
++    except OSError:
++        off(prefix)
++        raise
++    return [str(folder) for folder, arch in candidates if (folder, arch) not in folders]
+ 
+ 
+ def off(prefix):
+-    """Take wiz3D out and put DXVK's d3d9.dll back; harmless when wiz3D is not in the prefix."""
+-    for folder, arch in system_dirs(prefix):
+-        real = os.path.join(folder, 'd3d9_real.dll')
+-        for name in FILES:
+-            target = os.path.join(folder, name)
+-            if ours(target):
+-                os.remove(target)
+-        if os.path.lexists(real):
+-            if not os.path.lexists(os.path.join(folder, 'd3d9.dll')):
+-                os.rename(real, os.path.join(folder, 'd3d9.dll'))  # the file moved aside by `on`
+-            elif os.path.islink(real):
+-                os.remove(real)  # DXVK put its own link back since: ours is stale
++    """Remove owned links and restore the original D3D9, including legacy prefixes."""
++    for name, arch in system_dirs(prefix):
++        folder = Path(name)
++        d3d9 = folder / 'd3d9.dll'
++        real = folder / REAL_DLL
++        payload = folder / PAYLOAD
++        original = payload / 'original-d3d9.dll'
++        managed = not payload.is_symlink() and (payload / '.managed').is_file()
++        had_legacy_proxy = legacy_link(d3d9, arch)
++        for entry in (*FILES, REAL_DLL):
++            target = folder / entry
++            if (managed and local_link(target)) or legacy_link(target, arch):
++                target.unlink()
++        if managed:
++            if os.path.lexists(original):
++                if os.path.lexists(d3d9):
++                    raise RuntimeError(f'wiz3D could not restore {d3d9}. Its backup is at {original}')
++                original.rename(d3d9)
++            shutil.rmtree(payload)
++        if had_legacy_proxy and os.path.lexists(real) and not os.path.lexists(d3d9):
++            real.rename(d3d9)
+ 
+ 
+ if __name__ == '__main__':
+-    {'on': on, 'off': off}[sys.argv[1]](sys.argv[2])
++    with prefix_lock(sys.argv[2]):
++        {'on': on, 'off': off}[sys.argv[1]](sys.argv[2])

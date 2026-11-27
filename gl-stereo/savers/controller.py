@@ -10,6 +10,7 @@ import socket
 import struct
 import subprocess
 import sys
+import sysconfig
 import time
 from catalogue import Rotation, active, load, report
 from frames import receive, send
@@ -94,6 +95,11 @@ class Controller:
             if key.startswith('GL_STEREO') or key in ('LD_PRELOAD','DISPLAY','WAYLAND_DISPLAY','XAUTHORITY'):
                 env.pop(key)
         env.update(self.entry['environment'])
+        if env.get('LD_PRELOAD') == self.entry['library']:
+            declaration = Path('/usr/lib') / sysconfig.get_config_var('MULTIARCH') / 'libstereo-declare.so.1'
+            if not declaration.is_file():
+                raise RuntimeError('libstereo-declare.so.1 is not installed')
+            env['LD_PRELOAD'] = f"{declaration} {env['LD_PRELOAD']}"
         env['PATH'] = '/usr/libexec/xscreensaver:' + env.get('PATH', os.defpath)
         env.update(DISPLAY=self.display, GL_STEREO_FRAME_FD=str(writer.fileno()))
         try:

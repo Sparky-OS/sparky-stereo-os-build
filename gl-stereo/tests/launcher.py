@@ -12,7 +12,9 @@ for on in ('on', 'off'):
     assert value['GL_STEREO'] == ('1' if on == 'on' else '0')
     if on == 'on':
         assert value['GL_STEREO_RENDER_RESOLUTION'] == '800x600'
-        assert 'libgl-stereo.so' in value['LD_PRELOAD']
+        declaration, layer = value['LD_PRELOAD'].split()[:2]
+        assert declaration.endswith('/libstereo-declare.so.1')
+        assert layer.endswith('/libgl-stereo.so')
     else:
         assert 'GL_STEREO_RENDER_RESOLUTION' not in value
 for bad in ('0x200', 'nan', '9000x100', '100x100;false'):
