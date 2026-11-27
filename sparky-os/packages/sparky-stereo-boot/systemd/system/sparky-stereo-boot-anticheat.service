@@ -1,0 +1,13 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/27
+# Copyright 2026 under the GNU GPL3 License
+# The anti-cheat start says at login that it has no hibernation (sparky-stereo-boot 0.1.17, row 190): a notice of this
+# boot in the edition's problems engine, which the session's notifier shows. Only in that start; nothing runs in the
+# usual one.
+[Unit]
+Description=Sparky Stereo OS: the anti-cheat start tells the session it has no hibernation
+ConditionKernelCommandLine=sparky_stereo.anticheat=1
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/sparky-stereo-boot/anticheat.py start

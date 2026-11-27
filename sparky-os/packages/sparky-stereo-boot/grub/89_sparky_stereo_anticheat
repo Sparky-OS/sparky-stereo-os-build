@@ -1,0 +1,13 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/27
+# Copyright 2026 under the GNU GPL3 License
+# The anti-cheat start (sparky-stereo-boot 0.1.17, row 190): Debian's own 10_linux entry for the newest kernel once
+# more, with kernel lockdown, kexec disabled from the kernel's start, hibernation off and the IOMMU on, under the id
+# gnulinux-sparky-stereo-anticheat, which Plasma's "Restart for anti-cheat games" starts once (grub-reboot). It comes
+# right before 90_sparky_stereo_start, so no entry of Debian's, of another system or of the person's 40_custom changes
+# its number. On a BIOS start there is none: Easy Anti-Cheat needs Secure Boot, which needs UEFI.
+# /usr/lib/sparky-stereo-boot/anticheat.py writes it; SPARKY_STEREO_ANTICHEAT=no in /etc/default/sparky-stereo-boot
+# leaves it out.
+set -e
+[ -x /usr/bin/python3 ] && [ -f "${SPARKY_STEREO_LIB:-/usr/lib/sparky-stereo-boot}/anticheat.py" ] || exit 0
+exec /usr/bin/python3 "${SPARKY_STEREO_LIB:-/usr/lib/sparky-stereo-boot}/anticheat.py" grub

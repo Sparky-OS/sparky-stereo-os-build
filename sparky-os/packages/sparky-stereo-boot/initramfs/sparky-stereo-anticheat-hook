@@ -1,0 +1,30 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/27
+# Copyright 2026 under the GNU GPL3 License
+# The anti-cheat start's guard needs its one sentence inside the boot image, in the system's language and in English
+# (sparky-stereo-boot 0.1.17, row 190; the language files are not in the boot image).
+PREREQ=""
+prereqs()
+{
+	echo "$PREREQ"
+}
+case $1 in
+prereqs)
+	prereqs
+	exit 0
+	;;
+esac
+dir=/usr/share/sparky/sparky-stereo-boot
+lang=$(sed -n 's/^LANG=//p' /etc/default/locale 2>/dev/null | tr -d '"' | head -n 1)
+lang=${lang%%.*}
+case $lang in
+pt_BR|zh_CN|zh_TW) ;;
+zh*) lang=zh_CN ;;
+*) lang=${lang%%_*} ;;
+esac
+[ -f "$dir/$lang" ] || lang=en
+mkdir -p "${DESTDIR}/etc/sparky-stereo-boot"
+sed -n 's/^LOCAL174="\(.*\)"$/\1/p' "$dir/$lang" > "${DESTDIR}/etc/sparky-stereo-boot/anticheat-hibernated"
+if [ "$lang" != en ]; then
+	sed -n 's/^LOCAL174="\(.*\)"$/\1/p' "$dir/en" >> "${DESTDIR}/etc/sparky-stereo-boot/anticheat-hibernated"
+fi

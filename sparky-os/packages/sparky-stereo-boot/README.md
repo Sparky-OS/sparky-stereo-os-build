@@ -95,3 +95,15 @@ To see the plan: sudo /usr/lib/sparky-stereo-boot/kernel-keep.py --dry-run
 
 Boot images: every update-initramfs -u writes the boot image of every installed kernel, not only the newest's (update_initramfs=all in /etc/initramfs-tools/update-initramfs.conf.sparky-stereo; initramfs-tools' own file is kept as update-initramfs.conf.debian and comes back when the package is removed).
 So a boot splash, firmware or module change reaches the older kernel too, and after every kernel removal every kept kernel's boot image and GRUB's menu are written again.
+
+## The anti-cheat start (0.1.17)
+
+Easy Anti-Cheat for Linux, version 2, asks for kernel lockdown in integrity mode, kexec disabled from the kernel's start, the IOMMU on without passthrough and the BPF security module, beside Secure Boot with well-known keys, TPM 2.0 and measured boot.
+The usual start keeps hibernation, so it has no lockdown; on a UEFI computer GRUB's menu has a second start for the newest kernel with all of that, and Plasma's Restart for anti-cheat games (Restart Options, Kickoff, KRunner) starts it once.
+The start after it is the usual one.
+
+- `sparky-stereo-boot anticheat-check` says what Easy Anti-Cheat would see on this computer, requirement by requirement; with `sudo` it also reads the measured boot log's entries.
+- `pkexec /usr/lib/sparky-stereo-boot/anticheat-restart set` asks GRUB for the anti-cheat start once, as Plasma does; `unset` takes the request back.
+- `SPARKY_STEREO_ANTICHEAT=no` in `/etc/default/sparky-stereo-boot`, then `sudo update-grub`, leaves the entry out.
+- The anti-cheat start never runs over a hibernated system: it restarts into the usual start, which resumes it.
+

@@ -1,0 +1,52 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/27
+# Copyright 2026 under the GNU GPL3 License
+# The anti-cheat start never runs over a hibernated system (sparky-stereo-boot 0.1.17, row 190).
+# Under lockdown=integrity hibernation_available() is false, so the kernel's resume_store() returns without reading the
+# image (kernel/power/hibernate.c), and nohibernate sets noresume. The image would stay on the swap area while this
+# start changes the file systems, and the next usual start would restore memory that no longer matches its disks.
+# When this start finds a hibernation image where initramfs-tools' own resume script looks (local-premount/resume:
+# get_fstype says "suspend" for a swap partition; for a swap file the header at resume_offset, in PAGE_SIZE units,
+# ends with HIBERNATE_SIG "S1SUSPEND", struct swsusp_header in kernel/power/swap.c), it says so and restarts: GRUB has
+# already taken the one-time request, so the next start is the usual one, which resumes the system.
+PREREQ="resume"
+prereqs()
+{
+	echo "$PREREQ"
+}
+case $1 in
+prereqs)
+	prereqs
+	exit 0
+	;;
+esac
+case " $(cat /proc/cmdline) " in
+*" sparky_stereo.anticheat=1 "*) ;;
+*) exit 0 ;;
+esac
+if [ -z "${resume?}" ]; then
+	exit 0
+fi
+. /scripts/functions
+. /scripts/local
+if ! local_device_setup "${resume}" "suspend/resume device" false; then
+	exit 0
+fi
+image=
+if [ -n "${resume_offset?}" ]; then
+	if dd if="${DEV}" of=/run/sparky-stereo-swap-header bs=4096 skip="${resume_offset}" count=1 2>/dev/null; then
+		sig=$(dd if=/run/sparky-stereo-swap-header bs=1 skip=4086 count=9 2>/dev/null)
+		[ "$sig" != S1SUSPEND ] || image=yes
+	fi
+elif [ "$(get_fstype "${DEV}")" = suspend ]; then
+	image=yes
+fi
+[ -n "$image" ] || exit 0
+while IFS= read -r line; do
+	log_warning_msg "$line"
+	if command -v plymouth >/dev/null && plymouth --ping; then
+		plymouth display-message --text="$line"
+	fi
+done < /etc/sparky-stereo-boot/anticheat-hibernated
+sleep 15
+echo b > /proc/sysrq-trigger

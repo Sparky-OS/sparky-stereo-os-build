@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/25
+# Last update 2026/11/27
 #
 # Builds the sparky-stereo-boot package (hand assembled, Paweł's formula).
 #   build.sh OUTDIR
@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.16+lc1
+VERSION=0.1.17+lc1
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
@@ -24,7 +24,7 @@ chmod 755 "$D"
 install -D -m 755 "$HERE/bin/sparky-stereo-boot" "$D/usr/bin/sparky-stereo-boot"
 for u in sparky-stereo-boot.socket sparky-stereo-boot@.service sparky-stereo-boot-handover.service sparky-stereo-boot-check.service \
 	sparky-stereo-boot-login.service sparky-stereo-boot-finished.service \
-	sparky-stereo-boot-secureboot.service sparky-stereo-boot-dkms-key.path; do
+	sparky-stereo-boot-secureboot.service sparky-stereo-boot-dkms-key.path sparky-stereo-boot-anticheat.service; do
 	install -D -m 644 "$HERE/systemd/system/$u" "$D/usr/lib/systemd/system/$u"
 done
 install -D -m 644 "$HERE/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf" "$D/usr/lib/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf"
@@ -53,6 +53,16 @@ done
 # this computer's DKMS key (0.1.8, ORDER 374): beside shim and checked against the MOK list at every boot, and placed
 # when DKMS makes it (the first boot's signing)
 ln -s ../sparky-stereo-boot-secureboot.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-boot-secureboot.service"
+# the anti-cheat start (0.1.17, row 190): its GRUB entry, the one-time restart Plasma asks for through pkexec and
+# polkit, what Easy Anti-Cheat would see, the guard that never lets it run over a hibernated system, and the notice at
+# login that it has no hibernation (the unit runs only with sparky_stereo.anticheat=1 on the kernel line)
+ln -s ../sparky-stereo-boot-anticheat.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-boot-anticheat.service"
+install -D -m 644 "$HERE/lib/anticheat.py" "$D/usr/lib/sparky-stereo-boot/anticheat.py"
+install -D -m 755 "$HERE/lib/anticheat-restart" "$D/usr/lib/sparky-stereo-boot/anticheat-restart"
+install -D -m 755 "$HERE/grub/89_sparky_stereo_anticheat" "$D/etc/grub.d/89_sparky_stereo_anticheat"
+install -D -m 644 "$HERE/polkit/org.sparkystereo.boot.policy" "$D/usr/share/polkit-1/actions/org.sparkystereo.boot.policy"
+install -D -m 755 "$HERE/initramfs/sparky-stereo-anticheat-hook" "$D/usr/share/initramfs-tools/hooks/sparky-stereo-anticheat"
+install -D -m 755 "$HERE/initramfs/sparky-stereo-anticheat-premount" "$D/usr/share/initramfs-tools/scripts/local-premount/sparky-stereo-anticheat"
 for u in sparky-stereo-boot-export.path sparky-stereo-boot-export.service; do
 	install -D -m 644 "$HERE/systemd/user/$u" "$D/usr/lib/systemd/user/$u"
 	ln -s ../$u "$D/usr/lib/systemd/user/default.target.wants/$u"
@@ -107,7 +117,7 @@ install -D -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 mkdir -p "$D/DEBIAN"
 printf '%s\n' /etc/default/sparky-stereo-boot /etc/default/grub.d/30-sparky-stereo-boot.cfg /etc/default/grub.d/31-sparky-stereo-ia32.cfg \
 	/etc/default/grub.d/zz-sparky-stereo-loglevel.cfg \
-	/etc/grub.d/35_sparky_stereo_secureboot /etc/grub.d/01_sparky_stereo_menu /etc/grub.d/90_sparky_stereo_start /etc/kernel/postinst.d/zz-sparky-stereo-secureboot \
+	/etc/grub.d/35_sparky_stereo_secureboot /etc/grub.d/01_sparky_stereo_menu /etc/grub.d/89_sparky_stereo_anticheat /etc/grub.d/90_sparky_stereo_start /etc/kernel/postinst.d/zz-sparky-stereo-secureboot \
 	/etc/kernel/postinst.d/zz-sparky-stereo-kernel-keep /etc/initramfs-tools/update-initramfs.conf.sparky-stereo > "$D/DEBIAN/conffiles"
 cat > "$D/DEBIAN/preinst" <<'SCRIPT'
 #!/bin/sh
@@ -200,8 +210,9 @@ if [ "$1" = configure ]; then
 	# 0.1.11 (ORDER 572b): the Linux entries record each start and the menu shows by itself after one that did not
 	# finish; 0.1.13 records it through load_video and 0.1.14 names a person's GRUB_GFXPAYLOAD_LINUX=text (LOCAL102), so
 	# the menu and that problem are written again, as the last step; 0.1.15 (ORDER 666) writes the Secure Boot enrolment
-	# entries only where the firmware has Secure Boot and 0.1.16 sets the normal-entry console log level
-	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.16; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	# entries only where the firmware has Secure Boot, 0.1.16 sets the normal-entry console log level and 0.1.17 adds
+	# the anti-cheat start (row 190)
+	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.17; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
 		python3 $P run update-grub LOCAL21 -- update-grub || failed=1
 	fi
 	[ -z "$failed" ] || exit 1
@@ -321,7 +332,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: grub-common, os-prober, libdrm2, libstereo-policy1 (>= 1.15.0), python3, systemd, sparky-stereo-problems (>= 0.1.0)
+Depends: grub-common, os-prober, libdrm2, libstereo-policy1 (>= 1.15.0), python3, systemd, sparky-stereo-problems (>= 0.1.0), pkexec, openssl, kmod
 Recommends: plymouth (>= 26.134.222-1+stereo3d4), sparky-stereo-plymouth (>= 20261117~sparky9~0)
 Section: System
 Priority: optional
@@ -345,6 +356,14 @@ Description: Sparky Stereo OS boot that follows the main screen
   kept next to shim on the EFI system partition, with a GRUB entry that
   enrolls each one; a DKMS key that is not enrolled while modules signed
   with it are installed is said.
+  .
+  On a UEFI computer GRUB's menu has an anti-cheat start: the newest
+  kernel with kernel lockdown (integrity), kexec disabled from the
+  kernel's start, hibernation off and the IOMMU on, as Easy Anti-Cheat
+  for Linux asks. Plasma's Restart for anti-cheat games starts it once,
+  and the start after it is the usual one, with hibernation.
+  sparky-stereo-boot anticheat-check says what Easy Anti-Cheat would see
+  on this computer, requirement by requirement.
   .
   Nothing in the boot's upkeep fails silently: a failed update-grub,
   boot image, Secure Boot certificate, kernel cleanup or 3D splash
