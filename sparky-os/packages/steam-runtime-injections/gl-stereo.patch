@@ -1,0 +1,67 @@
+diff --git a/gl-stereo-run b/gl-stereo-run
+index c5558fa55..ec7d81b4b 100755
+--- a/gl-stereo-run
++++ b/gl-stereo-run
+@@ -8,6 +8,7 @@ from pathlib import Path
+ import re
+ import subprocess
+ import sys
++import sysconfig
+ 
+ # OpenGL on NVIDIA: NVIDIA's EGL gives a window no second view, so a program
+ # that draws its own two views gets them either from Mesa running on NVIDIA's
+@@ -210,8 +211,13 @@ def main():
+     if enabled:
+         if not library.is_file():
+             parser.error('gl-stereo library is not installed')
+-        preloads = env.get('LD_PRELOAD', '').split()
+-        env['LD_PRELOAD'] = ' '.join([str(library)] + [p for p in preloads if p != str(library)])
++        declaration = Path('/usr/lib') / sysconfig.get_config_var('MULTIARCH') / 'libstereo-declare.so.1'
++        if not declaration.is_file():
++            parser.error('libstereo-declare.so.1 is not installed')
++        # pressure-vessel imports explicit preloads but may omit their dependencies.
++        stereo_preloads = [str(declaration), str(library)]
++        preloads = re.split(r'[:\s]+', env.get('LD_PRELOAD', ''))
++        env['LD_PRELOAD'] = ' '.join(stereo_preloads + [p for p in preloads if p and p not in stereo_preloads])
+         env['GL_STEREO'] = '1'
+         env.pop('GL_STEREO_PASSTHROUGH', None)
+         # A program that draws its own two views keeps the driver's where it has
+diff --git a/savers/controller.py b/savers/controller.py
+index 26ae203dd..ea969af57 100644
+--- a/savers/controller.py
++++ b/savers/controller.py
+@@ -10,6 +10,7 @@ import socket
+ import struct
+ import subprocess
+ import sys
++import sysconfig
+ import time
+ from catalogue import Rotation, active, load, report
+ from frames import receive, send
+@@ -94,6 +95,11 @@ class Controller:
+             if key.startswith('GL_STEREO') or key in ('LD_PRELOAD','DISPLAY','WAYLAND_DISPLAY','XAUTHORITY'):
+                 env.pop(key)
+         env.update(self.entry['environment'])
++        if env.get('LD_PRELOAD') == self.entry['library']:
++            declaration = Path('/usr/lib') / sysconfig.get_config_var('MULTIARCH') / 'libstereo-declare.so.1'
++            if not declaration.is_file():
++                raise RuntimeError('libstereo-declare.so.1 is not installed')
++            env['LD_PRELOAD'] = f"{declaration} {env['LD_PRELOAD']}"
+         env['PATH'] = '/usr/libexec/xscreensaver:' + env.get('PATH', os.defpath)
+         env.update(DISPLAY=self.display, GL_STEREO_FRAME_FD=str(writer.fileno()))
+         try:
+diff --git a/tests/launcher.py b/tests/launcher.py
+index 32a21ddff..7e1445d4b 100644
+--- a/tests/launcher.py
++++ b/tests/launcher.py
+@@ -12,7 +12,9 @@ for on in ('on', 'off'):
+     assert value['GL_STEREO'] == ('1' if on == 'on' else '0')
+     if on == 'on':
+         assert value['GL_STEREO_RENDER_RESOLUTION'] == '800x600'
+-        assert 'libgl-stereo.so' in value['LD_PRELOAD']
++        declaration, layer = value['LD_PRELOAD'].split()[:2]
++        assert declaration.endswith('/libstereo-declare.so.1')
++        assert layer.endswith('/libgl-stereo.so')
+     else:
+         assert 'GL_STEREO_RENDER_RESOLUTION' not in value
+ for bad in ('0x200', 'nan', '9000x100', '100x100;false'):

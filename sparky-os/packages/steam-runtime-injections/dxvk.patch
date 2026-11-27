@@ -1,0 +1,110 @@
+--- a/debian/control
++++ b/debian/control
+@@ -2,8 +2,8 @@
+ Section: libs
+ Priority: optional
+ Maintainer: Marc Dequènes (Duck) <Duck@DuckCorp.org>
+-Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml, bubblewrap, debhelper-compat (= 13),
+-               glslang-tools,
++Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml, bubblewrap, debhelper-compat (= 13)
++Build-Depends-Arch: glslang-tools,
+                meson,
+                ninja-build,
+                libsdl2-dev,
+@@ -30,7 +30,8 @@
+ Multi-Arch: foreign
+ Depends: ${shlibs:Depends},
+          ${misc:Depends},
+-         dxvk-wine64 (>= ${source:Version}) | dxvk-wine32 (>= ${source:Version}),
++         util-linux,
++         dxvk-wine64 (>= 2.7.1-4+stereo3d5+lc1) | dxvk-wine32 (>= 2.7.1-4+stereo3d5+lc1),
+ Recommends: dxvk-wine32,
+             dxvk-wine64,
+ Description: Vulkan-based translation layer for Direct3D 8/9/10/11
+--- a/debian/dxvk-setup/dxvk-setup
++++ b/debian/dxvk-setup/dxvk-setup
+@@ -169,17 +169,29 @@
+     # 64-bit prefix, and only wine32 can open a 32-bit one
+     local winebin=$prefixwinebin
+ 
+-    echo "    [1/2] Creating registry override for $dll_name"
+-    echo -n "        "
++    local target="$unix_dlls_path/$dll_name.dll"
++    local backup="$target.old"
++    local temporary
++    temporary=$(mktemp "$target.XXXXXXXX")
++    if ! cp --reflink=auto --preserve=mode -- "$build_path/$dll_name.dll.so" "$temporary"; then
++        rm -f -- "$temporary"
++        return 1
++    fi
++
++    # Keep the original for uninstall, including when it was a symlink.
++    if [[ ! -e "$backup" && ! -L "$backup" ]]; then
++        if ! cp -a -- "$target" "$backup"; then
++            rm -f -- "$temporary"
++            return 1
++        fi
++    fi
++    if ! mv -fT -- "$temporary" "$target"; then
++        rm -f -- "$temporary"
++        return 1
++    fi
++
++    echo "    Installed native override for $dll_name"
+     "$winebin" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll_name" /d native /f
+-
+-    echo "    [2/2] Creating file override for $dll_name"
+-    if [ -f "$unix_dlls_path/$dll_name.dll.old" ]; then
+-        echo "    override already in place"
+-    else
+-        mv "$unix_dlls_path/$dll_name.dll" "$unix_dlls_path/$dll_name.dll.old"
+-        ln -s "$build_path/$dll_name.dll.so" "$unix_dlls_path/$dll_name.dll"
+-    fi
+ }
+ 
+ # $1 = (64 / 32)
+@@ -200,8 +212,8 @@
+     "$winebin" reg add 'HKEY_CURRENT_USER\Software\Wine\DllOverrides' /v "$dll_name" /d builtin /f 2>&1
+ 
+     echo "    [2/2] Removing file override for $dll_name"
+-    if [ -f "$unix_dlls_path/$dll_name.dll.old" ]; then
+-        mv "$unix_dlls_path/$dll_name.dll.old" "$unix_dlls_path/$dll_name.dll"
++    if [[ -e "$unix_dlls_path/$dll_name.dll.old" || -L "$unix_dlls_path/$dll_name.dll.old" ]]; then
++        mv -fT -- "$unix_dlls_path/$dll_name.dll.old" "$unix_dlls_path/$dll_name.dll"
+     else
+         echo "    override already removed"
+     fi
+@@ -339,6 +351,11 @@
+     exit 1
+ fi
+ 
++if [[ -n "${WINEPREFIX:-}" ]]; then
++    exec {prefixlock}>"$WINEPREFIX/.sparky-d3d.lock"
++    flock -x "$prefixlock"
++fi
++
+ # 64bit builds only in a 64bit prefix
+ if [[ $prefix_arch == win64 ]]; then
+     setup_dxvk "$cmd" 64
+--- a/debian/rules
++++ b/debian/rules
+@@ -43,6 +43,10 @@
+ 	-Dnative_sdl3=enabled \
+ 	$(NULL)
+ 
++ifeq ($(built_binaries),dxvk)
++# This architecture-independent package installs the prefix setup script.
++override_dh_auto_configure override_dh_auto_build override_dh_auto_test override_dh_auto_install override_dh_auto_clean:
++else
+ execute_after_dh_auto_clean:
+ 	rm -fr $(WINE_BUILD_DIR)
+ 
+@@ -105,6 +109,8 @@
+ execute_after_dh_clean:
+ 	rm -rf include/vulkan include/spirv subprojects
+ 
++endif
++
+ # Distribution-only processing; authored source remains in the source archive.
+ execute_before_dh_auto_configure:
+ 	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree project $(CURDIR)
