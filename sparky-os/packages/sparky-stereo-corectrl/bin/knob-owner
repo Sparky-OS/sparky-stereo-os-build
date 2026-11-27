@@ -316,14 +316,17 @@ def apply_tuned(bus, hold):
     ok, _, instances = call("get_instances", "(s)", ("cpu",), "(bsa(ss))")
     if not ok:
         return False
-    ours = any(name == TUNED_INSTANCE for name, _ in instances)
+    # get_instances lists active instances only; ours is inactive while it has no processor
+    ours = call("instance_get_devices", "(s)", (TUNED_INSTANCE,), "(bsas)")[0]
     if not hold:
         if ours:
             call("instance_destroy", "(s)", (TUNED_INSTANCE,), "(bs)")
             log("tuned has the processors back")
         return True
     if not ours:
-        ok, message = call("instance_create", "(ssa{ss})", ("cpu", TUNED_INSTANCE, {}), "(bs)")
+        # last by priority: the first cpu instance of a profile keeps the latency settings (plugin_cpu.py _instance_init),
+        # and nothing moves by itself; the processors are taken below. devices must be given (the matcher iterates it).
+        ok, message = call("instance_create", "(ssa{ss})", ("cpu", TUNED_INSTANCE, {"devices": "*", "priority": "1000"}), "(bs)")
         if not ok:
             engine(["keep", "--machine", PKG, "tuned", "LOCAL7", "CoreCtrl", message])
             return False
