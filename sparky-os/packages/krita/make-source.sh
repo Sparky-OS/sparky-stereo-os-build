@@ -119,10 +119,11 @@ edit("control", [
     ("               zlib1g-dev\n", "               wayland-protocols,\n               zlib1g-dev\n"),
     # the window keeps the canvas\x27s depth with its alpha only with the edition\x27s Qt (6.11.2+dfsg-5+stereo3d3 and
     # later, as +stereo3d7 needed); View > Display Settings runs kcmshell6 (libkf6kcmutils-bin) with the display page
-    # (kscreen): a dependency a designed feature needs is a Depends
+    # (kscreen); the native Wayland platform needs Qt\x27s Wayland shell integration (qt6-wayland: without it Qt makes no
+    # Wayland window and Krita runs on X11, flat and at 8 bits): a dependency a designed feature needs is a Depends
     ("Depends: krita-data (>= ${source:Version}), libqt5sql5-sqlite,\n",
      "Depends: krita-data (>= ${source:Version}), libqt6widgets6 (>= 6.11.2+dfsg-5+stereo3d3), libqt6sql6-sqlite,\n"
-     "         qml6-module-qtquick-controls, libkf6kcmutils-bin, kscreen,\n"),
+     "         qml6-module-qtquick-controls, libkf6kcmutils-bin, kscreen, qt6-wayland,\n"),
     ("Recommends: python3-pyqt5,\n", "Recommends: python3-pyqt6,\n"),
 ])
 edit("rules", [
