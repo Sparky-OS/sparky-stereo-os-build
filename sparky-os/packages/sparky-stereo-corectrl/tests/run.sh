@@ -3,7 +3,7 @@
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 status=0
-for t in decide rule dropin tell catalogs; do
+for t in decide rule dropin tell unit catalogs; do
 	echo "== $t"
 	python3 "$here/$t.py" || status=1
 done
