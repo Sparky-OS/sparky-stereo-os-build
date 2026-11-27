@@ -1,0 +1,1699 @@
+Description: GtkGLArea: a plain area's deep picture on a surface of its own, the memory way, luminances and mastering data
+ GTK 3 draws a window in 8 bit sRGB. A plain GtkGLArea (one that does not ask
+ for stereo) whose format is deeper than 8 bits, whose colour state is not
+ sRGB, or which carries luminances or mastering data now hands its picture to
+ the compositor on the stereo area's own kind of surface, with nothing
+ declared, so that its depth and its description reach the compositor; the
+ window keeps its hole over it as for a stereo area. The new properties
+ surface-shown and surface-error say whether it does and, where it cannot (an
+ X window, a compositor without colour management), why: it is then drawn into
+ its window as before.
+ .
+ On Wayland the picture goes to the compositor as a dma-buf where one carries
+ it, and otherwise through memory: a wl_shm buffer of a format the compositor
+ lists, as deep as the picture (XBGR16161616, XBGR2101010, XBGR16161616F,
+ XBGR8888, or XRGB8888 with red and blue exchanged), read back every frame.
+ That keeps every bit of a 16 bit picture on drivers that export no 16 bit
+ dma-buf (NVIDIA's EGL, zink on NVIDIA's Vulkan driver) and gives a software
+ renderer a way at all; a format no way carries fails as a format
+ (GDK_GL_ERROR_UNSUPPORTED_FORMAT), so a program can take another.
+ GDK_WAYLAND_GL_AREA_MEMORY=1 takes the memory way always, =0 never. The stereo
+ protocol and libstereo-declare are needed for a stereo area only.
+ .
+ gtk_gl_area_set_luminances(), gtk_gl_area_set_mastering_display() and
+ gtk_gl_area_set_content_light_levels() carry wp_color_management_v1's
+ set_luminances, set_mastering_display_primaries, set_mastering_luminance,
+ set_max_cll and set_max_fall (CTA-861-H, SMPTE ST 2086) into the surface's
+ description, checked against the features the compositor lists and the
+ protocol's own rules first (a maximum and a reference above the minimum).
+ Without them a PQ picture is described with PQ's defaults (peak 10000 cd/m2)
+ and a compositor that tone maps shows its reference white at about half.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, GIMP milestone 3: the deep and HDR canvas)
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff --git a/gtk/gtkglarea.c b/gtk/gtkglarea.c
+index 92ec10b..9914932 100644
+--- a/gtk/gtkglarea.c
++++ b/gtk/gtkglarea.c
+@@ -65,6 +65,23 @@
+  * An area that cannot be shown per eye says why (#GtkGLArea:stereo-error),
+  * logs it once and shows its left view alone, until stereo is asked again.
+  *
++ * ## Depth and colour ##
++ *
++ * GTK 3 draws a window in 8 bit sRGB. A plain area (one that does not ask
++ * for stereo) whose format is deeper, whose colour state is another, or
++ * which carries luminances or mastering data (gtk_gl_area_set_luminances(),
++ * gtk_gl_area_set_mastering_display(),
++ * gtk_gl_area_set_content_light_levels()) hands its picture to the
++ * compositor on the same kind of surface of its own, with nothing declared,
++ * so that its depth and its description reach the compositor
++ * (#GtkGLArea:surface-shown). Where that cannot be done (an X window, a
++ * compositor without colour management) it says why
++ * (#GtkGLArea:surface-error) and is drawn into its window.
++ *
++ * On Wayland the picture goes to the compositor as a dma-buf, or through
++ * memory (a wl_shm buffer of the picture's own depth) where no dma-buf
++ * carries it: a driver that exports none, or none of the picture's format.
++ *
+  * In order to draw, you have to connect to the #GtkGLArea::render signal,
+  * or subclass #GtkGLArea and override the @GtkGLAreaClass.render() virtual
+  * function.
+@@ -192,10 +209,14 @@ typedef struct {
+   GdkMemoryFormat format;
+   GdkColorState *color_state;
+   GtkGLAreaStereo *stereo_output;
++  int output_views;
++  gboolean surface_shown;
++  gboolean surface_failed;
++  GError *surface_error;
++  GtkGLAreaVolume volume;
+   int buffer_width;
+   int buffer_height;
+   guint repeat_id;
+-  gboolean told_flat;
+ } GtkGLAreaPrivate;
+ 
+ enum {
+@@ -216,6 +237,8 @@ enum {
+   PROP_STEREO_VIEW_HEIGHT,
+   PROP_FORMAT,
+   PROP_COLOR_STATE,
++  PROP_SURFACE_SHOWN,
++  PROP_SURFACE_ERROR,
+ 
+   LAST_PROP
+ };
+@@ -244,6 +267,7 @@ gtk_gl_area_dispose (GObject *gobject)
+ 
+   g_clear_object (&priv->context);
+   g_clear_error (&priv->stereo_error);
++  g_clear_error (&priv->surface_error);
+   g_clear_pointer (&priv->color_state, gdk_color_state_unref);
+   if (priv->repeat_id != 0)
+     {
+@@ -377,6 +401,14 @@ gtk_gl_area_get_property (GObject    *gobject,
+       g_value_set_boxed (value, priv->color_state);
+       break;
+ 
++    case PROP_SURFACE_SHOWN:
++      g_value_set_boolean (value, priv->surface_shown);
++      break;
++
++    case PROP_SURFACE_ERROR:
++      g_value_set_boxed (value, priv->surface_error);
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
+     }
+@@ -754,6 +786,31 @@ gtk_gl_area_set_stereo_shown (GtkGLArea *area,
+   g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_SHOWN]);
+ }
+ 
++static void
++gtk_gl_area_set_surface_shown (GtkGLArea *area,
++                               gboolean   shown)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  if (priv->surface_shown == shown)
++    return;
++
++  priv->surface_shown = shown;
++  g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_SURFACE_SHOWN]);
++}
++
++/* Whether a plain area's picture needs a surface of its own: GTK 3 draws a window in 8 bit sRGB, so a deeper format, another
++ * colour state, or luminances and mastering data reach the compositor only there */
++static gboolean
++gtk_gl_area_needs_surface (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  return priv->format != GDK_MEMORY_R8G8B8A8_PREMULTIPLIED ||
++         !gdk_color_state_equal (priv->color_state, gdk_color_state_get_srgb ()) ||
++         !gtk_gl_area_volume_is_default (&priv->volume);
++}
++
+ static void
+ gtk_gl_area_close_hole (GtkGLArea *area)
+ {
+@@ -773,6 +830,7 @@ gtk_gl_area_drop_stereo_output (GtkGLArea *area)
+       gtk_gl_area_stereo_hide (priv->stereo_output);
+       g_clear_pointer (&priv->stereo_output, gtk_gl_area_stereo_free);
+     }
++  priv->output_views = 0;
+   gtk_gl_area_close_hole (area);
+   if (priv->repeat_id != 0)
+     {
+@@ -797,11 +855,35 @@ gtk_gl_area_stereo_failed (GtkGLArea *area,
+   priv->stereo_failed = TRUE;
+   gtk_gl_area_drop_stereo_output (area);
+   gtk_gl_area_set_stereo_shown (area, FALSE);
++  gtk_gl_area_set_surface_shown (area, FALSE);
+   priv->needs_resize = TRUE;
+   priv->needs_render = TRUE;
+   g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_ERROR]);
+ }
+ 
++/* A plain area whose format or colour state its window cannot hold, and whose picture cannot reach the compositor on a
++ * surface of its own: it says why, once, and is drawn into its window (8 bit sRGB, its values as written) until its
++ * format, colour state or luminances change (takes @error) */
++static void
++gtk_gl_area_surface_failed (GtkGLArea *area,
++                            GError    *error)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  if (priv->surface_error == NULL || g_strcmp0 (priv->surface_error->message, error->message) != 0)
++    g_message ("GtkGLArea %p draws into its window, which GTK 3 keeps in 8 bit sRGB, because its format or colour state cannot reach the compositor: %s",
++               area, error->message);
++
++  g_clear_error (&priv->surface_error);
++  priv->surface_error = error;
++  priv->surface_failed = TRUE;
++  gtk_gl_area_drop_stereo_output (area);
++  gtk_gl_area_set_surface_shown (area, FALSE);
++  priv->needs_resize = TRUE;
++  priv->needs_render = TRUE;
++  g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_SURFACE_ERROR]);
++}
++
+ static void
+ gtk_gl_area_unrealize (GtkWidget *widget)
+ {
+@@ -814,6 +896,7 @@ gtk_gl_area_unrealize (GtkWidget *widget)
+         gtk_gl_area_make_current (area);
+       gtk_gl_area_drop_stereo_output (area);
+       gtk_gl_area_set_stereo_shown (area, FALSE);
++      gtk_gl_area_set_surface_shown (area, FALSE);
+     }
+ 
+   if (priv->context != NULL)
+@@ -948,7 +1031,7 @@ gtk_gl_area_stereo_place (GtkGLArea     *area,
+           y + allocation.height > gdk_window_get_height (window))
+         {
+           g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
+-                               "The area is partly hidden (scrolled out, or cut by its window or a widget around it), and a stereo picture is never cut");
++                               "The area is partly hidden (scrolled out, or cut by its window or a widget around it), and a picture on a surface of its own is never cut");
+           return FALSE;
+         }
+       if (window == toplevel)
+@@ -975,11 +1058,14 @@ gtk_gl_area_repeat (gpointer data)
+   return G_SOURCE_REMOVE;
+ }
+ 
+-/* One frame of a stereo area: both views rendered, copied side by side and handed to the compositor on the area's own
+- * surface, and a hole in the window over it. FALSE when the area failed (it then draws its left view alone) */
++/* One frame on the area's own surface: a stereo area's two views (@n_views 2) rendered, copied side by side and declared,
++ * or a plain area's one picture (@n_views 1) whose depth or colour state its window cannot hold; the picture handed to
++ * the compositor on the area's own surface, and a hole in the window over it. FALSE when the area failed: a stereo area
++ * then draws its left view alone, a plain area its picture into its window */
+ static gboolean
+-gtk_gl_area_draw_stereo (GtkGLArea *area,
+-                         cairo_t   *cr)
++gtk_gl_area_draw_surface (GtkGLArea *area,
++                          cairo_t   *cr,
++                          int        n_views)
+ {
+   GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
+   GtkWidget *widget = GTK_WIDGET (area);
+@@ -995,11 +1081,14 @@ gtk_gl_area_draw_stereo (GtkGLArea *area,
+   if (!gtk_gl_area_stereo_place (area, &place, &error))
+     goto failed;
+ 
++  if (priv->stereo_output != NULL && priv->output_views != n_views)
++    gtk_gl_area_drop_stereo_output (area);
+   if (priv->stereo_output == NULL)
+     {
+-      priv->stereo_output = gtk_gl_area_stereo_new (widget, priv->context, &error);
++      priv->stereo_output = gtk_gl_area_stereo_new (widget, priv->context, n_views, &error);
+       if (priv->stereo_output == NULL)
+         goto failed;
++      priv->output_views = n_views;
+       priv->needs_resize = TRUE;
+     }
+ 
+@@ -1021,11 +1110,11 @@ gtk_gl_area_draw_stereo (GtkGLArea *area,
+     }
+ 
+   pair = gtk_gl_area_stereo_begin (priv->stereo_output, view_width, view_height,
+-                                   gtk_gl_area_internal_format (area, TRUE), priv->color_state, &error);
++                                   gtk_gl_area_internal_format (area, TRUE), priv->color_state, &priv->volume, &error);
+   if (pair == 0)
+     goto failed;
+ 
+-  for (eye = GTK_GL_AREA_EYE_LEFT; eye <= GTK_GL_AREA_EYE_RIGHT; eye++)
++  for (eye = GTK_GL_AREA_EYE_LEFT; eye < GTK_GL_AREA_EYE_LEFT + n_views; eye++)
+     {
+       /* the area's framebuffer, whatever the handler of the other view left bound */
+       gtk_gl_area_attach_buffers (area);
+@@ -1035,7 +1124,8 @@ gtk_gl_area_draw_stereo (GtkGLArea *area,
+         glDisable (GL_DEPTH_TEST);
+       glViewport (0, 0, view_width, view_height);
+ 
+-      priv->current_eye = eye;
++      /* a plain area renders no view for an eye */
++      priv->current_eye = n_views == 2 ? eye : GTK_GL_AREA_EYE_NONE;
+       g_signal_emit (area, area_signals[RENDER], 0, priv->context, &unused);
+       priv->current_eye = GTK_GL_AREA_EYE_NONE;
+ 
+@@ -1060,7 +1150,7 @@ gtk_gl_area_draw_stereo (GtkGLArea *area,
+   priv->needs_render = FALSE;
+ 
+   if (!gtk_gl_area_stereo_present (priv->stereo_output, &place, gtk_widget_get_scale_factor (widget),
+-                                   priv->color_state, &error))
++                                   priv->color_state, &priv->volume, &error))
+     goto failed;
+ 
+   gtk_gl_area_make_current (area);
+@@ -1084,16 +1174,28 @@ gtk_gl_area_draw_stereo (GtkGLArea *area,
+   if (gtk_gl_area_stereo_wants_repeat (priv->stereo_output) && priv->repeat_id == 0)
+     priv->repeat_id = g_timeout_add (20, gtk_gl_area_repeat, area);
+ 
+-  if (priv->stereo_error != NULL)
++  if (n_views == 2)
+     {
+-      g_clear_error (&priv->stereo_error);
+-      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_ERROR]);
++      if (priv->stereo_error != NULL)
++        {
++          g_clear_error (&priv->stereo_error);
++          g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_ERROR]);
++        }
++      gtk_gl_area_set_stereo_shown (area, TRUE);
+     }
+-  gtk_gl_area_set_stereo_shown (area, TRUE);
++  else if (priv->surface_error != NULL)
++    {
++      g_clear_error (&priv->surface_error);
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_SURFACE_ERROR]);
++    }
++  gtk_gl_area_set_surface_shown (area, TRUE);
+   return TRUE;
+ 
+ failed:
+-  gtk_gl_area_stereo_failed (area, error);
++  if (n_views == 2)
++    gtk_gl_area_stereo_failed (area, error);
++  else
++    gtk_gl_area_surface_failed (area, error);
+   return FALSE;
+ }
+ 
+@@ -1121,16 +1223,27 @@ gtk_gl_area_draw (GtkWidget *widget,
+ 
+   gtk_gl_area_make_current (area);
+ 
+-  if (gtk_gl_area_renders_pair (area) && gtk_gl_area_draw_stereo (area, cr))
++  if (gtk_gl_area_renders_pair (area) && gtk_gl_area_draw_surface (area, cr, 2))
+     return TRUE;
+ 
+-  /* GTK 3 draws its windows in 8 bit sRGB: the area's own depth and colour state reach the compositor only on a
+-   * surface of its own, which a stereo area has */
+-  if (!priv->told_flat && !priv->stereo &&
+-      (priv->format != GDK_MEMORY_R8G8B8A8_PREMULTIPLIED || !gdk_color_state_equal (priv->color_state, gdk_color_state_get_srgb ())))
++  /* GTK 3 draws its windows in 8 bit sRGB: a plain area's own depth and colour state reach the compositor on a surface of
++   * its own, which a stereo area has too */
++  if (!priv->stereo)
+     {
+-      priv->told_flat = TRUE;
+-      g_message ("GtkGLArea %p draws into its window, which GTK 3 keeps in 8 bit sRGB: its format and colour state reach the compositor only when it asks for stereo", area);
++      if (gtk_gl_area_needs_surface (area))
++        {
++          if (!priv->surface_failed && gtk_gl_area_draw_surface (area, cr, 1))
++            return TRUE;
++        }
++      else if (priv->stereo_output != NULL)
++        {
++          /* back in 8 bit sRGB: drawn into the window again */
++          gtk_gl_area_drop_stereo_output (area);
++          gtk_gl_area_set_surface_shown (area, FALSE);
++          priv->needs_resize = TRUE;
++          priv->needs_render = TRUE;
++          gtk_gl_area_make_current (area);
++        }
+     }
+ 
+   gtk_gl_area_attach_buffers (area);
+@@ -1444,6 +1557,40 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+                         GDK_TYPE_COLOR_STATE,
+                         GTK_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
+ 
++  /**
++   * GtkGLArea:surface-shown:
++   *
++   * Whether the area's picture reaches the compositor on a surface of its
++   * own: a stereo area shown per eye, or a plain area whose format, colour
++   * state or luminances its window, which GTK 3 keeps in 8 bit sRGB, cannot
++   * hold.
++   *
++   * Since: 3.24.52+stereo3d2
++   */
++  obj_props[PROP_SURFACE_SHOWN] =
++    g_param_spec_boolean ("surface-shown",
++                          P_("Surface shown"),
++                          P_("Whether the picture reaches the compositor on a surface of its own"),
++                          FALSE,
++                          GTK_PARAM_READABLE);
++
++  /**
++   * GtkGLArea:surface-error:
++   *
++   * Why a plain area whose format, colour state or luminances its window
++   * cannot hold is drawn into its window instead of on a surface of its own
++   * (in 8 bit sRGB, its values as written), or %NULL. A change of its
++   * format, colour state or luminances tries again.
++   *
++   * Since: 3.24.52+stereo3d2
++   */
++  obj_props[PROP_SURFACE_ERROR] =
++    g_param_spec_boxed ("surface-error",
++                        P_("Surface error"),
++                        P_("Why the picture is drawn into the window"),
++                        G_TYPE_ERROR,
++                        GTK_PARAM_READABLE);
++
+   g_object_class_install_properties (gobject_class, LAST_PROP, obj_props);
+ 
+   /**
+@@ -1553,6 +1700,7 @@ gtk_gl_area_init (GtkGLArea *area)
+   priv->stereo_view_height = -1;
+   priv->format = GDK_MEMORY_R8G8B8A8_PREMULTIPLIED;
+   priv->color_state = gdk_color_state_ref (gdk_color_state_get_srgb ());
++  gtk_gl_area_volume_init (&priv->volume);
+ }
+ 
+ /**
+@@ -2020,6 +2168,12 @@ gtk_gl_area_stereo_changed (GtkGLArea *area)
+       g_clear_error (&priv->stereo_error);
+       g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_ERROR]);
+     }
++  if (priv->surface_failed)
++    {
++      priv->surface_failed = FALSE;
++      g_clear_error (&priv->surface_error);
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_SURFACE_ERROR]);
++    }
+   priv->needs_resize = TRUE;
+   gtk_gl_area_queue_render (area);
+ }
+@@ -2234,7 +2388,6 @@ gtk_gl_area_set_format (GtkGLArea       *area,
+     return;
+ 
+   priv->format = format;
+-  priv->told_flat = FALSE;
+   gtk_gl_area_stereo_changed (area);
+   g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_FORMAT]);
+ }
+@@ -2283,7 +2436,6 @@ gtk_gl_area_set_color_state (GtkGLArea     *area,
+ 
+   gdk_color_state_unref (priv->color_state);
+   priv->color_state = gdk_color_state_ref (color_state);
+-  priv->told_flat = FALSE;
+   gtk_gl_area_stereo_changed (area);
+   g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_COLOR_STATE]);
+ }
+@@ -2305,3 +2457,244 @@ gtk_gl_area_get_color_state (GtkGLArea *area)
+ 
+   return priv->color_state;
+ }
++
++/**
++ * gtk_gl_area_get_surface_shown:
++ * @area: a #GtkGLArea
++ *
++ * Returns: whether the area's picture reaches the compositor on a surface of
++ *   its own. See #GtkGLArea:surface-shown.
++ *
++ * Since: 3.24.52+stereo3d2
++ */
++gboolean
++gtk_gl_area_get_surface_shown (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), FALSE);
++
++  return priv->surface_shown;
++}
++
++/**
++ * gtk_gl_area_get_surface_error:
++ * @area: a #GtkGLArea
++ *
++ * Returns: (nullable) (transfer none): why a plain area whose format, colour
++ *   state or luminances its window cannot hold is drawn into its window, or
++ *   %NULL. See #GtkGLArea:surface-error.
++ *
++ * Since: 3.24.52+stereo3d2
++ */
++const GError *
++gtk_gl_area_get_surface_error (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), NULL);
++
++  return priv->surface_error;
++}
++
++static void
++gtk_gl_area_volume_changed (GtkGLArea             *area,
++                            const GtkGLAreaVolume *before)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  if (!gtk_gl_area_volume_equal (before, &priv->volume))
++    gtk_gl_area_stereo_changed (area);
++}
++
++/**
++ * gtk_gl_area_set_luminances:
++ * @area: a #GtkGLArea
++ * @min_luminance: the minimum luminance of the colour state's range, in
++ *   cd/m², or -1
++ * @max_luminance: the maximum luminance of the range, in cd/m², or -1
++ * @reference_luminance: the luminance of reference white, in cd/m², or -1
++ *
++ * Says the luminances the area's values are given in, which the colour
++ * state's transfer function implies otherwise (wp_color_management_v1's
++ * set_luminances; for ITU-R BT.2100 PQ 0.005, 10000 and 203 cd/m², for sRGB
++ * and linear 0.2, 80 and 80). The maximum and the reference must be above the
++ * minimum. Three values of -1 take the transfer function's own again.
++ *
++ * Since: 3.24.52+stereo3d2
++ */
++void
++gtk_gl_area_set_luminances (GtkGLArea *area,
++                            double     min_luminance,
++                            double     max_luminance,
++                            double     reference_luminance)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  GtkGLAreaVolume before;
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++  g_return_if_fail ((min_luminance < 0 && max_luminance < 0 && reference_luminance < 0) ||
++                    (min_luminance >= 0 && max_luminance > min_luminance && reference_luminance > min_luminance));
++
++  before = priv->volume;
++  if (reference_luminance < 0)
++    priv->volume.min_luminance = priv->volume.max_luminance = priv->volume.reference_luminance = -1;
++  else
++    {
++      priv->volume.min_luminance = min_luminance;
++      priv->volume.max_luminance = max_luminance;
++      priv->volume.reference_luminance = reference_luminance;
++    }
++  gtk_gl_area_volume_changed (area, &before);
++}
++
++/**
++ * gtk_gl_area_get_luminances:
++ * @area: a #GtkGLArea
++ * @min_luminance: (out) (optional): the minimum luminance, or -1
++ * @max_luminance: (out) (optional): the maximum luminance, or -1
++ * @reference_luminance: (out) (optional): the reference white, or -1
++ *
++ * Returns: whether the area says its luminances
++ *
++ * Since: 3.24.52+stereo3d2
++ */
++gboolean
++gtk_gl_area_get_luminances (GtkGLArea *area,
++                            double    *min_luminance,
++                            double    *max_luminance,
++                            double    *reference_luminance)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), FALSE);
++
++  if (min_luminance)
++    *min_luminance = priv->volume.min_luminance;
++  if (max_luminance)
++    *max_luminance = priv->volume.max_luminance;
++  if (reference_luminance)
++    *reference_luminance = priv->volume.reference_luminance;
++  return priv->volume.reference_luminance >= 0;
++}
++
++/**
++ * gtk_gl_area_set_mastering_display:
++ * @area: a #GtkGLArea
++ * @primaries: (nullable) (array fixed-size=8): the mastering display's
++ *   primaries and white point as CIE 1931 xy chromaticities (red x, red y,
++ *   green x, green y, blue x, blue y, white x, white y), or %NULL
++ * @min_luminance: the mastering display's minimum luminance, in cd/m², or -1
++ * @max_luminance: the mastering display's maximum luminance, in cd/m², or -1
++ *
++ * Says the mastering display colour volume of the area's content (SMPTE ST
++ * 2086; wp_color_management_v1's set_mastering_display_primaries and
++ * set_mastering_luminance), which the compositor uses to fit the content to
++ * a screen. The maximum must be above the minimum; %NULL and two values of
++ * -1 say nothing.
++ *
++ * Since: 3.24.52+stereo3d2
++ */
++void
++gtk_gl_area_set_mastering_display (GtkGLArea    *area,
++                                   const double *primaries,
++                                   double        min_luminance,
++                                   double        max_luminance)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  GtkGLAreaVolume before;
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++  g_return_if_fail ((min_luminance < 0 && max_luminance < 0) || (min_luminance >= 0 && max_luminance > min_luminance));
++
++  before = priv->volume;
++  for (int i = 0; i < 8; i++)
++    {
++      g_return_if_fail (primaries == NULL || (primaries[i] >= 0 && primaries[i] <= 1));
++      priv->volume.mastering_primaries[i] = primaries ? primaries[i] : -1;
++    }
++  priv->volume.mastering_min_luminance = max_luminance < 0 ? -1 : min_luminance;
++  priv->volume.mastering_max_luminance = max_luminance < 0 ? -1 : max_luminance;
++  gtk_gl_area_volume_changed (area, &before);
++}
++
++/**
++ * gtk_gl_area_get_mastering_display:
++ * @area: a #GtkGLArea
++ * @primaries: (out caller-allocates) (optional) (array fixed-size=8): the
++ *   mastering display's chromaticities, each -1 when none
++ * @min_luminance: (out) (optional): its minimum luminance, or -1
++ * @max_luminance: (out) (optional): its maximum luminance, or -1
++ *
++ * Returns: whether the area says anything of its mastering display
++ *
++ * Since: 3.24.52+stereo3d2
++ */
++gboolean
++gtk_gl_area_get_mastering_display (GtkGLArea *area,
++                                   double    *primaries,
++                                   double    *min_luminance,
++                                   double    *max_luminance)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), FALSE);
++
++  if (primaries)
++    memcpy (primaries, priv->volume.mastering_primaries, sizeof priv->volume.mastering_primaries);
++  if (min_luminance)
++    *min_luminance = priv->volume.mastering_min_luminance;
++  if (max_luminance)
++    *max_luminance = priv->volume.mastering_max_luminance;
++  return priv->volume.mastering_primaries[0] >= 0 || priv->volume.mastering_max_luminance >= 0;
++}
++
++/**
++ * gtk_gl_area_set_content_light_levels:
++ * @area: a #GtkGLArea
++ * @max_cll: the maximum content light level, in cd/m², or -1
++ * @max_fall: the maximum frame-average light level, in cd/m², or -1
++ *
++ * Says the content light levels of the area's content (CTA-861-H, MaxCLL
++ * and MaxFALL; wp_color_management_v1's set_max_cll and set_max_fall).
++ *
++ * Since: 3.24.52+stereo3d2
++ */
++void
++gtk_gl_area_set_content_light_levels (GtkGLArea *area,
++                                      double     max_cll,
++                                      double     max_fall)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  GtkGLAreaVolume before;
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++
++  before = priv->volume;
++  priv->volume.max_cll = max_cll < 0 ? -1 : max_cll;
++  priv->volume.max_fall = max_fall < 0 ? -1 : max_fall;
++  gtk_gl_area_volume_changed (area, &before);
++}
++
++/**
++ * gtk_gl_area_get_content_light_levels:
++ * @area: a #GtkGLArea
++ * @max_cll: (out) (optional): the maximum content light level, or -1
++ * @max_fall: (out) (optional): the maximum frame-average light level, or -1
++ *
++ * Since: 3.24.52+stereo3d2
++ */
++void
++gtk_gl_area_get_content_light_levels (GtkGLArea *area,
++                                      double    *max_cll,
++                                      double    *max_fall)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++
++  if (max_cll)
++    *max_cll = priv->volume.max_cll;
++  if (max_fall)
++    *max_fall = priv->volume.max_fall;
++}
+diff --git a/gtk/gtkglarea.h b/gtk/gtkglarea.h
+index 60a4335..5933535 100644
+--- a/gtk/gtkglarea.h
++++ b/gtk/gtkglarea.h
+@@ -183,6 +183,38 @@ void            gtk_gl_area_set_color_state             (GtkGLArea       *area,
+                                                          GdkColorState   *color_state);
+ GDK_AVAILABLE_IN_ALL
+ GdkColorState * gtk_gl_area_get_color_state             (GtkGLArea       *area);
++GDK_AVAILABLE_IN_ALL
++gboolean        gtk_gl_area_get_surface_shown           (GtkGLArea       *area);
++GDK_AVAILABLE_IN_ALL
++const GError *  gtk_gl_area_get_surface_error           (GtkGLArea       *area);
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_set_luminances              (GtkGLArea       *area,
++                                                         double           min_luminance,
++                                                         double           max_luminance,
++                                                         double           reference_luminance);
++GDK_AVAILABLE_IN_ALL
++gboolean        gtk_gl_area_get_luminances              (GtkGLArea       *area,
++                                                         double          *min_luminance,
++                                                         double          *max_luminance,
++                                                         double          *reference_luminance);
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_set_mastering_display       (GtkGLArea       *area,
++                                                         const double    *primaries,
++                                                         double           min_luminance,
++                                                         double           max_luminance);
++GDK_AVAILABLE_IN_ALL
++gboolean        gtk_gl_area_get_mastering_display       (GtkGLArea       *area,
++                                                         double          *primaries,
++                                                         double          *min_luminance,
++                                                         double          *max_luminance);
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_set_content_light_levels    (GtkGLArea       *area,
++                                                         double           max_cll,
++                                                         double           max_fall);
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_get_content_light_levels    (GtkGLArea       *area,
++                                                         double          *max_cll,
++                                                         double          *max_fall);
+ 
+ G_END_DECLS
+ 
+diff --git a/gtk/gtkglareastereo.c b/gtk/gtkglareastereo.c
+index 2900a42..9f1d8a9 100644
+--- a/gtk/gtkglareastereo.c
++++ b/gtk/gtkglareastereo.c
+@@ -34,6 +34,14 @@
+  * view, declared with libstereo-declare's X11 calls and placed below the window's own surface when the window has an
+  * alpha channel. The views are drawn on it with the area's own OpenGL context (GLX), or copied through memory
+  * (glReadPixels, XPutImage) on a software renderer.
++ *
++ * A plain area whose format or colour state the 8 bit sRGB window cannot hold (a deeper picture, another colour state,
++ * luminances or mastering data) takes the same surface on Wayland with one view and nothing declared, so its depth and
++ * its description reach the compositor too. An X window holds neither, and such an area says so.
++ *
++ * Where no dma-buf carries the picture (a driver that exports none, or none of its format: NVIDIA's EGL and zink on
++ * NVIDIA have no 16 bit one; a software renderer), the Wayland route copies it through memory into a wl_shm buffer of a
++ * format the compositor lists, which keeps every bit; GDK_WAYLAND_GL_AREA_MEMORY=1 always takes that way and =0 never.
+  */
+ 
+ #include "config.h"
+@@ -43,7 +51,10 @@
+ 
+ #include <gmodule.h>
+ #include <errno.h>
++#include <fcntl.h>
++#include <math.h>
+ #include <string.h>
++#include <sys/mman.h>
+ #include <unistd.h>
+ 
+ #ifdef GDK_WINDOWING_WAYLAND
+@@ -150,6 +161,12 @@ typedef struct
+   struct wl_buffer *buffer;
+   gboolean busy;
+   guint32 fourcc;
++  /* the memory way: the picture read back into a wl_shm buffer of this mapping */
++  gboolean in_memory;
++  void *data;
++  gsize size;
++  GLenum read_type;
++  gboolean swap_red_blue;
+ #endif
+ } PairBuffer;
+ 
+@@ -171,14 +188,19 @@ typedef struct
+   struct wl_subcompositor *subcompositor;
+   struct wp_viewporter *viewporter;
+   struct zwp_linux_dmabuf_v1 *dmabuf;
++  struct wl_shm *shm;
+   struct wp_color_manager_v1 *color_manager;
+   guint32 cm_tf;
+   guint32 cm_primaries;
++  guint32 cm_features;
+   gboolean cm_parametric;
+   gboolean cm_perceptual;
+-  GArray *formats;  /* guint64 pairs: fourcc, modifier */
++  GArray *formats;      /* guint64 pairs: fourcc, modifier */
++  GArray *shm_formats;  /* guint32: the wl_shm formats the compositor lists */
++  int memory;           /* GDK_WAYLAND_GL_AREA_MEMORY: -1 when needed, 0 never, 1 always */
+   StereoDeclare *lib;
+-  GError *error;
++  GError *error;        /* no subsurface can be made at all */
++  GError *stereo_error; /* a subsurface can be made, but not declared as stereo content */
+ } WaylandGlobals;
+ #endif
+ 
+@@ -188,6 +210,7 @@ struct _GtkGLAreaStereo
+   GdkGLContext *context;
+   GdkDisplay *display;
+   Route route;
++  int n_views;
+   PairBuffer buffers[MAX_BUFFERS];
+   int n_buffers;
+   int current;
+@@ -201,6 +224,7 @@ struct _GtkGLAreaStereo
+   struct wp_color_management_surface_v1 *color_surface;
+   struct wp_image_description_v1 *description;
+   GdkColorState *described;
++  GtkGLAreaVolume described_volume;
+   gboolean declared;
+   gboolean attached;
+   int x, y, dest_width, dest_height;
+@@ -243,7 +267,36 @@ gtk_gl_area_stereo_format_type (GLenum  internal_format,
+     }
+ }
+ 
+-/* The pair's buffers: a texture twice the view's width, in the area's format, with a framebuffer to blit the views into */
++void
++gtk_gl_area_volume_init (GtkGLAreaVolume *volume)
++{
++  volume->min_luminance = volume->max_luminance = volume->reference_luminance = -1;
++  for (int i = 0; i < 8; i++)
++    volume->mastering_primaries[i] = -1;
++  volume->mastering_min_luminance = volume->mastering_max_luminance = -1;
++  volume->max_cll = volume->max_fall = -1;
++}
++
++gboolean
++gtk_gl_area_volume_is_default (const GtkGLAreaVolume *volume)
++{
++  return volume == NULL ||
++         (volume->reference_luminance < 0 && volume->mastering_primaries[0] < 0 &&
++          volume->mastering_max_luminance < 0 && volume->max_cll < 0 && volume->max_fall < 0);
++}
++
++gboolean
++gtk_gl_area_volume_equal (const GtkGLAreaVolume *a,
++                          const GtkGLAreaVolume *b)
++{
++  GtkGLAreaVolume none;
++
++  gtk_gl_area_volume_init (&none);
++  return memcmp (a ? a : &none, b ? b : &none, sizeof (GtkGLAreaVolume)) == 0;
++}
++
++/* The pair's buffers: a texture as wide as the views side by side, in the area's format, with a framebuffer to blit the
++ * views into */
+ 
+ static void
+ pair_buffer_clear (GtkGLAreaStereo *stereo,
+@@ -254,10 +307,15 @@ pair_buffer_clear (GtkGLAreaStereo *stereo,
+     wl_buffer_destroy (buffer->buffer);
+   if (buffer->image != NULL)
+     eglDestroyImageKHR (eglGetCurrentDisplay (), buffer->image);
++  if (buffer->data != NULL)
++    munmap (buffer->data, buffer->size);
+   buffer->buffer = NULL;
+   buffer->image = NULL;
+   buffer->busy = FALSE;
+   buffer->fourcc = 0;
++  buffer->in_memory = FALSE;
++  buffer->data = NULL;
++  buffer->size = 0;
+ #endif
+   if (buffer->framebuffer != 0)
+     glDeleteFramebuffers (1, &buffer->framebuffer);
+@@ -389,6 +447,8 @@ cm_supported_feature (void *data, struct wp_color_manager_v1 *manager, uint32_t
+ 
+   if (feature == WP_COLOR_MANAGER_V1_FEATURE_PARAMETRIC)
+     globals->cm_parametric = TRUE;
++  if (feature < 32)
++    globals->cm_features |= 1u << feature;
+ }
+ 
+ static void
+@@ -422,6 +482,18 @@ static const struct wp_color_manager_v1_listener color_manager_listener = {
+   .done = cm_done,
+ };
+ 
++static void
++shm_format (void *data, struct wl_shm *shm, uint32_t format)
++{
++  WaylandGlobals *globals = data;
++
++  g_array_append_val (globals->shm_formats, format);
++}
++
++static const struct wl_shm_listener shm_listener = {
++  shm_format,
++};
++
+ static void
+ registry_global (void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
+ {
+@@ -429,6 +501,12 @@ registry_global (void *data, struct wl_registry *registry, uint32_t name, const
+ 
+   if (strcmp (interface, wl_compositor_interface.name) == 0 && version >= 4)
+     globals->compositor = wl_registry_bind (registry, name, &wl_compositor_interface, 4);
++  else if (strcmp (interface, wl_shm_interface.name) == 0)
++    {
++      /* its formats are announced after the bind: the second round trip of wayland_globals_get() reads them */
++      globals->shm = wl_registry_bind (registry, name, &wl_shm_interface, 1);
++      wl_shm_add_listener (globals->shm, &shm_listener, globals);
++    }
+   else if (strcmp (interface, wl_subcompositor_interface.name) == 0)
+     globals->subcompositor = wl_registry_bind (registry, name, &wl_subcompositor_interface, 1);
+   else if (strcmp (interface, wp_viewporter_interface.name) == 0)
+@@ -479,6 +557,12 @@ wayland_globals_get (GdkDisplay  *display,
+   globals = g_new0 (WaylandGlobals, 1);
+   g_object_set_data (G_OBJECT (display), "gtk-gl-area-stereo-wayland", globals);
+   globals->formats = g_array_new (FALSE, FALSE, sizeof (guint64));
++  globals->shm_formats = g_array_new (FALSE, FALSE, sizeof (guint32));
++  {
++    const char *memory = g_getenv ("GDK_WAYLAND_GL_AREA_MEMORY");
++
++    globals->memory = memory != NULL && *memory != '\0' ? memory[0] != '0' : -1;
++  }
+ 
+   wl_display = gdk_wayland_display_get_wl_display (display);
+   globals->display = wl_display;
+@@ -491,28 +575,27 @@ wayland_globals_get (GdkDisplay  *display,
+   wl_display_roundtrip_queue (wl_display, globals->queue);
+   wl_display_roundtrip_queue (wl_display, globals->queue);
+ 
+-  globals->lib = stereo_declare_load (&globals->error);
++  /* a plain area needs no declaration: libstereo-declare and the stereo protocol are a stereo area's alone */
++  globals->lib = stereo_declare_load (&globals->stereo_error);
+   if (globals->lib != NULL)
+     {
+       globals->lib->wayland_init (wl_display, globals->queue);
+       wl_display_roundtrip_queue (wl_display, globals->queue);
+       wl_display_roundtrip_queue (wl_display, globals->queue);
++      if (!globals->lib->supported_wayland ())
++        g_set_error_literal (&globals->stereo_error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                             "The compositor does not announce stereo content (kde_stereo_content_manager_v1)");
+     }
+ 
+-  if (globals->error != NULL)
+-    ;
+-  else if (!globals->lib->supported_wayland ())
+-    g_set_error_literal (&globals->error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
+-                         "The compositor does not announce stereo content (kde_stereo_content_manager_v1)");
+-  else if (globals->compositor == NULL || globals->subcompositor == NULL)
++  if (globals->compositor == NULL || globals->subcompositor == NULL)
+     g_set_error_literal (&globals->error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
+                          "The compositor offers no wl_compositor version 4 or no wl_subcompositor");
+   else if (globals->viewporter == NULL)
+     g_set_error_literal (&globals->error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
+-                         "The compositor offers no wp_viewporter, which gives the declared surface its size");
+-  else if (globals->dmabuf == NULL)
++                         "The compositor offers no wp_viewporter, which gives the area's surface its size");
++  else if (globals->dmabuf == NULL && globals->shm == NULL)
+     g_set_error_literal (&globals->error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
+-                         "The compositor offers no zwp_linux_dmabuf_v1 version 3, which carries the picture");
++                         "The compositor offers neither zwp_linux_dmabuf_v1 version 3 nor wl_shm, which carry the picture");
+ 
+   if (globals->error != NULL)
+     {
+@@ -523,6 +606,17 @@ wayland_globals_get (GdkDisplay  *display,
+   return globals;
+ }
+ 
++static gboolean
++shm_listed (WaylandGlobals *globals,
++            guint32         format)
++{
++  for (guint i = 0; i < globals->shm_formats->len; i++)
++    if (g_array_index (globals->shm_formats, guint32, i) == format)
++      return TRUE;
++
++  return FALSE;
++}
++
+ static gboolean
+ compositor_takes (WaylandGlobals *globals,
+                   guint32         fourcc,
+@@ -716,6 +810,273 @@ pair_buffer_export (GtkGLAreaStereo  *stereo,
+   return TRUE;
+ }
+ 
++/* wl_shm's formats are drm_fourcc.h's codes, except ARGB8888 (0) and XRGB8888 (1) (wayland.xml, wl_shm.format) */
++#define SHM_XRGB8888 1u
++#define SHM_ARGB8888 0u
++
++typedef struct
++{
++  GLenum internal_format;
++  guint32 formats[2];   /* the opaque form first */
++  int bytes;            /* a sample's size */
++  GLenum read_type;
++  gboolean swap_red_blue;
++} MemoryFormat;
++
++/* The wl_shm formats whose samples are OpenGL's RGBA as glReadPixels writes them on a little endian machine (the
++ * fourcc's components from the lowest bits up: R, G, B, then X or A); 8 bit pictures may also go as XRGB8888, the one
++ * 8 bit format every compositor lists (wayland.xml), with red and blue exchanged */
++static const MemoryFormat memory_formats[] = {
++  { GL_RGBA8,    { FOURCC_XB24, FOURCC_AB24 }, 4, GL_UNSIGNED_BYTE, FALSE },
++  { GL_RGBA8,    { SHM_XRGB8888, SHM_ARGB8888 }, 4, GL_UNSIGNED_BYTE, TRUE },
++  { GL_RGB10_A2, { FOURCC_XB30, FOURCC_AB30 }, 4, GL_UNSIGNED_INT_2_10_10_10_REV, FALSE },
++  { GL_RGBA16,   { FOURCC_XB48, FOURCC_AB48 }, 8, GL_UNSIGNED_SHORT, FALSE },
++  { GL_RGBA16F,  { FOURCC_XB4H, FOURCC_AB4H }, 8, GL_HALF_FLOAT, FALSE },
++};
++
++static char *
++shm_format_name (guint32 format)
++{
++  if (format == SHM_XRGB8888)
++    return g_strdup ("XRGB8888");
++  if (format == SHM_ARGB8888)
++    return g_strdup ("ARGB8888");
++  return fourcc_name (format);
++}
++
++/* The picture through memory: a wl_shm buffer of a format the compositor lists, as deep as the area's picture, made once
++ * for each buffer of the pool; every frame is read back into it (gtk_gl_area_stereo_present) */
++static gboolean
++pair_buffer_export_memory (GtkGLAreaStereo  *stereo,
++                           PairBuffer       *buffer,
++                           GError          **error)
++{
++  WaylandGlobals *globals = stereo->globals;
++  const MemoryFormat *found = NULL;
++  guint32 format = 0;
++  struct wl_shm_pool *pool;
++  gsize stride, size;
++  void *data;
++  int fd;
++
++  if (buffer->buffer != NULL)
++    return TRUE;
++
++  if (globals->shm == NULL)
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE, "the compositor offers no wl_shm");
++      return FALSE;
++    }
++
++  for (guint i = 0; i < G_N_ELEMENTS (memory_formats) && found == NULL; i++)
++    {
++      if (memory_formats[i].internal_format != buffer->internal_format)
++        continue;
++      for (int j = 0; j < 2 && found == NULL; j++)
++        if (shm_listed (globals, memory_formats[i].formats[j]))
++          {
++            found = &memory_formats[i];
++            format = found->formats[j];
++          }
++    }
++
++  if (found == NULL)
++    {
++      char *names = NULL;
++
++      for (guint i = 0; i < G_N_ELEMENTS (memory_formats); i++)
++        if (memory_formats[i].internal_format == buffer->internal_format)
++          {
++            char *name = shm_format_name (memory_formats[i].formats[0]);
++            char *both = names ? g_strconcat (names, " or ", name, NULL) : g_strdup (name);
++
++            g_free (name);
++            g_free (names);
++            names = both;
++          }
++      g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                   "the compositor lists no wl_shm format for the area's picture (%s)", names ? names : "none of its depth");
++      g_free (names);
++      return FALSE;
++    }
++
++  stride = (gsize) found->bytes * buffer->width;
++  size = stride * buffer->height;
++  fd = memfd_create ("gtk-gl-area", MFD_CLOEXEC | MFD_ALLOW_SEALING);
++  if (fd < 0 || ftruncate (fd, size) < 0)
++    {
++      g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                   "no shared memory for the area's picture: %s", g_strerror (errno));
++      if (fd >= 0)
++        close (fd);
++      return FALSE;
++    }
++  /* the compositor need not guard against a pool that shrinks (KWin reads the seals) */
++  fcntl (fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_SEAL);
++  data = mmap (NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  if (data == MAP_FAILED)
++    {
++      g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                   "the area's shared memory cannot be mapped: %s", g_strerror (errno));
++      close (fd);
++      return FALSE;
++    }
++
++  pool = wl_shm_create_pool (globals->shm, fd, size);
++  buffer->buffer = wl_shm_pool_create_buffer (pool, 0, buffer->width, buffer->height, stride, format);
++  wl_shm_pool_destroy (pool);
++  close (fd);
++
++  buffer->in_memory = TRUE;
++  buffer->data = data;
++  buffer->size = size;
++  buffer->fourcc = format;
++  buffer->read_type = found->read_type;
++  buffer->swap_red_blue = found->swap_red_blue;
++  wl_buffer_add_listener (buffer->buffer, &buffer_listener, buffer);
++
++  {
++    char *name = shm_format_name (format);
++    g_debug ("GtkGLArea %p: its picture goes through memory, a wl_shm buffer %s, %dx%d", stereo->area, name,
++             buffer->width, buffer->height);
++    g_free (name);
++  }
++
++  return TRUE;
++}
++
++/* The way the picture reaches the compositor: a dma-buf where one carries it, otherwise through memory, which keeps every
++ * bit as well and costs one copy; GDK_WAYLAND_GL_AREA_MEMORY chooses */
++static gboolean
++pair_buffer_prepare (GtkGLAreaStereo  *stereo,
++                     PairBuffer       *buffer,
++                     GError          **error)
++{
++  WaylandGlobals *globals = stereo->globals;
++  GError *dmabuf_error = NULL, *memory_error = NULL;
++
++  if (buffer->buffer != NULL)
++    return TRUE;
++
++  if (globals->memory != 1)
++    {
++      if (globals->dmabuf == NULL)
++        g_set_error_literal (&dmabuf_error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                             "The compositor offers no zwp_linux_dmabuf_v1 version 3");
++      else if (pair_buffer_export (stereo, buffer, &dmabuf_error))
++        return TRUE;
++
++      /* a failed export may have made the image */
++      if (buffer->image != NULL)
++        {
++          eglDestroyImageKHR (eglGetCurrentDisplay (), buffer->image);
++          buffer->image = NULL;
++        }
++      if (globals->memory == 0)
++        {
++          g_propagate_error (error, dmabuf_error);
++          return FALSE;
++        }
++      g_debug ("GtkGLArea %p: no dma-buf carries its picture (%s): it goes through memory", stereo->area,
++               dmabuf_error->message);
++    }
++
++  if (pair_buffer_export_memory (stereo, buffer, &memory_error))
++    {
++      g_clear_error (&dmabuf_error);
++      return TRUE;
++    }
++
++  if (dmabuf_error == NULL)
++    {
++      g_set_error (error, memory_error->domain, memory_error->code, "Through memory, %s", memory_error->message);
++    }
++  else
++    {
++      /* a picture of a format no way carries fails for its format: another format may go */
++      g_set_error (error, GDK_GL_ERROR,
++                   memory_error->code == GDK_GL_ERROR_UNSUPPORTED_FORMAT ? GDK_GL_ERROR_UNSUPPORTED_FORMAT : dmabuf_error->code,
++                   "%s; and through memory, %s", dmabuf_error->message, memory_error->message);
++    }
++  g_clear_error (&dmabuf_error);
++  g_clear_error (&memory_error);
++  return FALSE;
++}
++
++/* One frame of the picture into its wl_shm buffer: the views are read back in the buffer's own depth; the pair's first
++ * row is the top of the picture already, as wl_shm wants it */
++static void
++pair_buffer_read_back (GtkGLAreaStereo *stereo,
++                       PairBuffer      *buffer)
++{
++  gboolean es = gdk_gl_context_get_use_es (stereo->context);
++  gsize n = (gsize) buffer->width * buffer->height;
++
++  glBindFramebuffer (GL_READ_FRAMEBUFFER, buffer->framebuffer);
++  glPixelStorei (GL_PACK_ALIGNMENT, 4);
++
++  if (es && buffer->read_type == GL_HALF_FLOAT)
++    {
++      /* OpenGL ES reads a floating point framebuffer as single floats only (OpenGL ES 3.0, 4.3.1) */
++      float *floats = g_new (float, 4 * n);
++      guint16 *halves = buffer->data;
++
++      glReadPixels (0, 0, buffer->width, buffer->height, GL_RGBA, GL_FLOAT, floats);
++      for (gsize i = 0; i < 4 * n; i++)
++        {
++          union { float f; guint32 u; } v = { floats[i] };
++          guint32 sign = (v.u >> 16) & 0x8000, mantissa = v.u & 0x7fffff;
++          int exponent = (int) ((v.u >> 23) & 0xff) - 127 + 15;
++
++          if (((v.u >> 23) & 0xff) == 0xff)
++            halves[i] = sign | 0x7c00 | (mantissa ? 0x200 : 0);
++          else if (exponent >= 31)
++            halves[i] = sign | 0x7c00;
++          else if (exponent <= 0)
++            {
++              /* a subnormal half, rounded to nearest even */
++              if (exponent < -10)
++                halves[i] = sign;
++              else
++                {
++                  guint32 m = mantissa | 0x800000, shift = 14 - exponent;
++                  guint32 h = m >> shift, rest = m & ((1u << shift) - 1), half = 1u << (shift - 1);
++
++                  if (rest > half || (rest == half && (h & 1)))
++                    h++;
++                  halves[i] = sign | h;
++                }
++            }
++          else
++            {
++              guint32 h = ((guint32) exponent << 10) | (mantissa >> 13), rest = mantissa & 0x1fff;
++
++              if (rest > 0x1000 || (rest == 0x1000 && (h & 1)))
++                h++;
++              halves[i] = sign | h;
++            }
++        }
++      g_free (floats);
++    }
++  else
++    {
++      glReadPixels (0, 0, buffer->width, buffer->height, GL_RGBA, buffer->read_type, buffer->data);
++    }
++
++  if (buffer->swap_red_blue)
++    {
++      guint8 *p = buffer->data;
++
++      for (gsize i = 0; i < n; i++, p += 4)
++        {
++          guint8 r = p[0];
++
++          p[0] = p[2];
++          p[2] = r;
++        }
++    }
++}
++
+ /* ITU-T H.273 code points and the names of wp_color_manager_v1 (color-management-v1.xml); a code point the protocol
+  * has no name for is 0 */
+ static guint32
+@@ -796,26 +1157,71 @@ static const struct wp_image_description_v1_listener description_listener = {
+ 
+ /* Whether the compositor can be told @state: the protocol's names for its primaries and transfer function, which the
+  * compositor lists; FALSE with @error set otherwise. A compositor without colour management takes sRGB, undescribed */
++/* What the protocol refuses with a protocol error is refused here, before it is sent (set_luminances: "If 'max_lum' or
++ * 'reference_lum' are less than or equal to 'min_lum', the protocol error invalid_luminance is raised"; the same for the
++ * mastering luminances) */
++static gboolean
++volume_is_valid (const GtkGLAreaVolume  *volume,
++                 GError                **error)
++{
++  if (volume->reference_luminance >= 0 &&
++      (volume->min_luminance < 0 || volume->max_luminance <= volume->min_luminance ||
++       volume->reference_luminance <= volume->min_luminance))
++    {
++      g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                   "The area's luminances (minimum %g, maximum %g, reference %g cd/m²) are not a range: the maximum and the reference must be above the minimum",
++                   volume->min_luminance, volume->max_luminance, volume->reference_luminance);
++      return FALSE;
++    }
++  if (volume->mastering_max_luminance >= 0 &&
++      (volume->mastering_min_luminance < 0 || volume->mastering_max_luminance <= volume->mastering_min_luminance))
++    {
++      g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                   "The area's mastering luminances (%g to %g cd/m²) are not a range",
++                   volume->mastering_min_luminance, volume->mastering_max_luminance);
++      return FALSE;
++    }
++
++  return TRUE;
++}
++
+ static gboolean
+-wayland_can_describe (WaylandGlobals  *globals,
+-                      GdkColorState   *state,
+-                      guint32         *named_p_out,
+-                      guint32         *named_t_out,
+-                      GError         **error)
++wayland_can_describe (WaylandGlobals         *globals,
++                      GdkColorState          *state,
++                      const GtkGLAreaVolume  *volume,
++                      guint32                *named_p_out,
++                      guint32                *named_t_out,
++                      GError                **error)
+ {
+   GdkCicpParams *cicp;
+   guint primaries, transfer;
+   guint32 named_p, named_t;
+ 
+   *named_p_out = *named_t_out = 0;
++  if (!gtk_gl_area_volume_is_default (volume) && !volume_is_valid (volume, error))
++    return FALSE;
+   if (globals->color_manager == NULL)
+     {
+-      if (gdk_color_state_equal (state, gdk_color_state_get_srgb ()))
++      if (gdk_color_state_equal (state, gdk_color_state_get_srgb ()) && gtk_gl_area_volume_is_default (volume))
+         return TRUE;
+       g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
+                            "The compositor has no colour management (wp_color_manager_v1): the area's colour state cannot be described");
+       return FALSE;
+     }
++  if (volume != NULL && volume->reference_luminance >= 0 &&
++      !(globals->cm_features & (1u << WP_COLOR_MANAGER_V1_FEATURE_SET_LUMINANCES)))
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                           "The compositor's colour management takes no luminances (feature set_luminances)");
++      return FALSE;
++    }
++  if (volume != NULL && (volume->mastering_primaries[0] >= 0 || volume->mastering_max_luminance >= 0) &&
++      !(globals->cm_features & (1u << WP_COLOR_MANAGER_V1_FEATURE_SET_MASTERING_DISPLAY_PRIMARIES)))
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                           "The compositor's colour management takes no mastering display data (feature set_mastering_display_primaries)");
++      return FALSE;
++    }
+ 
+   cicp = gdk_color_state_create_cicp_params (state);
+   primaries = gdk_cicp_params_get_color_primaries (cicp);
+@@ -849,9 +1255,10 @@ wayland_can_describe (WaylandGlobals  *globals,
+ }
+ 
+ static gboolean
+-wayland_describe (GtkGLAreaStereo  *stereo,
+-                  GdkColorState    *state,
+-                  GError          **error)
++wayland_describe (GtkGLAreaStereo        *stereo,
++                  GdkColorState          *state,
++                  const GtkGLAreaVolume  *volume,
++                  GError                **error)
+ {
+   WaylandGlobals *globals = stereo->globals;
+   guint32 named_p, named_t;
+@@ -859,10 +1266,11 @@ wayland_describe (GtkGLAreaStereo  *stereo,
+   struct wp_image_description_v1 *description;
+   DescriptionResult result = { FALSE, FALSE, NULL };
+ 
+-  if (stereo->described != NULL && gdk_color_state_equal (stereo->described, state))
++  if (stereo->described != NULL && gdk_color_state_equal (stereo->described, state) &&
++      gtk_gl_area_volume_equal (&stereo->described_volume, volume))
+     return TRUE;
+ 
+-  if (!wayland_can_describe (globals, state, &named_p, &named_t, error))
++  if (!wayland_can_describe (globals, state, volume, &named_p, &named_t, error))
+     return FALSE;
+   /* a surface nothing describes is sRGB */
+   if (globals->color_manager == NULL)
+@@ -874,6 +1282,34 @@ wayland_describe (GtkGLAreaStereo  *stereo,
+   creator = wp_color_manager_v1_create_parametric_creator (globals->color_manager);
+   wp_image_description_creator_params_v1_set_tf_named (creator, named_t);
+   wp_image_description_creator_params_v1_set_primaries_named (creator, named_p);
++  if (volume != NULL)
++    {
++      /* the protocol's units: a minimum luminance times 10000, the other luminances in cd/m², chromaticities times one
++       * million */
++      if (volume->reference_luminance >= 0)
++        wp_image_description_creator_params_v1_set_luminances (creator,
++                                                               (guint32) lround (volume->min_luminance * 10000),
++                                                               (guint32) lround (volume->max_luminance),
++                                                               (guint32) lround (volume->reference_luminance));
++      if (volume->mastering_primaries[0] >= 0)
++        {
++          const double *m = volume->mastering_primaries;
++
++          wp_image_description_creator_params_v1_set_mastering_display_primaries (creator,
++                                                                                  lround (m[0] * 1e6), lround (m[1] * 1e6),
++                                                                                  lround (m[2] * 1e6), lround (m[3] * 1e6),
++                                                                                  lround (m[4] * 1e6), lround (m[5] * 1e6),
++                                                                                  lround (m[6] * 1e6), lround (m[7] * 1e6));
++        }
++      if (volume->mastering_max_luminance >= 0)
++        wp_image_description_creator_params_v1_set_mastering_luminance (creator,
++                                                                        (guint32) lround (volume->mastering_min_luminance * 10000),
++                                                                        (guint32) lround (volume->mastering_max_luminance));
++      if (volume->max_cll >= 0)
++        wp_image_description_creator_params_v1_set_max_cll (creator, (guint32) lround (volume->max_cll));
++      if (volume->max_fall >= 0)
++        wp_image_description_creator_params_v1_set_max_fall (creator, (guint32) lround (volume->max_fall));
++    }
+   description = wp_image_description_creator_params_v1_create (creator);
+   wp_image_description_v1_add_listener (description, &description_listener, &result);
+   while (!result.ready && !result.failed)
+@@ -895,9 +1331,13 @@ wayland_describe (GtkGLAreaStereo  *stereo,
+   stereo->description = description;
+   g_clear_pointer (&stereo->described, gdk_color_state_unref);
+   stereo->described = gdk_color_state_ref (state);
++  if (volume != NULL)
++    stereo->described_volume = *volume;
++  else
++    gtk_gl_area_volume_init (&stereo->described_volume);
+ 
+-  g_debug ("GtkGLArea %p: its surface is described with named primaries %u and transfer function %u",
+-           stereo->area, named_p, named_t);
++  g_debug ("GtkGLArea %p: its surface is described with named primaries %u and transfer function %u%s",
++           stereo->area, named_p, named_t, gtk_gl_area_volume_is_default (volume) ? "" : ", with its luminances");
+   return TRUE;
+ }
+ 
+@@ -923,11 +1363,12 @@ wayland_destroy_surface (GtkGLAreaStereo *stereo)
+ }
+ 
+ static gboolean
+-wayland_present (GtkGLAreaStereo     *stereo,
+-                 PairBuffer          *buffer,
+-                 const GdkRectangle  *place,
+-                 GdkColorState       *state,
+-                 GError             **error)
++wayland_present (GtkGLAreaStereo        *stereo,
++                 PairBuffer             *buffer,
++                 const GdkRectangle     *place,
++                 GdkColorState          *state,
++                 const GtkGLAreaVolume  *volume,
++                 GError                **error)
+ {
+   WaylandGlobals *globals = stereo->globals;
+   GdkWindow *toplevel = gdk_window_get_toplevel (gtk_widget_get_window (stereo->area));
+@@ -939,9 +1380,12 @@ wayland_present (GtkGLAreaStereo     *stereo,
+       return FALSE;
+     }
+ 
+-  if (!pair_buffer_export (stereo, buffer, error))
++  if (!pair_buffer_prepare (stereo, buffer, error))
+     return FALSE;
+ 
++  if (buffer->in_memory)
++    pair_buffer_read_back (stereo, buffer);
++
+   /* GTK hides a window by destroying its surface: a new one gets a new subsurface */
+   if (stereo->surface != NULL && stereo->parent != parent)
+     wayland_destroy_surface (stereo);
+@@ -958,10 +1402,11 @@ wayland_present (GtkGLAreaStereo     *stereo,
+       stereo->x = stereo->y = G_MININT;
+     }
+ 
+-  if (!wayland_describe (stereo, state, error))
++  if (!wayland_describe (stereo, state, volume, error))
+     return FALSE;
+ 
+-  if (!stereo->declared)
++  /* a plain area's surface holds one picture and declares nothing */
++  if (stereo->n_views == 2 && !stereo->declared)
+     {
+       int result = globals->lib->declare_format (stereo->surface, STEREO_SBS_FULL);
+ 
+@@ -980,7 +1425,8 @@ wayland_present (GtkGLAreaStereo     *stereo,
+       stereo->x = place->x;
+       stereo->y = place->y;
+     }
+-  /* the declared surface is one view wide: its destination is one view, the area's own size */
++  /* the declared surface is one view wide, and a plain area's surface is its one picture: its destination is the area's
++   * own size */
+   if (place->width != stereo->dest_width || place->height != stereo->dest_height)
+     {
+       wp_viewport_set_destination (stereo->viewport, place->width, place->height);
+@@ -1123,14 +1569,15 @@ x11_draw_readback (GtkGLAreaStereo *stereo,
+ 
+ /* What an X window cannot carry: a colour description, a picture deeper than its visual */
+ static gboolean
+-x11_can_carry (GtkGLAreaStereo  *stereo,
+-               GLenum            internal_format,
+-               GdkColorState    *state,
+-               GError          **error)
++x11_can_carry (GtkGLAreaStereo        *stereo,
++               GLenum                  internal_format,
++               GdkColorState          *state,
++               const GtkGLAreaVolume  *volume,
++               GError                **error)
+ {
+   XWindowAttributes toplevel;
+ 
+-  if (!gdk_color_state_equal (state, gdk_color_state_get_srgb ()))
++  if (!gdk_color_state_equal (state, gdk_color_state_get_srgb ()) || !gtk_gl_area_volume_is_default (volume))
+     {
+       g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
+                            "An X window has no colour description: an area in a colour state other than sRGB cannot be shown on X11");
+@@ -1158,12 +1605,13 @@ x11_can_carry (GtkGLAreaStereo  *stereo,
+ }
+ 
+ static gboolean
+-x11_present (GtkGLAreaStereo     *stereo,
+-             PairBuffer          *buffer,
+-             const GdkRectangle  *place,
+-             int                  scale,
+-             GdkColorState       *state,
+-             GError             **error)
++x11_present (GtkGLAreaStereo        *stereo,
++             PairBuffer             *buffer,
++             const GdkRectangle     *place,
++             int                     scale,
++             GdkColorState          *state,
++             const GtkGLAreaVolume  *volume,
++             GError                **error)
+ {
+   int view_width = buffer->width / 2, view_height = buffer->height;
+   int x = place->x * scale, y = place->y * scale;
+@@ -1171,7 +1619,7 @@ x11_present (GtkGLAreaStereo     *stereo,
+   gboolean resized;
+   int result;
+ 
+-  if (!x11_can_carry (stereo, buffer->internal_format, state, error))
++  if (!x11_can_carry (stereo, buffer->internal_format, state, volume, error))
+     return FALSE;
+ 
+   gdk_x11_display_error_trap_push (stereo->display);
+@@ -1258,11 +1706,14 @@ x11_present (GtkGLAreaStereo     *stereo,
+ GtkGLAreaStereo *
+ gtk_gl_area_stereo_new (GtkWidget     *area,
+                         GdkGLContext  *context,
++                        int            n_views,
+                         GError       **error)
+ {
+   GdkDisplay *display = gtk_widget_get_display (area);
+   GtkGLAreaStereo *stereo;
+ 
++  g_return_val_if_fail (n_views == 1 || n_views == 2, NULL);
++
+ #ifdef GDK_WINDOWING_WAYLAND
+   if (GDK_IS_WAYLAND_DISPLAY (display))
+     {
+@@ -1270,6 +1721,11 @@ gtk_gl_area_stereo_new (GtkWidget     *area,
+ 
+       if (globals == NULL)
+         return NULL;
++      if (n_views == 2 && globals->stereo_error != NULL)
++        {
++          g_propagate_error (error, g_error_copy (globals->stereo_error));
++          return NULL;
++        }
+ 
+       stereo = g_new0 (GtkGLAreaStereo, 1);
+       stereo->route = ROUTE_WAYLAND;
+@@ -1288,6 +1744,16 @@ gtk_gl_area_stereo_new (GtkWidget     *area,
+       const char *renderer, *readback;
+       GdkWindow *toplevel;
+ 
++      /* an X window has no colour description and its visual holds 8 bits a channel: a plain area's deeper picture or
++       * other colour state has no surface to go to */
++      if (n_views == 1)
++        {
++          g_clear_error (error);
++          g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_UNSUPPORTED_FORMAT,
++                               "An X window has no colour description and holds 8 bits a channel: the area's format or colour state cannot be carried on X11");
++          return NULL;
++        }
++
+       if (lib == NULL)
+         return NULL;
+ 
+@@ -1339,7 +1805,11 @@ done:
+   stereo->area = area;
+   stereo->context = g_object_ref (context);
+   stereo->display = display;
++  stereo->n_views = n_views;
+   stereo->current = -1;
++#ifdef GDK_WINDOWING_WAYLAND
++  gtk_gl_area_volume_init (&stereo->described_volume);
++#endif
+   return stereo;
+ }
+ 
+@@ -1382,16 +1852,17 @@ gtk_gl_area_stereo_free (GtkGLAreaStereo *stereo)
+   g_free (stereo);
+ }
+ 
+-/* Returns the framebuffer the two views are copied into, side by side, left first, or 0 with @error set. Every failure
+- * that can be known before the views are rendered is found here: the picture's export, a colour state the compositor
+- * or an X window cannot be told, a depth an X window cannot hold */
++/* Returns the framebuffer the views are copied into, side by side, left first (or the one picture of a plain area), or 0
++ * with @error set. Every failure that can be known before the views are rendered is found here: the picture's way to the
++ * compositor, a colour state or a volume the compositor or an X window cannot be told, a depth an X window cannot hold */
+ guint
+-gtk_gl_area_stereo_begin (GtkGLAreaStereo  *stereo,
+-                          int               view_width,
+-                          int               view_height,
+-                          GLenum            internal_format,
+-                          GdkColorState    *color_state,
+-                          GError          **error)
++gtk_gl_area_stereo_begin (GtkGLAreaStereo        *stereo,
++                          int                     view_width,
++                          int                     view_height,
++                          GLenum                  internal_format,
++                          GdkColorState          *color_state,
++                          const GtkGLAreaVolume  *volume,
++                          GError                **error)
+ {
+   PairBuffer *buffer = NULL;
+   int i;
+@@ -1427,10 +1898,10 @@ gtk_gl_area_stereo_begin (GtkGLAreaStereo  *stereo,
+   g_return_val_if_fail (buffer != NULL, 0);
+   stereo->current = buffer - stereo->buffers;
+ 
+-  if (buffer->texture == 0 || buffer->width != 2 * view_width || buffer->height != view_height ||
++  if (buffer->texture == 0 || buffer->width != stereo->n_views * view_width || buffer->height != view_height ||
+       buffer->internal_format != internal_format)
+     {
+-      if (!pair_buffer_allocate (stereo, buffer, 2 * view_width, view_height, internal_format, error))
++      if (!pair_buffer_allocate (stereo, buffer, stereo->n_views * view_width, view_height, internal_format, error))
+         return 0;
+     }
+ 
+@@ -1439,14 +1910,14 @@ gtk_gl_area_stereo_begin (GtkGLAreaStereo  *stereo,
+     {
+       guint32 named_p, named_t;
+ 
+-      if (!wayland_can_describe (stereo->globals, color_state, &named_p, &named_t, error) ||
+-          !pair_buffer_export (stereo, buffer, error))
++      if (!wayland_can_describe (stereo->globals, color_state, volume, &named_p, &named_t, error) ||
++          !pair_buffer_prepare (stereo, buffer, error))
+         return 0;
+     }
+ #endif
+ 
+ #ifdef GDK_WINDOWING_X11
+-  if (stereo->route == ROUTE_X11 && !x11_can_carry (stereo, internal_format, color_state, error))
++  if (stereo->route == ROUTE_X11 && !x11_can_carry (stereo, internal_format, color_state, volume, error))
+     return 0;
+ #endif
+ 
+@@ -1454,11 +1925,12 @@ gtk_gl_area_stereo_begin (GtkGLAreaStereo  *stereo,
+ }
+ 
+ gboolean
+-gtk_gl_area_stereo_present (GtkGLAreaStereo     *stereo,
+-                            const GdkRectangle  *place,
+-                            int                  scale,
+-                            GdkColorState       *color_state,
+-                            GError             **error)
++gtk_gl_area_stereo_present (GtkGLAreaStereo        *stereo,
++                            const GdkRectangle     *place,
++                            int                     scale,
++                            GdkColorState          *color_state,
++                            const GtkGLAreaVolume  *volume,
++                            GError                **error)
+ {
+   PairBuffer *buffer;
+   gboolean ok = FALSE;
+@@ -1473,13 +1945,13 @@ gtk_gl_area_stereo_present (GtkGLAreaStereo     *stereo,
+     {
+       /* the views must be in the buffer before the compositor reads it */
+       glFinish ();
+-      ok = wayland_present (stereo, buffer, place, color_state, error);
++      ok = wayland_present (stereo, buffer, place, color_state, volume, error);
+     }
+ #endif
+ 
+ #ifdef GDK_WINDOWING_X11
+   if (stereo->route == ROUTE_X11)
+-    ok = x11_present (stereo, buffer, place, scale, color_state, error);
++    ok = x11_present (stereo, buffer, place, scale, color_state, volume, error);
+ #endif
+ 
+   return ok;
+diff --git a/gtk/gtkglareastereoprivate.h b/gtk/gtkglareastereoprivate.h
+index 0680e72..fd2944f 100644
+--- a/gtk/gtkglareastereoprivate.h
++++ b/gtk/gtkglareastereoprivate.h
+@@ -28,21 +28,46 @@ G_BEGIN_DECLS
+ 
+ typedef struct _GtkGLAreaStereo GtkGLAreaStereo;
+ 
++/* What a colour description carries beside the primaries and the transfer function (wp_image_description_creator_params_v1:
++ * set_luminances, set_mastering_display_primaries, set_mastering_luminance, set_max_cll, set_max_fall); a value below 0 is
++ * not given, and the transfer function's defaults apply */
++typedef struct
++{
++  double min_luminance;
++  double max_luminance;
++  double reference_luminance;
++  double mastering_primaries[8];        /* red x, y, green x, y, blue x, y, white x, y */
++  double mastering_min_luminance;
++  double mastering_max_luminance;
++  double max_cll;
++  double max_fall;
++} GtkGLAreaVolume;
++
++void              gtk_gl_area_volume_init          (GtkGLAreaVolume       *volume);
++gboolean          gtk_gl_area_volume_is_default    (const GtkGLAreaVolume *volume);
++gboolean          gtk_gl_area_volume_equal         (const GtkGLAreaVolume *a,
++                                                    const GtkGLAreaVolume *b);
++
++/* @n_views: 2 for a stereo area (its surface declared full side by side), 1 for a plain area whose format or colour state
++ * its window cannot hold (the same surface, nothing declared) */
+ GtkGLAreaStereo * gtk_gl_area_stereo_new           (GtkWidget          *area,
+                                                     GdkGLContext       *context,
++                                                    int                 n_views,
+                                                     GError            **error);
+ void              gtk_gl_area_stereo_free          (GtkGLAreaStereo    *stereo);
+-guint             gtk_gl_area_stereo_begin         (GtkGLAreaStereo    *stereo,
+-                                                    int                 view_width,
+-                                                    int                 view_height,
+-                                                    GLenum              internal_format,
+-                                                    GdkColorState      *color_state,
+-                                                    GError            **error);
+-gboolean          gtk_gl_area_stereo_present       (GtkGLAreaStereo    *stereo,
+-                                                    const GdkRectangle *place,
+-                                                    int                 scale,
+-                                                    GdkColorState      *color_state,
+-                                                    GError            **error);
++guint             gtk_gl_area_stereo_begin         (GtkGLAreaStereo       *stereo,
++                                                    int                    view_width,
++                                                    int                    view_height,
++                                                    GLenum                 internal_format,
++                                                    GdkColorState         *color_state,
++                                                    const GtkGLAreaVolume *volume,
++                                                    GError               **error);
++gboolean          gtk_gl_area_stereo_present       (GtkGLAreaStereo       *stereo,
++                                                    const GdkRectangle    *place,
++                                                    int                    scale,
++                                                    GdkColorState         *color_state,
++                                                    const GtkGLAreaVolume *volume,
++                                                    GError               **error);
+ void              gtk_gl_area_stereo_hide          (GtkGLAreaStereo    *stereo);
+ gboolean          gtk_gl_area_stereo_wants_repeat  (GtkGLAreaStereo    *stereo);
+ gboolean          gtk_gl_area_stereo_below_window  (GtkGLAreaStereo    *stereo);

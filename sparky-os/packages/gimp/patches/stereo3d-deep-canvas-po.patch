@@ -1,0 +1,291 @@
+Description: the deep canvas's strings in nine languages
+ Five strings (the sentence that tells the person the canvas's depth after a
+ step down, its two depths in context canvas-depth, the preference "Show deep
+ images in their own depth and colors" and its tooltip) in Polish, Brazilian
+ Portuguese, French, German, Spanish, Japanese, Korean and Chinese (simplified
+ and traditional), additions only, in milestone 1's terms for the canvas and
+ the log.  For GIMP's translators to take over upstream.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (queue row 137, the stereo GIMP's milestone 3)
+Forwarded: no
+Last-Update: 2026-11-26
+---
+diff --git a/po/de.po b/po/de.po
+index 07ee6c1..f34f2c6 100644
+--- a/po/de.po
++++ b/po/de.po
+@@ -32397,3 +32397,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "Die Ebenengruppe „%s“ (%d) ist keine Tiefenebene"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "Die Leinwand kann die eigene Tiefe und die Farben dieses Bildes hier nicht an den Bildschirm weitergeben: Es wird in %s gezeigt. Der Grund steht im Protokoll."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16 Bit"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8 Bit"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "_Bilder mit hoher Farbtiefe in ihrer eigenen Farbtiefe und ihren eigenen Farben anzeigen"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "Wenn aktiviert, wird ein Bild mit mehr als 8 Bit oder mit einem Farbprofil, das Video-Codepunkte oder Farben über sRGB hinaus enthält, in seiner eigenen Farbtiefe und seinen eigenen Farben angezeigt: Seine Leinwand wird mit ihrer Farbbeschreibung an den Compositor der Arbeitsfläche übergeben, der sie für jeden Bildschirm umrechnet. Wenn deaktiviert, wird ein solches Bild wie jedes andere Bild in 8 Bit angezeigt, umgerechnet in das Farbprofil des Bildschirms."
+diff --git a/po/es.po b/po/es.po
+index 65fd84d..16805cb 100644
+--- a/po/es.po
++++ b/po/es.po
+@@ -34865,3 +34865,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "El grupo de capas «%s» (%d) no es una capa de profundidad"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "El lienzo no puede entregar aquí a la pantalla la profundidad y los colores propios de esta imagen: se muestra en %s. El motivo está en el registro."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16 bits"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8 bits"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "Mostrar las imágenes de gran _profundidad de color en su propia profundidad y colores"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "Si se activa, una imagen de más de 8 bits, o cuyo perfil de color lleva puntos de código de vídeo o colores más allá de sRGB, se muestra en su propia profundidad y colores: su lienzo se entrega al compositor del escritorio con su descripción de color, y el compositor lo convierte para cada pantalla. Si se desactiva, esa imagen se muestra en 8 bits, convertida al perfil de color del monitor, como cualquier otra imagen."
+diff --git a/po/fr.po b/po/fr.po
+index 9212645..99cb06a 100644
+--- a/po/fr.po
++++ b/po/fr.po
+@@ -30018,3 +30018,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "Le groupe de calques « %s » (%d) n'est pas un calque de profondeur"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "Le canevas ne peut pas transmettre ici à l’écran la profondeur et les couleurs propres de cette image : elle est affichée en %s. La raison se trouve dans le journal."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16 bits"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8 bits"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "Afficher les images à grande _profondeur de couleur dans leur propre profondeur et leurs propres couleurs"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "Si activé, une image de plus de 8 bits, ou dont le profil de couleurs porte des points de code vidéo ou des couleurs au-delà de sRGB, est affichée dans sa propre profondeur et ses propres couleurs : son canevas est remis au compositeur du bureau avec sa description des couleurs, et le compositeur le convertit pour chaque écran. Si désactivé, une telle image est affichée en 8 bits, convertie vers le profil du moniteur, comme toute autre image."
+diff --git a/po/ja.po b/po/ja.po
+index 73cdb9d..b5e35f3 100644
+--- a/po/ja.po
++++ b/po/ja.po
+@@ -33105,3 +33105,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "レイヤーグループ '%s' (%d) は奥行きレイヤーではありません"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "ここではキャンバスがこの画像本来の色深度と色を画面に渡せないため、%s で表示しています。理由はログにあります。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16 ビット"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8 ビット"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "高色深度の画像を本来の色深度と色で表示する(_D)"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "有効にすると、8 ビットを超える画像や、カラープロファイルが映像のコードポイントや sRGB を超える色を持つ画像を、その画像本来の色深度と色で表示します。キャンバスは色の記述とともにデスクトップのコンポジターに渡され、コンポジターが画面ごとに変換します。無効にすると、そのような画像もほかの画像と同じく 8 ビットで、モニタープロファイルに変換して表示します。"
+diff --git a/po/ko.po b/po/ko.po
+index d23ad66..12d408c 100644
+--- a/po/ko.po
++++ b/po/ko.po
+@@ -31233,3 +31233,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "레이어 그룹 '%s'(%d)은(는) 깊이 레이어가 아닙니다"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "여기서는 캔버스가 이 이미지 고유의 색 심도와 색을 화면에 전달할 수 없어 %s로 표시합니다. 이유는 로그에 있습니다."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16비트"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8비트"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "색 심도가 높은 이미지를 고유의 색 심도와 색으로 표시(_D)"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "켜면 8비트보다 깊은 이미지나, 색상 프로필에 영상 코드 포인트 또는 sRGB를 넘는 색이 있는 이미지를 고유의 색 심도와 색으로 표시합니다. 캔버스는 색 설명과 함께 데스크톱의 컴포지터에 전달되고, 컴포지터가 화면마다 변환합니다. 끄면 그런 이미지도 다른 이미지처럼 8비트로, 모니터 프로필로 변환하여 표시합니다."
+diff --git a/po/pl.po b/po/pl.po
+index 670e1c9..828ad6c 100644
+--- a/po/pl.po
++++ b/po/pl.po
+@@ -28385,3 +28385,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "Grupa warstw „%s” (%d) nie jest warstwą głębi"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "Płótno nie może tu przekazać ekranowi własnej głębi i kolorów tego obrazu: jest on pokazany w %s. Przyczyna jest w dzienniku."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16 bitach"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8 bitach"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "Wyświetlanie obrazów o dużej _głębi we własnej głębi i kolorach"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "Po włączeniu obraz o głębi większej niż 8 bitów albo taki, którego profil kolorów zawiera punkty kodowe wideo lub kolory spoza sRGB, jest wyświetlany we własnej głębi i kolorach: jego płótno jest przekazywane kompozytorowi pulpitu wraz z opisem kolorów, a kompozytor przelicza je dla każdego ekranu. Po wyłączeniu taki obraz jest wyświetlany w 8 bitach, przeliczony na profil monitora, jak każdy inny obraz."
+diff --git a/po/pt_BR.po b/po/pt_BR.po
+index 7fea118..976742f 100644
+--- a/po/pt_BR.po
++++ b/po/pt_BR.po
+@@ -31583,3 +31583,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "O grupo de camadas \"%s\" (%d) não é uma camada de profundidade"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "A tela de pintura não consegue entregar aqui ao monitor a profundidade e as cores próprias desta imagem: ela é mostrada em %s. O motivo está no registro."
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16 bits"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8 bits"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "Mostrar imagens de alta _profundidade de cor na sua própria profundidade e cores"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "Quando ativado, uma imagem com mais de 8 bits, ou cujo perfil de cores traz pontos de código de vídeo ou cores além do sRGB, é mostrada na sua própria profundidade e cores: a tela de pintura é entregue ao compositor da área de trabalho com a sua descrição de cores, e o compositor a converte para cada monitor. Quando desativado, essa imagem é mostrada em 8 bits, convertida para o perfil de cores do monitor de vídeo, como qualquer outra imagem."
+diff --git a/po/zh_CN.po b/po/zh_CN.po
+index e531f9d..d4c17fb 100644
+--- a/po/zh_CN.po
++++ b/po/zh_CN.po
+@@ -32429,3 +32429,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "图层组“%s”（%d）不是深度图层"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "此处画布无法将此图像本身的位深与颜色交给屏幕：现以 %s 显示。原因见日志。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16 位"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8 位"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "以图像本身的位深与颜色显示高位深图像(_D)"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "启用后，深于 8 位的图像，或其色彩特性文件带有视频编码点或超出 sRGB 颜色的图像，将以其本身的位深与颜色显示：画布连同其颜色描述交给桌面的合成器，由合成器为每块屏幕转换。禁用后，这类图像与其他图像一样以 8 位显示，并转换到显示器特性文件。"
+diff --git a/po/zh_TW.po b/po/zh_TW.po
+index 8a1415e..a9bb781 100644
+--- a/po/zh_TW.po
++++ b/po/zh_TW.po
+@@ -29495,3 +29495,26 @@
+ #, c-format
+ msgid "Layer group '%s' (%d) is not a depth layer"
+ msgstr "圖層群組「%s」（%d）不是深度圖層"
++
++#: app/display/gimpdisplayshell-stereo.c
++#, c-format
++msgid "The canvas cannot hand this image's own depth and colors to the screen here: it is shown in %s. The reason is in the log."
++msgstr "此處畫布無法將此影像本身的位元深度與色彩交給螢幕：現以 %s 顯示。原因請見記錄。"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "16 bits"
++msgstr "16 位元"
++
++#: app/display/gimpdisplayshell-stereo.c
++msgctxt "canvas-depth"
++msgid "8 bits"
++msgstr "8 位元"
++
++#: app/dialogs/preferences-dialog.c
++msgid "Show _deep images in their own depth and colors"
++msgstr "以影像本身的位元深度與色彩顯示高位元深度影像(_D)"
++
++#: app/config/gimprc-blurbs.h
++msgid "When enabled, an image deeper than 8 bits, or whose color profile carries video code points or colors beyond sRGB, is shown in its own depth and colors: its canvas is handed to the desktop's compositor with its color description, and the compositor converts it for each screen.  When disabled, such an image is shown in 8 bits, converted to the monitor color profile, like any other image."
++msgstr "啟用後，深於 8 位元的影像，或其色彩描述檔帶有視訊編碼點或超出 sRGB 色彩的影像，會以影像本身的位元深度與色彩顯示：畫布連同色彩描述交給桌面的合成器，由合成器為每個螢幕轉換。停用後，這類影像會和其他影像一樣以 8 位元顯示，並轉換為螢幕描述檔。"

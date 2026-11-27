@@ -1,56 +1,39 @@
 #!/bin/bash
-# Sparky Stereo OS: builds gtk+3.0 3.24.52-3+stereo3d1+lc1 from Debian's 3.24.52-3 source package.
-# (+stereo3d2 and later will be successors of the published source: release/build-from-lc-dsc.sh.)
 # Created by Daniel Ramos (Capitain Jack) 2026/11/26
 # Copyright 2026 under the GNU GPL3 License
-# Source package once (the stereo GtkGLArea patches after Debian's series, the changelog entry), then the Lean Code source,
-# then the build with the link and start gate against Debian's 3.24.52-3 build (queue row 137, milestone 4). Debian's own
-# test suite is not run here: the proof runs GTK's suite before and after the patches, as Debian's build runs it.
-# Candidates stay in WORK. A guard stops the build below 12 GB free on / or 10 GB on the WORK disk.
-# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR   (PREVIOUS_DIR: a folder holding Debian's gtk+3.0 3.24.52-3 binary packages;
-#   SOURCE_DIR: the folder holding Debian's gtk+3.0_3.24.52-3.dsc, its debian.tar.xz and the orig tarball, checked
-#   against Debian testing's signed Sources index)
-# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+# Sparky Stereo OS: builds gtk+3.0 3.24.52-3+stereo3d2+lc1 (queue row 137, GIMP milestone 3: the deep and HDR canvas;
+# +stereo3d1 was made by build-stereo3d1.sh from Debian's 3.24.52-3): make-source-2.sh, the successor of +stereo3d1, then
+# release/build-from-lc-dsc.sh with the Lean Code link and start gate, compared with the +stereo3d1 build. The gate's
+# archive list is this folder's archive-sources.json (Debian testing, deb-multimedia, the edition's tree) unless
+# SPARKY_LC_ARCHIVE_DIR names one.
+#   build.sh WORK PREVIOUS REPO [IMAGE]
+#   WORK      an empty folder: source/ (the .dsc and its files) and out/ (packages, buildinfo, changes, build record)
+#   PREVIOUS  the +stereo3d1+lc1 stage: its source package (checked against source-stereo3d1.sha256) and its binary packages,
+#             which the gate compares with
+#   REPO      the edition's repository, mounted read-only
+#   IMAGE     the build image (default sparky-lc-migration:20261020)
+# GTK's own test suite is not run in this build (nocheck): the lane's proof runs it on the tree before and after the
+# patches, as Debian's build runs it.
+# libgtk-3-0-udeb is not built (noudeb, as +stereo3d1's build-in-container.sh): Debian-Installer's GTK front end, which
+# the edition's installer, Calamares, does not use; its udeb dependencies cannot be solved with the deb packages in one
+# link-gate root (libc6-udeb and libc6 ship the same files), and the gate stops on it.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-. "$HERE/../../repo/build-provenance.sh"
-. "$HERE/../../config/local-config.sh"
-sparky_need SPARKY_REPO_DIR
-# The link gate's archive list is the recipe's own (archive-sources.json: Debian testing, deb-multimedia for the media libraries, the edition's tree as file:/repo), with the public keyrings copied
-# beside it; SPARKY_LC_ARCHIVE_DIR still wins when the local configuration names one.
+TOP=$(cd "$HERE/../.." && pwd)
+[ $# -ge 3 ] || { sed -n '/^#   build.sh/,/^# link-gate root/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
+WORK=$(mkdir -p "$1" && cd "$1" && pwd) PREV=$(realpath "$2") REPO=$(realpath "$3") IMG=${4:-sparky-lc-migration:20261020}
+[ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 if [ -z "${SPARKY_LC_ARCHIVE_DIR:-}" ]; then
-	SPARKY_LC_ARCHIVE_DIR=$(mktemp -d)
-	trap 'rm -rf "$SPARKY_LC_ARCHIVE_DIR"' EXIT
+	SPARKY_LC_ARCHIVE_DIR=$WORK/archive
+	mkdir -p "$SPARKY_LC_ARCHIVE_DIR"
 	cp "$HERE/archive-sources.json" "$SPARKY_LC_ARCHIVE_DIR/sources.json"
 	cp /usr/share/keyrings/debian-archive-keyring.pgp /usr/share/keyrings/deb-multimedia-keyring.pgp "$SPARKY_LC_ARCHIVE_DIR/"
-	cp "$SPARKY_REPO_DIR/sparky-stereo-repo.asc" "$SPARKY_LC_ARCHIVE_DIR/"
+	cp "$REPO/sparky-stereo-repo.asc" "$SPARKY_LC_ARCHIVE_DIR/"
 fi
-WORK=$(mkdir -p "$1" && cd "$1" && pwd)
-PREV=$(cd "$2" && pwd)
-SRC=$(cd "$3" && pwd)
-[ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
-name=${SPARKY_CONTAINER_PREFIX:-gtk3}-build-$$
-sparky_provenance_init sparky-lc-migration:20261020
-docker run --ulimit core=1 -d --name "$name" --cpus 4 --platform linux/amd64 \
-	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
-	-v "$WORK":/work -v "$SRC":/src:ro \
-	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
-	-v "$HERE/patches":/patches:ro \
-	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
-	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
-	sparky-lc-migration:20261020 bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/build.log 2>&1' >/dev/null
-guard=ok
-while [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ]; do
-	root=$(df -BG --output=avail / | tail -1 | tr -dc 0-9)
-	disk=$(df -BG --output=avail "$WORK" | tail -1 | tr -dc 0-9)
-	if [ "$root" -lt 12 ] || [ "$disk" -lt 10 ]; then
-		echo "stopping the build: / has ${root} GB and $WORK ${disk} GB free" >&2
-		docker kill "$name" >/dev/null
-		guard=stopped
-	fi
-	sleep 5
-done
-status=$(docker inspect -f '{{.State.ExitCode}}' "$name")
-docker rm "$name" >/dev/null
-[ "$guard" = ok ] && [ "$status" = 0 ] || { echo "the build failed (exit $status, guard $guard): $WORK/build.log" >&2; exit 1; }
+export SPARKY_LC_ARCHIVE_DIR
+bash "$HERE/make-source-2.sh" "$PREV" "$WORK/source" "$IMG"
+mkdir -p "$WORK/previous"
+find "$PREV" -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*' -exec cp {} "$WORK/previous/" \;
+SPARKY_LC_PREVIOUS_DIR=$WORK/previous SPARKY_DEB_BUILD_OPTIONS=${SPARKY_DEB_BUILD_OPTIONS:-nocheck} \
+	SPARKY_DEB_BUILD_PROFILES=${SPARKY_DEB_BUILD_PROFILES:-noudeb} \
+	bash "$TOP/release/build-from-lc-dsc.sh" "$WORK/source/gtk+3.0_3.24.52-3+stereo3d2+lc1.dsc" amd64 "$IMG" "$REPO" "$WORK/out"

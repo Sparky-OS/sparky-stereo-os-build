@@ -1,6 +1,6 @@
 # gtk+3.0: a stereo GtkGLArea in GTK 3
 
-Debian's gtk+3.0 3.24.52-3 with the edition's stereo GtkGLArea, built with Lean Code: 3.24.52-3+stereo3d1+lc1 (queue row 137, milestone 4).
+Debian's gtk+3.0 3.24.52-3 with the edition's stereo GtkGLArea, built with Lean Code: 3.24.52-3+stereo3d1+lc1 (queue row 137, milestone 4), and 3.24.52-3+stereo3d2+lc1 (queue row 137, the stereo GIMP's milestone 3: a plain area's deep picture on a surface of its own, the memory way, luminances and mastering data).
 GTK 4's stereo area (packages/gtk4) is the model, with the same names: the property `stereo`, the render signal once per eye with `gtk_gl_area_get_current_eye()`, `stereo-shown` and `stereo-error`, `stereo-view-width` and `stereo-view-height`, `format` and `color-state`.
 
 ## The patches
@@ -9,12 +9,15 @@ GTK 4's stereo area (packages/gtk4) is the model, with the same names: the prope
 - `stereo3d-gtkglarea-stereo.patch`: the stereo area (gtk/gtkglarea.c), its own surface on Wayland and X11 (gtk/gtkglareastereo.c) and the window's hole over it (gtk/gtkwindow.c, the opaque region).
 - `stereo3d-gtk3-demo-glarea-stereo.patch`: gtk3-demo's OpenGL Area in stereo.
 - `stereo3d-testsuite-glarea.patch`: GTK's own test of the API (testsuite/gtk/glarea.c).
+- `stereo3d-gtkglarea-deep-surface.patch` (+stereo3d2): a plain area whose format is deeper than 8 bits, whose colour state is not sRGB, or which carries luminances or mastering data hands its picture to the compositor on a surface of its own, nothing declared (`surface-shown`, `surface-error`); on Wayland a dma-buf where one carries the picture and otherwise `wl_shm` memory as deep as the picture (`GDK_WAYLAND_GL_AREA_MEMORY` chooses); `gtk_gl_area_set_luminances()`, `gtk_gl_area_set_mastering_display()`, `gtk_gl_area_set_content_light_levels()`.
+- `stereo3d-testsuite-glarea-volume.patch` (+stereo3d2): the new functions' tests and a plain 16 bit area on X11.
 
 How each piece works, its proof and its traps: the public skill stereo-window-3d-area, references/gtk-glarea.md, section "GTK 3".
 
 ## Build
 
-`build.sh WORK PREVIOUS_DIR SOURCE_DIR` (see its header): the source package once, the Lean Code source, then the build with the link and start gate against Debian's 3.24.52-3 binary packages.
+`build.sh WORK PREVIOUS REPO [IMAGE]` (see its header): make-source-2.sh, the successor of the staged +stereo3d1+lc1 source (repo/lc-successor.py with the two new patches and the eight new symbols), then release/build-from-lc-dsc.sh with the Lean Code link and start gate, compared with the +stereo3d1 build.
++stereo3d1 itself was built by `build-stereo3d1.sh WORK PREVIOUS_DIR SOURCE_DIR` from Debian's 3.24.52-3 source package (build-in-container.sh).
 
 ## Credits
 
