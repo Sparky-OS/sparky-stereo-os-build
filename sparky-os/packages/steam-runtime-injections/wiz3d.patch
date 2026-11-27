@@ -1,6 +1,36 @@
 --- a/tools/proton/wiz3d-launch
 +++ b/tools/proton/wiz3d-launch
-@@ -128,7 +128,8 @@
+@@ -50,16 +50,16 @@
+             os.environ['DXVK_CONFIG'] = wiz3d_prefix.dxvk_config(args.native, args.right_first, os.environ.get('DXVK_CONFIG'))
+             full = [os.environ.get('WIZ3D_RUN', 'wiz3d-run'), '--native-stereo', '--'] + command
+     else:
++        if '\\' not in log_dir:
++            Path(log_dir).mkdir(parents=True, exist_ok=True)
++            log_dir = wiz3d_prefix.windows_path(log_dir, prefix)
++        os.environ['WIZ3D_LOG_DIR'] = log_dir
+         try:
+             without_dxvk = wiz3d_prefix.on(prefix)
+         except (OSError, RuntimeError) as exc:
+             sys.exit('wiz3d-launch: %s' % exc)
+         for folder in without_dxvk:
+             say('no DXVK in %s, so games of that kind run without stereo' % folder)
+-        if '\\' not in log_dir:
+-            Path(log_dir).mkdir(parents=True, exist_ok=True)
+-            log_dir = wiz3d_prefix.windows_path(log_dir, prefix)
+-        os.environ['WIZ3D_LOG_DIR'] = log_dir
+         full = [os.environ.get('WIZ3D_RUN', 'wiz3d-run'), '--'] + command
+     # The game's error output passes through, and its last lines are kept: Wine says there what went wrong.
+     tail = collections.deque(maxlen=200)
+@@ -67,6 +67,8 @@
+     try:
+         child = subprocess.Popen(full, stderr=subprocess.PIPE)
+     except OSError as exc:
++        if args.enabled and not args.native:
++            wiz3d_prefix.off(prefix)
+         sys.exit('wiz3d-launch: cannot run %s: %s' % (full[0], exc))
+ 
+     def relay():
+@@ -128,7 +130,8 @@
      # A 16-bit program is known from its header not to run in the 64-bit prefix: no need to see it fail first.
      reason = wiz3d_prefix.failed_in_wow64(kind, 0, 0, '') if fallback and kind == 'win16' else None
      if not reason:
@@ -10,7 +40,7 @@
          if fallback:
              reason = wiz3d_prefix.failed_in_wow64(kind, status, seconds, output)
      if reason:
-@@ -137,7 +138,8 @@
+@@ -137,7 +140,8 @@
          say('the game does not run in the 64-bit prefix %s: %s. It runs in a 32-bit prefix instead, %s%s.'
              % (prefix, reason, other, '' if made else ', which is made now'))
          make_prefix(other, 'win32')
@@ -20,7 +50,7 @@
          if status == 0 or seconds >= wiz3d_prefix.FAILURE_SECONDS:
              wiz3d_prefix.remember_prefix(exe, other, reason)
              say('the 32-bit prefix is remembered for %s in %s' % (exe, wiz3d_prefix.choices_path()))
-@@ -147,4 +149,7 @@
+@@ -147,4 +151,7 @@
  
  
  if __name__ == '__main__':
