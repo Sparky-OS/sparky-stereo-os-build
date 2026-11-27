@@ -26,7 +26,7 @@ printf "Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n" > /et
 apt-get -qq update
 apt-get -y --no-install-recommends install kwin-wayland okular calligrawords sparky-stereo-graphics apt-utils > /out/before-install.log 2>&1
 rm -f /etc/apt/sources.list.d/sparky-stereo.sources
-dpkg-query -W kwin-wayland kwin-common libkwin6 libqt6waylandclient6 sparky-stereo-graphics > /out/before-versions.txt
+dpkg-query -W kwin-wayland kwin-common libkwin6 libqt6waylandclient6 sparky-stereo-graphics calligrawords > /out/before-versions.txt
 make_repository() {
     local candidate=$1; shift
     mkdir -p "$candidate"
@@ -44,7 +44,7 @@ make_repository /candidate-green /m2/qt6-base /m2/kwin /m2/sparky-stereo-graphic
 for row in red green; do
     printf "deb [trusted=yes] file:/candidate-%s ./\n" "$row" > /etc/apt/sources.list.d/candidate.list
     apt-get -qq update
-    apt-cache policy kwin-wayland libkwin6 libqt6waylandclient6 sparky-stereo-graphics > "/out/$row-policy.txt"
+    apt-cache policy kwin-wayland libkwin6 libqt6waylandclient6 sparky-stereo-graphics calligrawords > "/out/$row-policy.txt"
     case $row in red) qt=25 ;; green) qt=26 ;; esac
     apt-get -s --no-remove install "libqt6waylandclient6=6.11.2+dfsg-5+stereo3d$qt+lc1" > "/out/$row-qt-only.txt" 2>&1
     grep -q "^Inst libqt6waylandclient6 .*+stereo3d$qt+lc1" "/out/$row-qt-only.txt"
@@ -55,6 +55,7 @@ grep -q "^Inst libkwin6 .*stereo3d70+lc1" /out/green-qt-only.txt
 apt-get -s --no-remove full-upgrade > /out/green-full-upgrade.txt 2>&1
 grep -q "^Inst kwin-wayland .*stereo3d70+lc1" /out/green-full-upgrade.txt
 grep -q "^Inst libqt6waylandclient6 .*stereo3d26+lc1" /out/green-full-upgrade.txt
+grep -q "^Inst calligrawords .*stereo3d1+lc1" /out/green-full-upgrade.txt
 '
 docker inspect -f '{{.Id}}' "$name" >> "${CIDS:-/dev/null}"
 docker rm "$name" > /dev/null
