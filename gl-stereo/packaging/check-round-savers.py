@@ -10,7 +10,9 @@ round's own packages and asks the package's catalogue code (savers/catalogue.py,
 controller and the saver list run) which receipts it can offer, and refuses the round when any
 is left out; every saver it refuses is named with the differing file and both hashes. It also
 refuses a gl-stereo-savers whose Depends does not pin every XScreenSaver package it binds to
-the exact version the round carries.
+the exact version the round carries. An XScreenSaver package that owns no file a receipt binds
+(xscreensaver-data since 0.4.6: the 2D savers a person can add to the show have no receipts) may
+be named without a version; the gate says so in a note. A wrong exact version is always refused.
 
 Usage:
   check-round-savers.py --index REPO [--suite mashtabba] [--arch amd64]   a finished tree (dists/ and pool/)
@@ -171,9 +173,11 @@ def is_xscreensaver(fields):
     return fields.get('Source', '').split(' ')[0] == SOURCE_PREFIX or fields['Package'].startswith(SOURCE_PREFIX)
 
 
-def pin_problems(savers, packages):
-    """Every XScreenSaver package the round carries and gl-stereo-savers needs must be named with (= its version)."""
-    problems, pinned = [], 0
+def pin_problems(savers, packages, bound):
+    """(problems, notes). Every XScreenSaver package that owns a file a receipt binds (`bound`) must be named
+    with (= the version the round carries). One that owns no bound file may be named without a version: no
+    saver's offer depends on its build, and the pin is generated from the owners of the bound files (pin.py)."""
+    problems, notes, pinned = [], [], 0
     for item in re.split(r',\s*', savers.get('Depends', '').replace('\n', ' ')):
         for alternative in item.split('|'):
             match = re.match(r'\s*([a-z0-9.+-]+)(?::\w+)?\s*(?:\((=|>=|<=|<<|>>)\s*([^)]+)\))?', alternative)
@@ -181,7 +185,10 @@ def pin_problems(savers, packages):
                 continue
             name, op, wanted = match.groups()
             carried = packages[name]['Version']
-            if op != '=':
+            if op != '=' and name not in bound:
+                notes.append('Depends on %s is "%s%s", not an exact version; no receipt binds a file of %s, so no saver\'s '
+                             'offer depends on its build (the round carries %s)' % (name, op or '', ' ' + wanted if wanted else '', name, carried))
+            elif op != '=':
                 problems.append('Depends on %s is "%s%s", not an exact version: the round carries %s' % (name, op or '', ' ' + wanted if wanted else '', carried))
             elif wanted.strip() != carried:
                 problems.append('Depends on %s (= %s) but the round carries %s' % (name, wanted.strip(), carried))
@@ -189,11 +196,11 @@ def pin_problems(savers, packages):
                 pinned += 1
     if not pinned and not problems:
         problems.append('Depends names no XScreenSaver package with an exact version')
-    return problems
+    return problems, notes
 
 
-def unpinned_owners(entries, savers, packages, xscreensaver):
-    """Packages that own a file a receipt binds must be in Depends: a pin on gl alone leaves the settings files free."""
+def bound_owners(entries, packages, xscreensaver):
+    """The XScreenSaver packages that own a file a receipt binds: a saver's executable or its settings file."""
     owners = {}
     for name in xscreensaver:
         for path in deb_names(packages[name]['path']):
@@ -203,6 +210,11 @@ def unpinned_owners(entries, savers, packages, xscreensaver):
         for path in (entry['command'][0], '/usr/share/xscreensaver/config/%s.xml' % entry['id']):
             if path in owners:
                 needed.add(owners[path])
+    return needed
+
+
+def unpinned_owners(needed, savers):
+    """Packages that own a file a receipt binds must be in Depends: a pin on gl alone leaves the settings files free."""
     depends = savers.get('Depends', '')
     return ['%s owns a file the receipts bind and Depends does not pin its exact version' % name
             for name in sorted(needed) if not re.search(r'(^|[ ,|])%s\s*\(= ' % re.escape(name), depends.replace('\n', ' '))]
@@ -247,7 +259,13 @@ def main(argv):
         print('catalogue: %d of %d savers can be offered (%d receipts)' % (offered, shipped, len(entries)))
         if gone or offered < shipped:
             refused = True
-    for problem in pin_problems(savers, packages) + unpinned_owners(entries, savers, packages, xscreensaver):
+    bound = bound_owners(entries, packages, xscreensaver)
+    problems, notes = pin_problems(savers, packages, bound)
+    for note in notes:
+        print('note gl-stereo-savers %s: %s' % (savers['Version'], note))
+    # a bound owner named without an exact version is one refusal, said once by pin_problems
+    said = {problem.split(' ')[2] for problem in problems if problem.startswith('Depends on ')}
+    for problem in problems + [p for p in unpinned_owners(bound, savers) if p.split(' ')[0] not in said]:
         print('REFUSED gl-stereo-savers %s: %s' % (savers['Version'], problem))
         refused = True
     print('GATE %s' % ('REFUSES THE ROUND' if refused else 'PASSES'))

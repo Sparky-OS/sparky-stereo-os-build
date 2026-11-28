@@ -105,7 +105,27 @@ with tempfile.TemporaryDirectory(prefix='saver-receipts-') as work:
     round_of(work/'green', '6.09-2+stereo3d4', 'gl-stereo (= 0.4.4-1), xscreensaver-gl (= 6.09-2+stereo3d4)')
     code, out = run_gate(work/'green')
     assert code == 0 and '3 of 3 savers can be offered' in out and 'GATE PASSES' in out, out
+    # GREEN 2 (r1127a, 0.4.6): an XScreenSaver package that owns no bound file, named without a version, is a note
+    round_of(work/'green-data', '6.09-2+stereo3d4', 'gl-stereo (= 0.4.4-1), xscreensaver-data, xscreensaver-gl (= 6.09-2+stereo3d4)')
+    write_deb(work/'green-data', 'xscreensaver-data', '6.09-2+stereo3d4', {'usr/libexec/xscreensaver/deco': b'a 2D saver'}, source='xscreensaver')
+    code, out = run_gate(work/'green-data')
+    assert code == 0 and 'GATE PASSES' in out and 'note gl-stereo-savers 0.4.4-1: Depends on xscreensaver-data is ""' in out, out
+    # RED 5: the same package owns a file a receipt binds (a saver's settings file): unversioned is refused, once
+    round_of(work/'red-data', '6.09-2+stereo3d4', 'gl-stereo (= 0.4.4-1), xscreensaver-data, xscreensaver-gl (= 6.09-2+stereo3d4)')
+    (work/'red-data'/'xscreensaver-gl_6.09-2+stereo3d4_amd64.deb').unlink()
+    write_deb(work/'red-data', 'xscreensaver-gl', '6.09-2+stereo3d4',
+              {'usr/libexec/xscreensaver/' + name: b'saver ' + name.encode() + b' 6.09-2+stereo3d4' for name in ('gears', 'glplanet', 'pipes')}, source='xscreensaver')
+    write_deb(work/'red-data', 'xscreensaver-data', '6.09-2+stereo3d4',
+              {'usr/share/xscreensaver/config/%s.xml' % name: b'<screensaver/>' for name in ('gears', 'glplanet', 'pipes')}, source='xscreensaver')
+    code, out = run_gate(work/'red-data')
+    assert code == 1 and out.count('REFUSED gl-stereo-savers') == 1 and 'Depends on xscreensaver-data is "", not an exact version: the round carries' in out, out
+    # RED 6: a wrong exact version of a package that owns no bound file is still refused
+    round_of(work/'red-data-version', '6.09-2+stereo3d4', 'gl-stereo (= 0.4.4-1), xscreensaver-data (= 6.09-2+stereo3d3), xscreensaver-gl (= 6.09-2+stereo3d4)')
+    write_deb(work/'red-data-version', 'xscreensaver-data', '6.09-2+stereo3d4', {'usr/libexec/xscreensaver/deco': b'a 2D saver'}, source='xscreensaver')
+    code, out = run_gate(work/'red-data-version')
+    assert code == 1 and 'Depends on xscreensaver-data (= 6.09-2+stereo3d3) but the round carries 6.09-2+stereo3d4' in out, out
     print('PASS: the gate refuses a build that differs, an unpinned Depends, a changed settings file and a missing package; passes the pinned match')
+    print('PASS: a package that owns no bound file may be named without a version (a note); owning one, or a wrong exact version, is refused')
 
     # ---- the catalogue code: reasons name the file and both hashes ---------------------------------------
     root = work/'green-root'
