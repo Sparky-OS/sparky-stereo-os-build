@@ -73,6 +73,46 @@ def test_candidate_owned_solver_failure_is_not_eligible(tmp_path):
                            previous_published_at='2026-10-27T00:00:00Z')
 
 
+def test_candidate_owned_exact_pin_on_a_moved_outside_package_takes_the_dated_view(tmp_path, capsys):
+    """Row 933, round r1127a: the published AAC codec pins Debian's libspa-0.2-bluetooth (= 1.6.9-2), Debian moved
+    to 1.6.11-2, and the codec's successor is in the candidate set. The owner's name is a candidate's; the cause
+    is the outside archive alone, so the publication view decides whether the predecessor is a baseline."""
+    current, old, before, after, icons1, icons2 = fixture(tmp_path)
+    pinned1 = deb(tmp_path/'pin1', 'edition-codec', '1', depends='external-framework (= 1)')
+    pinned2 = deb(tmp_path/'pin2', 'edition-codec', '2', depends='external-framework (= 2)')
+    release.check_link([pinned2], archive_config=current, scratch=tmp_path/'scratch', siblings=[icons2],
+                       previous_siblings=[pinned1, icons1], previous_archive_config=old,
+                       previous_published_at='2026-10-27T00:00:00Z')
+    output = capsys.readouterr().out
+    assert 'predecessor view=dated' in output
+    assert 'dated predecessor baselines: 1 of 1' in output
+    record = json.loads(list((tmp_path/'scratch').glob('link-*/**/dated-predecessor-eligibility.json'))[0].read_text())
+    moved = record['failure_in_candidate_view'][0]['moved_outside_relations']
+    assert moved == [{'name': 'external-framework', 'relation': '= 1', 'candidate_view': ['2'], 'publication_view': ['1']}]
+
+
+def test_candidate_owned_exact_pin_stays_red_when_the_publication_view_never_met_it(tmp_path):
+    current, old, before, after, icons1, icons2 = fixture(tmp_path)
+    pinned1 = deb(tmp_path/'pin1', 'edition-codec', '1', depends='external-framework (= 9)')
+    pinned2 = deb(tmp_path/'pin2', 'edition-codec', '2', depends='external-framework (= 2)')
+    with pytest.raises(package.Invalid, match='not exclusively outside the candidate set'):
+        release.check_link([pinned2], archive_config=current, scratch=tmp_path/'scratch', siblings=[icons2],
+                           previous_siblings=[pinned1, icons1], previous_archive_config=old,
+                           previous_published_at='2026-10-27T00:00:00Z')
+
+
+def test_candidate_owned_pin_on_a_name_the_edition_carries_stays_red(tmp_path):
+    """The moved package is one the round itself supplies: that is not an outside cause."""
+    current, old, before, after, icons1, icons2 = fixture(tmp_path)
+    pinned1 = deb(tmp_path/'pin1', 'edition-codec', '1', depends='external-framework (= 1)')
+    pinned2 = deb(tmp_path/'pin2', 'edition-codec', '2', depends='external-framework (= 3)')
+    own = deb(tmp_path/'ext3', 'external-framework', '3', depends='edition-icons (>= 2)')
+    with pytest.raises(package.Invalid, match='not exclusively outside the candidate set'):
+        release.check_link([pinned2, own], archive_config=current, scratch=tmp_path/'scratch', siblings=[icons2],
+                           previous_siblings=[pinned1, icons1], previous_archive_config=old,
+                           previous_published_at='2026-10-27T00:00:00Z')
+
+
 def test_existing_missing_library_regression_stays_red_in_dated_view(tmp_path):
     from lean.tests.test_linkcheck import _runpath_case
     _, built = _runpath_case(tmp_path)

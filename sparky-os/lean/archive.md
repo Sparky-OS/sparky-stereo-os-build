@@ -257,6 +257,28 @@ The candidate must qualify in its current view and pass the existing baseline-fr
 No predecessor failure excuses a candidate failure.
 The summary lists these repairs under `published predecessor not installable at its publication`; the round description names them as repairs of already published breakage.
 
+## A published pin on an outside package that moved
+
+A published package of ours can depend on one exact version of a package that only an outside archive carries.
+The AAC codec does: `pipewire-bluez5-codec-aac 1.6.9-2+aac2+lc1` Depends on `libspa-0.2-bluetooth (= 1.6.9-2)`.
+When the outside archive moves to another version, the published package stops solving in the candidate view, and its rebuilt successor is in the candidate set.
+The relation's owner is then one of the candidate names, while nothing in the candidate set caused the refusal.
+The gate takes the dated view for such a predecessor, and for every package whose path reaches it, when all of these hold for every retained attempt that names a candidate owner:
+
+- every owner of the terminal refusal is an exact previous-edition input;
+- every relation of the terminal is a versioned Depends or Pre-Depends;
+- no package of the candidate set or of the previous edition set carries or provides the relation's name;
+- no version of that name in the candidate view's authenticated indexes meets the relation;
+- a version of that name in the publication view's authenticated indexes does.
+
+The dated solve that follows must still succeed, and it is then a real baseline: the comparison and the predecessor's start probes run in full.
+A pin that the publication view never met, or a pin on a name the edition itself carries, stays a refusal.
+The evidence (`dated-predecessor-eligibility.json`) records each such relation as `moved_outside_relations`, with the versions found in both views.
+
+Symptom (round r1127a, row 933): `predecessor failure is not exclusively outside the candidate set` for the codec and for the two metapackages that depend on it, after 386 inputs.
+Cause: the rule read a candidate-named owner as a cause inside the candidate set, unless the relation's name was absent from every index; a name that is present at another version was not considered.
+How it was found: the rehearsal on the 123 changed packages did not hold the codec's successor as a gate input, so the same refusal was attributed outside the candidate set there and took the dated view; the official run takes every package new to the destination.
+
 Use `--collect-predecessor-stops` for a complete inventory of uncovered predecessor-eligibility refusals.
 Each refusal is printed and retained in `predecessor-stops.json`; checking continues with the next input and the invocation exits 1 if any remains.
 `uninstallable-predecessors.json` holds every input covered by the checked absence rule.

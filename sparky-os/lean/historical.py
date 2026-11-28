@@ -286,6 +286,35 @@ class PreviousView:
             current.predecessor_result['stop'] = str(exc)
             raise EligibilityStop(str(exc)) from exc
 
+    def moved_relations(self, text, prior, previous_providers):
+        """The terminal's exact relations on packages only outside archives carry, met at publication and not now.
+
+        A published package of ours that pins an outside archive's version (the AAC codec's
+        `libspa-0.2-bluetooth (= 1.6.9-2)`, row 933) stops solving when that archive moves, and its successor in
+        the candidate set is the repair. The owner's name is then a candidate's while the cause is outside the
+        candidate set. Every relation of the terminal must be such a pin, or none counts; the dated solve that
+        follows still has to succeed.
+        """
+        terminal = failure_terminal(text)
+        named = set(re.findall(r'(?:PreDepends|Pre-Depends|Depends):?\s+([a-z0-9][a-z0-9+.-]*)', terminal))
+        pins = set(re.findall(r'(?:PreDepends|Pre-Depends|Depends):?\s+([a-z0-9][a-z0-9+.-]*)(?::[a-z0-9-]+)?'
+                              r'\s*\((<<|<=|=|>=|>>)\s*([^\s()]+)\)', terminal))
+        previous = {p['control']['Package'] for p in prior}
+        if not pins or {name for name, _, _ in pins} != named or not set(failure_owners(text)) <= previous:
+            return []
+        moved = []
+        for name, operator, version in sorted(pins):
+            if name in self.candidate_providers or name in previous_providers:
+                return []
+            now = sorted({p['identity'][1] for p in self.current_providers.get(name, []) if p['identity'][0] == name})
+            then = sorted({p['identity'][1] for p in self.dated_providers.get(name, []) if p['identity'][0] == name})
+            if (any(archive.version_matches(v, operator, version) for v in now)
+                    or not any(archive.version_matches(v, operator, version) for v in then)):
+                return []
+            moved.append({'name': name, 'relation': f'{operator} {version}', 'candidate_view': now,
+                          'publication_view': then})
+        return moved
+
     def absent_relations(self, current, deb, prior, failure):
         """A required path through exact previous inputs, ending at a name absent in both views.
 
@@ -426,7 +455,9 @@ class PreviousView:
                 external_relations = set(re.findall(r'(?:PreDepends|Pre-Depends|Depends):?\s+([a-z0-9][a-z0-9+.-]*)', failure_terminal(text)))
                 external_missing = (external_relations and all(n not in self.candidate_providers and n not in previous_providers
                                     and n not in self.current_providers for n in external_relations))
-                if not owners or (candidate_owned and not external_missing):
+                moved = (self.moved_relations(text, prior, previous_providers)
+                         if owners and candidate_owned and not external_missing else [])
+                if not owners or (candidate_owned and not external_missing and not moved):
                     raise package.Invalid('predecessor failure is not exclusively outside the candidate set; '
                                           f'see {attempt["solver"]}') from exc
                 names = failure_names(text)
@@ -436,10 +467,11 @@ class PreviousView:
                     blocked = [r['archive'] for r in self.archives if r['source'] in affected & self.exempt]
                     return self.unavailable(current, deb, prior, exc, affected)
                 changed_causes.update(set().union(*(self.owners.get(n, set()) for n in owners)) & self.changed)
-                if external_missing:
+                if external_missing or moved:
                     changed_causes.update(set().union(*(self.dated_owners.get(n, set()) for n in external_relations)) & self.changed)
                 reasons.append({'solver': attempt['solver'], 'sha256': archive.digest(attempt['solver']),
-                                'outside_candidate': sorted(set(owners)), 'named_package_archives': attribution})
+                                'outside_candidate': sorted(set(owners)), 'named_package_archives': attribution,
+                                **({'moved_outside_relations': moved} if moved else {})})
             if not reasons:
                 raise package.Invalid('no recorded previous-edition solver failure') from exc
             if self.exempt and not changed_causes:
