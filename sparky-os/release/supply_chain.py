@@ -252,7 +252,17 @@ def _spdx_id_ok(expr):
 
 
 def _licref(name):
-    return 'LicenseRef-' + re.sub(r'[^A-Za-z0-9.-]+', '-', name).strip('-')
+    """A licence reference for a name the copyright file gives. The licence library knows some LicenseRef names
+    itself and classes a few of them as exceptions (KDE's LicenseRef-KFQF-Accepted-GPL: scancode's
+    kfqf-accepted-gpl), and the SPDX validator then refuses the name where the file uses it as a licence
+    (round r1127a, plasma-integration). Such a name gets the prefix `as-licence-`; its extracted text keeps the
+    file's own name."""
+    ref = 'LicenseRef-' + re.sub(r'[^A-Za-z0-9.-]+', '-', name).strip('-')
+    try:
+        known_exception = getattr(_licensing().parse(ref), 'is_exception', False)
+    except Exception:
+        known_exception = False
+    return ref if not known_exception else 'LicenseRef-as-licence-' + ref[len('LicenseRef-'):]
 
 
 def _split_top(expr, word):

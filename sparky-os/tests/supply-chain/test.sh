@@ -68,7 +68,9 @@ assert 'LicenseRef-LLVM-exception' in p['alpha']['licenseDeclared'], p['alpha'][
 assert p['alpha']['originator'] == 'Organization: Debian'
 assert '@' not in ' '.join(e['extractedText'] for e in d['hasExtractedLicensingInfos']), 'a contact leaked from a licence text'
 assert 'Capitain_Jack' not in json.dumps(d) and 'lists.debian.org' not in json.dumps(d), 'a contact leaked'
-assert {e['licenseId'] for e in d['hasExtractedLicensingInfos']} == {'LicenseRef-Strange-1.0', 'LicenseRef-LLVM-exception'}
+assert 'LicenseRef-as-licence-KFQF-Accepted-GPL' in p['alpha']['licenseDeclared'] and 'LicenseRef-KFQF-Accepted-GPL' not in p['alpha']['licenseDeclared'].replace('as-licence-', 'X'), p['alpha']['licenseDeclared']   # a name the licence library classes as an exception, used as a licence (r1127a, plasma-integration)
+assert {e['licenseId'] for e in d['hasExtractedLicensingInfos']} == {'LicenseRef-Strange-1.0', 'LicenseRef-LLVM-exception', 'LicenseRef-as-licence-KFQF-Accepted-GPL'}
+assert [e['name'] for e in d['hasExtractedLicensingInfos'] if e['licenseId'] == 'LicenseRef-as-licence-KFQF-Accepted-GPL'] == ['LicenseRef-KFQF-Accepted-GPL']
 P
 expect green "the cohort replaces beta 2.0 by 2.1" $PY -I -c "
 import json,sys
