@@ -36,7 +36,7 @@ License: Strange-1.0
 
 Files: llvm/*
 Copyright: 2020 LLVM
-License: Apache-2.0 and LLVM-exception
+License: Apache-2.0 and LLVM-exception and LicenseRef-KFQF-Accepted-GPL
 
 License: GPL-2+
  This program is free software; see /usr/share/common-licenses/GPL-2.
